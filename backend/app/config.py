@@ -9,8 +9,12 @@ class Settings(BaseSettings):
     cors_origins: List[str] = ["http://localhost:3000"]
     rate_limit_per_minute: int = 60
     squiggle_api_base: str = "https://api.squiggle.com.au"
-    openai_api_key: str = ""
-    openai_model: str = "gpt-4o-mini"
+    
+    # OpenRouter Configuration
+    openrouter_api_key: str = ""
+    openrouter_model: str = "gptoss-120b"
+    openrouter_base_url: str = "https://openrouter.ai/api/v1"
+    
     environment: str = "development"
 
     class Config:
