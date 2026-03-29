@@ -12,10 +12,12 @@
     "typecheck": "nuxt typecheck"
   },
   "dependencies": {
-    "nuxt": "^4.0.0"
+    "nuxt": "^4.0.0",
+    "@nuxtjs/tailwindcss": "^6.12.0"
   },
   "devDependencies": {
     "@nuxt/eslint": "^0.7.0",
-    "typescript": "^5.7.0"
+    "typescript": "^5.7.0",
+    "@tailwindcss/forms": "^0.5.9"
   }
 }
