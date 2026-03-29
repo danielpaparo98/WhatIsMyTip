@@ -46,6 +46,25 @@ POST /api/tips/explanations/generate?season=2025&round=1
 ```
 GET /api/backtest
 GET /api/backtest/{heuristic}
+POST /api/backtest/run
+GET /api/backtest/compare
+```
+
+**Run Backtest:**
+```bash
+# Backtest entire season for all heuristics
+POST /api/backtest/run?season=2024
+
+# Backtest specific round
+POST /api/backtest/run?season=2024&round=5
+
+# Backtest specific heuristic
+POST /api/backtest/run?season=2024&heuristic=best_bet
+```
+
+**Compare Heuristics:**
+```bash
+GET /api/backtest/compare?season=2024
 ```
 
 ## Rate Limiting
