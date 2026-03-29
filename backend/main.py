@@ -5,6 +5,7 @@ from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 
 from app.config import settings
+from app.api import api_router
 
 app = FastAPI(
     title="WhatIsMyTip API",
@@ -26,11 +27,18 @@ limiter = Limiter(key_func=get_remote_address)
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
+# Include API routes
+app.include_router(api_router)
+
 
 @app.get("/")
 @limiter.limit("60/minute")
 async def root():
-    return {"message": "WhatIsMyTip API", "version": "0.1.0"}
+    return {
+        "message": "WhatIsMyTip API",
+        "version": "0.1.0",
+        "docs": "/docs",
+    }
 
 
 @app.get("/health")
