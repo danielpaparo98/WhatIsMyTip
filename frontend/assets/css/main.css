@@ -1,0 +1,23 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Monochrome with bold typographic design */
+:root {
+  --color-bg: #ffffff;
+  --color-text: #000000;
+  --color-border: #e5e5e5;
+  --color-muted: #666666;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  font-family: system-ui, -apple-system, sans-serif;
+  background-color: var(--color-bg);
+  color: var(--color-text);
+  margin: 0;
+  padding: 0;
+}
