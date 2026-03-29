@@ -29,6 +29,17 @@ GET /api/games/{game_id}
 GET /api/tips
 GET /api/tips/{heuristic}
 POST /api/tips/generate
+POST /api/tips/explanations/generate
+```
+
+**Generate Tips:**
+```bash
+POST /api/tips/generate?season=2025&round=1&heuristics=best_bet,yolo&generate_explanations=true
+```
+
+**Generate Explanations:**
+```bash
+POST /api/tips/explanations/generate?season=2025&round=1
 ```
 
 ### Backtesting
