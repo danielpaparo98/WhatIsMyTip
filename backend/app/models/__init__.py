@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Float, DateTime, Text, Boolean
+from sqlalchemy import Column, Integer, String, Float, DateTime, Text, Boolean, UniqueConstraint
 from sqlalchemy.sql import func
 from app.db import Base
 
@@ -46,3 +46,7 @@ class BacktestResult(Base):
     accuracy = Column(Float)
     profit = Column(Float)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+    
+    __table_args__ = (
+        UniqueConstraint('season', 'round_id', 'heuristic', name='uq_backtest_season_round_heuristic'),
+    )
