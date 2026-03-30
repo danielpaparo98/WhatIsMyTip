@@ -7,7 +7,14 @@ from datetime import datetime
 
 from app.db import get_db
 from app.crud import BacktestCRUD
-from app.schemas import BacktestResponse, BacktestListResponse, AvailableSeasonsResponse
+from app.schemas import (
+    BacktestResponse,
+    BacktestListResponse,
+    AvailableSeasonsResponse,
+    BacktestTableResponse,
+    BacktestTableData,
+    BacktestTableRow,
+)
 from app.services.backtest import BacktestService
 
 router = APIRouter()
@@ -155,6 +162,68 @@ async def compare_heuristics(
             "profit": best_heuristic[1]["total_profit"],
         },
     }
+
+
+@router.get("/table", response_model=BacktestTableResponse)
+@limiter.limit("30/minute")
+async def get_table_data(
+    request: Request,
+    season: int = Query(..., description="Season year to get table data for"),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get detailed table data for all heuristics for a season."""
+    results = await BacktestCRUD.get_table_data(db, season)
+    
+    # Group results by heuristic
+    heuristics_data: dict[str, list] = {}
+    for result in results:
+        if result.heuristic not in heuristics_data:
+            heuristics_data[result.heuristic] = []
+        
+        # Calculate totals for this heuristic
+        total_profit = sum(r.profit for r in heuristics_data[result.heuristic] + [result])
+        total_tips = sum(r.tips_made for r in heuristics_data[result.heuristic] + [result])
+        total_correct = sum(r.tips_correct for r in heuristics_data[result.heuristic] + [result])
+        total_accuracy = total_correct / total_tips if total_tips > 0 else 0.0
+        
+        heuristics_data[result.heuristic].append({
+            "round_id": result.round_id,
+            "tips_made": result.tips_made,
+            "tips_correct": result.tips_correct,
+            "accuracy": result.accuracy,
+            "profit": result.profit,
+            "_total_profit": total_profit,
+            "_total_accuracy": total_accuracy,
+        })
+    
+    # Build response
+    heuristics_list = []
+    for heuristic, rounds_data in heuristics_data.items():
+        # Get the final totals from the last round
+        final_round = rounds_data[-1]
+        heuristics_list.append(
+            BacktestTableData(
+                heuristic=heuristic,
+                season=season,
+                rounds=[
+                    BacktestTableRow(
+                        round_id=r["round_id"],
+                        tips_made=r["tips_made"],
+                        tips_correct=r["tips_correct"],
+                        accuracy=r["accuracy"],
+                        profit=r["profit"],
+                    )
+                    for r in rounds_data
+                ],
+                total_profit=final_round["_total_profit"],
+                total_accuracy=final_round["_total_accuracy"],
+            )
+        )
+    
+    return BacktestTableResponse(
+        season=season,
+        heuristics=heuristics_list,
+    )
 
 
 @router.get("/seasons", response_model=AvailableSeasonsResponse)

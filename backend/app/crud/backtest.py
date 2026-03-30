@@ -69,3 +69,13 @@ class BacktestCRUD:
             select(Game.season).distinct().order_by(Game.season.desc())
         )
         return [row[0] for row in result]
+    
+    @staticmethod
+    async def get_table_data(db: AsyncSession, season: int) -> List[BacktestResult]:
+        """Get detailed backtest results for a season."""
+        result = await db.execute(
+            select(BacktestResult)
+            .where(BacktestResult.season == season)
+            .order_by(BacktestResult.heuristic, BacktestResult.round_id)
+        )
+        return list(result.scalars().all())
