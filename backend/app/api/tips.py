@@ -17,6 +17,121 @@ limiter = Limiter(key_func=get_remote_address)
 orchestrator = ModelOrchestrator()
 
 
+@router.get("/games-with-tips")
+@limiter.limit("60/minute")
+async def get_games_with_tips(
+    request: Request,
+    season: int = Query(..., description="Season year"),
+    round_id: int = Query(..., alias="round", description="Round number"),
+    heuristic: Optional[str] = Query("best_bet", description="Heuristic to use (default: best_bet)"),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get games with tips for a round.
+    
+    Automatically generates tips if they don't exist for the requested round.
+    """
+    try:
+        # Get games for the round
+        result = await db.execute(
+            select(Game)
+            .where(Game.season == season, Game.round_id == round_id)
+            .order_by(Game.date)
+        )
+        games = list(result.scalars().all())
+        
+        if not games:
+            return {"games": [], "count": 0}
+        
+        # Get tips for these games
+        game_ids = [g.id for g in games]
+        if game_ids:
+            if heuristic:
+                result = await db.execute(
+                    select(Tip)
+                    .where(
+                        Tip.game_id.in_(game_ids),
+                        Tip.heuristic == heuristic
+                    )
+                )
+            else:
+                result = await db.execute(
+                    select(Tip)
+                    .where(Tip.game_id.in_(game_ids))
+                )
+            tips = list(result.scalars().all())
+        else:
+            tips = []
+        
+        # If no tips exist for this round, generate them synchronously
+        if not tips:
+            print(f"INFO: No tips found for round {round_id}, season {season}. Generating now...")
+            generation_result = await TipCRUD.regenerate_tips_for_round(db, season, round_id)
+            
+            if generation_result["success"]:
+                print(f"INFO: {generation_result['message']}")
+                
+                # Fetch the newly generated tips
+                if heuristic:
+                    result = await db.execute(
+                        select(Tip)
+                        .where(
+                            Tip.game_id.in_(game_ids),
+                            Tip.heuristic == heuristic
+                        )
+                    )
+                else:
+                    result = await db.execute(
+                        select(Tip)
+                        .where(Tip.game_id.in_(game_ids))
+                    )
+                tips = list(result.scalars().all())
+            else:
+                print(f"WARNING: Failed to generate tips: {generation_result['message']}")
+        
+        # Create a dict of game_id -> tip
+        tips_by_game = {tip.game_id: tip for tip in tips}
+        
+        # Combine games with their tips
+        games_with_tips = []
+        for game in games:
+            game_dict = {
+                "id": game.id,
+                "squiggle_id": game.squiggle_id,
+                "round_id": game.round_id,
+                "season": game.season,
+                "home_team": game.home_team,
+                "away_team": game.away_team,
+                "home_score": game.home_score,
+                "away_score": game.away_score,
+                "venue": game.venue,
+                "date": game.date.isoformat() if game.date is not None else None,
+                "completed": game.completed,
+                "tip": None
+            }
+            
+            # Add tip if available
+            if game.id in tips_by_game:
+                tip = tips_by_game[game.id]
+                game_dict["tip"] = {
+                    "id": tip.id,
+                    "heuristic": tip.heuristic,
+                    "selected_team": tip.selected_team,
+                    "margin": tip.margin,
+                    "confidence": tip.confidence,
+                    "explanation": tip.explanation,
+                    "created_at": tip.created_at.isoformat() if tip.created_at is not None else None
+                }
+            
+            games_with_tips.append(game_dict)
+        
+        return {"games": games_with_tips, "count": len(games_with_tips)}
+    except Exception as e:
+        import traceback
+        print(f"ERROR in get_games_with_tips: {e}")
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.get("", response_model=TipListResponse)
 @limiter.limit("60/minute")
 async def get_tips(
@@ -136,111 +251,6 @@ async def generate_tips(
     except Exception as e:
         import traceback
         print(f"ERROR in generate_tips: {e}")
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.get("/games-with-tips")
-@limiter.limit("60/minute")
-async def get_games_with_tips(
-    request: Request,
-    season: int = Query(..., description="Season year"),
-    round_id: int = Query(..., alias="round", description="Round number"),
-    heuristic: Optional[str] = Query("best_bet", description="Heuristic to use (default: best_bet)"),
-    db: AsyncSession = Depends(get_db),
-):
-    """Get games with tips for a round.
-    
-    Automatically regenerates stale tips if the previous round's games have passed
-    and no tips exist for the requested round.
-    """
-    try:
-        # Check if tips are stale and need regeneration
-        is_stale = await GameCRUD.are_current_tips_stale(db)
-        
-        if is_stale:
-            # Get the next round that needs tips
-            next_round = await GameCRUD.get_next_upcoming_round(db)
-            
-            if next_round:
-                next_season, next_round_id = next_round
-                
-                # Check if the requested round matches the next round needing tips
-                if season == next_season and round_id == next_round_id:
-                    # Regenerate tips for this round
-                    print(f"INFO: Regenerating stale tips for round {round_id}, season {season}")
-                    result = await TipCRUD.regenerate_tips_for_round(db, season, round_id)
-                    if result["success"]:
-                        print(f"INFO: {result['message']}")
-        
-        # Get games for the round
-        result = await db.execute(
-            select(Game)
-            .where(Game.season == season, Game.round_id == round_id)
-            .order_by(Game.date)
-        )
-        games = list(result.scalars().all())
-        
-        # Get tips for these games
-        game_ids = [g.id for g in games]
-        if game_ids:
-            if heuristic:
-                result = await db.execute(
-                    select(Tip)
-                    .where(
-                        Tip.game_id.in_(game_ids),
-                        Tip.heuristic == heuristic
-                    )
-                )
-            else:
-                result = await db.execute(
-                    select(Tip)
-                    .where(Tip.game_id.in_(game_ids))
-                )
-            tips = list(result.scalars().all())
-        else:
-            tips = []
-        
-        # Create a dict of game_id -> tip
-        tips_by_game = {tip.game_id: tip for tip in tips}
-        
-        # Combine games with their tips
-        games_with_tips = []
-        for game in games:
-            game_dict = {
-                "id": game.id,
-                "squiggle_id": game.squiggle_id,
-                "round_id": game.round_id,
-                "season": game.season,
-                "home_team": game.home_team,
-                "away_team": game.away_team,
-                "home_score": game.home_score,
-                "away_score": game.away_score,
-                "venue": game.venue,
-                "date": game.date.isoformat() if game.date is not None else None,
-                "completed": game.completed,
-                "tip": None
-            }
-            
-            # Add tip if available
-            if game.id in tips_by_game:
-                tip = tips_by_game[game.id]
-                game_dict["tip"] = {
-                    "id": tip.id,
-                    "heuristic": tip.heuristic,
-                    "selected_team": tip.selected_team,
-                    "margin": tip.margin,
-                    "confidence": tip.confidence,
-                    "explanation": tip.explanation,
-                    "created_at": tip.created_at.isoformat() if tip.created_at is not None else None
-                }
-            
-            games_with_tips.append(game_dict)
-        
-        return {"games": games_with_tips, "count": len(games_with_tips)}
-    except Exception as e:
-        import traceback
-        print(f"ERROR in get_games_with_tips: {e}")
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
