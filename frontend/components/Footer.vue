@@ -5,7 +5,7 @@
         Data provided by <a href="https://squiggle.com.au" target="_blank" rel="noopener">Squiggle</a>
       </p>
       <p class="text-muted">
-        Open source project on <a href="https://github.com" target="_blank" rel="noopener">GitHub</a>
+        Open source project on <a href="https://github.com/danielpaparo98/WhatIsMyTip" target="_blank" rel="noopener">GitHub</a>
       </p>
     </div>
   </footer>
