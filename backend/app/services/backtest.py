@@ -221,7 +221,7 @@ class BacktestService:
         db: AsyncSession,
         season: int,
     ) -> Dict[str, Dict[str, float]]:
-        """Compare all heuristics for a season.
+        """Compare all heuristics for a season by reading from database.
         
         Args:
             db: Database session
@@ -233,7 +233,16 @@ class BacktestService:
         comparison = {}
         
         for heuristic in self.orchestrator.get_available_heuristics():
-            results = await self.backtest_season(db, season, heuristic)
+            # Read backtest results from database instead of running new backtests
+            result = await db.execute(
+                select(BacktestResult)
+                .where(
+                    BacktestResult.season == season,
+                    BacktestResult.heuristic == heuristic
+                )
+                .order_by(BacktestResult.round_id)
+            )
+            results = list(result.scalars().all())
             comparison[heuristic] = self.calculate_summary_stats(results)
         
         return comparison
