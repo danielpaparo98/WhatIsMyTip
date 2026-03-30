@@ -72,7 +72,6 @@
               {{ year }}
             </option>
           </select>
-          <button @click="runBacktest" class="btn btn-primary" :disabled="loading || seasonsLoading || syncing">Run Backtest</button>
           <div class="view-toggle">
             <button
               @click="viewMode = 'summary'"
@@ -290,17 +289,15 @@ const loadAvailableSeasons = async () => {
   }
 }
 
-const runBacktest = async () => {
+const loadComparisonData = async () => {
   loading.value = true
   syncing.value = true
   error.value = null
   
   try {
     comparison.value = await api.compareHeuristics(selectedSeason.value)
-    // Also load table data for the selected season
-    await loadTableData()
   } catch (e) {
-    error.value = 'Failed to run backtest'
+    error.value = 'Failed to load comparison data'
     console.error(e)
   } finally {
     loading.value = false
@@ -326,14 +323,18 @@ const loadTableData = async () => {
 
 // Watch for season changes to reload data
 watch(selectedSeason, async () => {
-  if (viewMode.value === 'table') {
+  if (viewMode.value === 'summary') {
+    await loadComparisonData()
+  } else if (viewMode.value === 'table') {
     await loadTableData()
   }
 })
 
 // Watch for view mode changes
 watch(viewMode, async (newMode) => {
-  if (newMode === 'table' && !tableData.value) {
+  if (newMode === 'summary' && !comparison.value) {
+    await loadComparisonData()
+  } else if (newMode === 'table' && !tableData.value) {
     await loadTableData()
   } else if (newMode === 'charts' && !chartData.value) {
     await loadChartData()
@@ -391,7 +392,7 @@ const loadCurrentSeasonData = async () => {
 onMounted(async () => {
   await loadAvailableSeasons()
   await loadCurrentSeasonData()
-  runBacktest()
+  await loadComparisonData()
 })
 </script>
 
