@@ -63,10 +63,10 @@ class BacktestCRUD:
     
     @staticmethod
     async def get_available_seasons(db: AsyncSession) -> List[int]:
-        """Get list of distinct seasons available in the database."""
+        """Get list of distinct seasons with backtest results."""
         from sqlalchemy import select
         result = await db.execute(
-            select(Game.season).distinct().order_by(Game.season.desc())
+            select(BacktestResult.season).distinct().order_by(BacktestResult.season.desc())
         )
         return [row[0] for row in result]
     
