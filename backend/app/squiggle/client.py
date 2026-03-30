@@ -9,7 +9,10 @@ class SquiggleClient:
     
     def __init__(self):
         self.base_url = settings.squiggle_api_base
-        self.client = httpx.AsyncClient(timeout=30.0)
+        self.client = httpx.AsyncClient(
+            timeout=30.0,
+            headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+        )
     
     async def close(self):
         await self.client.aclose()
@@ -30,17 +33,23 @@ class SquiggleClient:
         Returns:
             List of game dictionaries
         """
-        params = {}
+        # Build query string for Squiggle API format: ?q=games;year=2024;round=1
+        query_parts = ["games"]
         if year:
-            params["year"] = year
+            query_parts.append(f"year={year}")
         if round:
-            params["round"] = round
+            query_parts.append(f"round={round}")
         if complete is not None:
-            params["complete"] = str(complete).lower()
+            query_parts.append(f"complete={str(complete).lower()}")
         
-        response = await self.client.get(f"{self.base_url}/games", params=params)
+        query = ";".join(query_parts)
+        url = f"{self.base_url}/?q={query}"
+        
+        response = await self.client.get(url)
         response.raise_for_status()
-        return response.json()
+        data = response.json()
+        # Squiggle API returns {"games": [...]}
+        return data.get("games", [])
     
     async def get_game(self, game_id: int) -> Dict[str, Any]:
         """Fetch a single game by ID.
