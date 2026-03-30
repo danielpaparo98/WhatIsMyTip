@@ -7,6 +7,10 @@ from app.orchestrator import ModelOrchestrator
 from app.crud import BacktestCRUD
 
 
+# Stake amount per game for profit calculation
+STAKE_PER_GAME = 10.0
+
+
 class BacktestService:
     """Service for backtesting heuristic performance."""
     
@@ -75,11 +79,11 @@ class BacktestService:
             # Check if prediction was correct
             if winner == actual_winner:
                 tips_correct += 1
-                # Simple profit calculation: $1 profit per correct tip
-                profit += 1.0
+                # Profit calculation: $10 profit per correct tip
+                profit += STAKE_PER_GAME
             else:
-                # Loss of $1 per incorrect tip
-                profit -= 1.0
+                # Loss of $10 per incorrect tip
+                profit -= STAKE_PER_GAME
         
         # Calculate accuracy
         accuracy = tips_correct / tips_made if tips_made > 0 else 0.0
