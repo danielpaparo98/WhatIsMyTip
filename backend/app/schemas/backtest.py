@@ -96,3 +96,10 @@ class CurrentSeasonResponse(BaseModel):
     heuristics: List[CurrentSeasonHeuristicPerformance]
     rounds_completed: int
     total_rounds: int
+
+
+class PreGenerateResponse(BaseModel):
+    """Response for pre-generating backtest data for all seasons."""
+    message: str
+    seasons_processed: int
+    total_backtest_results: int

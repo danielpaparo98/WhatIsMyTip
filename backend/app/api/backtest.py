@@ -16,6 +16,7 @@ from app.schemas import (
     BacktestTableRow,
     HistoricalSyncResponse,
     CurrentSeasonResponse,
+    PreGenerateResponse,
 )
 from app.services.backtest import BacktestService
 from app.squiggle import SquiggleClient
@@ -67,39 +68,6 @@ async def get_current_season_performance(
     performance = await service.get_current_season_performance(db)
     
     return performance
-
-
-@router.get("/{heuristic}", response_model=BacktestListResponse)
-@limiter.limit("60/minute")
-async def get_backtest_by_heuristic(
-    request: Request,
-    heuristic: str,
-    season: Optional[int] = Query(None, description="Filter by season year"),
-    limit: int = Query(50, ge=1, le=200),
-    db: AsyncSession = Depends(get_db),
-):
-    """Get backtest results by heuristic type."""
-    if season:
-        from sqlalchemy import select
-        from app.models import BacktestResult
-        
-        result = await db.execute(
-            select(BacktestResult)
-            .where(
-                BacktestResult.heuristic == heuristic,
-                BacktestResult.season == season,
-            )
-            .order_by(BacktestResult.round_id)
-            .limit(limit)
-        )
-        results = list(result.scalars().all())
-    else:
-        results = await BacktestCRUD.get_by_heuristic(db, heuristic, limit=limit)
-    
-    return BacktestListResponse(
-        results=[BacktestResponse.model_validate(r) for r in results],
-        count=len(results),
-    )
 
 
 @router.post("/run")
@@ -171,15 +139,9 @@ async def compare_heuristics(
     )
     backtest_count = result.scalar()
     
-    # If no backtest results exist, sync historical data first
+    # If no backtest results exist, pre-generate data for this season
     if backtest_count == 0:
-        squiggle_client = SquiggleClient()
-        try:
-            sync_result = await service.sync_historical_season(db, season, squiggle_client)
-            # Run backtest after sync
-            await service.backtest_all_heuristics(db, season)
-        finally:
-            await squiggle_client.close()
+        await service.pre_generate_all_seasons(db, specific_season=season)
     
     comparison = await service.compare_heuristics(db, season)
     
@@ -217,16 +179,10 @@ async def get_table_data(
     )
     backtest_count = result.scalar()
     
-    # If no backtest results exist, sync historical data first
+    # If no backtest results exist, pre-generate data for this season
     if backtest_count == 0:
         service = BacktestService()
-        squiggle_client = SquiggleClient()
-        try:
-            sync_result = await service.sync_historical_season(db, season, squiggle_client)
-            # Run backtest after sync
-            await service.backtest_all_heuristics(db, season)
-        finally:
-            await squiggle_client.close()
+        await service.pre_generate_all_seasons(db, specific_season=season)
     
     results = await BacktestCRUD.get_table_data(db, season)
     
@@ -314,3 +270,58 @@ async def sync_historical_data(
         return result
     finally:
         await squiggle_client.close()
+
+
+@router.post("/pre-generate", response_model=PreGenerateResponse)
+@limiter.limit("5/minute")
+async def pre_generate_backtest_data(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    season: Optional[int] = Query(None, description="Specific season to pre-generate (if None, all seasons)"),
+    db: AsyncSession = Depends(get_db),
+):
+    """Pre-generate backtest data for all seasons from 2010 to current_year-1.
+    
+    This endpoint runs in the background and generates backtest results for
+    all historical seasons. If a specific season is provided, only that season
+    is processed.
+    """
+    service = BacktestService()
+    
+    # Run pre-generation in background
+    result = await service.pre_generate_all_seasons(db, specific_season=season)
+    
+    return result
+
+
+@router.get("/{heuristic}", response_model=BacktestListResponse)
+@limiter.limit("60/minute")
+async def get_backtest_by_heuristic(
+    request: Request,
+    heuristic: str,
+    season: Optional[int] = Query(None, description="Filter by season year"),
+    limit: int = Query(50, ge=1, le=200),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get backtest results by heuristic type."""
+    if season:
+        from sqlalchemy import select
+        from app.models import BacktestResult
+        
+        result = await db.execute(
+            select(BacktestResult)
+            .where(
+                BacktestResult.heuristic == heuristic,
+                BacktestResult.season == season,
+            )
+            .order_by(BacktestResult.round_id)
+            .limit(limit)
+        )
+        results = list(result.scalars().all())
+    else:
+        results = await BacktestCRUD.get_by_heuristic(db, heuristic, limit=limit)
+    
+    return BacktestListResponse(
+        results=[BacktestResponse.model_validate(r) for r in results],
+        count=len(results),
+    )
