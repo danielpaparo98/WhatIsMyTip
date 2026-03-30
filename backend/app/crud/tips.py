@@ -43,7 +43,7 @@ class TipCRUD:
         
         result = await db.execute(
             select(Tip)
-            .join(Game)
+            .join(Game, Tip.game_id == Game.id)
             .where(
                 and_(Game.season == season, Game.round_id == round_id)
             )
@@ -82,6 +82,76 @@ class TipCRUD:
         tips = result.scalars().all()
         count = len(tips)
         for tip in tips:
-            await db.delete(tip)
+            db.delete(tip)
         await db.commit()
         return count
+    
+    @staticmethod
+    async def regenerate_tips_for_round(
+        db: AsyncSession,
+        season: int,
+        round_id: int,
+        heuristics: Optional[List[str]] = None,
+    ) -> dict:
+        """Generate tips for a specific round using the ModelOrchestrator.
+        
+        Args:
+            db: Database session
+            season: Season year
+            round_id: Round number
+            heuristics: Optional list of heuristics to generate (default: all)
+            
+        Returns:
+            Dict with generation results including tips count and heuristics used
+        """
+        from app.crud import GameCRUD
+        from app.orchestrator import ModelOrchestrator
+        
+        # Get games for round
+        games = await GameCRUD.get_by_round(db, season, round_id)
+        
+        if not games:
+            return {
+                "success": False,
+                "message": f"No games found for round {round_id}, season {season}",
+                "tips_count": 0,
+                "heuristics_used": [],
+            }
+        
+        # Initialize orchestrator
+        orchestrator = ModelOrchestrator()
+        
+        # Determine which heuristics to use
+        if heuristics:
+            heuristics_to_use = [h for h in heuristics if h in orchestrator.get_available_heuristics()]
+        else:
+            heuristics_to_use = orchestrator.get_available_heuristics()
+        
+        # Generate tips
+        tips_created = []
+        for game in games:
+            # Delete existing tips for this game
+            await TipCRUD.delete_for_game(db, game.id)
+            
+            for heuristic in heuristics_to_use:
+                winner, confidence, margin = await orchestrator.predict(game, heuristic)
+                
+                tip = await TipCRUD.create(
+                    db=db,
+                    game_id=game.id,
+                    heuristic=heuristic,
+                    selected_team=winner,
+                    margin=margin,
+                    confidence=confidence,
+                    explanation="",  # Explanations can be generated separately
+                )
+                tips_created.append(tip)
+        
+        return {
+            "success": True,
+            "message": f"Generated {len(tips_created)} tips for round {round_id}, season {season}",
+            "tips_count": len(tips_created),
+            "heuristics_used": heuristics_to_use,
+            "season": season,
+            "round_id": round_id,
+        }
