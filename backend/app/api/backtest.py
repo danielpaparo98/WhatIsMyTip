@@ -3,10 +3,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 from typing import Optional
+from datetime import datetime
 
 from app.db import get_db
 from app.crud import BacktestCRUD
-from app.schemas import BacktestResponse, BacktestListResponse
+from app.schemas import BacktestResponse, BacktestListResponse, AvailableSeasonsResponse
 from app.services.backtest import BacktestService
 
 router = APIRouter()
@@ -154,3 +155,19 @@ async def compare_heuristics(
             "profit": best_heuristic[1]["total_profit"],
         },
     }
+
+
+@router.get("/seasons", response_model=AvailableSeasonsResponse)
+@limiter.limit("60/minute")
+async def get_available_seasons(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    """Get available seasons for backtesting."""
+    available_years = await BacktestCRUD.get_available_seasons(db)
+    current_year = datetime.now().year
+    
+    return AvailableSeasonsResponse(
+        available_years=available_years,
+        current_year=current_year,
+    )
