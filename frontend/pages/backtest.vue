@@ -33,6 +33,13 @@
             >
               Detailed Table
             </button>
+            <button
+              @click="viewMode = 'charts'"
+              class="toggle-btn"
+              :class="{ active: viewMode === 'charts' }"
+            >
+              Charts
+            </button>
           </div>
         </div>
 
@@ -132,6 +139,32 @@
             <p>No table data available for this season.</p>
           </div>
         </div>
+        
+        <!-- Charts View -->
+        <div v-else-if="viewMode === 'charts'" class="charts-section">
+          <div v-if="syncing" class="loading sync-message">
+            <div class="spinner"></div>
+            <p>Syncing historical data for {{ selectedSeason }}...</p>
+          </div>
+          <div v-else-if="chartsLoading" class="loading">
+            <div class="spinner"></div>
+          </div>
+          <div v-else-if="chartsError" class="error">
+            <p>{{ chartsError }}</p>
+          </div>
+          <div v-else-if="chartData && chartData.length > 0" class="charts-container">
+            <div class="charts-grid">
+              <ProfitChart :data="chartData" :loading="chartsLoading" />
+              <AccuracyChart :data="chartData" :loading="chartsLoading" />
+            </div>
+            <div class="charts-full-width">
+              <CumulativeProfitChart :data="chartData" :loading="chartsLoading" />
+            </div>
+          </div>
+          <div v-else class="empty-state">
+            <p>No chart data available for this season.</p>
+          </div>
+        </div>
       </section>
     </main>
     <Footer />
@@ -144,12 +177,15 @@ const api = useApi()
 const loading = ref(false)
 const seasonsLoading = ref(true)
 const tableLoading = ref(false)
+const chartsLoading = ref(false)
 const syncing = ref(false)
 const error = ref<string | null>(null)
 const tableError = ref<string | null>(null)
+const chartsError = ref<string | null>(null)
 const comparison = ref<any>(null)
 const tableData = ref<any>(null)
-const viewMode = ref<'summary' | 'table'>('summary')
+const chartData = ref<any>(null)
+const viewMode = ref<'summary' | 'table' | 'charts'>('summary')
 const selectedSeason = ref(new Date().getFullYear() - 1)
 const availableYears = ref<number[]>([])
 
@@ -239,8 +275,35 @@ watch(selectedSeason, async () => {
 watch(viewMode, async (newMode) => {
   if (newMode === 'table' && !tableData.value) {
     await loadTableData()
+  } else if (newMode === 'charts' && !chartData.value) {
+    await loadChartData()
   }
 })
+
+const loadChartData = async () => {
+  chartsLoading.value = true
+  syncing.value = true
+  chartsError.value = null
+  
+  try {
+    const tableResponse = await api.getBacktestTableData(selectedSeason.value)
+    // Transform table data into chart-friendly format
+    chartData.value = tableResponse.heuristics.map((h: any) => ({
+      heuristic: h.heuristic,
+      rounds: h.rounds.map((r: any) => ({
+        round_id: r.round_id,
+        profit: r.profit,
+        accuracy: r.accuracy
+      }))
+    }))
+  } catch (e) {
+    chartsError.value = 'Failed to load chart data'
+    console.error(e)
+  } finally {
+    chartsLoading.value = false
+    syncing.value = false
+  }
+}
 
 const formatHeuristic = (h: string) => {
   const labels: Record<string, string> = {
@@ -490,5 +553,32 @@ onMounted(async () => {
   text-align: center;
   padding: 4rem 2rem;
   color: var(--color-muted);
+}
+
+/* Charts Styles */
+.charts-section {
+  padding: 1rem 0;
+}
+
+.charts-container {
+  display: flex;
+  flex-direction: column;
+  gap: 2rem;
+}
+
+.charts-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(500px, 1fr));
+  gap: 2rem;
+}
+
+.charts-full-width {
+  width: 100%;
+}
+
+@media (max-width: 768px) {
+  .charts-grid {
+    grid-template-columns: 1fr;
+  }
 }
 </style>
