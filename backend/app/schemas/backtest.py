@@ -78,3 +78,21 @@ class HistoricalSyncResponse(BaseModel):
     games_synced: int
     tips_generated: int
     message: str
+
+
+class CurrentSeasonHeuristicPerformance(BaseModel):
+    """Performance data for a single heuristic in the current season."""
+    heuristic: str
+    total_profit: float
+    total_accuracy: float
+    rounds_played: int
+    avg_profit_per_round: float
+    projected_annual_profit: float
+
+
+class CurrentSeasonResponse(BaseModel):
+    """Response containing current season performance data with projections."""
+    season: int
+    heuristics: List[CurrentSeasonHeuristicPerformance]
+    rounds_completed: int
+    total_rounds: int
