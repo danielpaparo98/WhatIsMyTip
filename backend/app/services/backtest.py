@@ -324,7 +324,7 @@ class BacktestService:
                         )
                     )
                 )
-                existing_tip = result.scalar_one_or_none()
+                existing_tip = result.scalars().first()
                 
                 if not existing_tip:
                     try:
@@ -382,6 +382,16 @@ class BacktestService:
         
         # AFL typically has 24 rounds per season
         total_rounds = 24
+        
+        # Check if backtest results exist for current season
+        result = await db.execute(
+            select(func.count(BacktestResult.id)).where(BacktestResult.season == current_year)
+        )
+        backtest_count = result.scalar()
+        
+        # If no backtest results exist and there are completed rounds, generate them
+        if backtest_count == 0 and rounds_completed > 0:
+            await self.backtest_all_heuristics(db, current_year)
         
         # Get backtest results for current season
         result = await db.execute(
