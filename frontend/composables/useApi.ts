@@ -81,6 +81,17 @@ export const useApi = () => {
     return response.json()
   }
   
+  const getGamesWithTips = async (season: number, round: number, heuristic: string = 'best_bet') => {
+    const queryParams = new URLSearchParams()
+    queryParams.append('season', season.toString())
+    queryParams.append('round', round.toString())
+    queryParams.append('heuristic', heuristic)
+    
+    const response = await fetchWithTimeout(`/api/tips/games-with-tips?${queryParams}`)
+    if (!response.ok) throw new Error('Failed to fetch games with tips')
+    return response.json()
+  }
+  
   // Backtest
   const getBacktestResults = async (params?: { heuristic?: string; season?: number }) => {
     const queryParams = new URLSearchParams()
@@ -118,6 +129,7 @@ export const useApi = () => {
     getTips,
     getTipsByHeuristic,
     generateTips,
+    getGamesWithTips,
     getBacktestResults,
     runBacktest,
     compareHeuristics,
