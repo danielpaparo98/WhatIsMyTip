@@ -10,9 +10,17 @@
       <section class="section">
         <!-- Round Display -->
         <div v-if="latestRound" class="round-display">
-          <span class="round-label">Current Round</span>
+          <span class="round-label">{{ latestRound.is_current_year ? 'Current Round' : 'Latest Available' }}</span>
           <span class="round-value">R{{ latestRound.round_id }} • {{ latestRound.season }}</span>
           <span class="game-count">{{ latestRound.game_count }} Games</span>
+        </div>
+        
+        <!-- Data Warning -->
+        <div v-if="latestRound && !latestRound.is_current_year" class="data-warning">
+          <p>
+            <strong>No data available for {{ new Date().getFullYear() }}.</strong>
+            Showing historical data from {{ latestRound.season }}.
+          </p>
         </div>
 
         <!-- Heuristic Selector -->
@@ -175,6 +183,26 @@ onMounted(() => {
 .game-count {
   font-size: 0.875rem;
   color: var(--color-muted);
+}
+
+/* Data Warning */
+.data-warning {
+  padding: 1rem 1.5rem;
+  background: rgba(255, 193, 7, 0.1);
+  border: 1px solid rgba(255, 193, 7, 0.3);
+  border-radius: 8px;
+  margin-bottom: 2rem;
+  text-align: center;
+}
+
+.data-warning p {
+  margin: 0;
+  font-size: 0.9rem;
+  color: var(--color-text);
+}
+
+.data-warning strong {
+  color: #f59e0b;
 }
 
 /* Heuristic Selector */
