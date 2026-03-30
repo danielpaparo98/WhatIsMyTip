@@ -192,43 +192,34 @@ async def get_table_data(
         if result.heuristic not in heuristics_data:
             heuristics_data[result.heuristic] = []
         
-        # Calculate totals for this heuristic
-        total_profit = sum(r.profit for r in heuristics_data[result.heuristic] + [result])
-        total_tips = sum(r.tips_made for r in heuristics_data[result.heuristic] + [result])
-        total_correct = sum(r.tips_correct for r in heuristics_data[result.heuristic] + [result])
-        total_accuracy = total_correct / total_tips if total_tips > 0 else 0.0
-        
-        heuristics_data[result.heuristic].append({
-            "round_id": result.round_id,
-            "tips_made": result.tips_made,
-            "tips_correct": result.tips_correct,
-            "accuracy": result.accuracy,
-            "profit": result.profit,
-            "_total_profit": total_profit,
-            "_total_accuracy": total_accuracy,
-        })
+        # Add this round's data
+        heuristics_data[result.heuristic].append(result)
     
     # Build response
     heuristics_list = []
-    for heuristic, rounds_data in heuristics_data.items():
-        # Get the final totals from the last round
-        final_round = rounds_data[-1]
+    for heuristic, rounds in heuristics_data.items():
+        # Calculate totals for this heuristic
+        total_profit = sum(r.profit for r in rounds)
+        total_tips = sum(r.tips_made for r in rounds)
+        total_correct = sum(r.tips_correct for r in rounds)
+        total_accuracy = total_correct / total_tips if total_tips > 0 else 0.0
+        
         heuristics_list.append(
             BacktestTableData(
                 heuristic=heuristic,
                 season=season,
                 rounds=[
                     BacktestTableRow(
-                        round_id=r["round_id"],
-                        tips_made=r["tips_made"],
-                        tips_correct=r["tips_correct"],
-                        accuracy=r["accuracy"],
-                        profit=r["profit"],
+                        round_id=r.round_id,
+                        tips_made=r.tips_made,
+                        tips_correct=r.tips_correct,
+                        accuracy=r.accuracy,
+                        profit=r.profit,
                     )
-                    for r in rounds_data
+                    for r in rounds
                 ],
-                total_profit=final_round["_total_profit"],
-                total_accuracy=final_round["_total_accuracy"],
+                total_profit=total_profit,
+                total_accuracy=total_accuracy,
             )
         )
     
