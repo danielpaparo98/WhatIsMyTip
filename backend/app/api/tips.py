@@ -149,8 +149,30 @@ async def get_games_with_tips(
     heuristic: Optional[str] = Query("best_bet", description="Heuristic to use (default: best_bet)"),
     db: AsyncSession = Depends(get_db),
 ):
-    """Get games with tips for a round."""
+    """Get games with tips for a round.
+    
+    Automatically regenerates stale tips if the previous round's games have passed
+    and no tips exist for the requested round.
+    """
     try:
+        # Check if tips are stale and need regeneration
+        is_stale = await GameCRUD.are_current_tips_stale(db)
+        
+        if is_stale:
+            # Get the next round that needs tips
+            next_round = await GameCRUD.get_next_upcoming_round(db)
+            
+            if next_round:
+                next_season, next_round_id = next_round
+                
+                # Check if the requested round matches the next round needing tips
+                if season == next_season and round_id == next_round_id:
+                    # Regenerate tips for this round
+                    print(f"INFO: Regenerating stale tips for round {round_id}, season {season}")
+                    result = await TipCRUD.regenerate_tips_for_round(db, season, round_id)
+                    if result["success"]:
+                        print(f"INFO: {result['message']}")
+        
         # Get games for the round
         result = await db.execute(
             select(Game)

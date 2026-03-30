@@ -1,8 +1,8 @@
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
-from typing import List, Optional
+from sqlalchemy import select, func, and_
+from typing import List, Optional, Tuple
 from datetime import datetime
-from app.models import Game
+from app.models import Game, Tip
 from app.squiggle import SquiggleClient
 
 
@@ -63,29 +63,45 @@ class GameCRUD:
         # Check if game exists by squiggle_id
         game = await GameCRUD.get_by_squiggle_id(db, game_data["id"])
         
+        # Parse complete status (Squiggle returns 100 for complete, not True/False)
+        complete_value = game_data.get("complete", False)
+        if isinstance(complete_value, int):
+            is_complete = complete_value == 100
+        else:
+            is_complete = bool(complete_value)
+        
+        # Get values with defaults for None
+        home_score_val = game_data.get("hscore")
+        away_score_val = game_data.get("ascore")
+        
         if game:
             # Update existing game
-            game.home_team = game_data.get("hometeam", game.home_team)
-            game.away_team = game_data.get("awayteam", game.away_team)
-            game.home_score = game_data.get("homescore")
-            game.away_score = game_data.get("awayscore")
-            game.venue = game_data.get("venue", game.venue)
-            game.date = datetime.fromisoformat(game_data["date"].replace("Z", "+00:00"))
-            game.completed = game_data.get("complete", False)
-            game.updated_at = datetime.utcnow()
+            if game_data.get("hteam") is not None:
+                setattr(game, 'home_team', game_data["hteam"])
+            if game_data.get("ateam") is not None:
+                setattr(game, 'away_team', game_data["ateam"])
+            if home_score_val is not None:
+                setattr(game, 'home_score', home_score_val)
+            if away_score_val is not None:
+                setattr(game, 'away_score', away_score_val)
+            if game_data.get("venue") is not None:
+                setattr(game, 'venue', game_data["venue"])
+            if game_data.get("date") is not None:
+                setattr(game, 'date', datetime.fromisoformat(game_data["date"].replace("Z", "+00:00")))
+            setattr(game, 'completed', is_complete)
         else:
             # Create new game
             game = Game(
                 squiggle_id=game_data["id"],
                 round_id=game_data.get("round", 0),
                 season=game_data.get("year", 0),
-                home_team=game_data.get("hometeam", ""),
-                away_team=game_data.get("awayteam", ""),
-                home_score=game_data.get("homescore"),
-                away_score=game_data.get("awayscore"),
+                home_team=game_data.get("hteam", ""),
+                away_team=game_data.get("ateam", ""),
+                home_score=home_score_val,
+                away_score=away_score_val,
                 venue=game_data.get("venue", ""),
                 date=datetime.fromisoformat(game_data["date"].replace("Z", "+00:00")),
-                completed=game_data.get("complete", False),
+                completed=is_complete,
             )
             db.add(game)
         
@@ -115,3 +131,124 @@ class GameCRUD:
             synced_games.append(game)
         
         return synced_games
+    
+    @staticmethod
+    async def get_next_upcoming_round(db: AsyncSession) -> Optional[Tuple[int, int]]:
+        """Get the next upcoming round (season, round_id) that needs tips.
+        
+        Finds the earliest round where completed=0 and no tips exist yet.
+        
+        Args:
+            db: Database session
+            
+        Returns:
+            Tuple of (season, round_id) or None if no upcoming rounds
+        """
+        # Get all upcoming games
+        upcoming_games = await GameCRUD.get_upcoming(db)
+        
+        if not upcoming_games:
+            return None
+        
+        # Group games by season and round
+        rounds = {}
+        for game in upcoming_games:
+            key = (game.season, game.round_id)
+            if key not in rounds:
+                rounds[key] = []
+            rounds[key].append(game)
+        
+        # Check each round for existing tips
+        from app.crud import TipCRUD
+        
+        for (season, round_id), games in sorted(rounds.items()):
+            game_ids = [g.id for g in games]
+            
+            # Check if tips exist for this round
+            result = await db.execute(
+                select(Tip).where(Tip.game_id.in_(game_ids))
+            )
+            existing_tips = list(result.scalars().all())
+            
+            # If no tips exist, this is the next round to generate
+            if not existing_tips:
+                return (season, round_id)
+        
+        # All rounds have tips, return the earliest upcoming round
+        if rounds:
+            return sorted(rounds.keys())[0]
+        
+        return None
+    
+    @staticmethod
+    async def get_latest_completed_round(db: AsyncSession) -> Optional[Tuple[int, int]]:
+        """Get the most recent completed round (season, round_id).
+        
+        Args:
+            db: Database session
+            
+        Returns:
+            Tuple of (season, round_id) or None if no completed rounds
+        """
+        # Get the latest completed game
+        result = await db.execute(
+            select(Game)
+            .where(Game.completed == True)
+            .order_by(Game.date.desc())
+            .limit(1)
+        )
+        game = result.scalar_one_or_none()
+        
+        if game:
+            return (game.season, game.round_id)
+        
+        return None
+    
+    @staticmethod
+    async def are_current_tips_stale(db: AsyncSession) -> bool:
+        """Check if current tips are stale and need regeneration.
+        
+        Tips are stale if the latest completed round's game dates have passed
+        and tips don't exist for the next round.
+        
+        Args:
+            db: Database session
+            
+        Returns:
+            True if tips are stale, False otherwise
+        """
+        latest_round = await GameCRUD.get_latest_completed_round(db)
+        
+        if not latest_round:
+            # No completed rounds yet, tips are not stale
+            return False
+        
+        season, round_id = latest_round
+        
+        # Get games from the latest completed round
+        games = await GameCRUD.get_by_round(db, season, round_id)
+        
+        if not games:
+            return False
+        
+        # Check if any game date has passed
+        now = datetime.now()
+        for game in games:
+            if game.date and game.date < now:
+                # Games have passed, check if next round has tips
+                next_round = await GameCRUD.get_next_upcoming_round(db)
+                if next_round:
+                    next_season, next_round_id = next_round
+                    # Check if tips exist for next round
+                    next_games = await GameCRUD.get_by_round(db, next_season, next_round_id)
+                    if next_games:
+                        game_ids = [g.id for g in next_games]
+                        result = await db.execute(
+                            select(Tip).where(Tip.game_id.in_(game_ids))
+                        )
+                        existing_tips = list(result.scalars().all())
+                        if not existing_tips:
+                            return True
+                break
+        
+        return False
