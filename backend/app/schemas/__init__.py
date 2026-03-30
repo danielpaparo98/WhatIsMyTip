@@ -10,6 +10,7 @@ from .backtest import (
     HistoricalSyncResponse,
     CurrentSeasonHeuristicPerformance,
     CurrentSeasonResponse,
+    PreGenerateResponse,
 )
 
 __all__ = [
@@ -27,4 +28,5 @@ __all__ = [
     "HistoricalSyncResponse",
     "CurrentSeasonHeuristicPerformance",
     "CurrentSeasonResponse",
+    "PreGenerateResponse",
 ]

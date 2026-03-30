@@ -6,7 +6,7 @@ from app.models import Game, Tip, BacktestResult
 from app.orchestrator import ModelOrchestrator
 from app.crud import BacktestCRUD, GameCRUD, TipCRUD
 from app.squiggle import SquiggleClient
-from app.schemas.backtest import HistoricalSyncResponse, CurrentSeasonResponse, CurrentSeasonHeuristicPerformance
+from app.schemas.backtest import HistoricalSyncResponse, CurrentSeasonResponse, CurrentSeasonHeuristicPerformance, PreGenerateResponse
 
 
 # Stake amount per game for profit calculation
@@ -448,3 +448,68 @@ class BacktestService:
             rounds_completed=rounds_completed,
             total_rounds=total_rounds,
         )
+    
+    async def pre_generate_all_seasons(
+        self,
+        db: AsyncSession,
+        specific_season: Optional[int] = None,
+    ) -> PreGenerateResponse:
+        """Generate backtest results for all seasons from 2010 to current_year-1.
+        
+        Args:
+            db: Database session
+            specific_season: Optional specific season to pre-generate (if None, all seasons)
+            
+        Returns:
+            PreGenerateResponse with summary of what was processed
+        """
+        # Get current year
+        current_year = datetime.now().year
+        
+        # Generate list of seasons from 2010 to current_year-1
+        if specific_season:
+            seasons = [specific_season]
+        else:
+            seasons = list(range(2010, current_year))
+        
+        seasons_processed = 0
+        total_backtest_results = 0
+        squiggle_client = SquiggleClient()
+        
+        try:
+            for season in seasons:
+                # Check if backtest results exist for this season
+                result = await db.execute(
+                    select(func.count(BacktestResult.id)).where(BacktestResult.season == season)
+                )
+                backtest_count = result.scalar() or 0
+                
+                # If no backtest results exist, generate them
+                if backtest_count == 0:
+                    try:
+                        # Sync games for this season
+                        sync_result = await self.sync_historical_season(db, season, squiggle_client)
+                        
+                        # Generate backtest results for all completed rounds
+                        backtest_results = await self.backtest_all_heuristics(db, season)
+                        
+                        # Count total backtest results generated
+                        results_count = sum(len(results) for results in backtest_results.values())
+                        total_backtest_results += results_count
+                        seasons_processed += 1
+                        
+                    except Exception as e:
+                        # Skip seasons where sync or backtest fails
+                        continue
+                else:
+                    # Backtest results already exist, count them
+                    seasons_processed += 1
+                    total_backtest_results += backtest_count
+            
+            return PreGenerateResponse(
+                message=f"Processed {seasons_processed} season(s) with {total_backtest_results} total backtest results",
+                seasons_processed=seasons_processed,
+                total_backtest_results=total_backtest_results,
+            )
+        finally:
+            await squiggle_client.close()
