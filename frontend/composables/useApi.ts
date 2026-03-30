@@ -134,6 +134,12 @@ export const useApi = () => {
     return response.json()
   }
   
+  const getCurrentSeasonPerformance = async () => {
+    const response = await fetchWithTimeout('/api/backtest/current-season')
+    if (!response.ok) throw new Error('Failed to fetch current season performance')
+    return response.json()
+  }
+  
   return {
     getGames,
     getGame,
@@ -147,5 +153,6 @@ export const useApi = () => {
     compareHeuristics,
     getAvailableSeasons,
     getBacktestTableData,
+    getCurrentSeasonPerformance,
   }
 }

@@ -15,6 +15,7 @@ from app.schemas import (
     BacktestTableData,
     BacktestTableRow,
     HistoricalSyncResponse,
+    CurrentSeasonResponse,
 )
 from app.services.backtest import BacktestService
 from app.squiggle import SquiggleClient
@@ -52,6 +53,20 @@ async def get_backtest_results(
         results=[BacktestResponse.model_validate(r) for r in results],
         count=len(results),
     )
+
+
+@router.get("/current-season", response_model=CurrentSeasonResponse)
+@limiter.limit("60/minute")
+async def get_current_season_performance(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    """Get current season performance with year-to-date results and projections."""
+    service = BacktestService()
+    
+    performance = await service.get_current_season_performance(db)
+    
+    return performance
 
 
 @router.get("/{heuristic}", response_model=BacktestListResponse)

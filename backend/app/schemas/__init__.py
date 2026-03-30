@@ -8,6 +8,8 @@ from .backtest import (
     BacktestTableData,
     BacktestTableResponse,
     HistoricalSyncResponse,
+    CurrentSeasonHeuristicPerformance,
+    CurrentSeasonResponse,
 )
 
 __all__ = [
@@ -23,4 +25,6 @@ __all__ = [
     "BacktestTableData",
     "BacktestTableResponse",
     "HistoricalSyncResponse",
+    "CurrentSeasonHeuristicPerformance",
+    "CurrentSeasonResponse",
 ]

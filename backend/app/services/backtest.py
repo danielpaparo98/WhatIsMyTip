@@ -6,7 +6,7 @@ from app.models import Game, Tip, BacktestResult
 from app.orchestrator import ModelOrchestrator
 from app.crud import BacktestCRUD, GameCRUD, TipCRUD
 from app.squiggle import SquiggleClient
-from app.schemas.backtest import HistoricalSyncResponse
+from app.schemas.backtest import HistoricalSyncResponse, CurrentSeasonResponse, CurrentSeasonHeuristicPerformance
 
 
 # Stake amount per game for profit calculation
@@ -351,4 +351,90 @@ class BacktestService:
             games_synced=games_synced,
             tips_generated=tips_generated,
             message=f"Successfully synced {games_synced} games and generated {tips_generated} tips for season {season}",
+        )
+    
+    async def get_current_season_performance(
+        self,
+        db: AsyncSession,
+    ) -> CurrentSeasonResponse:
+        """Get year-to-date performance for the current season with projections.
+        
+        Args:
+            db: Database session
+            
+        Returns:
+            CurrentSeasonResponse with YTD performance and projections
+        """
+        # Get current year
+        current_year = datetime.now().year
+        
+        # Get completed games for current season
+        result = await db.execute(
+            select(func.count(func.distinct(Game.round_id)))
+            .where(
+                and_(
+                    Game.season == current_year,
+                    Game.completed == True,
+                )
+            )
+        )
+        rounds_completed = result.scalar() or 0
+        
+        # AFL typically has 24 rounds per season
+        total_rounds = 24
+        
+        # Get backtest results for current season
+        result = await db.execute(
+            select(BacktestResult)
+            .where(BacktestResult.season == current_year)
+            .order_by(BacktestResult.heuristic, BacktestResult.round_id)
+        )
+        backtest_results = list(result.scalars().all())
+        
+        # Group results by heuristic
+        heuristics_data: Dict[str, List[BacktestResult]] = {}
+        for br in backtest_results:
+            if br.heuristic not in heuristics_data:
+                heuristics_data[br.heuristic] = []
+            heuristics_data[br.heuristic].append(br)
+        
+        # Calculate performance for each heuristic
+        heuristic_performances = []
+        for heuristic in self.orchestrator.get_available_heuristics():
+            results = heuristics_data.get(heuristic, [])
+            
+            if results:
+                total_profit = sum(r.profit for r in results)
+                total_tips = sum(r.tips_made for r in results)
+                total_correct = sum(r.tips_correct for r in results)
+                rounds_played = len(results)
+                
+                total_accuracy = total_correct / total_tips if total_tips > 0 else 0.0
+                avg_profit_per_round = total_profit / rounds_played if rounds_played > 0 else 0.0
+                
+                # Calculate projected annual profit
+                projected_annual_profit = avg_profit_per_round * total_rounds
+            else:
+                total_profit = 0.0
+                total_accuracy = 0.0
+                rounds_played = 0
+                avg_profit_per_round = 0.0
+                projected_annual_profit = 0.0
+            
+            heuristic_performances.append(
+                CurrentSeasonHeuristicPerformance(
+                    heuristic=heuristic,
+                    total_profit=total_profit,
+                    total_accuracy=total_accuracy,
+                    rounds_played=rounds_played,
+                    avg_profit_per_round=avg_profit_per_round,
+                    projected_annual_profit=projected_annual_profit,
+                )
+            )
+        
+        return CurrentSeasonResponse(
+            season=current_year,
+            heuristics=heuristic_performances,
+            rounds_completed=rounds_completed,
+            total_rounds=total_rounds,
         )

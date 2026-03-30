@@ -7,6 +7,61 @@
         <p>See how our heuristics performed historically.</p>
       </section>
 
+      <!-- Current Season Section -->
+      <section v-if="currentSeasonData" class="current-season-section">
+        <div class="current-season-header">
+          <h2>
+            <span class="badge">🏆 Current Season {{ currentSeasonData.season }}</span>
+          </h2>
+          <p class="season-progress">
+            {{ currentSeasonData.rounds_completed }} / {{ currentSeasonData.total_rounds }} rounds completed
+          </p>
+        </div>
+        
+        <div v-if="currentSeasonLoading" class="loading">
+          <div class="spinner"></div>
+        </div>
+        <div v-else-if="currentSeasonError" class="error">
+          <p>{{ currentSeasonError }}</p>
+        </div>
+        <div v-else class="current-season-cards">
+          <div v-for="heuristic in currentSeasonData.heuristics" :key="heuristic.heuristic" class="current-season-card">
+            <div class="card-header">
+              <h3>{{ formatHeuristic(heuristic.heuristic) }}</h3>
+              <span class="heuristic-badge">Current Season</span>
+            </div>
+            <div class="card-stats">
+              <div class="stat-row">
+                <span class="stat-label">Year-to-Date Profit</span>
+                <span class="stat-value" :class="{ positive: heuristic.total_profit > 0, negative: heuristic.total_profit < 0 }">
+                  ${{ heuristic.total_profit.toFixed(2) }}
+                </span>
+              </div>
+              <div class="stat-row">
+                <span class="stat-label">Projected Annual Profit</span>
+                <span class="stat-value projected" :class="{ positive: heuristic.projected_annual_profit > 0, negative: heuristic.projected_annual_profit < 0 }">
+                  ${{ heuristic.projected_annual_profit.toFixed(2) }}
+                </span>
+              </div>
+              <div class="stat-row">
+                <span class="stat-label">Accuracy</span>
+                <span class="stat-value">{{ (heuristic.total_accuracy * 100).toFixed(1) }}%</span>
+              </div>
+              <div class="stat-row">
+                <span class="stat-label">Rounds Played</span>
+                <span class="stat-value">{{ heuristic.rounds_played }}</span>
+              </div>
+              <div class="stat-row">
+                <span class="stat-label">Avg Profit/Round</span>
+                <span class="stat-value" :class="{ positive: heuristic.avg_profit_per_round > 0, negative: heuristic.avg_profit_per_round < 0 }">
+                  ${{ heuristic.avg_profit_per_round.toFixed(2) }}
+                </span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
       <section class="section">
         <h2>Performance Comparison</h2>
         
@@ -172,6 +227,8 @@
 </template>
 
 <script setup lang="ts">
+import { ref, watch, onMounted } from 'vue'
+
 const api = useApi()
 
 const loading = ref(false)
@@ -179,12 +236,15 @@ const seasonsLoading = ref(true)
 const tableLoading = ref(false)
 const chartsLoading = ref(false)
 const syncing = ref(false)
+const currentSeasonLoading = ref(false)
 const error = ref<string | null>(null)
 const tableError = ref<string | null>(null)
 const chartsError = ref<string | null>(null)
+const currentSeasonError = ref<string | null>(null)
 const comparison = ref<any>(null)
 const tableData = ref<any>(null)
 const chartData = ref<any>(null)
+const currentSeasonData = ref<any>(null)
 const viewMode = ref<'summary' | 'table' | 'charts'>('summary')
 const selectedSeason = ref(new Date().getFullYear() - 1)
 const availableYears = ref<number[]>([])
@@ -314,8 +374,23 @@ const formatHeuristic = (h: string) => {
   return labels[h] || h
 }
 
+const loadCurrentSeasonData = async () => {
+  currentSeasonLoading.value = true
+  currentSeasonError.value = null
+  
+  try {
+    currentSeasonData.value = await api.getCurrentSeasonPerformance()
+  } catch (e) {
+    currentSeasonError.value = 'Failed to load current season data'
+    console.error(e)
+  } finally {
+    currentSeasonLoading.value = false
+  }
+}
+
 onMounted(async () => {
   await loadAvailableSeasons()
+  await loadCurrentSeasonData()
   runBacktest()
 })
 </script>
@@ -335,6 +410,112 @@ onMounted(async () => {
 .hero h1 {
   font-size: clamp(2.5rem, 8vw, 4rem);
   margin-bottom: 1rem;
+}
+
+/* Current Season Styles */
+.current-season-section {
+  padding: 3rem 2rem;
+  background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%);
+  border-bottom: 2px solid var(--color-border);
+}
+
+.current-season-header {
+  text-align: center;
+  margin-bottom: 2rem;
+}
+
+.current-season-header h2 {
+  margin-bottom: 0.5rem;
+}
+
+.badge {
+  display: inline-block;
+  padding: 0.5rem 1rem;
+  background: var(--color-text);
+  color: var(--color-bg);
+  border-radius: 2rem;
+  font-weight: 700;
+  font-size: 0.875rem;
+}
+
+.season-progress {
+  font-size: 1rem;
+  color: var(--color-muted);
+  font-weight: 600;
+}
+
+.current-season-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 1.5rem;
+}
+
+.current-season-card {
+  background: var(--color-bg);
+  border: 2px solid var(--color-text);
+  border-radius: 0.75rem;
+  padding: 1.5rem;
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+}
+
+.card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 1.5rem;
+  padding-bottom: 1rem;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.card-header h3 {
+  font-size: 1.125rem;
+  font-weight: 700;
+  margin: 0;
+}
+
+.heuristic-badge {
+  padding: 0.25rem 0.75rem;
+  background: #10b981;
+  color: white;
+  border-radius: 1rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.card-stats {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.stat-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.stat-label {
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--color-muted);
+}
+
+.stat-value {
+  font-size: 1.125rem;
+  font-weight: 700;
+}
+
+.stat-value.positive {
+  color: #00a000;
+}
+
+.stat-value.negative {
+  color: #c00000;
+}
+
+.stat-value.projected {
+  font-size: 1.25rem;
+  font-weight: 800;
 }
 
 .section {
