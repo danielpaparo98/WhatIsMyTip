@@ -10,6 +10,7 @@ class Settings(BaseSettings):
     cors_origins: Union[str, List[str]] = "http://localhost:3000"
     rate_limit_per_minute: int = 60
     squiggle_api_base: str = "https://api.squiggle.com.au"
+    squiggle_contact_email: str = "contact@whatismytip.com"
     
     # OpenRouter Configuration
     openrouter_api_key: str = ""
