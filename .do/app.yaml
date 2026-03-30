@@ -1,0 +1,44 @@
+name: whatismytip-backend
+region: sfo3
+services:
+  - name: api
+    source_dir: backend
+    environment_slug: python
+    github:
+      repo: your-username/WhatIsMyTip
+      branch: main
+      deploy_on_push: true
+    run_command: uvicorn main:app --host 0.0.0.0 --port $PORT
+    envs:
+      - key: DATABASE_URL
+        value: ${db.DATABASE_URL}
+      - key: API_HOST
+        value: 0.0.0.0
+      - key: API_PORT
+        value: 8080
+      - key: CORS_ORIGINS
+        value: https://whatismytip.com,https://www.whatismytip.com
+      - key: RATE_LIMIT_PER_MINUTE
+        value: 60
+      - key: SQUIGGLE_API_BASE
+        value: https://api.squiggle.com.au
+      - key: OPENROUTER_API_KEY
+        value: ${openrouter.OPENROUTER_API_KEY}
+      - key: OPENROUTER_MODEL
+        value: gptoss-120b
+      - key: OPENROUTER_BASE_URL
+        value: https://openrouter.ai/api/v1
+      - key: ENVIRONMENT
+        value: production
+    instance_size: basic-xxs
+    instance_count: 1
+    http_port: 8080
+    routes:
+      - path: /api
+        preserve_path_prefix: true
+databases:
+  - name: db
+    engine: PG
+    version: "15"
+    size: db-s-dev-database
+    production: false
