@@ -1,0 +1,23 @@
+{
+  "name": "whatismytip-frontend",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "nuxt dev",
+    "build": "nuxt build",
+    "generate": "nuxt generate",
+    "preview": "nuxt preview",
+    "lint": "eslint .",
+    "typecheck": "nuxt typecheck"
+  },
+  "dependencies": {
+    "nuxt": "^4.0.0",
+    "@nuxtjs/tailwindcss": "^6.12.0"
+  },
+  "devDependencies": {
+    "@nuxt/eslint": "^0.7.0",
+    "typescript": "^5.7.0",
+    "@tailwindcss/forms": "^0.5.9"
+  }
+}
