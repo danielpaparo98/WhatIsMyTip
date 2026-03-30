@@ -1,0 +1,34 @@
+name: Deploy to Digital Ocean
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  deploy-backend:
+    name: Deploy Backend
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Deploy to Digital Ocean App Platform
+        uses: digitalocean/app_action@main
+        with:
+          app_name: whatismytip-backend
+          spec: .do/app.yaml
+
+  deploy-frontend:
+    name: Deploy Frontend
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Deploy to Digital Ocean App Platform
+        uses: digitalocean/app_action@main
+        with:
+          app_name: whatismytip-frontend
+          spec: .do/frontend.yaml
