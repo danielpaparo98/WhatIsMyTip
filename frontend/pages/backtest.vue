@@ -18,6 +18,22 @@
             </option>
           </select>
           <button @click="runBacktest" class="btn btn-primary" :disabled="loading || seasonsLoading">Run Backtest</button>
+          <div class="view-toggle">
+            <button
+              @click="viewMode = 'summary'"
+              class="toggle-btn"
+              :class="{ active: viewMode === 'summary' }"
+            >
+              Summary
+            </button>
+            <button
+              @click="viewMode = 'table'"
+              class="toggle-btn"
+              :class="{ active: viewMode === 'table' }"
+            >
+              Detailed Table
+            </button>
+          </div>
         </div>
 
         <div v-if="loading" class="loading">
@@ -26,7 +42,9 @@
         <div v-else-if="error" class="error">
           <p>{{ error }}</p>
         </div>
-        <div v-else-if="comparison" class="comparison">
+        
+        <!-- Summary View -->
+        <div v-else-if="viewMode === 'summary' && comparison" class="comparison">
           <div v-for="(stats, heuristic) in comparison.comparison" :key="heuristic" class="stat-card">
             <h3>{{ formatHeuristic(heuristic) }}</h3>
             <div class="stat-grid">
@@ -51,6 +69,61 @@
             </div>
           </div>
         </div>
+        
+        <!-- Table View -->
+        <div v-else-if="viewMode === 'table'" class="table-section">
+          <div v-if="tableLoading" class="loading">
+            <div class="spinner"></div>
+          </div>
+          <div v-else-if="tableError" class="error">
+            <p>{{ tableError }}</p>
+          </div>
+          <div v-else-if="tableData && tableData.heuristics.length > 0" class="tables-container">
+            <div v-for="heuristicData in tableData.heuristics" :key="heuristicData.heuristic" class="table-wrapper">
+              <div class="table-header">
+                <h3>{{ formatHeuristic(heuristicData.heuristic) }}</h3>
+                <div class="table-summary">
+                  <span class="summary-item">
+                    <strong>Total Accuracy:</strong> {{ (heuristicData.total_accuracy * 100).toFixed(1) }}%
+                  </span>
+                  <span class="summary-item">
+                    <strong>Total Profit:</strong>
+                    <span :class="{ positive: heuristicData.total_profit > 0, negative: heuristicData.total_profit < 0 }">
+                      ${{ heuristicData.total_profit.toFixed(2) }}
+                    </span>
+                  </span>
+                </div>
+              </div>
+              <div class="table-scroll">
+                <table class="data-table">
+                  <thead>
+                    <tr>
+                      <th>Round</th>
+                      <th>Tips Made</th>
+                      <th>Tips Correct</th>
+                      <th>Accuracy</th>
+                      <th>Profit</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr v-for="round in heuristicData.rounds" :key="round.round_id">
+                      <td>{{ round.round_id }}</td>
+                      <td>{{ round.tips_made }}</td>
+                      <td>{{ round.tips_correct }}</td>
+                      <td>{{ (round.accuracy * 100).toFixed(1) }}%</td>
+                      <td :class="{ positive: round.profit > 0, negative: round.profit < 0 }">
+                        ${{ round.profit.toFixed(2) }}
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+          <div v-else class="empty-state">
+            <p>No table data available for this season.</p>
+          </div>
+        </div>
       </section>
     </main>
     <Footer />
@@ -62,8 +135,12 @@ const api = useApi()
 
 const loading = ref(false)
 const seasonsLoading = ref(true)
+const tableLoading = ref(false)
 const error = ref<string | null>(null)
+const tableError = ref<string | null>(null)
 const comparison = ref<any>(null)
+const tableData = ref<any>(null)
+const viewMode = ref<'summary' | 'table'>('summary')
 const selectedSeason = ref(new Date().getFullYear() - 1)
 const availableYears = ref<number[]>([])
 
@@ -114,6 +191,8 @@ const runBacktest = async () => {
   
   try {
     comparison.value = await api.compareHeuristics(selectedSeason.value)
+    // Also load table data for the selected season
+    await loadTableData()
   } catch (e) {
     error.value = 'Failed to run backtest'
     console.error(e)
@@ -121,6 +200,34 @@ const runBacktest = async () => {
     loading.value = false
   }
 }
+
+const loadTableData = async () => {
+  tableLoading.value = true
+  tableError.value = null
+  
+  try {
+    tableData.value = await api.getBacktestTableData(selectedSeason.value)
+  } catch (e) {
+    tableError.value = 'Failed to load table data'
+    console.error(e)
+  } finally {
+    tableLoading.value = false
+  }
+}
+
+// Watch for season changes to reload data
+watch(selectedSeason, async () => {
+  if (viewMode.value === 'table') {
+    await loadTableData()
+  }
+})
+
+// Watch for view mode changes
+watch(viewMode, async (newMode) => {
+  if (newMode === 'table' && !tableData.value) {
+    await loadTableData()
+  }
+})
 
 const formatHeuristic = (h: string) => {
   const labels: Record<string, string> = {
@@ -167,7 +274,39 @@ onMounted(async () => {
   display: flex;
   gap: 1rem;
   justify-content: center;
+  align-items: center;
   margin-bottom: 3rem;
+  flex-wrap: wrap;
+}
+
+.view-toggle {
+  display: flex;
+  gap: 0.5rem;
+  background: var(--color-bg);
+  border: 2px solid var(--color-text);
+  border-radius: 0.5rem;
+  padding: 0.25rem;
+}
+
+.toggle-btn {
+  padding: 0.5rem 1rem;
+  background: transparent;
+  border: none;
+  color: var(--color-text);
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 0.875rem;
+  border-radius: 0.25rem;
+  transition: all 0.2s ease;
+}
+
+.toggle-btn:hover {
+  background: var(--color-border);
+}
+
+.toggle-btn.active {
+  background: var(--color-text);
+  color: var(--color-bg);
 }
 
 .select {
@@ -234,5 +373,91 @@ onMounted(async () => {
 
 .stat-value.negative {
   color: #c00000;
+}
+
+/* Table Styles */
+.table-section {
+  padding: 1rem 0;
+}
+
+.tables-container {
+  display: flex;
+  flex-direction: column;
+  gap: 3rem;
+}
+
+.table-wrapper {
+  border: 1px solid var(--color-border);
+  padding: 2rem;
+}
+
+.table-header {
+  margin-bottom: 1.5rem;
+}
+
+.table-header h3 {
+  font-size: 1.25rem;
+  margin-bottom: 1rem;
+}
+
+.table-summary {
+  display: flex;
+  gap: 2rem;
+  font-size: 0.875rem;
+}
+
+.summary-item {
+  color: var(--color-muted);
+}
+
+.table-scroll {
+  overflow-x: auto;
+}
+
+.data-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.875rem;
+}
+
+.data-table thead {
+  background: var(--color-border);
+}
+
+.data-table th {
+  padding: 0.75rem 1rem;
+  text-align: left;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-size: 0.75rem;
+}
+
+.data-table tbody tr {
+  border-bottom: 1px solid var(--color-border);
+}
+
+.data-table tbody tr:last-child {
+  border-bottom: none;
+}
+
+.data-table td {
+  padding: 0.75rem 1rem;
+}
+
+.data-table td.positive {
+  color: #00a000;
+  font-weight: 600;
+}
+
+.data-table td.negative {
+  color: #c00000;
+  font-weight: 600;
+}
+
+.empty-state {
+  text-align: center;
+  padding: 4rem 2rem;
+  color: var(--color-muted);
 }
 </style>

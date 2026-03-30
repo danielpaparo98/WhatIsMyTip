@@ -128,6 +128,12 @@ export const useApi = () => {
     return response.json()
   }
   
+  const getBacktestTableData = async (season: number) => {
+    const response = await fetchWithTimeout(`/api/backtest/table?season=${season}`)
+    if (!response.ok) throw new Error('Failed to fetch backtest table data')
+    return response.json()
+  }
+  
   return {
     getGames,
     getGame,
@@ -140,5 +146,6 @@ export const useApi = () => {
     runBacktest,
     compareHeuristics,
     getAvailableSeasons,
+    getBacktestTableData,
   }
 }
