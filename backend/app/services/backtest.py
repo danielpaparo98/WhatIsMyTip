@@ -454,7 +454,9 @@ class BacktestService:
         db: AsyncSession,
         specific_season: Optional[int] = None,
     ) -> PreGenerateResponse:
-        """Generate backtest results for all seasons from 2010 to current_year-1.
+        """Generate backtest results for all seasons from 2010 to current_year.
+        
+        Includes current year if it has completed games.
         
         Args:
             db: Database session
@@ -466,11 +468,11 @@ class BacktestService:
         # Get current year
         current_year = datetime.now().year
         
-        # Generate list of seasons from 2010 to current_year-1
+        # Generate list of seasons from 2010 to current_year
         if specific_season:
             seasons = [specific_season]
         else:
-            seasons = list(range(2010, current_year))
+            seasons = list(range(2010, current_year + 1))
         
         seasons_processed = 0
         total_backtest_results = 0
