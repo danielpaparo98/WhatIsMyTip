@@ -24,14 +24,21 @@ export const useApi = () => {
   }
   
   // Games
-  const getGames = async (params?: { season?: number; round?: number; upcoming?: boolean }) => {
+  const getGames = async (params?: { season?: number; round?: number; upcoming?: boolean; latest?: boolean }) => {
     const queryParams = new URLSearchParams()
     if (params?.season) queryParams.append('season', params.season.toString())
     if (params?.round) queryParams.append('round', params.round.toString())
     if (params?.upcoming) queryParams.append('upcoming', 'true')
+    if (params?.latest) queryParams.append('latest', 'true')
     
     const response = await fetchWithTimeout(`/api/games?${queryParams}`)
     if (!response.ok) throw new Error('Failed to fetch games')
+    return response.json()
+  }
+  
+  const getLatestRound = async () => {
+    const response = await fetchWithTimeout('/api/games?latest=true')
+    if (!response.ok) throw new Error('Failed to fetch latest round')
     return response.json()
   }
   
@@ -107,6 +114,7 @@ export const useApi = () => {
   return {
     getGames,
     getGame,
+    getLatestRound,
     getTips,
     getTipsByHeuristic,
     generateTips,
