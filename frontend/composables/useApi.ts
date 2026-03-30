@@ -122,6 +122,12 @@ export const useApi = () => {
     return response.json()
   }
   
+  const getAvailableSeasons = async () => {
+    const response = await fetchWithTimeout('/api/backtest/seasons')
+    if (!response.ok) throw new Error('Failed to fetch available seasons')
+    return response.json()
+  }
+  
   return {
     getGames,
     getGame,
@@ -133,5 +139,6 @@ export const useApi = () => {
     getBacktestResults,
     runBacktest,
     compareHeuristics,
+    getAvailableSeasons,
   }
 }

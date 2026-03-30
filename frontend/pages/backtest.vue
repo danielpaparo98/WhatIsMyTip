@@ -11,12 +11,13 @@
         <h2>Performance Comparison</h2>
         
         <div class="controls">
-          <select v-model="selectedSeason" class="select">
+          <select v-model="selectedSeason" class="select" :disabled="seasonsLoading">
+            <option v-if="seasonsLoading" disabled>Loading seasons...</option>
             <option v-for="year in availableYears" :key="year" :value="year">
               {{ year }}
             </option>
           </select>
-          <button @click="runBacktest" class="btn btn-primary">Run Backtest</button>
+          <button @click="runBacktest" class="btn btn-primary" :disabled="loading || seasonsLoading">Run Backtest</button>
         </div>
 
         <div v-if="loading" class="loading">
@@ -60,10 +61,52 @@
 const api = useApi()
 
 const loading = ref(false)
+const seasonsLoading = ref(true)
 const error = ref<string | null>(null)
 const comparison = ref<any>(null)
 const selectedSeason = ref(new Date().getFullYear() - 1)
-const availableYears = ref([2024, 2023, 2022, 2021, 2020])
+const availableYears = ref<number[]>([])
+
+const generateFallbackYears = (currentYear: number): number[] => {
+  const years: number[] = []
+  for (let year = 2010; year < currentYear; year++) {
+    years.push(year)
+  }
+  return years.sort((a, b) => b - a) // Descending order
+}
+
+const loadAvailableSeasons = async () => {
+  seasonsLoading.value = true
+  try {
+    const response = await api.getAvailableSeasons()
+    const currentYear = response.current_year
+    
+    // Filter out current year from available years
+    const filteredYears = response.available_years.filter((year: number) => year !== currentYear)
+    
+    if (filteredYears.length > 0) {
+      availableYears.value = filteredYears
+    } else {
+      // Fallback to generated years if no data exists
+      availableYears.value = generateFallbackYears(currentYear)
+    }
+    
+    // Set default selected season to the first available year (newest)
+    if (availableYears.value.length > 0) {
+      selectedSeason.value = availableYears.value[0]
+    }
+  } catch (e) {
+    console.error('Failed to load available seasons:', e)
+    // Fallback to generated years on error
+    const currentYear = new Date().getFullYear()
+    availableYears.value = generateFallbackYears(currentYear)
+    if (availableYears.value.length > 0) {
+      selectedSeason.value = availableYears.value[0]
+    }
+  } finally {
+    seasonsLoading.value = false
+  }
+}
 
 const runBacktest = async () => {
   loading.value = true
@@ -88,7 +131,8 @@ const formatHeuristic = (h: string) => {
   return labels[h] || h
 }
 
-onMounted(() => {
+onMounted(async () => {
+  await loadAvailableSeasons()
   runBacktest()
 })
 </script>

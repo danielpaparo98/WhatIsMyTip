@@ -1,6 +1,6 @@
 from pydantic import BaseModel
 from datetime import datetime
-from typing import Optional
+from typing import Optional, List
 
 
 class BacktestResponse(BaseModel):
@@ -40,3 +40,9 @@ class BacktestComparison(BaseModel):
     season: int
     comparison: dict[str, BacktestSummary]
     best_overall: dict[str, str | float]
+
+
+class AvailableSeasonsResponse(BaseModel):
+    """Response containing available seasons for backtesting."""
+    available_years: List[int]
+    current_year: int
