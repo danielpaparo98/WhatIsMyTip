@@ -1,0 +1,17 @@
+name: whatismytip-frontend
+region: sfo3
+static_sites:
+  - name: frontend
+    source_dir: frontend
+    github:
+      repo: your-username/WhatIsMyTip
+      branch: main
+      deploy_on_push: true
+    build_command: bun install && bun run generate
+    output_dir: .output/public
+    envs:
+      - key: API_BASE_URL
+        value: https://api.whatismytip.com
+    routes:
+      - path: /
+        preserve_path_prefix: false
