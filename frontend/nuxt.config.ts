@@ -3,7 +3,7 @@ export default defineNuxtConfig({
   compatibilityDate: '2024-04-03',
   devtools: { enabled: true },
   
-  modules: [],
+  modules: ['@nuxtjs/tailwindcss'],
   
   app: {
     head: {
@@ -11,7 +11,14 @@ export default defineNuxtConfig({
       meta: [
         { charset: 'utf-8' },
         { name: 'viewport', content: 'width=device-width, initial-scale=1' },
-        { name: 'description', content: 'AI-powered footy tipping with smart heuristics' }
+        { name: 'description', content: 'AI-powered footy tipping with smart heuristics' },
+        { name: 'robots', content: 'index, follow' },
+        { property: 'og:title', content: 'WhatIsMyTip.com' },
+        { property: 'og:description', content: 'AI-powered footy tipping with smart heuristics' },
+        { property: 'og:type', content: 'website' }
+      ],
+      link: [
+        { rel: 'icon', type: 'image/x-icon', href: '/favicon.ico' }
       ]
     }
   },
@@ -22,5 +29,9 @@ export default defineNuxtConfig({
     public: {
       apiBase: process.env.API_BASE_URL || 'http://localhost:8000'
     }
+  },
+  
+  nitro: {
+    preset: 'static'
   }
 })
