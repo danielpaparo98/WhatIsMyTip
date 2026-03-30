@@ -7,6 +7,7 @@ from .backtest import (
     BacktestTableRow,
     BacktestTableData,
     BacktestTableResponse,
+    HistoricalSyncResponse,
 )
 
 __all__ = [
@@ -21,4 +22,5 @@ __all__ = [
     "BacktestTableRow",
     "BacktestTableData",
     "BacktestTableResponse",
+    "HistoricalSyncResponse",
 ]

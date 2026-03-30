@@ -70,3 +70,11 @@ class BacktestTableResponse(BaseModel):
     """Response containing detailed table data for all heuristics."""
     season: int
     heuristics: List[BacktestTableData]
+
+
+class HistoricalSyncResponse(BaseModel):
+    """Response for historical data sync operation."""
+    season: int
+    games_synced: int
+    tips_generated: int
+    message: str

@@ -11,13 +11,13 @@
         <h2>Performance Comparison</h2>
         
         <div class="controls">
-          <select v-model="selectedSeason" class="select" :disabled="seasonsLoading">
+          <select v-model="selectedSeason" class="select" :disabled="seasonsLoading || syncing">
             <option v-if="seasonsLoading" disabled>Loading seasons...</option>
             <option v-for="year in availableYears" :key="year" :value="year">
               {{ year }}
             </option>
           </select>
-          <button @click="runBacktest" class="btn btn-primary" :disabled="loading || seasonsLoading">Run Backtest</button>
+          <button @click="runBacktest" class="btn btn-primary" :disabled="loading || seasonsLoading || syncing">Run Backtest</button>
           <div class="view-toggle">
             <button
               @click="viewMode = 'summary'"
@@ -36,7 +36,11 @@
           </div>
         </div>
 
-        <div v-if="loading" class="loading">
+        <div v-if="syncing" class="loading sync-message">
+          <div class="spinner"></div>
+          <p>Syncing historical data for {{ selectedSeason }}...</p>
+        </div>
+        <div v-else-if="loading" class="loading">
           <div class="spinner"></div>
         </div>
         <div v-else-if="error" class="error">
@@ -72,7 +76,11 @@
         
         <!-- Table View -->
         <div v-else-if="viewMode === 'table'" class="table-section">
-          <div v-if="tableLoading" class="loading">
+          <div v-if="syncing" class="loading sync-message">
+            <div class="spinner"></div>
+            <p>Syncing historical data for {{ selectedSeason }}...</p>
+          </div>
+          <div v-else-if="tableLoading" class="loading">
             <div class="spinner"></div>
           </div>
           <div v-else-if="tableError" class="error">
@@ -136,6 +144,7 @@ const api = useApi()
 const loading = ref(false)
 const seasonsLoading = ref(true)
 const tableLoading = ref(false)
+const syncing = ref(false)
 const error = ref<string | null>(null)
 const tableError = ref<string | null>(null)
 const comparison = ref<any>(null)
@@ -187,6 +196,7 @@ const loadAvailableSeasons = async () => {
 
 const runBacktest = async () => {
   loading.value = true
+  syncing.value = true
   error.value = null
   
   try {
@@ -198,11 +208,13 @@ const runBacktest = async () => {
     console.error(e)
   } finally {
     loading.value = false
+    syncing.value = false
   }
 }
 
 const loadTableData = async () => {
   tableLoading.value = true
+  syncing.value = true
   tableError.value = null
   
   try {
@@ -212,6 +224,7 @@ const loadTableData = async () => {
     console.error(e)
   } finally {
     tableLoading.value = false
+    syncing.value = false
   }
 }
 
@@ -319,9 +332,27 @@ onMounted(async () => {
   cursor: pointer;
 }
 
+.select:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .loading, .error {
   text-align: center;
   padding: 4rem 2rem;
+}
+
+.sync-message {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1rem;
+}
+
+.sync-message p {
+  font-size: 1.125rem;
+  font-weight: 600;
+  color: var(--color-text);
 }
 
 .comparison {

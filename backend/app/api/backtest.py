@@ -14,8 +14,10 @@ from app.schemas import (
     BacktestTableResponse,
     BacktestTableData,
     BacktestTableRow,
+    HistoricalSyncResponse,
 )
 from app.services.backtest import BacktestService
+from app.squiggle import SquiggleClient
 
 router = APIRouter()
 limiter = Limiter(key_func=get_remote_address)
@@ -145,6 +147,25 @@ async def compare_heuristics(
     """Compare all heuristics for a season."""
     service = BacktestService()
     
+    # Check if backtest results exist for the season
+    from sqlalchemy import select, func
+    from app.models import BacktestResult
+    
+    result = await db.execute(
+        select(func.count(BacktestResult.id)).where(BacktestResult.season == season)
+    )
+    backtest_count = result.scalar()
+    
+    # If no backtest results exist, sync historical data first
+    if backtest_count == 0:
+        squiggle_client = SquiggleClient()
+        try:
+            sync_result = await service.sync_historical_season(db, season, squiggle_client)
+            # Run backtest after sync
+            await service.backtest_all_heuristics(db, season)
+        finally:
+            await squiggle_client.close()
+    
     comparison = await service.compare_heuristics(db, season)
     
     # Find best performing heuristic
@@ -172,6 +193,26 @@ async def get_table_data(
     db: AsyncSession = Depends(get_db),
 ):
     """Get detailed table data for all heuristics for a season."""
+    # Check if backtest results exist for the season
+    from sqlalchemy import select, func
+    from app.models import BacktestResult
+    
+    result = await db.execute(
+        select(func.count(BacktestResult.id)).where(BacktestResult.season == season)
+    )
+    backtest_count = result.scalar()
+    
+    # If no backtest results exist, sync historical data first
+    if backtest_count == 0:
+        service = BacktestService()
+        squiggle_client = SquiggleClient()
+        try:
+            sync_result = await service.sync_historical_season(db, season, squiggle_client)
+            # Run backtest after sync
+            await service.backtest_all_heuristics(db, season)
+        finally:
+            await squiggle_client.close()
+    
     results = await BacktestCRUD.get_table_data(db, season)
     
     # Group results by heuristic
@@ -240,3 +281,21 @@ async def get_available_seasons(
         available_years=available_years,
         current_year=current_year,
     )
+
+
+@router.post("/sync", response_model=HistoricalSyncResponse)
+@limiter.limit("5/minute")
+async def sync_historical_data(
+    request: Request,
+    season: int = Query(..., description="Season year to sync"),
+    db: AsyncSession = Depends(get_db),
+):
+    """Sync historical game data and generate tips for a season."""
+    service = BacktestService()
+    squiggle_client = SquiggleClient()
+    
+    try:
+        result = await service.sync_historical_season(db, season, squiggle_client)
+        return result
+    finally:
+        await squiggle_client.close()
