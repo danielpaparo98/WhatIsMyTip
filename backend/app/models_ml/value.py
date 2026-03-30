@@ -1,6 +1,6 @@
 import numpy as np
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, func, case, or_
 from typing import Dict, Tuple
 from app.models_ml.base import BaseModel
 from app.models import Game
@@ -18,8 +18,6 @@ class ValueModel(BaseModel):
     
     async def _calculate_win_rates(self, db: AsyncSession):
         """Calculate historical win rates for each team."""
-        from sqlalchemy import func, or_
-        
         teams_result = await db.execute(
             select(Game.home_team).distinct().union(select(Game.away_team).distinct())
         )
@@ -30,10 +28,7 @@ class ValueModel(BaseModel):
                 select(
                     func.count().label("total"),
                     func.sum(
-                        func.case(
-                            (Game.home_score > Game.away_score, 1),
-                            else_=0,
-                        )
+                        case((Game.home_score > Game.away_score, 1), else_=0)
                     ).label("wins"),
                 )
                 .where(
@@ -56,7 +51,7 @@ class ValueModel(BaseModel):
             # Apply home advantage adjustment
             adjusted_home = min(home_rate + 0.05, 0.9)
             
-            # Predict the team with better historical performance
+            # Predict team with better historical performance
             if adjusted_home > away_rate:
                 winner = game.home_team
                 confidence = (adjusted_home - away_rate) + 0.5

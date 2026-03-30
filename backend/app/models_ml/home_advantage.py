@@ -1,6 +1,6 @@
 import numpy as np
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func
+from sqlalchemy import select, func, case
 from typing import Dict, Tuple
 from app.models_ml.base import BaseModel
 from app.models import Game
@@ -24,10 +24,7 @@ class HomeAdvantageModel(BaseModel):
                 Game.venue,
                 func.count().label("total_games"),
                 func.sum(
-                    func.case(
-                        (Game.home_score > Game.away_score, 1),
-                        else_=0,
-                    )
+                    case((Game.home_score > Game.away_score, 1), else_=0)
                 ).label("home_wins"),
             )
             .where(Game.completed == True)
@@ -45,10 +42,7 @@ class HomeAdvantageModel(BaseModel):
             select(
                 func.count().label("total_games"),
                 func.sum(
-                    func.case(
-                        (Game.home_score > Game.away_score, 1),
-                        else_=0,
-                    )
+                    case((Game.home_score > Game.away_score, 1), else_=0)
                 ).label("home_wins"),
             )
             .where(Game.completed == True)
