@@ -26,37 +26,58 @@
         <!-- Heuristic Selector -->
         <div class="heuristic-selector">
           <button
-            v-for="heuristic in heuristics"
-            :key="heuristic.value"
-            @click="selectedHeuristic = heuristic.value"
-            :class="['heuristic-btn', { active: selectedHeuristic === heuristic.value }]"
+            v-for="h in heuristics"
+            :key="h.value"
+            @click="selectedHeuristic = h.value"
+            :class="['heuristic-btn', { active: selectedHeuristic === h.value }]"
           >
-            {{ heuristic.label }}
+            {{ h.label }}
           </button>
         </div>
 
-        <!-- Tips Display -->
+        <!-- Games with Tips -->
         <div v-if="loading" class="loading">
           <div class="spinner"></div>
         </div>
         <div v-else-if="error" class="error">
           <p>{{ error }}</p>
-          <button @click="loadTips" class="btn">Retry</button>
+          <button @click="loadGames" class="btn">Retry</button>
         </div>
-        <div v-else-if="filteredTips.length === 0" class="empty">
+        <div v-else-if="gamesWithTips.length === 0" class="empty">
           <p>No tips available for this round.</p>
           <button @click="generateTips" class="btn btn-primary">Generate Tips</button>
         </div>
-        <div v-else class="tips-grid">
-          <TipCard
-            v-for="tip in filteredTips"
-            :key="tip.id"
-            :heuristic="tip.heuristic"
-            :selected-team="tip.selected_team"
-            :margin="tip.margin"
-            :confidence="tip.confidence"
-            :explanation="tip.explanation"
-          />
+        <div v-else class="games-grid">
+          <div v-for="game in gamesWithTips" :key="game.id" class="game-card">
+            <!-- Match Info -->
+            <div class="match-info">
+              <div class="teams">
+                <span class="team home">{{ game.home_team }}</span>
+                <span class="vs">VS</span>
+                <span class="team away">{{ game.away_team }}</span>
+              </div>
+              <div class="match-details">
+                <span class="venue">{{ game.venue }}</span>
+                <span class="date">{{ formatDate(game.date) }}</span>
+              </div>
+            </div>
+            
+            <!-- Tip Info -->
+            <div v-if="game.tip" class="tip-info">
+              <div class="tip-header">
+                <span class="heuristic-badge">{{ formatHeuristic(game.tip.heuristic) }}</span>
+                <span class="confidence">{{ Math.round(game.tip.confidence * 100) }}%</span>
+              </div>
+              <div class="tip-body">
+                <h3>{{ game.tip.selected_team }}</h3>
+                <p class="margin">Margin: {{ game.tip.margin }} pts</p>
+              </div>
+              <p v-if="game.tip.explanation" class="explanation">{{ game.tip.explanation }}</p>
+            </div>
+            <div v-else class="no-tip">
+              <p>No tip available</p>
+            </div>
+          </div>
         </div>
       </section>
     </main>
@@ -69,23 +90,15 @@ const api = useApi()
 
 const loading = ref(true)
 const error = ref<string | null>(null)
-const tips = ref<any[]>([])
+const gamesWithTips = ref<any[]>([])
 const latestRound = ref<any>(null)
-const selectedHeuristic = ref<string>('all')
+const selectedHeuristic = ref<string>('best_bet')
 
 const heuristics = [
-  { value: 'all', label: 'All' },
   { value: 'best_bet', label: 'Best Bet' },
   { value: 'yolo', label: 'YOLO' },
   { value: 'high_risk_high_reward', label: 'High Risk' }
 ]
-
-const filteredTips = computed(() => {
-  if (selectedHeuristic.value === 'all') {
-    return tips.value
-  }
-  return tips.value.filter(tip => tip.heuristic === selectedHeuristic.value)
-})
 
 const loadLatestRound = async () => {
   try {
@@ -95,13 +108,20 @@ const loadLatestRound = async () => {
   }
 }
 
-const loadTips = async () => {
+const loadGames = async () => {
   loading.value = true
   error.value = null
   
   try {
-    const data = await api.getTips()
-    tips.value = data.tips || []
+    if (!latestRound.value) {
+      await loadLatestRound()
+    }
+    
+    const season = latestRound.value?.season || new Date().getFullYear()
+    const round = latestRound.value?.round_id || 1
+    
+    const data = await api.getGamesWithTips(season, round, selectedHeuristic.value)
+    gamesWithTips.value = data.games || []
   } catch (e) {
     error.value = 'Failed to load tips'
     console.error(e)
@@ -114,17 +134,42 @@ const generateTips = async () => {
   try {
     const season = latestRound.value?.season || new Date().getFullYear()
     const round = latestRound.value?.round_id || 1
-    await api.generateTips(season, round)
-    await loadTips()
+    await api.generateTips(season, round, [selectedHeuristic.value])
+    await loadGames()
   } catch (e) {
     error.value = 'Failed to generate tips'
     console.error(e)
   }
 }
 
+const formatDate = (dateStr: string) => {
+  const date = new Date(dateStr)
+  return date.toLocaleDateString('en-AU', {
+    weekday: 'short',
+    day: 'numeric',
+    month: 'short',
+    hour: '2-digit',
+    minute: '2-digit'
+  })
+}
+
+const formatHeuristic = (h: string) => {
+  const labels: Record<string, string> = {
+    best_bet: 'Best Bet',
+    yolo: 'YOLO',
+    high_risk_high_reward: 'High Risk'
+  }
+  return labels[h] || h
+}
+
+// Reload games when heuristic changes
+watch(selectedHeuristic, () => {
+  loadGames()
+})
+
 onMounted(() => {
   loadLatestRound()
-  loadTips()
+  loadGames()
 })
 </script>
 
@@ -242,9 +287,112 @@ onMounted(() => {
   padding: 4rem 2rem;
 }
 
-.tips-grid {
+/* Games Grid */
+.games-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-  gap: 1.5rem;
+  grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+  gap: 2rem;
+}
+
+.game-card {
+  border: 1px solid var(--color-border);
+  padding: 2rem;
+  transition: border-color 0.2s ease;
+}
+
+.game-card:hover {
+  border-color: var(--color-text);
+}
+
+/* Match Info */
+.match-info {
+  margin-bottom: 2rem;
+  padding-bottom: 1.5rem;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.teams {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 1rem;
+}
+
+.team {
+  flex: 1;
+  font-size: 1.25rem;
+  font-weight: 700;
+}
+
+.team.home {
+  text-align: right;
+}
+
+.team.away {
+  text-align: left;
+}
+
+.vs {
+  font-size: 0.875rem;
+  font-weight: 700;
+  padding: 0 1rem;
+}
+
+.match-details {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.875rem;
+  color: var(--color-muted);
+}
+
+/* Tip Info */
+.tip-info {
+  background: var(--color-hover);
+  padding: 1.5rem;
+  border-radius: 4px;
+}
+
+.tip-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 1rem;
+  padding-bottom: 1rem;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.heuristic-badge {
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--color-muted);
+}
+
+.confidence {
+  font-size: 0.875rem;
+  font-weight: 700;
+}
+
+.tip-body h3 {
+  font-size: 1.5rem;
+  margin-bottom: 0.5rem;
+}
+
+.tip-body .margin {
+  font-size: 0.875rem;
+  margin: 0;
+}
+
+.explanation {
+  margin-top: 1rem;
+  font-size: 0.9375rem;
+  line-height: 1.5;
+}
+
+.no-tip {
+  text-align: center;
+  padding: 2rem;
+  color: var(--color-muted);
 }
 </style>
