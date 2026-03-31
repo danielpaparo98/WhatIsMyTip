@@ -83,6 +83,12 @@ async def main():
                     logger.info(f"[OK] {result['message']}")
                     logger.info(f"  Heuristics used: {', '.join(result['heuristics_used'])}")
                     logger.info(f"  Tips created: {result['tips_count']}")
+                    
+                    # Update Elo cache after tip generation to keep cache fresh
+                    logger.info("Updating Elo ratings cache...")
+                    from app.models_ml.elo import EloModel
+                    await EloModel.update_cache(db)
+                    logger.info("[OK] Updated Elo ratings cache")
                 else:
                     logger.error(f"[FAIL] {result['message']}")
                 
