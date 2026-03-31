@@ -151,7 +151,8 @@ async def sync_season_games(
     # No games exist, fetch from Squiggle API
     try:
         logger.info(f"Fetching games from Squiggle API for season {season}...")
-        games_data = await squiggle_client.get_games(year=season, complete=True)
+        # Don't use complete=True for historical seasons - it filters out games
+        games_data = await squiggle_client.get_games(year=season)
         
         games = []
         for game_data in games_data:
