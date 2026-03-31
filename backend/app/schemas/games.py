@@ -1,6 +1,9 @@
 from pydantic import BaseModel, Field
 from datetime import datetime
-from typing import Optional
+from typing import Optional, List, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from app.schemas.tips import TipResponse
 
 
 class GameResponse(BaseModel):
@@ -18,6 +21,19 @@ class GameResponse(BaseModel):
     
     class Config:
         from_attributes = True
+
+
+class ModelPrediction(BaseModel):
+    model_name: str  # 'elo', 'form', 'home_advantage', 'value'
+    winner: str
+    confidence: float
+    margin: int
+
+
+class GameDetailResponse(BaseModel):
+    game: GameResponse
+    tips: List['TipResponse']  # All tips for all heuristics
+    model_predictions: List[ModelPrediction]  # On-demand predictions from all 4 models
 
 
 class GameListResponse(BaseModel):
