@@ -88,6 +88,37 @@
 <script setup lang="ts">
 const api = useApi()
 
+// Page-specific SEO
+useHead({
+  title: 'AFL Tips & Predictions | AI-Powered Footy Tipping',
+  meta: [
+    { name: 'description', content: 'Get AI-powered AFL tips and predictions for the current round. Expert footy tipping advice with smart heuristics, betting tips, and round predictions backed by machine learning models.' },
+    { name: 'keywords', content: 'AFL tips, AFL predictions, AFL betting tips, AFL footy tips, AFL round predictions, AFL betting advice, footy tipping, AFL betting' },
+    { property: 'og:title', content: 'AFL Tips & Predictions | AI-Powered Footy Tipping' },
+    { property: 'og:description', content: 'Get AI-powered AFL tips and predictions for the current round. Expert footy tipping advice with smart heuristics.' },
+    { property: 'og:url', content: 'https://whatismytip.com' },
+    { name: 'twitter:title', content: 'AFL Tips & Predictions | AI-Powered Footy Tipping' },
+    { name: 'twitter:description', content: 'Get AI-powered AFL tips and predictions for the current round. Expert footy tipping advice with smart heuristics.' }
+  ],
+  script: [
+    {
+      type: 'application/ld+json',
+      innerHTML: JSON.stringify({
+        '@context': 'https://schema.org',
+        '@type': 'WebPage',
+        name: 'AFL Tips & Predictions',
+        description: 'Get AI-powered AFL tips and predictions for the current round. Expert footy tipping advice with smart heuristics.',
+        url: 'https://whatismytip.com',
+        mainEntity: {
+          '@type': 'SportsEvent',
+          sport: 'Australian Rules Football',
+          name: 'AFL Tips'
+        }
+      })
+    }
+  ]
+})
+
 const loading = ref(true)
 const error = ref<string | null>(null)
 const gamesWithTips = ref<any[]>([])

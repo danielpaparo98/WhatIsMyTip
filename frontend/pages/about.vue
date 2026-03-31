@@ -124,6 +124,40 @@
   </div>
 </template>
 
+<script setup lang="ts">
+// Page-specific SEO
+useHead({
+  title: 'About | WhatIsMyTip - AI-Powered AFL Tipping',
+  meta: [
+    { name: 'description', content: 'Learn about WhatIsMyTip\'s AI-powered AFL tipping system. Discover our machine learning models, heuristics, and how we generate accurate AFL predictions and betting tips.' },
+    { name: 'keywords', content: 'AFL tipping models, AFL prediction algorithms, machine learning AFL, AFL betting models, Elo ratings AFL, AFL form analysis, AFL home advantage' },
+    { property: 'og:title', content: 'About | WhatIsMyTip - AI-Powered AFL Tipping' },
+    { property: 'og:description', content: 'Learn about WhatIsMyTip\'s AI-powered AFL tipping system. Discover our machine learning models and heuristics.' },
+    { property: 'og:url', content: 'https://whatismytip.com/about' },
+    { name: 'twitter:title', content: 'About | WhatIsMyTip - AI-Powered AFL Tipping' },
+    { name: 'twitter:description', content: 'Learn about WhatIsMyTip\'s AI-powered AFL tipping system. Discover our machine learning models and heuristics.' }
+  ],
+  script: [
+    {
+      type: 'application/ld+json',
+      innerHTML: JSON.stringify({
+        '@context': 'https://schema.org',
+        '@type': 'AboutPage',
+        name: 'About WhatIsMyTip',
+        description: 'Learn about WhatIsMyTip\'s AI-powered AFL tipping system. Discover our machine learning models, heuristics, and how we generate accurate AFL predictions.',
+        url: 'https://whatismytip.com/about',
+        mainEntity: {
+          '@type': 'SoftwareApplication',
+          name: 'WhatIsMyTip',
+          applicationCategory: 'SportsApplication',
+          description: 'AI-powered AFL tips and predictions with smart heuristics'
+        }
+      })
+    }
+  ]
+})
+</script>
+
 <style scoped>
 .main {
   max-width: 800px;

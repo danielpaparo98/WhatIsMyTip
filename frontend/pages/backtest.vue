@@ -230,6 +230,37 @@ import { ref, watch, onMounted } from 'vue'
 
 const api = useApi()
 
+// Page-specific SEO
+useHead({
+  title: 'Backtesting | AFL Prediction Performance & Accuracy',
+  meta: [
+    { name: 'description', content: 'View historical performance and accuracy of our AFL prediction heuristics. Analyze year-to-date profit, accuracy rates, and betting performance across multiple seasons.' },
+    { name: 'keywords', content: 'AFL backtesting, AFL prediction accuracy, AFL betting performance, AFL tipping results, AFL profit analysis, AFL historical performance' },
+    { property: 'og:title', content: 'Backtesting | AFL Prediction Performance & Accuracy' },
+    { property: 'og:description', content: 'View historical performance and accuracy of our AFL prediction heuristics. Analyze year-to-date profit and accuracy rates.' },
+    { property: 'og:url', content: 'https://whatismytip.com/backtest' },
+    { name: 'twitter:title', content: 'Backtesting | AFL Prediction Performance & Accuracy' },
+    { name: 'twitter:description', content: 'View historical performance and accuracy of our AFL prediction heuristics. Analyze year-to-date profit and accuracy rates.' }
+  ],
+  script: [
+    {
+      type: 'application/ld+json',
+      innerHTML: JSON.stringify({
+        '@context': 'https://schema.org',
+        '@type': 'WebPage',
+        name: 'AFL Prediction Backtesting',
+        description: 'View historical performance and accuracy of our AFL prediction heuristics. Analyze year-to-date profit, accuracy rates, and betting performance.',
+        url: 'https://whatismytip.com/backtest',
+        mainEntity: {
+          '@type': 'Dataset',
+          name: 'AFL Prediction Performance Data',
+          description: 'Historical performance data for AFL prediction heuristics including accuracy, profit, and betting results'
+        }
+      })
+    }
+  ]
+})
+
 const loading = ref(false)
 const seasonsLoading = ref(true)
 const tableLoading = ref(false)
