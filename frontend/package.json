@@ -19,7 +19,8 @@
   },
   "devDependencies": {
     "@nuxt/eslint": "^0.7.0",
-    "typescript": "^5.7.0",
-    "@tailwindcss/forms": "^0.5.9"
+    "@playwright/test": "^1.58.2",
+    "@tailwindcss/forms": "^0.5.9",
+    "typescript": "^5.7.0"
   }
 }
