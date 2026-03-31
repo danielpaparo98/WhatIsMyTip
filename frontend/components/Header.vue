@@ -2,37 +2,19 @@
   <header class="header">
     <nav class="nav">
       <NuxtLink to="/" class="logo" aria-label="WhatIsMyTip home">
-        <span class="logo-text">WhatIsMyTip<span class="dot">.</span>com</span>
+        <span class="logo-text">WhatIsMyTip</span>
       </NuxtLink>
-      <button
-        class="mobile-menu-btn"
-        @click="toggleMenu"
-        :aria-expanded="isMenuOpen"
-        aria-label="Toggle navigation menu"
-      >
-        <span class="hamburger"></span>
-      </button>
-      <ul class="nav-links" :class="{ 'is-open': isMenuOpen }">
-        <li><NuxtLink to="/" @click="closeMenu">Tips</NuxtLink></li>
-        <li><NuxtLink to="/backtest" @click="closeMenu">Backtest</NuxtLink></li>
-        <li><NuxtLink to="/about" @click="closeMenu">About</NuxtLink></li>
+      <ul class="nav-links">
+        <li><NuxtLink to="/">Tips</NuxtLink></li>
+        <li><NuxtLink to="/backtest">Backtest</NuxtLink></li>
+        <li><NuxtLink to="/about">About</NuxtLink></li>
       </ul>
     </nav>
   </header>
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
-
-const isMenuOpen = ref(false)
-
-const toggleMenu = () => {
-  isMenuOpen.value = !isMenuOpen.value
-}
-
-const closeMenu = () => {
-  isMenuOpen.value = false
-}
+// No state needed - burger menu removed
 </script>
 
 <style scoped>
@@ -53,72 +35,13 @@ const closeMenu = () => {
   margin: 0 auto;
 }
 
-.logo h1 {
-  font-size: 1.25rem;
-  margin: 0;
+.logo {
   font-weight: 800;
+  letter-spacing: -0.02em;
 }
 
-.logo .dot {
-  color: var(--color-muted);
-}
-
-.mobile-menu-btn {
-  display: none;
-  flex-direction: column;
-  justify-content: center;
-  align-items: center;
-  width: 44px;
-  height: 44px;
-  padding: 0;
-  background: transparent;
-  border: 2px solid var(--color-border);
-  border-radius: 0.5rem;
-  cursor: pointer;
-  transition: all 0.2s ease;
-}
-
-.mobile-menu-btn:hover {
-  border-color: var(--color-text);
-  background: var(--color-hover);
-}
-
-.hamburger {
-  position: relative;
-  width: 20px;
-  height: 2px;
-  background: var(--color-text);
-  transition: all 0.3s ease;
-}
-
-.hamburger::before,
-.hamburger::after {
-  content: '';
-  position: absolute;
-  width: 20px;
-  height: 2px;
-  background: var(--color-text);
-  transition: all 0.3s ease;
-}
-
-.hamburger::before {
-  transform: translateY(-6px);
-}
-
-.hamburger::after {
-  transform: translateY(6px);
-}
-
-.mobile-menu-btn[aria-expanded="true"] .hamburger {
-  background: transparent;
-}
-
-.mobile-menu-btn[aria-expanded="true"] .hamburger::before {
-  transform: rotate(45deg);
-}
-
-.mobile-menu-btn[aria-expanded="true"] .hamburger::after {
-  transform: rotate(-45deg);
+.logo-text {
+  font-size: 1.25rem;
 }
 
 .nav-links {
@@ -147,60 +70,34 @@ const closeMenu = () => {
 }
 
 /* Mobile styles */
-@media (max-width: 768px) {
+@media (max-width: 640px) {
   .header {
-    padding: 0.75rem 1rem;
+    padding: 1rem;
   }
 
-  .logo h1 {
-    font-size: 1rem;
+  .nav {
+    flex-direction: column;
+    gap: 1rem;
+    text-align: center;
   }
 
-  .mobile-menu-btn {
-    display: flex;
+  .logo-text {
+    font-size: 1.125rem;
   }
 
   .nav-links {
-    position: absolute;
-    top: 100%;
-    left: 0;
-    right: 0;
-    flex-direction: column;
-    gap: 0;
-    background: var(--color-bg);
-    border-bottom: 1px solid var(--color-border);
-    padding: 0;
-    max-height: 0;
-    overflow: hidden;
-    transition: max-height 0.3s ease;
-  }
-
-  .nav-links.is-open {
-    max-height: 300px;
-  }
-
-  .nav-links li {
-    border-bottom: 1px solid var(--color-border);
-  }
-
-  .nav-links li:last-child {
-    border-bottom: none;
+    gap: 1rem;
   }
 
   .nav-links a {
-    display: block;
-    padding: 1rem 1.5rem;
-    font-size: 1rem;
+    font-size: 0.75rem;
+    padding: 0.25rem 0.5rem;
   }
 }
 
-@media (min-width: 769px) {
+@media (min-width: 641px) {
   .header {
     padding: 1.5rem 2rem;
-  }
-
-  .logo h1 {
-    font-size: 1.5rem;
   }
 }
 </style>
