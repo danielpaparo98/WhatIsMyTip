@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, Query, BackgroundTasks, Request
+from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from slowapi import Limiter
 from slowapi.util import get_remote_address
@@ -14,19 +14,16 @@ from app.schemas import (
     BacktestTableResponse,
     BacktestTableData,
     BacktestTableRow,
-    HistoricalSyncResponse,
     CurrentSeasonResponse,
-    PreGenerateResponse,
 )
 from app.services.backtest import BacktestService
-from app.squiggle import SquiggleClient
 
 router = APIRouter()
 limiter = Limiter(key_func=get_remote_address)
 
 
 @router.get("", response_model=BacktestListResponse)
-@limiter.limit("60/minute")
+@limiter.limit("20/minute")
 async def get_backtest_results(
     request: Request,
     heuristic: Optional[str] = Query(None, description="Filter by heuristic type"),
@@ -57,7 +54,7 @@ async def get_backtest_results(
 
 
 @router.get("/current-season", response_model=CurrentSeasonResponse)
-@limiter.limit("60/minute")
+@limiter.limit("20/minute")
 async def get_current_season_performance(
     request: Request,
     db: AsyncSession = Depends(get_db),
@@ -68,56 +65,6 @@ async def get_current_season_performance(
     performance = await service.get_current_season_performance(db)
     
     return performance
-
-
-@router.post("/run")
-@limiter.limit("5/minute")
-async def run_backtest(
-    request: Request,
-    season: int = Query(..., description="Season year to backtest"),
-    round_id: Optional[int] = Query(None, alias="round", description="Round to backtest (if None, entire season)"),
-    heuristic: Optional[str] = Query(None, description="Heuristic to backtest (if None, all)"),
-    db: AsyncSession = Depends(get_db),
-):
-    """Run backtest for specified parameters."""
-    service = BacktestService()
-    
-    if heuristic:
-        # Backtest single heuristic
-        if round_id:
-            result = await service.backtest_round(db, season, round_id, heuristic)
-            results = [result]
-        else:
-            results = await service.backtest_season(db, season, heuristic)
-        
-        summary = service.calculate_summary_stats(results)
-        
-        return {
-            "message": f"Backtest completed for {heuristic}",
-            "heuristic": heuristic,
-            "season": season,
-            "round": round_id,
-            "results_count": len(results),
-            "summary": summary,
-        }
-    else:
-        # Backtest all heuristics
-        results = await service.backtest_all_heuristics(db, season, round_id)
-        
-        summaries = {}
-        for h, res in results.items():
-            summaries[h] = service.calculate_summary_stats(res)
-        
-        total_results = sum(len(r) for r in results.values())
-        
-        return {
-            "message": f"Backtest completed for all heuristics",
-            "season": season,
-            "round": round_id,
-            "heuristics_tested": list(results.keys()),
-            "total_results": total_results,
-            "summaries": summaries,
-        }
 
 
 @router.get("/compare")
@@ -230,7 +177,7 @@ async def get_table_data(
 
 
 @router.get("/seasons", response_model=AvailableSeasonsResponse)
-@limiter.limit("60/minute")
+@limiter.limit("20/minute")
 async def get_available_seasons(
     request: Request,
     db: AsyncSession = Depends(get_db),
@@ -245,48 +192,8 @@ async def get_available_seasons(
     )
 
 
-@router.post("/sync", response_model=HistoricalSyncResponse)
-@limiter.limit("5/minute")
-async def sync_historical_data(
-    request: Request,
-    season: int = Query(..., description="Season year to sync"),
-    db: AsyncSession = Depends(get_db),
-):
-    """Sync historical game data and generate tips for a season."""
-    service = BacktestService()
-    squiggle_client = SquiggleClient()
-    
-    try:
-        result = await service.sync_historical_season(db, season, squiggle_client)
-        return result
-    finally:
-        await squiggle_client.close()
-
-
-@router.post("/pre-generate", response_model=PreGenerateResponse)
-@limiter.limit("5/minute")
-async def pre_generate_backtest_data(
-    request: Request,
-    background_tasks: BackgroundTasks,
-    season: Optional[int] = Query(None, description="Specific season to pre-generate (if None, all seasons)"),
-    db: AsyncSession = Depends(get_db),
-):
-    """Pre-generate backtest data for all seasons from 2010 to current_year-1.
-    
-    This endpoint runs in the background and generates backtest results for
-    all historical seasons. If a specific season is provided, only that season
-    is processed.
-    """
-    service = BacktestService()
-    
-    # Run pre-generation in background
-    result = await service.pre_generate_all_seasons(db, specific_season=season)
-    
-    return result
-
-
 @router.get("/{heuristic}", response_model=BacktestListResponse)
-@limiter.limit("60/minute")
+@limiter.limit("20/minute")
 async def get_backtest_by_heuristic(
     request: Request,
     heuristic: str,

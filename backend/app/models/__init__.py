@@ -32,6 +32,10 @@ class Tip(Base):
     confidence = Column(Float)
     explanation = Column(Text)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+    
+    __table_args__ = (
+        UniqueConstraint('game_id', 'heuristic', name='uq_game_heuristic'),
+    )
 
 
 class BacktestResult(Base):

@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, Query, BackgroundTasks, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, true
 from slowapi import Limiter
@@ -8,17 +8,19 @@ from typing import Optional
 from app.db import get_db
 from app.crud import TipCRUD, GameCRUD
 from app.schemas import TipResponse, TipListResponse
-from app.orchestrator import ModelOrchestrator
-from app.services import ExplanationService
 from app.models import Game, Tip
+from app.logger import get_logger
 
 router = APIRouter()
 limiter = Limiter(key_func=get_remote_address)
-orchestrator = ModelOrchestrator()
+logger = get_logger(__name__)
+
+# Valid heuristics for input validation
+VALID_HEURISTICS = ["best_bet", "high_risk_high_reward", "yolo"]
 
 
 @router.get("/games-with-tips")
-@limiter.limit("60/minute")
+@limiter.limit("30/minute")
 async def get_games_with_tips(
     request: Request,
     season: int = Query(..., description="Season year"),
@@ -30,47 +32,30 @@ async def get_games_with_tips(
     
     Automatically generates tips if they don't exist for the requested round.
     """
-    try:
-        # Get games for the round
-        result = await db.execute(
-            select(Game)
-            .where(Game.season == season, Game.round_id == round_id)
-            .order_by(Game.date)
+    # Validate heuristic parameter
+    if heuristic and heuristic not in VALID_HEURISTICS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid heuristic. Must be one of: {', '.join(VALID_HEURISTICS)}"
         )
-        games = list(result.scalars().all())
-        
-        if not games:
-            return {"games": [], "count": 0}
-        
-        # Get tips for these games
-        game_ids = [g.id for g in games]
-        if game_ids:
-            if heuristic:
-                result = await db.execute(
-                    select(Tip)
-                    .where(
-                        Tip.game_id.in_(game_ids),
-                        Tip.heuristic == heuristic
-                    )
-                )
-            else:
-                result = await db.execute(
-                    select(Tip)
-                    .where(Tip.game_id.in_(game_ids))
-                )
-            tips = list(result.scalars().all())
-        else:
-            tips = []
-        
-        # If no tips exist for this round, generate them synchronously
-        if not tips:
-            print(f"INFO: No tips found for round {round_id}, season {season}. Generating now...")
-            generation_result = await TipCRUD.regenerate_tips_for_round(db, season, round_id)
+    
+    try:
+        # Lock games for this round to prevent concurrent tip generation
+        async with db.begin():
+            stmt = select(Game).where(
+                Game.season == season,
+                Game.round_id == round_id
+            ).with_for_update()
             
-            if generation_result["success"]:
-                print(f"INFO: {generation_result['message']}")
-                
-                # Fetch the newly generated tips
+            games_result = await db.execute(stmt)
+            games = list(games_result.scalars().all())
+            
+            if not games:
+                return {"games": [], "count": 0}
+            
+            # Check if tips exist for these games
+            game_ids = [g.id for g in games]
+            if game_ids:
                 if heuristic:
                     result = await db.execute(
                         select(Tip)
@@ -86,7 +71,34 @@ async def get_games_with_tips(
                     )
                 tips = list(result.scalars().all())
             else:
-                print(f"WARNING: Failed to generate tips: {generation_result['message']}")
+                tips = []
+            
+            # If no tips exist for this round, generate them synchronously
+            # This is now safe due to the lock
+            if not tips:
+                logger.info(f"No tips found for round {round_id}, season {season}. Generating now...")
+                generation_result = await TipCRUD.regenerate_tips_for_round(db, season, round_id)
+            
+                if generation_result["success"]:
+                    logger.info(f"{generation_result['message']}")
+                    
+                    # Fetch the newly generated tips
+                    if heuristic:
+                        result = await db.execute(
+                            select(Tip)
+                            .where(
+                                Tip.game_id.in_(game_ids),
+                                Tip.heuristic == heuristic
+                            )
+                        )
+                    else:
+                        result = await db.execute(
+                            select(Tip)
+                            .where(Tip.game_id.in_(game_ids))
+                        )
+                    tips = list(result.scalars().all())
+                else:
+                    logger.warning(f"Failed to generate tips: {generation_result['message']}")
         
         # Create a dict of game_id -> tip
         tips_by_game = {tip.game_id: tip for tip in tips}
@@ -126,14 +138,12 @@ async def get_games_with_tips(
         
         return {"games": games_with_tips, "count": len(games_with_tips)}
     except Exception as e:
-        import traceback
-        print(f"ERROR in get_games_with_tips: {e}")
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Error in get_games_with_tips: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="An error occurred while fetching tips")
 
 
 @router.get("", response_model=TipListResponse)
-@limiter.limit("60/minute")
+@limiter.limit("30/minute")
 async def get_tips(
     request: Request,
     season: Optional[int] = Query(None, description="Filter by season year"),
@@ -157,14 +167,12 @@ async def get_tips(
             count=len(tips),
         )
     except Exception as e:
-        import traceback
-        print(f"ERROR in get_tips: {e}")
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Error in get_tips: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="An error occurred while fetching tips")
 
 
 @router.get("/{heuristic}", response_model=TipListResponse)
-@limiter.limit("60/minute")
+@limiter.limit("30/minute")
 async def get_tips_by_heuristic(
     request: Request,
     heuristic: str,
@@ -179,100 +187,3 @@ async def get_tips_by_heuristic(
     )
 
 
-@router.post("/generate")
-@limiter.limit("10/minute")
-async def generate_tips(
-    request: Request,
-    background_tasks: BackgroundTasks,
-    season: int = Query(..., description="Season year"),
-    round_id: int = Query(..., alias="round", description="Round number"),
-    heuristics: Optional[list[str]] = Query(None, description="Heuristics to generate (default: all)"),
-    generate_explanations: bool = Query(True, description="Generate AI explanations"),
-    db: AsyncSession = Depends(get_db),
-):
-    """Generate tips for a round using ML models and heuristics."""
-    try:
-        print(f"DEBUG: Starting tips generation for season={season}, round={round_id}")
-        # Get games for round
-        games = await GameCRUD.get_by_round(db, season, round_id)
-        print(f"DEBUG: Found {len(games)} games")
-        
-        if not games:
-            raise HTTPException(status_code=404, detail="No games found for this round")
-        
-        # Determine which heuristics to use
-        if heuristics:
-            heuristics_to_use = [h for h in heuristics if h in orchestrator.get_available_heuristics()]
-        else:
-            heuristics_to_use = orchestrator.get_available_heuristics()
-        print(f"DEBUG: Using heuristics: {heuristics_to_use}")
-        
-        # Generate tips
-        tips_created = []
-        for game in games:
-            print(f"DEBUG: Processing game {game.id}: {game.home_team} vs {game.away_team}")
-            # Delete existing tips for this game
-            await TipCRUD.delete_for_game(db, game.id)
-            
-            for heuristic in heuristics_to_use:
-                print(f"DEBUG: Running heuristic {heuristic}")
-                winner, confidence, margin = await orchestrator.predict(game, heuristic)
-                print(f"DEBUG: Prediction: {winner}, confidence={confidence}, margin={margin}")
-                
-                # Note: Explanation will be generated by OpenRouter if requested
-                tip = await TipCRUD.create(
-                    db=db,
-                    game_id=game.id,
-                    heuristic=heuristic,
-                    selected_team=winner,
-                    margin=margin,
-                    confidence=confidence,
-                    explanation="",  # Will be filled by AI if requested
-                )
-                tips_created.append(tip)
-        
-        # Generate explanations in background if requested
-        if generate_explanations:
-            async def generate_expl():
-                service = ExplanationService()
-                try:
-                    await service.generate_for_round(db, season, round_id)
-                finally:
-                    await service.close()
-            
-            background_tasks.add_task(generate_expl)
-        
-        return {
-            "message": f"Generated {len(tips_created)} tips for round {round_id}, {season}",
-            "heuristics_used": heuristics_to_use,
-            "tips_count": len(tips_created),
-            "explanations_generating": generate_explanations,
-        }
-    except Exception as e:
-        import traceback
-        print(f"ERROR in generate_tips: {e}")
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.post("/explanations/generate")
-@limiter.limit("5/minute")
-async def generate_explanations(
-    request: Request,
-    season: int = Query(..., description="Season year"),
-    round_id: int = Query(..., alias="round", description="Round number"),
-    db: AsyncSession = Depends(get_db),
-):
-    """Generate AI explanations for tips in a round."""
-    try:
-        service = ExplanationService()
-        try:
-            await service.generate_for_round(db, season, round_id)
-        finally:
-            await service.close()
-        return {"message": f"Generated explanations for round {round_id}, {season}"}
-    except Exception as e:
-        import traceback
-        print(f"ERROR in generate_explanations: {e}")
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=str(e))

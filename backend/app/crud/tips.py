@@ -61,30 +61,38 @@ class TipCRUD:
         confidence: float,
         explanation: str,
     ) -> Tip:
-        """Create a new tip."""
-        tip = Tip(
-            game_id=game_id,
-            heuristic=heuristic,
-            selected_team=selected_team,
-            margin=margin,
-            confidence=confidence,
-            explanation=explanation,
-        )
-        db.add(tip)
-        await db.commit()
-        await db.refresh(tip)
-        return tip
+        """Create a new tip with proper transaction management."""
+        try:
+            tip = Tip(
+                game_id=game_id,
+                heuristic=heuristic,
+                selected_team=selected_team,
+                margin=margin,
+                confidence=confidence,
+                explanation=explanation,
+            )
+            db.add(tip)
+            await db.commit()
+            await db.refresh(tip)
+            return tip
+        except Exception as e:
+            await db.rollback()
+            raise
     
     @staticmethod
     async def delete_for_game(db: AsyncSession, game_id: int) -> int:
-        """Delete all tips for a game."""
-        result = await db.execute(select(Tip).where(Tip.game_id == game_id))
-        tips = result.scalars().all()
-        count = len(tips)
-        for tip in tips:
-            db.delete(tip)
-        await db.commit()
-        return count
+        """Delete all tips for a game with proper transaction management."""
+        try:
+            result = await db.execute(select(Tip).where(Tip.game_id == game_id))
+            tips = result.scalars().all()
+            count = len(tips)
+            for tip in tips:
+                db.delete(tip)
+            await db.commit()
+            return count
+        except Exception as e:
+            await db.rollback()
+            raise
     
     @staticmethod
     async def regenerate_tips_for_round(
@@ -127,25 +135,37 @@ class TipCRUD:
         else:
             heuristics_to_use = orchestrator.get_available_heuristics()
         
-        # Generate tips
+        # Generate tips (idempotent - only create if not exist)
         tips_created = []
         for game in games:
-            # Delete existing tips for this game
-            await TipCRUD.delete_for_game(db, game.id)
+            # Check if tips already exist for this game
+            existing_tips = await TipCRUD.get_by_game(db, game.id)
+            existing_heuristics = {tip.heuristic for tip in existing_tips}
             
             for heuristic in heuristics_to_use:
+                # Skip if tip already exists for this game and heuristic
+                if heuristic in existing_heuristics:
+                    continue
+                
                 winner, confidence, margin = await orchestrator.predict(game, heuristic)
                 
-                tip = await TipCRUD.create(
-                    db=db,
-                    game_id=game.id,
-                    heuristic=heuristic,
-                    selected_team=winner,
-                    margin=margin,
-                    confidence=confidence,
-                    explanation="",  # Explanations can be generated separately
-                )
-                tips_created.append(tip)
+                try:
+                    tip = await TipCRUD.create(
+                        db=db,
+                        game_id=game.id,
+                        heuristic=heuristic,
+                        selected_team=winner,
+                        margin=margin,
+                        confidence=confidence,
+                        explanation="",  # Explanations can be generated separately
+                    )
+                    tips_created.append(tip)
+                except Exception as e:
+                    # Handle unique constraint violation (race condition)
+                    # If another request created tip, just skip it
+                    if "uq_game_heuristic" in str(e) or "duplicate" in str(e).lower():
+                        continue
+                    raise
         
         return {
             "success": True,
