@@ -4,7 +4,6 @@ from sqlalchemy import select, func, case
 from typing import Dict, Tuple
 from app.models_ml.base import BaseModel
 from app.models import Game
-from app.db import AsyncSessionLocal
 
 
 class HomeAdvantageModel(BaseModel):
@@ -51,28 +50,27 @@ class HomeAdvantageModel(BaseModel):
         total, home_wins = result.one()
         self.overall_home_advantage = (home_wins / total) if total > 0 else 0.5
     
-    async def predict(self, game: Game) -> Tuple[str, float, int]:
+    async def predict(self, game: Game, db: AsyncSession) -> Tuple[str, float, int]:
         """Predict winner based on home advantage."""
-        async with AsyncSessionLocal() as db:
-            await self._calculate_home_advantage(db)
-            
-            # Get venue-specific home advantage
-            venue_advantage = self.home_win_rate.get(
-                game.venue, self.overall_home_advantage
-            )
-            
-            # Adjust for venue
-            if venue_advantage > 0.5:
-                winner = game.home_team
-                confidence = venue_advantage
-                margin = int((venue_advantage - 0.5) * 200)
-            else:
-                winner = game.away_team
-                confidence = 1.0 - venue_advantage
-                margin = int((0.5 - venue_advantage) * 200)
-            
-            # Clamp values
-            confidence = max(0.5, min(0.85, confidence))
-            margin = max(1, min(60, margin))
-            
-            return winner, confidence, margin
+        await self._calculate_home_advantage(db)
+        
+        # Get venue-specific home advantage
+        venue_advantage = self.home_win_rate.get(
+            game.venue, self.overall_home_advantage
+        )
+        
+        # Adjust for venue
+        if venue_advantage > 0.5:
+            winner = game.home_team
+            confidence = venue_advantage
+            margin = int((venue_advantage - 0.5) * 200)
+        else:
+            winner = game.away_team
+            confidence = 1.0 - venue_advantage
+            margin = int((0.5 - venue_advantage) * 200)
+        
+        # Clamp values
+        confidence = max(0.5, min(0.85, confidence))
+        margin = max(1, min(60, margin))
+        
+        return winner, confidence, margin

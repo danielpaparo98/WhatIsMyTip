@@ -1,13 +1,10 @@
 <template>
-  <div>
-    <Header />
-    <main class="main">
-      <section class="hero">
-        <h1>About</h1>
-        <p>How WhatIsMyTip uses AI to help you make better footy tips.</p>
-      </section>
+  <section class="hero">
+    <h1>About</h1>
+    <p>How WhatIsMyTip uses AI to help you make better footy tips.</p>
+  </section>
 
-      <section class="section">
+  <section class="section">
         <h2>Our Approach</h2>
         <div class="content">
           <p>
@@ -19,10 +16,10 @@
             We use OpenRouter's gptoss-120b model to generate human-readable explanations for each tip,
             helping you understand the reasoning behind our predictions.
           </p>
-        </div>
-      </section>
+    </div>
+  </section>
 
-      <section class="section">
+  <section class="section">
         <h2>Models</h2>
         <div class="models">
           <div class="model-card">
@@ -69,10 +66,10 @@
               <li>Best for finding upset opportunities</li>
             </ul>
           </div>
-        </div>
-      </section>
+    </div>
+  </section>
 
-      <section class="section">
+  <section class="section">
         <h2>Heuristics</h2>
         <div class="heuristics">
           <div class="heuristic-card">
@@ -96,10 +93,10 @@
               with high variance and picks the underdog for potentially higher returns.
             </p>
           </div>
-        </div>
-      </section>
+    </div>
+  </section>
 
-      <section class="section">
+  <section class="section">
         <h2>Data Source</h2>
         <div class="content">
           <p>
@@ -107,24 +104,25 @@
             an excellent resource for AFL statistics and historical data. We're grateful for their
             public API which makes this project possible.
           </p>
-        </div>
-      </section>
+    </div>
+  </section>
 
-      <section class="section">
+  <section class="section">
         <h2>Open Source</h2>
         <div class="content">
           <p>
             WhatIsMyTip is an open source project. The code is available on GitHub and we welcome
             contributions from the community.
           </p>
-        </div>
-      </section>
-    </main>
-    <Footer />
-  </div>
+    </div>
+  </section>
 </template>
 
 <script setup lang="ts">
+definePageMeta({
+  layout: 'default'
+})
+
 // Page-specific SEO
 useHead({
   title: 'About | WhatIsMyTip - AI-Powered AFL Tipping',
@@ -159,12 +157,6 @@ useHead({
 </script>
 
 <style scoped>
-.main {
-  max-width: 800px;
-  margin: 0 auto;
-  padding: 2rem 1.5rem;
-}
-
 .hero {
   padding: 3rem 1.5rem;
   text-align: center;
@@ -230,10 +222,6 @@ useHead({
 
 /* Mobile styles */
 @media (max-width: 640px) {
-  .main {
-    padding: 1.5rem 1rem;
-  }
-
   .hero {
     padding: 2.5rem 1rem;
   }
@@ -278,10 +266,6 @@ useHead({
 
 /* Desktop styles */
 @media (min-width: 1025px) {
-  .main {
-    padding: 2rem;
-  }
-
   .hero {
     padding: 4rem 2rem;
   }

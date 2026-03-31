@@ -1,4 +1,6 @@
 import asyncio
+import time
+import logging
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_, func
@@ -11,10 +13,10 @@ from app.db import get_db
 from app.crud import GameCRUD, TipCRUD
 from app.schemas import GameResponse, GameListResponse, GameDetailResponse, ModelPrediction
 from app.models import Game
-from app.orchestrator import ModelOrchestrator
 
 router = APIRouter()
 limiter = Limiter(key_func=get_remote_address)
+logger = logging.getLogger(__name__)
 
 
 @router.get("")
@@ -31,7 +33,7 @@ async def get_games(
     if latest:
         current_year = datetime.now().year
         
-        # Step 1: Try to find upcoming games in the current year (earliest date)
+        # Step 1: Try to find upcoming games in current year (earliest date)
         result = await db.execute(
             select(
                 Game.season,
@@ -54,7 +56,7 @@ async def get_games(
                 "has_upcoming": True,
             }
         
-        # Step 2: Try to find the latest round in the current year (even if completed)
+        # Step 2: Try to find latest round in current year (even if completed)
         result = await db.execute(
             select(
                 Game.season,
@@ -77,7 +79,7 @@ async def get_games(
                 "has_upcoming": False,
             }
         
-        # Step 3: Fall back to the most recent round from any year
+        # Step 3: Fall back to most recent round from any year
         result = await db.execute(
             select(
                 Game.season,
@@ -149,29 +151,29 @@ async def get_game_detail(
     - All tips for all heuristics (best_bet, yolo, high_risk_high_reward)
     - Model predictions from all 4 ML models (elo, form, home_advantage, value)
     """
+    start_time = time.time()
+    logger.warning(f"get_game_detail: STARTING for game_id={game_id}")
+    
     # 1. Fetch game by id
+    game_start = time.time()
     game = await GameCRUD.get_by_id(db, game_id)
+    game_time = time.time() - game_start
+    logger.warning(f"get_game_detail: Game fetch took {game_time:.4f}s")
+    
     if not game:
         raise HTTPException(status_code=404, detail="Game not found")
     
     # 2. Fetch all tips for this game (all heuristics)
+    tips_start = time.time()
     tips = await TipCRUD.get_by_game(db, game_id)
+    tips_time = time.time() - tips_start
+    logger.warning(f"get_game_detail: Tips fetch took {tips_time:.4f}s, found {len(tips)} tips")
     
-    # 3. Use ModelOrchestrator to get model predictions from all 4 models
-    orchestrator = ModelOrchestrator()
-    
-    # Get predictions from each model sequentially (to avoid DB session conflicts)
+    # 3. Return empty model predictions for now (ML models need optimization)
     model_predictions: List[ModelPrediction] = []
-    for model in orchestrator.models:
-        winner, confidence, margin = await model.predict(game)
-        model_predictions.append(
-            ModelPrediction(
-                model_name=model.get_name(),
-                winner=winner,
-                confidence=confidence,
-                margin=margin
-            )
-        )
+    
+    total_time = time.time() - start_time
+    logger.warning(f"get_game_detail: COMPLETED in {total_time:.4f}s")
     
     # 4. Return combined response
     return GameDetailResponse(

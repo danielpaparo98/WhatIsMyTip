@@ -49,19 +49,20 @@ app = FastAPI(
 )
 
 
-@app.on_event("startup")
-async def startup_event():
-    """Run pre-generation of backtest data on startup."""
-    db_gen = get_db()
-    db = await db_gen.__anext__()
-    try:
-        service = BacktestService()
-        await service.pre_generate_all_seasons(db)
-    except Exception as e:
-        # Log error but don't fail startup
-        logger.warning(f"Failed to pre-generate backtest data on startup: {e}")
-    finally:
-        await db_gen.aclose()
+# Temporarily disabled startup event to allow server to start
+# @app.on_event("startup")
+# async def startup_event():
+#     """Run pre-generation of backtest data on startup."""
+#     db_gen = get_db()
+#     db = await db_gen.__anext__()
+#     try:
+#         service = BacktestService()
+#         await service.pre_generate_all_seasons(db)
+#     except Exception as e:
+#         # Log error but don't fail startup
+#         logger.warning(f"Failed to pre-generate backtest data on startup: {e}")
+#     finally:
+#         await db_gen.aclose()
 
 # Security headers middleware
 app.add_middleware(SecurityHeadersMiddleware)
