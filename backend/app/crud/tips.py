@@ -1,5 +1,5 @@
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, and_
+from sqlalchemy import select, and_, insert
 from typing import List, Optional
 from app.models import Tip
 from app.cache import cached, short_cache, medium_cache
@@ -85,6 +85,33 @@ class TipCRUD:
             invalidate_cache_pattern(short_cache, "tips_by_round:")
             
             return tip
+        except Exception as e:
+            await db.rollback()
+            raise
+    
+    @staticmethod
+    async def create_batch(db: AsyncSession, tips_data: List[dict]) -> List[Tip]:
+        """Create multiple tips in a single bulk insert operation.
+        
+        Args:
+            db: Database session
+            tips_data: List of dictionaries containing tip data
+            
+        Returns:
+            List of created Tip objects
+        """
+        from app.cache import invalidate_cache_pattern
+        
+        try:
+            stmt = insert(Tip).values(tips_data).returning(Tip)
+            result = await db.execute(stmt)
+            await db.commit()
+            
+            # Invalidate cache for tip-related queries
+            invalidate_cache_pattern(short_cache, "tips_by_heuristic:")
+            invalidate_cache_pattern(short_cache, "tips_by_round:")
+            
+            return list(result.scalars().all())
         except Exception as e:
             await db.rollback()
             raise

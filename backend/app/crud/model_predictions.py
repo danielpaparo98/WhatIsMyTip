@@ -1,5 +1,5 @@
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, insert
 from typing import List, Optional
 from app.models import ModelPrediction
 from app.cache import cached, short_cache
@@ -75,6 +75,33 @@ class ModelPredictionCRUD:
             invalidate_cache_pattern(short_cache, "model_predictions_by_games:")
             
             return prediction
+        except Exception as e:
+            await db.rollback()
+            raise
+    
+    @staticmethod
+    async def create_batch(db: AsyncSession, predictions_data: List[dict]) -> List[ModelPrediction]:
+        """Create multiple model predictions in a single bulk insert operation.
+        
+        Args:
+            db: Database session
+            predictions_data: List of dictionaries containing prediction data
+            
+        Returns:
+            List of created ModelPrediction objects
+        """
+        from app.cache import invalidate_cache_pattern
+        
+        try:
+            stmt = insert(ModelPrediction).values(predictions_data).returning(ModelPrediction)
+            result = await db.execute(stmt)
+            await db.commit()
+            
+            # Invalidate cache for model prediction queries
+            invalidate_cache_pattern(short_cache, "model_predictions:")
+            invalidate_cache_pattern(short_cache, "model_predictions_by_games:")
+            
+            return list(result.scalars().all())
         except Exception as e:
             await db.rollback()
             raise
