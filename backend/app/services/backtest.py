@@ -4,7 +4,7 @@ from typing import Dict, List, Tuple, Optional
 from datetime import datetime
 from app.models import Game, Tip, BacktestResult
 from app.orchestrator import ModelOrchestrator
-from app.crud import BacktestCRUD, GameCRUD, TipCRUD
+from app.crud import BacktestCRUD, GameCRUD, TipCRUD, GenerationProgressCRUD
 from app.squiggle import SquiggleClient
 from app.schemas.backtest import HistoricalSyncResponse, CurrentSeasonResponse, CurrentSeasonHeuristicPerformance, PreGenerateResponse
 
@@ -483,12 +483,29 @@ class BacktestService:
         else:
             seasons = list(range(2010, current_year + 1))
         
+        # Create progress tracking record
+        operation_type = f"historical_generation_{specific_season}" if specific_season else "historical_generation_all"
+        progress = await GenerationProgressCRUD.create(
+            db=db,
+            operation_type=operation_type,
+            total_items=len(seasons),
+            season=specific_season,
+        )
+        
+        # Update status to in_progress
+        await GenerationProgressCRUD.update_progress(
+            db=db,
+            progress_id=progress.id,
+            completed_items=0,
+            status="in_progress",
+        )
+        
         seasons_processed = 0
         total_backtest_results = 0
         squiggle_client = SquiggleClient()
         
         try:
-            for season in seasons:
+            for idx, season in enumerate(seasons):
                 # Check if backtest results exist for this season
                 result = await db.execute(
                     select(func.count(BacktestResult.id)).where(BacktestResult.season == season)
@@ -510,17 +527,50 @@ class BacktestService:
                         seasons_processed += 1
                         
                     except Exception as e:
-                        # Skip seasons where sync or backtest fails
+                        # Update progress with error and continue
+                        await GenerationProgressCRUD.update_progress(
+                            db=db,
+                            progress_id=progress.id,
+                            completed_items=idx + 1,
+                            status="in_progress",
+                            error_message=f"Season {season} failed: {str(e)}",
+                        )
                         continue
                 else:
                     # Backtest results already exist, count them
                     seasons_processed += 1
                     total_backtest_results += backtest_count
+                
+                # Update progress after each season
+                await GenerationProgressCRUD.update_progress(
+                    db=db,
+                    progress_id=progress.id,
+                    completed_items=idx + 1,
+                    status="in_progress",
+                )
+            
+            # Mark progress as completed
+            await GenerationProgressCRUD.update_progress(
+                db=db,
+                progress_id=progress.id,
+                completed_items=len(seasons),
+                status="completed",
+            )
             
             return PreGenerateResponse(
                 message=f"Processed {seasons_processed} season(s) with {total_backtest_results} total backtest results",
                 seasons_processed=seasons_processed,
                 total_backtest_results=total_backtest_results,
             )
+        except Exception as e:
+            # Mark progress as failed on unhandled error
+            await GenerationProgressCRUD.update_progress(
+                db=db,
+                progress_id=progress.id,
+                completed_items=seasons_processed,
+                status="failed",
+                error_message=str(e),
+            )
+            raise
         finally:
             await squiggle_client.close()
