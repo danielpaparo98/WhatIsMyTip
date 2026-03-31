@@ -4,12 +4,14 @@ from typing import List, Optional, Tuple
 from datetime import datetime
 from app.models import Game, Tip
 from app.squiggle import SquiggleClient
+from app.cache import cached, short_cache, medium_cache
 
 
 class GameCRUD:
     """CRUD operations for games."""
     
     @staticmethod
+    @cached(cache=short_cache, key_prefix="game_by_id:")
     async def get_by_id(db: AsyncSession, game_id: int) -> Optional[Game]:
         """Get a game by database ID."""
         result = await db.execute(select(Game).where(Game.id == game_id))
@@ -24,6 +26,7 @@ class GameCRUD:
         return result.scalar_one_or_none()
     
     @staticmethod
+    @cached(cache=short_cache, key_prefix="games_by_round:")
     async def get_by_round(
         db: AsyncSession, season: int, round_id: int
     ) -> List[Game]:
@@ -36,6 +39,7 @@ class GameCRUD:
         return list(result.scalars().all())
     
     @staticmethod
+    @cached(cache=short_cache, key_prefix="upcoming_games:")
     async def get_upcoming(db: AsyncSession) -> List[Game]:
         """Get all upcoming (not completed) games."""
         result = await db.execute(
@@ -46,6 +50,7 @@ class GameCRUD:
         return list(result.scalars().all())
     
     @staticmethod
+    @cached(cache=medium_cache, key_prefix="games_by_season:")
     async def get_by_season(db: AsyncSession, season: int) -> List[Game]:
         """Get all games for a season."""
         result = await db.execute(
@@ -60,6 +65,8 @@ class GameCRUD:
         db: AsyncSession, game_data: dict
     ) -> Game:
         """Create or update a game from Squiggle data."""
+        from app.cache import invalidate_cache_pattern
+        
         # Check if game exists by squiggle_id
         game = await GameCRUD.get_by_squiggle_id(db, game_data["id"])
         
@@ -107,6 +114,13 @@ class GameCRUD:
         
         await db.commit()
         await db.refresh(game)
+        
+        # Invalidate cache for game-related queries
+        invalidate_cache_pattern(short_cache, "game_by_id:")
+        invalidate_cache_pattern(short_cache, "games_by_round:")
+        invalidate_cache_pattern(short_cache, "upcoming_games:")
+        invalidate_cache_pattern(medium_cache, "games_by_season:")
+        
         return game
     
     @staticmethod

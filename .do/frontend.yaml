@@ -12,6 +12,10 @@ static_sites:
     envs:
       - key: API_BASE_URL
         value: https://api.whatismytip.com
+      - key: UMAMI_WEBSITE_ID
+        value: ${umami.UMAMI_WEBSITE_ID}
+      - key: UMAMI_HOST
+        value: ${umami.UMAMI_HOST}
     routes:
       - path: /
         preserve_path_prefix: false

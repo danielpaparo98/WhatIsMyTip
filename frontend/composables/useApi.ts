@@ -1,3 +1,63 @@
+// TypeScript interfaces for game detail response
+export interface Game {
+  id: number
+  squiggle_id: number
+  round_id: number
+  season: number
+  home_team: string
+  away_team: string
+  home_score: number | null
+  away_score: number | null
+  venue: string
+  date: string
+  completed: boolean
+}
+
+export interface Tip {
+  id: number
+  game_id: number
+  heuristic: string
+  selected_team: string
+  margin: number
+  confidence: number
+  explanation: string
+  created_at: string
+}
+
+export interface ModelPrediction {
+  model_name: string
+  winner: string
+  confidence: number
+  margin: number
+}
+
+export interface GameDetailResponse {
+  game: Game
+  tips: Tip[]
+  model_predictions: ModelPrediction[]
+}
+
+export interface GameWithTip {
+  id: number
+  squiggle_id: number
+  round_id: number
+  season: number
+  home_team: string
+  away_team: string
+  home_score: number | null
+  away_score: number | null
+  venue: string
+  date: string
+  completed: boolean
+  tip: Tip | null
+  model_predictions: ModelPrediction[]
+}
+
+export interface GamesWithTipsResponse {
+  games: GameWithTip[]
+  count: number
+}
+
 export const useApi = () => {
   const config = useRuntimeConfig()
   const apiBase = config.public.apiBase
@@ -48,6 +108,12 @@ export const useApi = () => {
     return response.json()
   }
   
+  const getGameDetail = async (gameId: number): Promise<GameDetailResponse> => {
+    const response = await fetchWithTimeout(`/api/games/${gameId}/detail`)
+    if (!response.ok) throw new Error('Failed to fetch game detail')
+    return response.json()
+  }
+  
   // Tips
   const getTips = async (params?: { heuristic?: string; season?: number; round?: number }) => {
     const queryParams = new URLSearchParams()
@@ -81,7 +147,7 @@ export const useApi = () => {
     return response.json()
   }
   
-  const getGamesWithTips = async (season: number, round: number, heuristic: string = 'best_bet') => {
+  const getGamesWithTips = async (season: number, round: number, heuristic: string = 'best_bet'): Promise<GamesWithTipsResponse> => {
     const queryParams = new URLSearchParams()
     queryParams.append('season', season.toString())
     queryParams.append('round', round.toString())
@@ -122,9 +188,28 @@ export const useApi = () => {
     return response.json()
   }
   
+  const getAvailableSeasons = async () => {
+    const response = await fetchWithTimeout('/api/backtest/seasons')
+    if (!response.ok) throw new Error('Failed to fetch available seasons')
+    return response.json()
+  }
+  
+  const getBacktestTableData = async (season: number) => {
+    const response = await fetchWithTimeout(`/api/backtest/table?season=${season}`)
+    if (!response.ok) throw new Error('Failed to fetch backtest table data')
+    return response.json()
+  }
+  
+  const getCurrentSeasonPerformance = async () => {
+    const response = await fetchWithTimeout('/api/backtest/current-season')
+    if (!response.ok) throw new Error('Failed to fetch current season performance')
+    return response.json()
+  }
+  
   return {
     getGames,
     getGame,
+    getGameDetail,
     getLatestRound,
     getTips,
     getTipsByHeuristic,
@@ -133,5 +218,8 @@ export const useApi = () => {
     getBacktestResults,
     runBacktest,
     compareHeuristics,
+    getAvailableSeasons,
+    getBacktestTableData,
+    getCurrentSeasonPerformance,
   }
 }

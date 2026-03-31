@@ -11,7 +11,7 @@ class SquiggleClient:
         self.base_url = settings.squiggle_api_base
         self.client = httpx.AsyncClient(
             timeout=30.0,
-            headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+            headers={"User-Agent": f"WhatIsMyTip - {settings.squiggle_contact_email}"}
         )
     
     async def close(self):

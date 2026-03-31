@@ -1,6 +1,6 @@
 from pydantic import BaseModel
 from datetime import datetime
-from typing import Optional
+from typing import Optional, List
 
 
 class BacktestResponse(BaseModel):
@@ -40,3 +40,66 @@ class BacktestComparison(BaseModel):
     season: int
     comparison: dict[str, BacktestSummary]
     best_overall: dict[str, str | float]
+
+
+class AvailableSeasonsResponse(BaseModel):
+    """Response containing available seasons for backtesting."""
+    available_years: List[int]
+    current_year: int
+
+
+class BacktestTableRow(BaseModel):
+    """Single row of backtest table data."""
+    round_id: int
+    tips_made: int
+    tips_correct: int
+    accuracy: float
+    profit: float
+
+
+class BacktestTableData(BaseModel):
+    """Table data for a single heuristic."""
+    heuristic: str
+    season: int
+    rounds: List[BacktestTableRow]
+    total_profit: float
+    total_accuracy: float
+
+
+class BacktestTableResponse(BaseModel):
+    """Response containing detailed table data for all heuristics."""
+    season: int
+    heuristics: List[BacktestTableData]
+
+
+class HistoricalSyncResponse(BaseModel):
+    """Response for historical data sync operation."""
+    season: int
+    games_synced: int
+    tips_generated: int
+    message: str
+
+
+class CurrentSeasonHeuristicPerformance(BaseModel):
+    """Performance data for a single heuristic in the current season."""
+    heuristic: str
+    total_profit: float
+    total_accuracy: float
+    rounds_played: int
+    avg_profit_per_round: float
+    projected_annual_profit: float
+
+
+class CurrentSeasonResponse(BaseModel):
+    """Response containing current season performance data with projections."""
+    season: int
+    heuristics: List[CurrentSeasonHeuristicPerformance]
+    rounds_completed: int
+    total_rounds: int
+
+
+class PreGenerateResponse(BaseModel):
+    """Response for pre-generating backtest data for all seasons."""
+    message: str
+    seasons_processed: int
+    total_backtest_results: int

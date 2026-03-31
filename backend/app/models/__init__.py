@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Float, DateTime, Text, Boolean
+from sqlalchemy import Column, Integer, String, Float, DateTime, Text, Boolean, UniqueConstraint
 from sqlalchemy.sql import func
 from app.db import Base
 
@@ -32,6 +32,26 @@ class Tip(Base):
     confidence = Column(Float)
     explanation = Column(Text)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+    
+    __table_args__ = (
+        UniqueConstraint('game_id', 'heuristic', name='uq_game_heuristic'),
+    )
+
+
+class ModelPrediction(Base):
+    __tablename__ = "model_predictions"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    game_id = Column(Integer, index=True)
+    model_name = Column(String(50), index=True)  # elo, form, home_advantage, value
+    winner = Column(String(100))
+    confidence = Column(Float)
+    margin = Column(Integer)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    
+    __table_args__ = (
+        UniqueConstraint('game_id', 'model_name', name='uq_game_model'),
+    )
 
 
 class BacktestResult(Base):
@@ -46,3 +66,7 @@ class BacktestResult(Base):
     accuracy = Column(Float)
     profit = Column(Float)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+    
+    __table_args__ = (
+        UniqueConstraint('season', 'round_id', 'heuristic', name='uq_backtest_season_round_heuristic'),
+    )
