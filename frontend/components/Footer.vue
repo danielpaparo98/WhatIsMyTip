@@ -14,8 +14,8 @@
 <style scoped>
 .footer {
   border-top: 1px solid var(--color-border);
-  padding: 2rem;
-  margin-top: 4rem;
+  padding: 2rem 1.5rem;
+  margin-top: 3rem;
 }
 
 .footer-content {
@@ -27,5 +27,16 @@
 .footer-content p {
   margin: 0.5rem 0;
   font-size: 0.875rem;
+}
+
+@media (max-width: 640px) {
+  .footer {
+    padding: 1.5rem 1rem;
+    margin-top: 2rem;
+  }
+
+  .footer-content p {
+    font-size: 0.8125rem;
+  }
 }
 </style>

@@ -1,10 +1,14 @@
+import asyncio
 import numpy as np
+import time
+import logging
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from typing import Dict, Tuple
 from app.models_ml.base import BaseModel
 from app.models import Game
-from app.db import AsyncSessionLocal
+
+logger = logging.getLogger(__name__)
 
 
 class EloModel(BaseModel):
@@ -17,67 +21,82 @@ class EloModel(BaseModel):
         self.k_factor = k_factor
         self.home_advantage = home_advantage
         self.ratings: Dict[str, float] = {}
+        self._lock = asyncio.Lock()
     
     def get_name(self) -> str:
         return "Elo"
     
     async def _get_team_ratings(self, db: AsyncSession) -> Dict[str, float]:
         """Get or initialize team Elo ratings."""
-        if not self.ratings:
-            # Initialize all teams with 1500 rating
-            from app.models import Game
-            result = await db.execute(
-                select(Game.home_team).distinct()
-            )
-            home_teams = set(r[0] for r in result.all())
-            result = await db.execute(
-                select(Game.away_team).distinct()
-            )
-            away_teams = set(r[0] for r in result.all())
-            all_teams = home_teams.union(away_teams)
+        async with self._lock:
+            if not self.ratings:
+                # Initialize all teams with 1500 rating
+                result = await db.execute(
+                    select(Game.home_team).distinct()
+                )
+                home_teams = set(r[0] for r in result.all())
+                result = await db.execute(
+                    select(Game.away_team).distinct()
+                )
+                away_teams = set(r[0] for r in result.all())
+                all_teams = home_teams.union(away_teams)
+                
+                for team in all_teams:
+                    self.ratings[team] = 1500.0
             
-            for team in all_teams:
-                self.ratings[team] = 1500.0
-        
-        return self.ratings
+            return self.ratings.copy()
     
     async def _update_ratings(self, db: AsyncSession):
         """Update Elo ratings based on historical games."""
-        from app.models import Game
         from sqlalchemy import and_
         
-        result = await db.execute(
-            select(Game)
-            .where(Game.completed == True)
-            .order_by(Game.date)
-        )
-        games = result.scalars().all()
+        start_time = time.time()
         
-        for game in games:
-            home_rating = self.ratings.get(game.home_team, 1500.0)
-            away_rating = self.ratings.get(game.away_team, 1500.0)
+        async with self._lock:
+            query_start = time.time()
+            result = await db.execute(
+                select(Game)
+                .where(Game.completed == True)
+                .order_by(Game.date)
+            )
+            games = result.scalars().all()
+            query_time = time.time() - query_start
             
-            # Expected scores
-            expected_home = 1.0 / (1.0 + 10.0 ** ((away_rating - home_rating - self.home_advantage) / 400.0))
-            expected_away = 1.0 - expected_home
+            logger.warning(f"EloModel._update_ratings: LOADED {len(games)} COMPLETED GAMES FROM DATABASE (query took {query_time:.4f}s)")
             
-            # Actual scores
-            if game.home_score is not None and game.away_score is not None:
-                actual_home = 1.0 if game.home_score > game.away_score else 0.0
-                actual_away = 1.0 - actual_home
+            update_start = time.time()
+            for game in games:
+                home_rating = self.ratings.get(game.home_team, 1500.0)
+                away_rating = self.ratings.get(game.away_team, 1500.0)
                 
-                # Update ratings
-                self.ratings[game.home_team] = home_rating + self.k_factor * (actual_home - expected_home)
-                self.ratings[game.away_team] = away_rating + self.k_factor * (actual_away - expected_away)
+                # Expected scores
+                expected_home = 1.0 / (1.0 + 10.0 ** ((away_rating - home_rating - self.home_advantage) / 400.0))
+                expected_away = 1.0 - expected_home
+                
+                # Actual scores
+                if game.home_score is not None and game.away_score is not None:
+                    actual_home = 1.0 if game.home_score > game.away_score else 0.0
+                    actual_away = 1.0 - actual_home
+                    
+                    # Update ratings
+                    self.ratings[game.home_team] = home_rating + self.k_factor * (actual_home - expected_home)
+                    self.ratings[game.away_team] = away_rating + self.k_factor * (actual_away - expected_away)
+            
+            update_time = time.time() - update_start
+            total_time = time.time() - start_time
+            logger.warning(f"EloModel._update_ratings: UPDATED RATINGS FOR {len(games)} GAMES (update took {update_time:.4f}s, total {total_time:.4f}s)")
     
-    async def predict(self, game: Game) -> Tuple[str, float, int]:
+    async def predict(self, game: Game, db: AsyncSession) -> Tuple[str, float, int]:
         """Predict winner using Elo ratings."""
-        async with AsyncSessionLocal() as db:
-            await self._get_team_ratings(db)
+        start_time = time.time()
+        logger.warning(f"EloModel.predict: STARTING PREDICTION for game {game.id} ({game.home_team} vs {game.away_team})")
+        
+        async with self._lock:
+            ratings = await self._get_team_ratings(db)
             await self._update_ratings(db)
             
-            home_rating = self.ratings.get(game.home_team, 1500.0)
-            away_rating = self.ratings.get(game.away_team, 1500.0)
+            home_rating = ratings.get(game.home_team, 1500.0)
+            away_rating = ratings.get(game.away_team, 1500.0)
             
             # Apply home advantage
             effective_home = home_rating + self.home_advantage
@@ -98,5 +117,8 @@ class EloModel(BaseModel):
             
             # Clamp margin to reasonable range
             margin = max(1, min(100, margin))
+            
+            total_time = time.time() - start_time
+            logger.warning(f"EloModel.predict: COMPLETED in {total_time:.4f}s | winner={winner}, confidence={confidence:.2f}, margin={margin}")
             
             return winner, confidence, margin

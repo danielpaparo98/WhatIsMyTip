@@ -1,0 +1,10 @@
+# https://www.robotstxt.org/robotstxt.html
+User-agent: *
+Allow: /
+
+# Disallow admin areas if any exist
+# Disallow: /admin/
+# Disallow: /api/
+
+# Sitemap
+Sitemap: https://whatismytip.com/sitemap.xml
