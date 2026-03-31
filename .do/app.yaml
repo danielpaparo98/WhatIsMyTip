@@ -48,17 +48,13 @@ services:
   - key: SQUIGGLE_API_BASE
     value: https://api.squiggle.com.au
   - key: SQUIGGLE_CONTACT_EMAIL
-    value: contact@whatismytip.com
+    value: 
   - key: OPENROUTER_API_KEY
     value: ${openrouter.OPENROUTER_API_KEY}
   - key: OPENROUTER_MODEL
     value: gptoss-120b
   - key: OPENROUTER_BASE_URL
     value: https://openrouter.ai/api/v1
-  - key: UMAMI_WEBSITE_ID
-    value: ${umami.UMAMI_WEBSITE_ID}
-  - key: UMAMI_HOST
-    value: ${umami.UMAMI_HOST}
   - key: ENVIRONMENT
     value: production
 static_sites:
