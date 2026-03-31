@@ -1,3 +1,42 @@
+// TypeScript interfaces for game detail response
+export interface Game {
+  id: number
+  squiggle_id: number
+  round_id: number
+  season: number
+  home_team: string
+  away_team: string
+  home_score: number | null
+  away_score: number | null
+  venue: string
+  date: string
+  completed: boolean
+}
+
+export interface Tip {
+  id: number
+  game_id: number
+  heuristic: string
+  selected_team: string
+  margin: number
+  confidence: number
+  explanation: string
+  created_at: string
+}
+
+export interface ModelPrediction {
+  model_name: string
+  winner: string
+  confidence: number
+  margin: number
+}
+
+export interface GameDetailResponse {
+  game: Game
+  tips: Tip[]
+  model_predictions: ModelPrediction[]
+}
+
 export const useApi = () => {
   const config = useRuntimeConfig()
   const apiBase = config.public.apiBase
@@ -45,6 +84,12 @@ export const useApi = () => {
   const getGame = async (gameId: number) => {
     const response = await fetchWithTimeout(`/api/games/${gameId}`)
     if (!response.ok) throw new Error('Failed to fetch game')
+    return response.json()
+  }
+  
+  const getGameDetail = async (gameId: number): Promise<GameDetailResponse> => {
+    const response = await fetchWithTimeout(`/api/games/${gameId}/detail`)
+    if (!response.ok) throw new Error('Failed to fetch game detail')
     return response.json()
   }
   
@@ -143,6 +188,7 @@ export const useApi = () => {
   return {
     getGames,
     getGame,
+    getGameDetail,
     getLatestRound,
     getTips,
     getTipsByHeuristic,
