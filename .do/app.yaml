@@ -1,11 +1,11 @@
-name: whatismytip-backend
-region: sfo3
+name: whatismytip
+region: syd1
 services:
   - name: api
     source_dir: backend
     environment_slug: python
     github:
-      repo: your-username/WhatIsMyTip
+      repo: danielpaparo98/WhatIsMyTip
       branch: main
       deploy_on_push: true
     build_command: uv sync
@@ -23,12 +23,18 @@ services:
         value: 60
       - key: SQUIGGLE_API_BASE
         value: https://api.squiggle.com.au
+      - key: SQUIGGLE_CONTACT_EMAIL
+        value: contact@whatismytip.com
       - key: OPENROUTER_API_KEY
         value: ${openrouter.OPENROUTER_API_KEY}
       - key: OPENROUTER_MODEL
         value: gptoss-120b
       - key: OPENROUTER_BASE_URL
         value: https://openrouter.ai/api/v1
+      - key: UMAMI_WEBSITE_ID
+        value: ${umami.UMAMI_WEBSITE_ID}
+      - key: UMAMI_HOST
+        value: ${umami.UMAMI_HOST}
       - key: ENVIRONMENT
         value: production
     instance_size: basic-xxs
@@ -37,3 +43,22 @@ services:
     routes:
       - path: /api
         preserve_path_prefix: true
+  - name: frontend
+    source_dir: frontend
+    environment_slug: nodejs
+    github:
+      repo: danielpaparo98/WhatIsMyTip
+      branch: main
+      deploy_on_push: true
+    build_command: bun install && bun run generate
+    output_dir: .output/public
+    envs:
+      - key: API_BASE_URL
+        value: https://whatismytip.com
+      - key: UMAMI_WEBSITE_ID
+        value: ${umami.UMAMI_WEBSITE_ID}
+      - key: UMAMI_HOST
+        value: ${umami.UMAMI_HOST}
+    routes:
+      - path: /
+        preserve_path_prefix: false
