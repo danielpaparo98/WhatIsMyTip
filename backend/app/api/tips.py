@@ -105,9 +105,11 @@ async def get_games_with_tips(
         
         # Fetch model predictions for all games in this round
         game_ids = [g.id for g in games]
+        predictions_by_game = await ModelPredictionCRUD.get_by_games(db, game_ids)
+
+        # Convert to schema format
         model_predictions_by_game = {}
-        for game_id in game_ids:
-            predictions_db = await ModelPredictionCRUD.get_by_game(db, game_id)
+        for game_id, predictions_db in predictions_by_game.items():
             model_predictions_by_game[game_id] = [
                 ModelPredictionSchema(
                     model_name=p.model_name,
