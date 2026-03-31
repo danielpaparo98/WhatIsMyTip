@@ -17,6 +17,8 @@ class Game(Base):
     venue = Column(String(200))
     date = Column(DateTime)
     completed = Column(Boolean, default=False)
+    predictions_generated = Column(Boolean, default=False, index=True)
+    tips_generated = Column(Boolean, default=False, index=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
