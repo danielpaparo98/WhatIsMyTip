@@ -1,8 +1,8 @@
 <template>
   <header class="header">
     <nav class="nav">
-      <NuxtLink to="/" class="logo">
-        <h1>WhatIsMyTip<span class="dot">.</span>com</h1>
+      <NuxtLink to="/" class="logo" aria-label="WhatIsMyTip home">
+        <span class="logo-text">WhatIsMyTip<span class="dot">.</span>com</span>
       </NuxtLink>
       <button
         class="mobile-menu-btn"
