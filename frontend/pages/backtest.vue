@@ -1,8 +1,5 @@
 <template>
-  <div>
-    <Header />
-    <main class="main">
-      <section class="hero">
+  <section class="hero">
         <h1>Backtesting</h1>
         <p>See how our heuristics performed historically.</p>
       </section>
@@ -219,13 +216,14 @@
             <p>No chart data available for this season.</p>
           </div>
         </div>
-      </section>
-    </main>
-    <Footer />
-  </div>
+  </section>
 </template>
 
 <script setup lang="ts">
+definePageMeta({
+  layout: 'default'
+})
+
 import { ref, watch, onMounted } from 'vue'
 
 const api = useApi()
@@ -428,12 +426,6 @@ onMounted(async () => {
 </script>
 
 <style scoped>
-.main {
-  max-width: 1400px;
-  margin: 0 auto;
-  padding: 2rem 1.5rem;
-}
-
 .hero {
   padding: 3rem 1.5rem;
   text-align: center;
@@ -795,10 +787,6 @@ onMounted(async () => {
 
 /* Mobile styles */
 @media (max-width: 640px) {
-  .main {
-    padding: 1.5rem 1rem;
-  }
-
   .hero {
     padding: 2.5rem 1rem;
   }
@@ -945,10 +933,6 @@ onMounted(async () => {
 
 /* Tablet styles */
 @media (min-width: 641px) and (max-width: 1024px) {
-  .main {
-    padding: 2rem 1.5rem;
-  }
-
   .hero {
     padding: 3.5rem 1.5rem;
   }
@@ -968,10 +952,6 @@ onMounted(async () => {
 
 /* Desktop styles */
 @media (min-width: 1025px) {
-  .main {
-    padding: 2rem;
-  }
-
   .hero {
     padding: 4rem 2rem;
   }

@@ -4,7 +4,6 @@ from sqlalchemy import select, and_
 from typing import Dict, Tuple, List
 from app.models_ml.base import BaseModel
 from app.models import Game
-from app.db import AsyncSessionLocal
 
 
 class FormModel(BaseModel):
@@ -64,44 +63,43 @@ class FormModel(BaseModel):
             "games": len(games),
         }
     
-    async def predict(self, game: Game) -> Tuple[str, float, int]:
+    async def predict(self, game: Game, db: AsyncSession) -> Tuple[str, float, int]:
         """Predict winner based on recent form."""
-        async with AsyncSessionLocal() as db:
-            home_form = await self._get_recent_form(db, game.home_team, game.date)
-            away_form = await self._get_recent_form(db, game.away_team, game.date)
-            
-            # Calculate form scores
-            home_score = (
-                home_form["wins"] * 2
-                - home_form["losses"]
-                + home_form["avg_score_diff"] / 10
-            )
-            away_score = (
-                away_form["wins"] * 2
-                - away_form["losses"]
-                + away_form["avg_score_diff"] / 10
-            )
-            
-            # Apply home advantage
-            home_score += 1.0
-            
-            # Calculate confidence
-            total_score = abs(home_score) + abs(away_score)
-            if total_score > 0:
-                confidence = abs(home_score - away_score) / (total_score + 1)
-            else:
-                confidence = 0.5
-            
-            # Predict winner
-            if home_score > away_score:
-                winner = game.home_team
-                margin = int(abs(home_score - away_score) * 5)
-            else:
-                winner = game.away_team
-                margin = int(abs(home_score - away_score) * 5)
-            
-            # Clamp values
-            confidence = max(0.5, min(0.95, confidence))
-            margin = max(1, min(100, margin))
-            
-            return winner, confidence, margin
+        home_form = await self._get_recent_form(db, game.home_team, game.date)
+        away_form = await self._get_recent_form(db, game.away_team, game.date)
+        
+        # Calculate form scores
+        home_score = (
+            home_form["wins"] * 2
+            - home_form["losses"]
+            + home_form["avg_score_diff"] / 10
+        )
+        away_score = (
+            away_form["wins"] * 2
+            - away_form["losses"]
+            + away_form["avg_score_diff"] / 10
+        )
+        
+        # Apply home advantage
+        home_score += 1.0
+        
+        # Calculate confidence
+        total_score = abs(home_score) + abs(away_score)
+        if total_score > 0:
+            confidence = abs(home_score - away_score) / (total_score + 1)
+        else:
+            confidence = 0.5
+        
+        # Predict winner
+        if home_score > away_score:
+            winner = game.home_team
+            margin = int(abs(home_score - away_score) * 5)
+        else:
+            winner = game.away_team
+            margin = int(abs(home_score - away_score) * 5)
+        
+        # Clamp values
+        confidence = max(0.5, min(0.95, confidence))
+        margin = max(1, min(100, margin))
+        
+        return winner, confidence, margin

@@ -6,10 +6,13 @@ Thread-safe for basic use cases.
 """
 import time
 import threading
+import asyncio
+import logging
 from typing import Any, Callable, Optional, TypeVar
 from functools import wraps
 
 T = TypeVar('T')
+logger = logging.getLogger(__name__)
 
 
 class CacheEntry:
@@ -135,13 +138,27 @@ def cached(
             cache_key = f"{key_prefix}{func.__name__}:{str(args)}:{str(sorted(kwargs.items()))}"
             
             # Try to get from cache
+            import time
+            start_time = time.time()
             cached_value = cache.get(cache_key)
+            cache_get_time = time.time() - start_time
+            
             if cached_value is not None:
+                logger.debug(f"CACHE HIT: {func.__name__} | cache_get_time: {cache_get_time:.4f}s")
                 return cached_value
             
+            logger.debug(f"CACHE MISS: {func.__name__} | cache_get_time: {cache_get_time:.4f}s")
+            
             # Execute function and cache result
+            func_start = time.time()
             result = await func(*args, **kwargs)
+            func_time = time.time() - func_start
+            
+            set_start = time.time()
             cache.set(cache_key, result, ttl)
+            set_time = time.time() - set_start
+            
+            logger.debug(f"CACHE SET: {func.__name__} | func_time: {func_time:.4f}s | set_time: {set_time:.4f}s")
             return result
         
         @wraps(func)
@@ -150,13 +167,27 @@ def cached(
             cache_key = f"{key_prefix}{func.__name__}:{str(args)}:{str(sorted(kwargs.items()))}"
             
             # Try to get from cache
+            import time
+            start_time = time.time()
             cached_value = cache.get(cache_key)
+            cache_get_time = time.time() - start_time
+            
             if cached_value is not None:
+                logger.debug(f"CACHE HIT (sync): {func.__name__} | cache_get_time: {cache_get_time:.4f}s")
                 return cached_value
             
+            logger.debug(f"CACHE MISS (sync): {func.__name__} | cache_get_time: {cache_get_time:.4f}s")
+            
             # Execute function and cache result
+            func_start = time.time()
             result = func(*args, **kwargs)
+            func_time = time.time() - func_start
+            
+            set_start = time.time()
             cache.set(cache_key, result, ttl)
+            set_time = time.time() - set_start
+            
+            logger.debug(f"CACHE SET (sync): {func.__name__} | func_time: {func_time:.4f}s | set_time: {set_time:.4f}s")
             return result
         
         # Return appropriate wrapper based on whether function is async
@@ -180,6 +211,9 @@ def invalidate_cache_pattern(cache: InMemoryCache, pattern: str) -> int:
     Returns:
         Number of keys invalidated
     """
+    import time
+    start_time = time.time()
+    
     with cache._lock:
         keys_to_delete = [
             key for key in cache._cache.keys()
@@ -187,4 +221,7 @@ def invalidate_cache_pattern(cache: InMemoryCache, pattern: str) -> int:
         ]
         for key in keys_to_delete:
             del cache._cache[key]
-        return len(keys_to_delete)
+    
+    elapsed = time.time() - start_time
+    logger.debug(f"CACHE INVALIDATE: pattern='{pattern}' | keys_deleted={len(keys_to_delete)} | time={elapsed:.4f}s")
+    return len(keys_to_delete)
