@@ -54,12 +54,10 @@
               <div class="teams">
                 <div class="team home">
                   <img :src="getLogoUrl(game.home_team)" :alt="game.home_team" class="team-logo" />
-                  <span>{{ game.home_team }}</span>
                 </div>
                 <span class="vs">VS</span>
                 <div class="team away">
                   <img :src="getLogoUrl(game.away_team)" :alt="game.away_team" class="team-logo" />
-                  <span>{{ game.away_team }}</span>
                 </div>
               </div>
               <div class="match-details">

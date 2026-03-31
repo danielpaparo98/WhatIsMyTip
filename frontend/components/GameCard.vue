@@ -7,13 +7,11 @@
     <div class="game-body">
       <div class="team home">
         <img :src="getLogoUrl(homeTeam)" :alt="homeTeam" class="team-logo" />
-        <span class="team-name">{{ homeTeam }}</span>
         <span v-if="homeScore !== null" class="score">{{ homeScore }}</span>
       </div>
       <div class="vs">VS</div>
       <div class="team away">
         <img :src="getLogoUrl(awayTeam)" :alt="awayTeam" class="team-logo" />
-        <span class="team-name">{{ awayTeam }}</span>
         <span v-if="awayScore !== null" class="score">{{ awayScore }}</span>
       </div>
     </div>
