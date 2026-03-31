@@ -129,7 +129,7 @@ class TipCRUD:
         Returns:
             Dict with generation results including tips count and heuristics used
         """
-        from app.crud import GameCRUD
+        from app.crud import GameCRUD, ModelPredictionCRUD
         from app.orchestrator import ModelOrchestrator
         
         # Get games for round
@@ -183,6 +183,24 @@ class TipCRUD:
                     if "uq_game_heuristic" in str(e) or "duplicate" in str(e).lower():
                         continue
                     raise
+            
+            # Generate and store model predictions for this game
+            for model in orchestrator.models:
+                try:
+                    winner, confidence, margin = await model.predict(game, db)
+                    await ModelPredictionCRUD.create_or_update(
+                        db=db,
+                        game_id=game.id,
+                        model_name=model.get_name(),
+                        winner=winner,
+                        confidence=confidence,
+                        margin=margin,
+                    )
+                except Exception as e:
+                    # Log error but continue with other models
+                    import logging
+                    logger = logging.getLogger(__name__)
+                    logger.error(f"Error generating prediction for model {model.get_name()}: {e}", exc_info=True)
         
         return {
             "success": True,

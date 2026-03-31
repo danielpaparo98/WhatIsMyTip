@@ -6,8 +6,8 @@ from slowapi.util import get_remote_address
 from typing import Optional
 
 from app.db import get_db
-from app.crud import TipCRUD, GameCRUD
-from app.schemas import TipResponse, TipListResponse
+from app.crud import TipCRUD, GameCRUD, ModelPredictionCRUD
+from app.schemas import TipResponse, TipListResponse, ModelPrediction as ModelPredictionSchema
 from app.models import Game, Tip
 from app.logger import get_logger
 
@@ -103,7 +103,22 @@ async def get_games_with_tips(
         # Create a dict of game_id -> tip
         tips_by_game = {tip.game_id: tip for tip in tips}
         
-        # Combine games with their tips
+        # Fetch model predictions for all games in this round
+        game_ids = [g.id for g in games]
+        model_predictions_by_game = {}
+        for game_id in game_ids:
+            predictions_db = await ModelPredictionCRUD.get_by_game(db, game_id)
+            model_predictions_by_game[game_id] = [
+                ModelPredictionSchema(
+                    model_name=p.model_name,
+                    winner=p.winner,
+                    confidence=p.confidence,
+                    margin=p.margin
+                )
+                for p in predictions_db
+            ]
+        
+        # Combine games with their tips and model predictions
         games_with_tips = []
         for game in games:
             game_dict = {
@@ -118,7 +133,8 @@ async def get_games_with_tips(
                 "venue": game.venue,
                 "date": game.date.isoformat() if game.date is not None else None,
                 "completed": game.completed,
-                "tip": None
+                "tip": None,
+                "model_predictions": model_predictions_by_game.get(game.id, [])
             }
             
             # Add tip if available

@@ -10,8 +10,8 @@ from typing import Optional, List
 from datetime import datetime
 
 from app.db import get_db
-from app.crud import GameCRUD, TipCRUD
-from app.schemas import GameResponse, GameListResponse, GameDetailResponse, ModelPrediction
+from app.crud import GameCRUD, TipCRUD, ModelPredictionCRUD
+from app.schemas import GameResponse, GameListResponse, GameDetailResponse, ModelPrediction as ModelPredictionSchema
 from app.models import Game
 
 router = APIRouter()
@@ -169,8 +169,23 @@ async def get_game_detail(
     tips_time = time.time() - tips_start
     logger.warning(f"get_game_detail: Tips fetch took {tips_time:.4f}s, found {len(tips)} tips")
     
-    # 3. Return empty model predictions for now (ML models need optimization)
-    model_predictions: List[ModelPrediction] = []
+    # 3. Fetch stored model predictions
+    model_predictions_start = time.time()
+    model_predictions_db = await ModelPredictionCRUD.get_by_game(db, game_id)
+    
+    # Convert database models to schema
+    model_predictions_list = [
+        ModelPredictionSchema(
+            model_name=p.model_name,
+            winner=p.winner,
+            confidence=p.confidence,
+            margin=p.margin
+        )
+        for p in model_predictions_db
+    ]
+    
+    model_predictions_time = time.time() - model_predictions_start
+    logger.warning(f"get_game_detail: Model predictions fetch took {model_predictions_time:.4f}s, found {len(model_predictions_list)} predictions")
     
     total_time = time.time() - start_time
     logger.warning(f"get_game_detail: COMPLETED in {total_time:.4f}s")
@@ -179,5 +194,5 @@ async def get_game_detail(
     return GameDetailResponse(
         game=GameResponse.model_validate(game),
         tips=[tip for tip in tips],
-        model_predictions=model_predictions
+        model_predictions=model_predictions_list
     )

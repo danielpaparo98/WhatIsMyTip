@@ -9,16 +9,12 @@
     <!-- Error State -->
     <div v-else-if="error" class="error">
       <h2>Error</h2>
-      <p>{{ error }}</p>
-      <NuxtLink to="/" class="back-link">← Back to Home</NuxtLink>
-    </div>
+      <p>{{ error }}</p>    </div>
 
     <!-- Game Detail Content -->
     <div v-else-if="gameDetail" class="content">
       <!-- Header Section -->
-      <section class="game-header-section">
-        <NuxtLink to="/" class="back-link">← Back to Home</NuxtLink>
-        
+      <section class="game-header-section">        
         <div class="game-info">
           <div class="round-season">
             <span class="round">Round {{ gameDetail.game.round_id }}</span>

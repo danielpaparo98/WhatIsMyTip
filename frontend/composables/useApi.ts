@@ -37,6 +37,27 @@ export interface GameDetailResponse {
   model_predictions: ModelPrediction[]
 }
 
+export interface GameWithTip {
+  id: number
+  squiggle_id: number
+  round_id: number
+  season: number
+  home_team: string
+  away_team: string
+  home_score: number | null
+  away_score: number | null
+  venue: string
+  date: string
+  completed: boolean
+  tip: Tip | null
+  model_predictions: ModelPrediction[]
+}
+
+export interface GamesWithTipsResponse {
+  games: GameWithTip[]
+  count: number
+}
+
 export const useApi = () => {
   const config = useRuntimeConfig()
   const apiBase = config.public.apiBase
@@ -126,7 +147,7 @@ export const useApi = () => {
     return response.json()
   }
   
-  const getGamesWithTips = async (season: number, round: number, heuristic: string = 'best_bet') => {
+  const getGamesWithTips = async (season: number, round: number, heuristic: string = 'best_bet'): Promise<GamesWithTipsResponse> => {
     const queryParams = new URLSearchParams()
     queryParams.append('season', season.toString())
     queryParams.append('round', round.toString())
