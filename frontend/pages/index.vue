@@ -84,6 +84,24 @@
             <div v-else class="no-tip">
               <p>No tip available</p>
             </div>
+            
+            <!-- Model Predictions -->
+            <div v-if="game.model_predictions && game.model_predictions.length > 0" class="model-predictions">
+              <div class="models-header">
+                <span class="models-label">Model Predictions</span>
+              </div>
+              <div class="models-list">
+                <div
+                  v-for="prediction in game.model_predictions"
+                  :key="prediction.model_name"
+                  class="model-item"
+                >
+                  <span class="model-name">{{ getModelDisplayName(prediction.model_name) }}</span>
+                  <span class="model-prediction">{{ prediction.winner }}</span>
+                  <span class="model-confidence">{{ Math.round(prediction.confidence * 100) }}%</span>
+                </div>
+              </div>
+            </div>
             </div>
           </NuxtLink>
         </div>
@@ -200,6 +218,16 @@ const formatHeuristic = (h: string) => {
     high_risk_high_reward: 'High Risk'
   }
   return labels[h] || h
+}
+
+const getModelDisplayName = (modelName: string) => {
+  const names: Record<string, string> = {
+    elo: 'Elo Rating',
+    form: 'Form',
+    home_advantage: 'Home Advantage',
+    value: 'Value'
+  }
+  return names[modelName] || modelName
 }
 
 const getLogoUrl = (teamName: string): string => {
@@ -479,6 +507,53 @@ onMounted(() => {
   text-align: center;
   padding: 1.5rem;
   color: var(--color-muted);
+}
+
+/* Model Predictions */
+.model-predictions {
+  margin-top: 1.25rem;
+  padding-top: 1.25rem;
+  border-top: 1px solid var(--color-border);
+}
+
+.models-header {
+  margin-bottom: 0.75rem;
+}
+
+.models-label {
+  font-size: 0.6875rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--color-muted);
+}
+
+.models-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.model-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.5rem 0;
+  font-size: 0.8125rem;
+}
+
+.model-name {
+  font-weight: 600;
+  color: var(--color-muted);
+}
+
+.model-prediction {
+  font-weight: 700;
+}
+
+.model-confidence {
+  font-weight: 700;
+  color: var(--color-text);
 }
 
 /* Mobile styles */
