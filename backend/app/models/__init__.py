@@ -1,5 +1,6 @@
 from sqlalchemy import Column, Integer, String, Float, DateTime, Text, Boolean, UniqueConstraint
 from sqlalchemy.sql import func
+from datetime import datetime
 from app.db import Base
 
 
@@ -72,3 +73,18 @@ class BacktestResult(Base):
     __table_args__ = (
         UniqueConstraint('season', 'round_id', 'heuristic', name='uq_backtest_season_round_heuristic'),
     )
+
+
+class GenerationProgress(Base):
+    __tablename__ = "generation_progress"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    operation_type = Column(String(50), index=True)  # e.g., "historical_generation", "season_sync"
+    season = Column(Integer, nullable=True, index=True)
+    total_items = Column(Integer, default=0)
+    completed_items = Column(Integer, default=0)
+    status = Column(String(20), default="pending")  # pending, in_progress, completed, failed
+    error_message = Column(Text, nullable=True)
+    started_at = Column(DateTime, default=datetime.utcnow)
+    completed_at = Column(DateTime, nullable=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
