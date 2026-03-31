@@ -215,34 +215,34 @@ const plugins: Plugin<'line'>[] = []
 <style scoped>
 .chart-container {
   border: 1px solid var(--color-border);
-  padding: 1.5rem;
+  padding: 1.25rem;
   border-radius: 0.5rem;
 }
 
 .chart-title {
-  font-size: 1.125rem;
+  font-size: 1rem;
   font-weight: 600;
-  margin-bottom: 1rem;
+  margin-bottom: 0.875rem;
   text-align: center;
 }
 
 .chart-wrapper {
   position: relative;
-  height: 400px;
+  height: 350px;
   width: 100%;
 }
 
 .chart-loading,
 .chart-empty {
-  height: 400px;
+  height: 350px;
   display: flex;
   align-items: center;
   justify-content: center;
 }
 
 .spinner {
-  width: 40px;
-  height: 40px;
+  width: 36px;
+  height: 36px;
   border: 3px solid var(--color-border);
   border-top-color: var(--color-text);
   border-radius: 50%;
@@ -258,5 +258,69 @@ const plugins: Plugin<'line'>[] = []
 .chart-empty p {
   color: var(--color-muted);
   font-style: italic;
+}
+
+/* Mobile styles */
+@media (max-width: 640px) {
+  .chart-container {
+    padding: 1rem;
+  }
+
+  .chart-title {
+    font-size: 0.9375rem;
+    margin-bottom: 0.75rem;
+  }
+
+  .chart-wrapper {
+    height: 300px;
+  }
+
+  .chart-loading,
+  .chart-empty {
+    height: 300px;
+  }
+
+  .spinner {
+    width: 32px;
+    height: 32px;
+  }
+}
+
+/* Tablet styles */
+@media (min-width: 641px) and (max-width: 1024px) {
+  .chart-wrapper {
+    height: 350px;
+  }
+
+  .chart-loading,
+  .chart-empty {
+    height: 350px;
+  }
+}
+
+/* Desktop styles */
+@media (min-width: 1025px) {
+  .chart-container {
+    padding: 1.5rem;
+  }
+
+  .chart-title {
+    font-size: 1.125rem;
+    margin-bottom: 1rem;
+  }
+
+  .chart-wrapper {
+    height: 400px;
+  }
+
+  .chart-loading,
+  .chart-empty {
+    height: 400px;
+  }
+
+  .spinner {
+    width: 40px;
+    height: 40px;
+  }
 }
 </style>

@@ -128,25 +128,25 @@
 .main {
   max-width: 800px;
   margin: 0 auto;
-  padding: 2rem;
+  padding: 2rem 1.5rem;
 }
 
 .hero {
-  padding: 4rem 2rem;
+  padding: 3rem 1.5rem;
   text-align: center;
 }
 
 .hero h1 {
-  font-size: clamp(2.5rem, 8vw, 4rem);
+  font-size: clamp(2rem, 6vw, 4rem);
   margin-bottom: 1rem;
 }
 
 .section {
-  padding: 4rem 2rem;
+  padding: 3rem 1.5rem;
 }
 
 .section h2 {
-  margin-bottom: 2rem;
+  margin-bottom: 1.5rem;
 }
 
 .content {
@@ -155,22 +155,22 @@
 
 .models {
   display: grid;
-  gap: 2rem;
+  gap: 1.5rem;
 }
 
 .model-card {
   border: 1px solid var(--color-border);
-  padding: 2rem;
+  padding: 1.5rem;
 }
 
 .model-card h3 {
-  font-size: 1.5rem;
-  margin-bottom: 1rem;
+  font-size: 1.25rem;
+  margin-bottom: 0.875rem;
 }
 
 .model-card ul {
-  margin-top: 1rem;
-  padding-left: 1.5rem;
+  margin-top: 0.875rem;
+  padding-left: 1.25rem;
 }
 
 .model-card li {
@@ -179,16 +179,111 @@
 
 .heuristics {
   display: grid;
-  gap: 2rem;
+  gap: 1.5rem;
 }
 
 .heuristic-card {
   border: 1px solid var(--color-border);
-  padding: 2rem;
+  padding: 1.5rem;
 }
 
 .heuristic-card h3 {
-  font-size: 1.5rem;
-  margin-bottom: 1rem;
+  font-size: 1.25rem;
+  margin-bottom: 0.875rem;
+}
+
+/* Mobile styles */
+@media (max-width: 640px) {
+  .main {
+    padding: 1.5rem 1rem;
+  }
+
+  .hero {
+    padding: 2.5rem 1rem;
+  }
+
+  .hero h1 {
+    margin-bottom: 0.875rem;
+  }
+
+  .section {
+    padding: 2rem 1rem;
+  }
+
+  .section h2 {
+    margin-bottom: 1.25rem;
+  }
+
+  .model-card,
+  .heuristic-card {
+    padding: 1.25rem;
+  }
+
+  .model-card h3,
+  .heuristic-card h3 {
+    font-size: 1.125rem;
+  }
+
+  .model-card ul {
+    padding-left: 1rem;
+  }
+}
+
+/* Tablet styles */
+@media (min-width: 641px) and (max-width: 1024px) {
+  .models {
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  }
+
+  .heuristics {
+    grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+  }
+}
+
+/* Desktop styles */
+@media (min-width: 1025px) {
+  .main {
+    padding: 2rem;
+  }
+
+  .hero {
+    padding: 4rem 2rem;
+  }
+
+  .hero h1 {
+    font-size: clamp(2.5rem, 8vw, 4rem);
+  }
+
+  .section {
+    padding: 4rem 2rem;
+  }
+
+  .section h2 {
+    margin-bottom: 2rem;
+  }
+
+  .models {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 2rem;
+  }
+
+  .heuristics {
+    grid-template-columns: repeat(3, 1fr);
+    gap: 2rem;
+  }
+
+  .model-card,
+  .heuristic-card {
+    padding: 2rem;
+  }
+
+  .model-card h3,
+  .heuristic-card h3 {
+    font-size: 1.5rem;
+  }
+
+  .model-card ul {
+    padding-left: 1.5rem;
+  }
 }
 </style>

@@ -400,29 +400,29 @@ onMounted(async () => {
 .main {
   max-width: 1400px;
   margin: 0 auto;
-  padding: 2rem;
+  padding: 2rem 1.5rem;
 }
 
 .hero {
-  padding: 4rem 2rem;
+  padding: 3rem 1.5rem;
   text-align: center;
 }
 
 .hero h1 {
-  font-size: clamp(2.5rem, 8vw, 4rem);
+  font-size: clamp(2rem, 6vw, 4rem);
   margin-bottom: 1rem;
 }
 
 /* Current Season Styles */
 .current-season-section {
-  padding: 3rem 2rem;
+  padding: 2rem 1.5rem;
   background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%);
   border-bottom: 2px solid var(--color-border);
 }
 
 .current-season-header {
   text-align: center;
-  margin-bottom: 2rem;
+  margin-bottom: 1.5rem;
 }
 
 .current-season-header h2 {
@@ -431,31 +431,31 @@ onMounted(async () => {
 
 .badge {
   display: inline-block;
-  padding: 0.5rem 1rem;
+  padding: 0.375rem 0.75rem;
   background: var(--color-text);
   color: var(--color-bg);
   border-radius: 2rem;
   font-weight: 700;
-  font-size: 0.875rem;
+  font-size: 0.8125rem;
 }
 
 .season-progress {
-  font-size: 1rem;
+  font-size: 0.9375rem;
   color: var(--color-muted);
   font-weight: 600;
 }
 
 .current-season-cards {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-  gap: 1.5rem;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 1.25rem;
 }
 
 .current-season-card {
   background: var(--color-bg);
   border: 2px solid var(--color-text);
   border-radius: 0.75rem;
-  padding: 1.5rem;
+  padding: 1.25rem;
   box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
 }
 
@@ -463,30 +463,30 @@ onMounted(async () => {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 1.5rem;
-  padding-bottom: 1rem;
+  margin-bottom: 1.25rem;
+  padding-bottom: 0.875rem;
   border-bottom: 1px solid var(--color-border);
 }
 
 .card-header h3 {
-  font-size: 1.125rem;
+  font-size: 1rem;
   font-weight: 700;
   margin: 0;
 }
 
 .heuristic-badge {
-  padding: 0.25rem 0.75rem;
+  padding: 0.25rem 0.625rem;
   background: #10b981;
   color: white;
   border-radius: 1rem;
-  font-size: 0.75rem;
+  font-size: 0.6875rem;
   font-weight: 600;
 }
 
 .card-stats {
   display: flex;
   flex-direction: column;
-  gap: 1rem;
+  gap: 0.875rem;
 }
 
 .stat-row {
@@ -496,13 +496,13 @@ onMounted(async () => {
 }
 
 .stat-label {
-  font-size: 0.875rem;
+  font-size: 0.8125rem;
   font-weight: 600;
   color: var(--color-muted);
 }
 
 .stat-value {
-  font-size: 1.125rem;
+  font-size: 1rem;
   font-weight: 700;
 }
 
@@ -515,31 +515,31 @@ onMounted(async () => {
 }
 
 .stat-value.projected {
-  font-size: 1.25rem;
+  font-size: 1.125rem;
   font-weight: 800;
 }
 
 .section {
-  padding: 4rem 2rem;
+  padding: 3rem 1.5rem;
 }
 
 .section h2 {
   text-align: center;
-  margin-bottom: 2rem;
+  margin-bottom: 1.5rem;
 }
 
 .controls {
   display: flex;
-  gap: 1rem;
+  gap: 0.75rem;
   justify-content: center;
   align-items: center;
-  margin-bottom: 3rem;
+  margin-bottom: 2rem;
   flex-wrap: wrap;
 }
 
 .view-toggle {
   display: flex;
-  gap: 0.5rem;
+  gap: 0.375rem;
   background: var(--color-bg);
   border: 2px solid var(--color-text);
   border-radius: 0.5rem;
@@ -547,15 +547,17 @@ onMounted(async () => {
 }
 
 .toggle-btn {
-  padding: 0.5rem 1rem;
+  padding: 0.5rem 0.75rem;
   background: transparent;
   border: none;
   color: var(--color-text);
   cursor: pointer;
   font-weight: 600;
-  font-size: 0.875rem;
+  font-size: 0.8125rem;
   border-radius: 0.25rem;
   transition: all 0.2s ease;
+  min-height: 44px;
+  min-width: 44px;
 }
 
 .toggle-btn:hover {
@@ -568,13 +570,14 @@ onMounted(async () => {
 }
 
 .select {
-  padding: 0.875rem 2rem;
-  font-size: 1rem;
+  padding: 0.75rem 1.5rem;
+  font-size: 0.9375rem;
   font-weight: 700;
   border: 2px solid var(--color-text);
   background: var(--color-bg);
   color: var(--color-text);
   cursor: pointer;
+  min-height: 44px;
 }
 
 .select:disabled {
@@ -584,7 +587,7 @@ onMounted(async () => {
 
 .loading, .error {
   text-align: center;
-  padding: 4rem 2rem;
+  padding: 3rem 1.5rem;
 }
 
 .sync-message {
@@ -595,33 +598,33 @@ onMounted(async () => {
 }
 
 .sync-message p {
-  font-size: 1.125rem;
+  font-size: 1rem;
   font-weight: 600;
   color: var(--color-text);
 }
 
 .comparison {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-  gap: 2rem;
+  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+  gap: 1.5rem;
 }
 
 .stat-card {
   border: 1px solid var(--color-border);
-  padding: 2rem;
+  padding: 1.5rem;
 }
 
 .stat-card h3 {
-  font-size: 1.25rem;
-  margin-bottom: 1.5rem;
-  padding-bottom: 1rem;
+  font-size: 1.125rem;
+  margin-bottom: 1.25rem;
+  padding-bottom: 0.875rem;
   border-bottom: 1px solid var(--color-border);
 }
 
 .stat-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 1.5rem;
+  gap: 1.25rem;
 }
 
 .stat {
@@ -631,7 +634,7 @@ onMounted(async () => {
 }
 
 .stat-label {
-  font-size: 0.75rem;
+  font-size: 0.6875rem;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.1em;
@@ -639,7 +642,7 @@ onMounted(async () => {
 }
 
 .stat-value {
-  font-size: 1.5rem;
+  font-size: 1.25rem;
   font-weight: 800;
 }
 
@@ -659,27 +662,28 @@ onMounted(async () => {
 .tables-container {
   display: flex;
   flex-direction: column;
-  gap: 3rem;
+  gap: 2rem;
 }
 
 .table-wrapper {
   border: 1px solid var(--color-border);
-  padding: 2rem;
+  padding: 1.5rem;
 }
 
 .table-header {
-  margin-bottom: 1.5rem;
+  margin-bottom: 1.25rem;
 }
 
 .table-header h3 {
-  font-size: 1.25rem;
-  margin-bottom: 1rem;
+  font-size: 1.125rem;
+  margin-bottom: 0.875rem;
 }
 
 .table-summary {
   display: flex;
-  gap: 2rem;
-  font-size: 0.875rem;
+  gap: 1.5rem;
+  font-size: 0.8125rem;
+  flex-wrap: wrap;
 }
 
 .summary-item {
@@ -693,7 +697,7 @@ onMounted(async () => {
 .data-table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 0.875rem;
+  font-size: 0.8125rem;
 }
 
 .data-table thead {
@@ -701,12 +705,12 @@ onMounted(async () => {
 }
 
 .data-table th {
-  padding: 0.75rem 1rem;
+  padding: 0.625rem 0.875rem;
   text-align: left;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.05em;
-  font-size: 0.75rem;
+  font-size: 0.6875rem;
 }
 
 .data-table tbody tr {
@@ -718,7 +722,7 @@ onMounted(async () => {
 }
 
 .data-table td {
-  padding: 0.75rem 1rem;
+  padding: 0.625rem 0.875rem;
 }
 
 .data-table td.positive {
@@ -733,7 +737,7 @@ onMounted(async () => {
 
 .empty-state {
   text-align: center;
-  padding: 4rem 2rem;
+  padding: 3rem 1.5rem;
   color: var(--color-muted);
 }
 
@@ -745,22 +749,362 @@ onMounted(async () => {
 .charts-container {
   display: flex;
   flex-direction: column;
-  gap: 2rem;
+  gap: 1.5rem;
 }
 
 .charts-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(500px, 1fr));
-  gap: 2rem;
+  grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+  gap: 1.5rem;
 }
 
 .charts-full-width {
   width: 100%;
 }
 
-@media (max-width: 768px) {
+/* Mobile styles */
+@media (max-width: 640px) {
+  .main {
+    padding: 1.5rem 1rem;
+  }
+
+  .hero {
+    padding: 2.5rem 1rem;
+  }
+
+  .hero h1 {
+    margin-bottom: 0.875rem;
+  }
+
+  .current-season-section {
+    padding: 1.5rem 1rem;
+  }
+
+  .current-season-header {
+    margin-bottom: 1rem;
+  }
+
+  .badge {
+    font-size: 0.75rem;
+    padding: 0.25rem 0.625rem;
+  }
+
+  .season-progress {
+    font-size: 0.875rem;
+  }
+
+  .current-season-cards {
+    grid-template-columns: 1fr;
+    gap: 1rem;
+  }
+
+  .current-season-card {
+    padding: 1rem;
+  }
+
+  .card-header h3 {
+    font-size: 0.9375rem;
+  }
+
+  .stat-row {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.25rem;
+  }
+
+  .stat-value {
+    font-size: 1.125rem;
+  }
+
+  .stat-value.projected {
+    font-size: 1.25rem;
+  }
+
+  .section {
+    padding: 2rem 1rem;
+  }
+
+  .section h2 {
+    margin-bottom: 1.25rem;
+  }
+
+  .controls {
+    flex-direction: column;
+    gap: 1rem;
+    width: 100%;
+  }
+
+  .view-toggle {
+    width: 100%;
+  }
+
+  .toggle-btn {
+    flex: 1;
+    padding: 0.5rem 0.625rem;
+    font-size: 0.75rem;
+  }
+
+  .select {
+    width: 100%;
+    padding: 0.625rem 1rem;
+  }
+
+  .comparison {
+    grid-template-columns: 1fr;
+    gap: 1rem;
+  }
+
+  .stat-card {
+    padding: 1.25rem;
+  }
+
+  .stat-card h3 {
+    font-size: 1rem;
+    margin-bottom: 1rem;
+  }
+
+  .stat-grid {
+    grid-template-columns: 1fr;
+    gap: 1rem;
+  }
+
+  .stat-value {
+    font-size: 1.125rem;
+  }
+
+  .tables-container {
+    gap: 1.5rem;
+  }
+
+  .table-wrapper {
+    padding: 1rem;
+  }
+
+  .table-header h3 {
+    font-size: 1rem;
+  }
+
+  .table-summary {
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+
+  .data-table {
+    font-size: 0.75rem;
+  }
+
+  .data-table th,
+  .data-table td {
+    padding: 0.5rem 0.625rem;
+  }
+
   .charts-grid {
     grid-template-columns: 1fr;
+    gap: 1rem;
+  }
+
+  .loading, .error {
+    padding: 2rem 1rem;
+  }
+
+  .sync-message p {
+    font-size: 0.9375rem;
+  }
+}
+
+/* Tablet styles */
+@media (min-width: 641px) and (max-width: 1024px) {
+  .main {
+    padding: 2rem 1.5rem;
+  }
+
+  .hero {
+    padding: 3.5rem 1.5rem;
+  }
+
+  .current-season-section {
+    padding: 2.5rem 1.5rem;
+  }
+
+  .current-season-cards {
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  }
+
+  .charts-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Desktop styles */
+@media (min-width: 1025px) {
+  .main {
+    padding: 2rem;
+  }
+
+  .hero {
+    padding: 4rem 2rem;
+  }
+
+  .hero h1 {
+    font-size: clamp(2.5rem, 8vw, 4rem);
+  }
+
+  .current-season-section {
+    padding: 3rem 2rem;
+  }
+
+  .current-season-header {
+    margin-bottom: 2rem;
+  }
+
+  .badge {
+    padding: 0.5rem 1rem;
+    font-size: 0.875rem;
+  }
+
+  .season-progress {
+    font-size: 1rem;
+  }
+
+  .current-season-cards {
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+    gap: 1.5rem;
+  }
+
+  .current-season-card {
+    padding: 1.5rem;
+  }
+
+  .card-header h3 {
+    font-size: 1.125rem;
+  }
+
+  .card-header {
+    margin-bottom: 1.5rem;
+    padding-bottom: 1rem;
+  }
+
+  .card-stats {
+    gap: 1rem;
+  }
+
+  .stat-label {
+    font-size: 0.875rem;
+  }
+
+  .stat-value {
+    font-size: 1.125rem;
+  }
+
+  .stat-value.projected {
+    font-size: 1.25rem;
+  }
+
+  .section {
+    padding: 4rem 2rem;
+  }
+
+  .section h2 {
+    margin-bottom: 2rem;
+  }
+
+  .controls {
+    gap: 1rem;
+    margin-bottom: 3rem;
+  }
+
+  .toggle-btn {
+    padding: 0.5rem 1rem;
+    font-size: 0.875rem;
+  }
+
+  .select {
+    padding: 0.875rem 2rem;
+    font-size: 1rem;
+  }
+
+  .loading, .error {
+    padding: 4rem 2rem;
+  }
+
+  .sync-message p {
+    font-size: 1.125rem;
+  }
+
+  .comparison {
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 2rem;
+  }
+
+  .stat-card {
+    padding: 2rem;
+  }
+
+  .stat-card h3 {
+    font-size: 1.25rem;
+    margin-bottom: 1.5rem;
+    padding-bottom: 1rem;
+  }
+
+  .stat-grid {
+    grid-template-columns: 1fr 1fr;
+    gap: 1.5rem;
+  }
+
+  .stat-label {
+    font-size: 0.75rem;
+  }
+
+  .stat-value {
+    font-size: 1.5rem;
+  }
+
+  .tables-container {
+    gap: 3rem;
+  }
+
+  .table-wrapper {
+    padding: 2rem;
+  }
+
+  .table-header {
+    margin-bottom: 1.5rem;
+  }
+
+  .table-header h3 {
+    font-size: 1.25rem;
+    margin-bottom: 1rem;
+  }
+
+  .table-summary {
+    gap: 2rem;
+    font-size: 0.875rem;
+  }
+
+  .data-table {
+    font-size: 0.875rem;
+  }
+
+  .data-table th {
+    padding: 0.75rem 1rem;
+    font-size: 0.75rem;
+  }
+
+  .data-table td {
+    padding: 0.75rem 1rem;
+  }
+
+  .empty-state {
+    padding: 4rem 2rem;
+  }
+
+  .charts-container {
+    gap: 2rem;
+  }
+
+  .charts-grid {
+    grid-template-columns: repeat(auto-fit, minmax(500px, 1fr));
+    gap: 2rem;
   }
 }
 </style>
