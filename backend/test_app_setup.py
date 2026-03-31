@@ -17,7 +17,7 @@ from app.logger import get_logger
 
 logger = get_logger(__name__)
 
-print("✓ All imports successful")
+print("[OK] All imports successful")
 
 # Create app
 app = FastAPI(
@@ -25,7 +25,7 @@ app = FastAPI(
     description="AI-powered footy tipping API",
     version="0.1.0",
 )
-print("✓ FastAPI app created")
+print("[OK] FastAPI app created")
 
 # Add CORS
 app.add_middleware(
@@ -35,16 +35,16 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-print("✓ CORS middleware added")
+print("[OK] CORS middleware added")
 
 # Add rate limiter
 limiter = Limiter(key_func=get_remote_address)
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
-print("✓ Rate limiter added")
+print("[OK] Rate limiter added")
 
 # Include API routes
 app.include_router(api_router)
-print("✓ API routes included")
+print("[OK] API routes included")
 
-print("\n✓ App setup complete!")
+print("\n[OK] App setup complete!")
