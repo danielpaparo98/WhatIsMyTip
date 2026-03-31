@@ -52,9 +52,15 @@
             <!-- Match Info -->
             <div class="match-info">
               <div class="teams">
-                <span class="team home">{{ game.home_team }}</span>
+                <div class="team home">
+                  <img :src="getLogoUrl(game.home_team)" :alt="game.home_team" class="team-logo" />
+                  <span>{{ game.home_team }}</span>
+                </div>
                 <span class="vs">VS</span>
-                <span class="team away">{{ game.away_team }}</span>
+                <div class="team away">
+                  <img :src="getLogoUrl(game.away_team)" :alt="game.away_team" class="team-logo" />
+                  <span>{{ game.away_team }}</span>
+                </div>
               </div>
               <div class="match-details">
                 <span class="venue">{{ game.venue }}</span>
@@ -191,6 +197,33 @@ const formatHeuristic = (h: string) => {
     high_risk_high_reward: 'High Risk'
   }
   return labels[h] || h
+}
+
+const getLogoUrl = (teamName: string): string => {
+  // Map team names to logo filenames
+  const logoMap: Record<string, string> = {
+    'Adelaide': 'Adelaide.png',
+    'Brisbane Lions': 'Brisbane.png',
+    'Carlton': 'Carlton.png',
+    'Collingwood': 'Collingwood.png',
+    'Essendon': 'Essendon.png',
+    'Fremantle': 'Fremantle.png',
+    'Geelong': 'Geelong.png',
+    'Gold Coast': 'GoldCoast.png',
+    'Greater Western Sydney': 'Giants.png',
+    'Hawthorn': 'Hawthorn.png',
+    'Melbourne': 'Melbourne.png',
+    'North Melbourne': 'NorthMelbourne.png',
+    'Port Adelaide': 'PortAdelaide.png',
+    'Richmond': 'Richmond.png',
+    'St Kilda': 'StKilda.png',
+    'Sydney': 'Sydney.png',
+    'West Coast': 'WestCoast.png',
+    'Western Bulldogs': 'Bulldogs.png',
+  }
+  
+  const filename = logoMap[teamName] || ''
+  return filename ? `/logos/${filename}` : ''
 }
 
 // Reload games when heuristic changes
@@ -356,14 +389,25 @@ onMounted(() => {
   flex: 1;
   font-size: 1.125rem;
   font-weight: 700;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
 }
 
 .team.home {
   text-align: right;
+  justify-content: flex-end;
 }
 
 .team.away {
   text-align: left;
+  justify-content: flex-start;
+}
+
+.team-logo {
+  width: 40px;
+  height: 40px;
+  object-fit: contain;
 }
 
 .vs {
