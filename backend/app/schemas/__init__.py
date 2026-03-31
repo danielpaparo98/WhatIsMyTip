@@ -1,4 +1,4 @@
-from .games import GameResponse, GameListResponse
+from .games import GameResponse, GameListResponse, GameDetailResponse, ModelPrediction
 from .tips import TipResponse, TipCreate, TipListResponse
 from .backtest import (
     BacktestResponse,
@@ -16,6 +16,8 @@ from .backtest import (
 __all__ = [
     "GameResponse",
     "GameListResponse",
+    "GameDetailResponse",
+    "ModelPrediction",
     "TipResponse",
     "TipCreate",
     "TipListResponse",

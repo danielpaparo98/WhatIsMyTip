@@ -1,15 +1,17 @@
+import asyncio
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_, func
 from slowapi import Limiter
 from slowapi.util import get_remote_address
-from typing import Optional
+from typing import Optional, List
 from datetime import datetime
 
 from app.db import get_db
-from app.crud import GameCRUD
-from app.schemas import GameResponse, GameListResponse
+from app.crud import GameCRUD, TipCRUD
+from app.schemas import GameResponse, GameListResponse, GameDetailResponse, ModelPrediction
 from app.models import Game
+from app.orchestrator import ModelOrchestrator
 
 router = APIRouter()
 limiter = Limiter(key_func=get_remote_address)
@@ -132,3 +134,48 @@ async def get_game(
     if not game:
         raise HTTPException(status_code=404, detail="Game not found")
     return GameResponse.model_validate(game)
+
+
+@router.get("/{game_id}/detail", response_model=GameDetailResponse)
+@limiter.limit("60/minute")
+async def get_game_detail(
+    request: Request,
+    game_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Get comprehensive game details including:
+    - Game information
+    - All tips for all heuristics (best_bet, yolo, high_risk_high_reward)
+    - Model predictions from all 4 ML models (elo, form, home_advantage, value)
+    """
+    # 1. Fetch game by id
+    game = await GameCRUD.get_by_id(db, game_id)
+    if not game:
+        raise HTTPException(status_code=404, detail="Game not found")
+    
+    # 2. Fetch all tips for this game (all heuristics)
+    tips = await TipCRUD.get_by_game(db, game_id)
+    
+    # 3. Use ModelOrchestrator to get model predictions from all 4 models
+    orchestrator = ModelOrchestrator()
+    
+    # Get predictions from each model sequentially (to avoid DB session conflicts)
+    model_predictions: List[ModelPrediction] = []
+    for model in orchestrator.models:
+        winner, confidence, margin = await model.predict(game)
+        model_predictions.append(
+            ModelPrediction(
+                model_name=model.get_name(),
+                winner=winner,
+                confidence=confidence,
+                margin=margin
+            )
+        )
+    
+    # 4. Return combined response
+    return GameDetailResponse(
+        game=GameResponse.model_validate(game),
+        tips=[tip for tip in tips],
+        model_predictions=model_predictions
+    )
