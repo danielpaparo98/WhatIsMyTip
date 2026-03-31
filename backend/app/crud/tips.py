@@ -2,6 +2,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_
 from typing import List, Optional
 from app.models import Tip
+from app.cache import cached, short_cache, medium_cache
 
 
 class TipCRUD:
@@ -22,6 +23,7 @@ class TipCRUD:
         return list(result.scalars().all())
     
     @staticmethod
+    @cached(cache=short_cache, key_prefix="tips_by_heuristic:")
     async def get_by_heuristic(
         db: AsyncSession, heuristic: str, limit: int = 100
     ) -> List[Tip]:
@@ -35,6 +37,7 @@ class TipCRUD:
         return list(result.scalars().all())
     
     @staticmethod
+    @cached(cache=short_cache, key_prefix="tips_by_round:")
     async def get_by_round(
         db: AsyncSession, season: int, round_id: int
     ) -> List[Tip]:
@@ -62,6 +65,8 @@ class TipCRUD:
         explanation: str,
     ) -> Tip:
         """Create a new tip with proper transaction management."""
+        from app.cache import invalidate_cache_pattern
+        
         try:
             tip = Tip(
                 game_id=game_id,
@@ -74,6 +79,11 @@ class TipCRUD:
             db.add(tip)
             await db.commit()
             await db.refresh(tip)
+            
+            # Invalidate cache for tip-related queries
+            invalidate_cache_pattern(short_cache, "tips_by_heuristic:")
+            invalidate_cache_pattern(short_cache, "tips_by_round:")
+            
             return tip
         except Exception as e:
             await db.rollback()
@@ -82,6 +92,8 @@ class TipCRUD:
     @staticmethod
     async def delete_for_game(db: AsyncSession, game_id: int) -> int:
         """Delete all tips for a game with proper transaction management."""
+        from app.cache import invalidate_cache_pattern
+        
         try:
             result = await db.execute(select(Tip).where(Tip.game_id == game_id))
             tips = result.scalars().all()
@@ -89,6 +101,11 @@ class TipCRUD:
             for tip in tips:
                 db.delete(tip)
             await db.commit()
+            
+            # Invalidate cache for tip-related queries
+            invalidate_cache_pattern(short_cache, "tips_by_heuristic:")
+            invalidate_cache_pattern(short_cache, "tips_by_round:")
+            
             return count
         except Exception as e:
             await db.rollback()
