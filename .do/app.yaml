@@ -1,45 +1,80 @@
-name: whatismytip-backend
-region: sfo3
+alerts:
+- rule: DEPLOYMENT_FAILED
+- rule: DOMAIN_FAILED
+features:
+- buildpack-stack=ubuntu-22
+ingress:
+  rules:
+  - component:
+      name: whatismytip-frontend
+    match:
+      authority:
+        exact: ""
+      path:
+        prefix: /
+  - component:
+      name: whatismytip-backend
+    match:
+      authority:
+        exact: ""
+      path:
+        prefix: /api
+name: whatismytip
+region: syd
 services:
-  - name: api
-    source_dir: backend
-    environment_slug: python
-    github:
-      repo: your-username/WhatIsMyTip
-      branch: main
-      deploy_on_push: true
-    build_command: uv sync && uv run alembic upgrade head
-    run_command: uvicorn main:app --host 0.0.0.0 --port $PORT
-    envs:
-      - key: DATABASE_URL
-        value: ${db.DATABASE_URL}
-      - key: API_HOST
-        value: 0.0.0.0
-      - key: API_PORT
-        value: 8080
-      - key: CORS_ORIGINS
-        value: https://whatismytip.com,https://www.whatismytip.com
-      - key: RATE_LIMIT_PER_MINUTE
-        value: 60
-      - key: SQUIGGLE_API_BASE
-        value: https://api.squiggle.com.au
-      - key: OPENROUTER_API_KEY
-        value: ${openrouter.OPENROUTER_API_KEY}
-      - key: OPENROUTER_MODEL
-        value: gptoss-120b
-      - key: OPENROUTER_BASE_URL
-        value: https://openrouter.ai/api/v1
-      - key: ENVIRONMENT
-        value: production
-    instance_size: basic-xxs
-    instance_count: 1
-    http_port: 8080
-    routes:
-      - path: /api
-        preserve_path_prefix: true
-databases:
-  - name: db
-    engine: PG
-    version: "15"
-    size: db-s-dev-database
-    production: false
+- environment_slug: python
+  github:
+    branch: main
+    deploy_on_push: true
+    repo: danielpaparo98/WhatIsMyTip
+  http_port: 8080
+  instance_count: 1
+  instance_size_slug: apps-s-1vcpu-0.5gb
+  name: whatismytip-backend
+  source_dir: backend
+  build_command: uv sync
+  run_command: uvicorn main:app --host 0.0.0.0 --port $PORT
+  envs:
+  - key: DATABASE_URL
+    value: sqlite+aiosqlite:///./whatismytip.db
+  - key: API_HOST
+    value: 0.0.0.0
+  - key: API_PORT
+    value: 8080
+  - key: CORS_ORIGINS
+    value: https://whatismytip.com,https://www.whatismytip.com
+  - key: RATE_LIMIT_PER_MINUTE
+    value: 60
+  - key: SQUIGGLE_API_BASE
+    value: https://api.squiggle.com.au
+  - key: SQUIGGLE_CONTACT_EMAIL
+    value: contact@whatismytip.com
+  - key: OPENROUTER_API_KEY
+    value: ${openrouter.OPENROUTER_API_KEY}
+  - key: OPENROUTER_MODEL
+    value: gptoss-120b
+  - key: OPENROUTER_BASE_URL
+    value: https://openrouter.ai/api/v1
+  - key: UMAMI_WEBSITE_ID
+    value: ${umami.UMAMI_WEBSITE_ID}
+  - key: UMAMI_HOST
+    value: ${umami.UMAMI_HOST}
+  - key: ENVIRONMENT
+    value: production
+static_sites:
+- environment_slug: node-js
+  github:
+    branch: main
+    deploy_on_push: true
+    repo: danielpaparo98/WhatIsMyTip
+  name: whatismytip-frontend
+  source_dir: frontend
+  build_command: bun install && bun run generate
+  output_dir: .output/public
+  envs:
+  - key: API_BASE_URL
+    value: https://whatismytip.com
+  - key: UMAMI_WEBSITE_ID
+    value: ${umami.UMAMI_WEBSITE_ID}
+  - key: UMAMI_HOST
+    value: ${umami.UMAMI_HOST}
