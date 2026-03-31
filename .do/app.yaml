@@ -32,7 +32,7 @@ services:
   instance_size_slug: apps-s-1vcpu-0.5gb
   name: whatismytip-backend
   source_dir: backend
-  build_command: uv sync
+  build_command: rm -f whatismytip.db && uv sync && uv run alembic upgrade head && uv run python scripts/generate_historical_data.py
   run_command: uvicorn main:app --host 0.0.0.0 --port $PORT
   envs:
   - key: DATABASE_URL
@@ -48,7 +48,7 @@ services:
   - key: SQUIGGLE_API_BASE
     value: https://api.squiggle.com.au
   - key: SQUIGGLE_CONTACT_EMAIL
-    value: 
+    value: contact@whatismytip.com
   - key: OPENROUTER_API_KEY
     value: ${openrouter.OPENROUTER_API_KEY}
   - key: OPENROUTER_MODEL
