@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "packageManager": "bun@1.x",
   "scripts": {
     "dev": "node node_modules/@nuxt/cli/bin/nuxi.mjs dev",
     "build": "nuxt build",
