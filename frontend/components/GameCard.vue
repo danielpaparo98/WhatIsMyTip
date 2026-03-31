@@ -6,11 +6,13 @@
     </div>
     <div class="game-body">
       <div class="team home">
+        <img :src="getLogoUrl(homeTeam)" :alt="homeTeam" class="team-logo" />
         <span class="team-name">{{ homeTeam }}</span>
         <span v-if="homeScore !== null" class="score">{{ homeScore }}</span>
       </div>
       <div class="vs">VS</div>
       <div class="team away">
+        <img :src="getLogoUrl(awayTeam)" :alt="awayTeam" class="team-logo" />
         <span class="team-name">{{ awayTeam }}</span>
         <span v-if="awayScore !== null" class="score">{{ awayScore }}</span>
       </div>
@@ -39,6 +41,33 @@ const formatDate = (dateStr: string) => {
     day: 'numeric',
     month: 'short'
   })
+}
+
+const getLogoUrl = (teamName: string): string => {
+  // Map team names to logo filenames
+  const logoMap: Record<string, string> = {
+    'Adelaide': 'Adelaide.png',
+    'Brisbane Lions': 'Brisbane.png',
+    'Carlton': 'Carlton.png',
+    'Collingwood': 'Collingwood.png',
+    'Essendon': 'Essendon.png',
+    'Fremantle': 'Fremantle.png',
+    'Geelong': 'Geelong.png',
+    'Gold Coast': 'GoldCoast.png',
+    'Greater Western Sydney': 'Giants.png',
+    'Hawthorn': 'Hawthorn.png',
+    'Melbourne': 'Melbourne.png',
+    'North Melbourne': 'NorthMelbourne.png',
+    'Port Adelaide': 'PortAdelaide.png',
+    'Richmond': 'Richmond.png',
+    'St Kilda': 'StKilda.png',
+    'Sydney': 'Sydney.png',
+    'West Coast': 'WestCoast.png',
+    'Western Bulldogs': 'Bulldogs.png',
+  }
+  
+  const filename = logoMap[teamName] || ''
+  return filename ? `/logos/${filename}` : ''
 }
 </script>
 
@@ -76,6 +105,16 @@ const formatDate = (dateStr: string) => {
 .team {
   flex: 1;
   text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.team-logo {
+  width: 64px;
+  height: 64px;
+  object-fit: contain;
 }
 
 .team-name {
