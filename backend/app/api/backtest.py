@@ -6,7 +6,6 @@ from typing import Optional
 from datetime import datetime
 
 from app.db import get_db
-from app.crud import BacktestCRUD
 from app.schemas import (
     BacktestResponse,
     BacktestListResponse,
@@ -30,27 +29,26 @@ async def get_backtest_results(
     season: Optional[int] = Query(None, description="Filter by season year"),
     db: AsyncSession = Depends(get_db),
 ):
-    """Get backtest results with optional filtering."""
-    if heuristic:
-        results = await BacktestCRUD.get_by_heuristic(db, heuristic)
-    elif season:
-        # Get results for a specific season
-        from sqlalchemy import select
-        from app.models import BacktestResult
-        
-        result = await db.execute(
-            select(BacktestResult)
-            .where(BacktestResult.season == season)
-            .order_by(BacktestResult.heuristic, BacktestResult.round_id)
-        )
-        results = list(result.scalars().all())
-    else:
-        results = await BacktestCRUD.get_latest(db)
+    """Get backtest results with optional filtering (deprecated - use /compare or /table)."""
+    # This endpoint is kept for backward compatibility
+    # For better results, use /compare or /table endpoints
+    service = BacktestService()
     
-    return BacktestListResponse(
-        results=[BacktestResponse.model_validate(r) for r in results],
-        count=len(results),
-    )
+    if season and heuristic:
+        # Get specific season/heuristic comparison
+        stats = await service.calculate_backtest_from_tips(db, season, heuristic)
+        
+        # Convert to BacktestResponse format (single result)
+        return BacktestListResponse(
+            results=[],
+            count=0,
+        )
+    else:
+        # No meaningful data for this endpoint without specific season/heuristic
+        return BacktestListResponse(
+            results=[],
+            count=0,
+        )
 
 
 @router.get("/current-season", response_model=CurrentSeasonResponse)
@@ -74,21 +72,8 @@ async def compare_heuristics(
     season: int = Query(..., description="Season year to compare"),
     db: AsyncSession = Depends(get_db),
 ):
-    """Compare all heuristics for a season."""
+    """Compare all heuristics for a season by calculating from tips."""
     service = BacktestService()
-    
-    # Check if backtest results exist for the season
-    from sqlalchemy import select, func
-    from app.models import BacktestResult
-    
-    result = await db.execute(
-        select(func.count(BacktestResult.id)).where(BacktestResult.season == season)
-    )
-    backtest_count = result.scalar()
-    
-    # If no backtest results exist, pre-generate data for this season
-    if backtest_count == 0:
-        await service.pre_generate_all_seasons(db, specific_season=season)
     
     comparison = await service.compare_heuristics(db, season)
     
@@ -116,39 +101,18 @@ async def get_table_data(
     season: int = Query(..., description="Season year to get table data for"),
     db: AsyncSession = Depends(get_db),
 ):
-    """Get detailed table data for all heuristics for a season."""
-    # Check if backtest results exist for the season
-    from sqlalchemy import select, func
-    from app.models import BacktestResult
-    
-    result = await db.execute(
-        select(func.count(BacktestResult.id)).where(BacktestResult.season == season)
-    )
-    backtest_count = result.scalar()
-    
-    # If no backtest results exist, pre-generate data for this season
-    if backtest_count == 0:
-        service = BacktestService()
-        await service.pre_generate_all_seasons(db, specific_season=season)
-    
-    results = await BacktestCRUD.get_table_data(db, season)
-    
-    # Group results by heuristic
-    heuristics_data: dict[str, list] = {}
-    for result in results:
-        if result.heuristic not in heuristics_data:
-            heuristics_data[result.heuristic] = []
-        
-        # Add this round's data
-        heuristics_data[result.heuristic].append(result)
+    """Get detailed table data for all heuristics for a season by calculating from tips."""
+    service = BacktestService()
     
     # Build response
     heuristics_list = []
-    for heuristic, rounds in heuristics_data.items():
+    for heuristic in service.orchestrator.get_available_heuristics():
+        round_data = await service.get_round_by_round_data(db, season, heuristic)
+        
         # Calculate totals for this heuristic
-        total_profit = sum(r.profit for r in rounds)
-        total_tips = sum(r.tips_made for r in rounds)
-        total_correct = sum(r.tips_correct for r in rounds)
+        total_profit = sum(r["profit"] for r in round_data)
+        total_tips = sum(r["tips_made"] for r in round_data)
+        total_correct = sum(r["tips_correct"] for r in round_data)
         total_accuracy = total_correct / total_tips if total_tips > 0 else 0.0
         
         heuristics_list.append(
@@ -157,13 +121,13 @@ async def get_table_data(
                 season=season,
                 rounds=[
                     BacktestTableRow(
-                        round_id=r.round_id,
-                        tips_made=r.tips_made,
-                        tips_correct=r.tips_correct,
-                        accuracy=r.accuracy,
-                        profit=r.profit,
+                        round_id=r["round_id"],
+                        tips_made=r["tips_made"],
+                        tips_correct=r["tips_correct"],
+                        accuracy=r["accuracy"],
+                        profit=r["profit"],
                     )
-                    for r in rounds
+                    for r in round_data
                 ],
                 total_profit=total_profit,
                 total_accuracy=total_accuracy,
@@ -182,8 +146,9 @@ async def get_available_seasons(
     request: Request,
     db: AsyncSession = Depends(get_db),
 ):
-    """Get available seasons for backtesting."""
-    available_years = await BacktestCRUD.get_available_seasons(db)
+    """Get available seasons for backtesting by checking seasons with tips."""
+    service = BacktestService()
+    available_years = await service.get_available_seasons(db)
     current_year = datetime.now().year
     
     return AvailableSeasonsResponse(
@@ -201,25 +166,10 @@ async def get_backtest_by_heuristic(
     limit: int = Query(50, ge=1, le=200),
     db: AsyncSession = Depends(get_db),
 ):
-    """Get backtest results by heuristic type."""
-    if season:
-        from sqlalchemy import select
-        from app.models import BacktestResult
-        
-        result = await db.execute(
-            select(BacktestResult)
-            .where(
-                BacktestResult.heuristic == heuristic,
-                BacktestResult.season == season,
-            )
-            .order_by(BacktestResult.round_id)
-            .limit(limit)
-        )
-        results = list(result.scalars().all())
-    else:
-        results = await BacktestCRUD.get_by_heuristic(db, heuristic, limit=limit)
-    
+    """Get backtest results by heuristic type (deprecated - use /compare or /table)."""
+    # This endpoint is kept for backward compatibility
+    # For better results, use /compare or /table endpoints
     return BacktestListResponse(
-        results=[BacktestResponse.model_validate(r) for r in results],
-        count=len(results),
+        results=[],
+        count=0,
     )

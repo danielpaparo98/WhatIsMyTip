@@ -288,18 +288,12 @@ const generateFallbackYears = (currentYear: number): number[] => {
 const loadAvailableSeasons = async () => {
   seasonsLoading.value = true
   try {
-    const response = await api.getAvailableSeasons()
-    const currentYear = response.current_year
+    const currentYear = new Date().getFullYear()
     
-    // Filter out current year from available years
-    const filteredYears = response.available_years.filter((year: number) => year !== currentYear)
-    
-    if (filteredYears.length > 0) {
-      availableYears.value = filteredYears
-    } else {
-      // Fallback to generated years if no data exists
-      availableYears.value = generateFallbackYears(currentYear)
-    }
+    // Always show all seasons from 2010 to current year (excluding current year)
+    // This ensures users can select any historical season, and backtest data
+    // will be generated on-demand via the API
+    availableYears.value = generateFallbackYears(currentYear)
     
     // Set default selected season to the first available year (newest)
     if (availableYears.value.length > 0) {
