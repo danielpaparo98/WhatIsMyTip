@@ -19,6 +19,14 @@ export default defineNuxtConfig({
       ],
       link: [
         { rel: 'icon', type: 'image/x-icon', href: '/favicon.ico' }
+      ],
+      script: [
+        {
+          src: process.env.UMAMI_HOST ? `${process.env.UMAMI_HOST}/script.js` : '',
+          'data-website-id': process.env.UMAMI_WEBSITE_ID || '',
+          defer: true,
+          key: 'umami-analytics'
+        }
       ]
     }
   },
@@ -27,7 +35,9 @@ export default defineNuxtConfig({
   
   runtimeConfig: {
     public: {
-      apiBase: process.env.API_BASE_URL || 'http://localhost:8000'
+      apiBase: process.env.API_BASE_URL || 'http://localhost:8000',
+      umamiHost: process.env.UMAMI_HOST || '',
+      umamiWebsiteId: process.env.UMAMI_WEBSITE_ID || ''
     }
   },
   
