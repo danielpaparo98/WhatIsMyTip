@@ -85,23 +85,6 @@
               <p>No tip available</p>
             </div>
             
-            <!-- Model Predictions -->
-            <div v-if="game.model_predictions && game.model_predictions.length > 0" class="model-predictions">
-              <div class="models-header">
-                <span class="models-label">Model Predictions</span>
-              </div>
-              <div class="models-list">
-                <div
-                  v-for="prediction in game.model_predictions"
-                  :key="prediction.model_name"
-                  class="model-item"
-                >
-                  <span class="model-name">{{ getModelDisplayName(prediction.model_name) }}</span>
-                  <span class="model-prediction">{{ prediction.winner }}</span>
-                  <span class="model-confidence">{{ Math.round(prediction.confidence * 100) }}%</span>
-                </div>
-              </div>
-            </div>
             </div>
           </NuxtLink>
         </div>
