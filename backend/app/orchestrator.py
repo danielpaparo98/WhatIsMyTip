@@ -1,6 +1,7 @@
 from typing import Dict, Tuple, List
 import time
 import logging
+import asyncio
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.models import Game
 from app.models_ml import BaseModel, EloModel, FormModel, HomeAdvantageModel, ValueModel
@@ -47,15 +48,31 @@ class ModelOrchestrator:
         if heuristic not in self.heuristics:
             raise ValueError(f"Unknown heuristic: {heuristic}")
         
-        # Get predictions from all models
+        # Get predictions from all models in parallel
         model_predictions: Dict[str, Tuple[str, float, int]] = {}
         model_start = time.time()
-        for model in self.models:
+        
+        async def predict_with_logging(model: BaseModel) -> Tuple[str, Tuple[str, float, int]]:
+            """Predict with error handling and timing."""
             model_predict_start = time.time()
-            winner, confidence, margin = await model.predict(game, db)
-            model_predict_time = time.time() - model_predict_start
-            logger.warning(f"ModelOrchestrator.predict: {model.get_name()} model took {model_predict_time:.4f}s")
-            model_predictions[model.get_name()] = (winner, confidence, margin)
+            try:
+                result = await model.predict(game, db)
+                model_predict_time = time.time() - model_predict_start
+                logger.warning(f"ModelOrchestrator.predict: {model.get_name()} model took {model_predict_time:.4f}s")
+                return model.get_name(), result
+            except Exception as e:
+                model_predict_time = time.time() - model_predict_start
+                logger.error(f"ModelOrchestrator.predict: {model.get_name()} model failed after {model_predict_time:.4f}s: {e}")
+                # Return a default prediction on error
+                return model.get_name(), (str(game.home_team), 0.5, 0)
+        
+        # Run all models in parallel
+        tasks = [predict_with_logging(model) for model in self.models]
+        results = await asyncio.gather(*tasks)
+        
+        # Build predictions dictionary
+        for model_name, prediction in results:
+            model_predictions[model_name] = prediction
         
         model_total_time = time.time() - model_start
         logger.warning(f"ModelOrchestrator.predict: ALL MODELS took {model_total_time:.4f}s")
