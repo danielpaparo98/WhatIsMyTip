@@ -48,8 +48,14 @@
           <button @click="generateTips" class="btn btn-primary">Generate Tips</button>
         </div>
         <div v-else class="games-grid">
-          <div v-for="game in gamesWithTips" :key="game.id" class="game-card">
-            <!-- Match Info -->
+          <NuxtLink
+            v-for="game in gamesWithTips"
+            :key="game.id"
+            :to="`/game/${game.id}`"
+            class="game-card-link"
+          >
+            <div class="game-card">
+              <!-- Match Info -->
             <div class="match-info">
               <div class="teams">
                 <div class="team home">
@@ -81,7 +87,8 @@
             <div v-else class="no-tip">
               <p>No tip available</p>
             </div>
-          </div>
+            </div>
+          </NuxtLink>
         </div>
       </section>
     </main>
@@ -359,14 +366,22 @@ onMounted(() => {
   gap: 1.5rem;
 }
 
+.game-card-link {
+  display: block;
+  cursor: pointer;
+  transition: all 0.2s ease-in-out;
+  text-decoration: none;
+}
+
+.game-card-link:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.1);
+}
+
 .game-card {
   border: 1px solid var(--color-border);
   padding: 1.5rem;
-  transition: border-color 0.2s ease;
-}
-
-.game-card:hover {
-  border-color: var(--color-text);
+  height: 100%;
 }
 
 /* Match Info */
