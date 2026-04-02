@@ -94,6 +94,16 @@ class CronJobManager:
             job_class=DailyGameSyncJob
         )
         
+        # Phase 3: Match Completion Detection Job
+        from app.cron.jobs.match_completion import MatchCompletionDetectionJob
+        
+        await self.register_job(
+            name="match_completion_detector",
+            schedule=settings.cron_match_completion_check,
+            job_class=MatchCompletionDetectionJob,
+            enabled=settings.match_completion_check_enabled
+        )
+        
         self.logger.info(f"Registered {len(self.jobs)} cron jobs")
     
     async def execute_job(

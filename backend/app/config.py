@@ -36,7 +36,8 @@ class Settings(BaseSettings):
     
     # Match Completion Detector
     cron_match_completion_check: str = "*/15 * * * *"  # Every 15 minutes
-    completion_buffer_minutes: int = 60  # 1 hour buffer
+    match_completion_buffer_minutes: int = 60  # 1 hour buffer
+    match_completion_check_enabled: bool = True  # Enable/disable the job
     completion_check_timeout_seconds: int = 300  # 5 minutes
     
     # Tip Generation

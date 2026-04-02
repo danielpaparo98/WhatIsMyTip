@@ -34,6 +34,11 @@ class DailySyncTriggerResponse(BaseModel):
     duration_seconds: float = 0.0
 
 
+class MatchCompletionTriggerRequest(BaseModel):
+    """Request model for triggering match completion check."""
+    buffer_minutes: Optional[int] = None
+
+
 @router.post("/daily-sync/trigger", response_model=DailySyncTriggerResponse)
 @limiter.limit("10/minute")
 async def trigger_daily_sync(
@@ -104,4 +109,98 @@ async def trigger_daily_sync(
         raise HTTPException(
             status_code=500,
             detail=f"Daily sync failed: {str(e)}"
+        )
+
+
+class MatchCompletionTriggerResponse(BaseModel):
+    """Response model for match completion trigger."""
+    success: bool
+    message: str
+    games_checked: int = 0
+    games_completed: int = 0
+    games_already_completed: int = 0
+    games_not_ready: int = 0
+    games_failed: int = 0
+    duration_seconds: float = 0.0
+    elo_cache_updated: bool = False
+
+
+@router.post("/match-completion/trigger", response_model=MatchCompletionTriggerResponse)
+@limiter.limit("10/minute")
+async def trigger_match_completion(
+    request: Request,
+    trigger_request: MatchCompletionTriggerRequest,
+    db: AsyncSession = Depends(get_db)
+):
+    """Manually trigger match completion detection job.
+    
+    This endpoint allows admins to manually trigger match completion detection
+    with an optional buffer_minutes override.
+    
+    Args:
+        request: FastAPI request object
+        trigger_request: Request with optional buffer_minutes parameter
+        
+    Returns:
+        Completion detection results with statistics
+    """
+    from app.squiggle import SquiggleClient
+    from app.services.match_completion import MatchCompletionDetectorService
+    from app.models_ml.elo import EloModel
+    
+    buffer_minutes = trigger_request.buffer_minutes or settings.match_completion_buffer_minutes
+    
+    logger.info(f"Manual match completion detection triggered with {buffer_minutes} minute buffer")
+    
+    try:
+        # Create Squiggle client
+        squiggle_client = SquiggleClient()
+        
+        try:
+            # Create match completion detector service
+            detector_service = MatchCompletionDetectorService(
+                squiggle_client=squiggle_client,
+                db_session=db,
+                buffer_minutes=buffer_minutes
+            )
+            
+            # Detect and process completed matches
+            completion_stats = await detector_service.detect_and_process_completed_matches()
+            
+            # Update Elo ratings cache if games were completed
+            elo_cache_updated = False
+            if completion_stats["games_completed"] > 0:
+                try:
+                    await EloModel.update_cache(db)
+                    elo_cache_updated = True
+                except Exception as elo_error:
+                    logger.error(f"Failed to update Elo cache: {str(elo_error)}", exc_info=True)
+            
+            # Build response
+            response = MatchCompletionTriggerResponse(
+                success=True,
+                message=f"Checked {completion_stats['games_checked']} games, "
+                        f"marked {completion_stats['games_completed']} as complete",
+                games_checked=completion_stats["games_checked"],
+                games_completed=completion_stats["games_completed"],
+                games_already_completed=completion_stats["games_already_completed"],
+                games_not_ready=completion_stats["games_not_ready"],
+                games_failed=len(completion_stats.get("errors", [])),
+                duration_seconds=completion_stats.get("duration_seconds", 0.0),
+                elo_cache_updated=elo_cache_updated
+            )
+            
+            logger.info(f"Manual match completion detection completed: {response.message}")
+            
+            return response
+            
+        finally:
+            # Close Squiggle client
+            await squiggle_client.close()
+    
+    except Exception as e:
+        logger.error(f"Manual match completion detection failed: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Match completion detection failed: {str(e)}"
         )
