@@ -16,8 +16,16 @@ class HomeAdvantageModel(BaseModel):
     def get_name(self) -> str:
         return "HomeAdvantage"
     
-    async def _calculate_home_advantage(self, db: AsyncSession):
-        """Calculate home advantage statistics."""
+    async def _calculate_home_advantage(self, db: AsyncSession, game: Game):
+        """Calculate home advantage statistics using only historical data.
+        
+        Only uses games that occurred BEFORE the prediction game's date
+        to ensure no data leakage in backtesting.
+        
+        Args:
+            db: Database session
+            game: The game being predicted (used for temporal filtering)
+        """
         result = await db.execute(
             select(
                 Game.venue,
@@ -26,7 +34,10 @@ class HomeAdvantageModel(BaseModel):
                     case((Game.home_score > Game.away_score, 1), else_=0)
                 ).label("home_wins"),
             )
-            .where(Game.completed == True)
+            .where(
+                Game.completed == True,
+                Game.date < game.date
+            )
             .group_by(Game.venue)
         )
         
@@ -36,7 +47,7 @@ class HomeAdvantageModel(BaseModel):
             if total > 0:
                 self.home_win_rate[venue] = home_wins / total
         
-        # Calculate overall home advantage
+        # Calculate overall home advantage using only historical games
         result = await db.execute(
             select(
                 func.count().label("total_games"),
@@ -44,15 +55,21 @@ class HomeAdvantageModel(BaseModel):
                     case((Game.home_score > Game.away_score, 1), else_=0)
                 ).label("home_wins"),
             )
-            .where(Game.completed == True)
+            .where(
+                Game.completed == True,
+                Game.date < game.date
+            )
         )
         
         total, home_wins = result.one()
         self.overall_home_advantage = (home_wins / total) if total > 0 else 0.5
     
     async def predict(self, game: Game, db: AsyncSession) -> Tuple[str, float, int]:
-        """Predict winner based on home advantage."""
-        await self._calculate_home_advantage(db)
+        """Predict winner based on home advantage.
+        
+        Uses only historical data before the prediction game's date.
+        """
+        await self._calculate_home_advantage(db, game)
         
         # Get venue-specific home advantage
         venue_advantage = self.home_win_rate.get(

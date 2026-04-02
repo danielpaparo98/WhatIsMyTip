@@ -224,17 +224,68 @@ class EloModel(BaseModel):
             logger.warning(f"EloModel._update_ratings: UPDATED RATINGS FOR {len(games)} GAMES (update took {update_time:.4f}s, total {total_time:.4f}s)")
     
     async def predict(self, game: Game, db: AsyncSession) -> Tuple[str, float, int]:
-        """Predict winner using Elo ratings."""
+        """Predict winner using Elo ratings with point-in-time data.
+        
+        Only uses games that occurred BEFORE the prediction game's date
+        to ensure no data leakage in backtesting.
+        """
         start_time = time.time()
-        logger.info(f"EloModel.predict: STARTING PREDICTION for game {game.id} ({game.home_team} vs {game.away_team})")
+        logger.info(f"EloModel.predict: STARTING PREDICTION for game {game.id} ({game.home_team} vs {game.away_team}) on {game.date}")
         
-        # Initialize cache if not already done
-        if not self._cache_initialized:
-            await self._initialize_cache(db)
+        # Get all teams
+        result = await db.execute(
+            select(Game.home_team).distinct()
+        )
+        home_teams = set(r[0] for r in result.all())
+        result = await db.execute(
+            select(Game.away_team).distinct()
+        )
+        away_teams = set(r[0] for r in result.all())
+        all_teams = home_teams.union(away_teams)
         
-        # Use cached ratings for prediction
-        home_rating = self._ratings_cache.get(game.home_team, 1500.0)
-        away_rating = self._ratings_cache.get(game.away_team, 1500.0)
+        # Initialize all teams with 1500 rating
+        ratings = {team: 1500.0 for team in all_teams}
+        
+        # Load only games that occurred BEFORE the prediction game's date
+        # This ensures point-in-time accuracy for backtesting
+        query_start = time.time()
+        result = await db.execute(
+            select(Game)
+            .where(
+                Game.completed == True,
+                Game.date < game.date
+            )
+            .order_by(Game.date)
+        )
+        games = result.scalars().all()
+        query_time = time.time() - query_start
+        
+        logger.info(f"EloModel.predict: Loaded {len(games)} historical games before {game.date} (query took {query_time:.4f}s)")
+        
+        # Process games in chronological order to calculate ratings
+        update_start = time.time()
+        for historical_game in games:
+            home_rating = ratings.get(historical_game.home_team, 1500.0)
+            away_rating = ratings.get(historical_game.away_team, 1500.0)
+            
+            # Expected scores
+            expected_home = 1.0 / (1.0 + 10.0 ** ((away_rating - home_rating - 50.0) / 400.0))
+            expected_away = 1.0 - expected_home
+            
+            # Actual scores
+            if historical_game.home_score is not None and historical_game.away_score is not None:
+                actual_home = 1.0 if historical_game.home_score > historical_game.away_score else 0.0
+                actual_away = 1.0 - actual_home
+                
+                # Update ratings
+                ratings[historical_game.home_team] = home_rating + 32.0 * (actual_home - expected_home)
+                ratings[historical_game.away_team] = away_rating + 32.0 * (actual_away - expected_away)
+        
+        update_time = time.time() - update_start
+        
+        # Get ratings for the prediction game
+        home_rating = ratings.get(game.home_team, 1500.0)
+        away_rating = ratings.get(game.away_team, 1500.0)
         
         # Apply home advantage
         effective_home = home_rating + self.home_advantage
@@ -257,6 +308,6 @@ class EloModel(BaseModel):
         margin = max(1, min(100, margin))
         
         total_time = time.time() - start_time
-        logger.info(f"EloModel.predict: COMPLETED in {total_time:.4f}s | winner={winner}, confidence={confidence:.2f}, margin={margin}")
+        logger.info(f"EloModel.predict: COMPLETED in {total_time:.4f}s | winner={winner}, confidence={confidence:.2f}, margin={margin} (ratings calc took {update_time:.4f}s)")
         
         return winner, confidence, margin
