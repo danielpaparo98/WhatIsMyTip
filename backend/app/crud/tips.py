@@ -144,6 +144,7 @@ class TipCRUD:
         season: int,
         round_id: int,
         heuristics: Optional[List[str]] = None,
+        force: bool = False,
     ) -> dict:
         """Generate tips for a specific round using the ModelOrchestrator.
         
@@ -167,7 +168,12 @@ class TipCRUD:
                 "success": False,
                 "message": f"No games found for round {round_id}, season {season}",
                 "tips_count": 0,
+                "tips_created": 0,
+                "tips_updated": 0,
+                "tips_skipped": 0,
                 "heuristics_used": [],
+                "season": season,
+                "round_id": round_id,
             }
         
         # Initialize orchestrator
@@ -179,17 +185,31 @@ class TipCRUD:
         else:
             heuristics_to_use = orchestrator.get_available_heuristics()
         
-        # Generate tips (idempotent - only create if not exist)
-        tips_created = []
+        # Track statistics
+        tips_created = 0
+        tips_updated = 0
+        tips_skipped = 0
+        
+        # Generate tips (idempotent - only create if not exist, unless force=True)
         for game in games:
             # Check if tips already exist for this game
             existing_tips = await TipCRUD.get_by_game(db, game.id)
             existing_heuristics = {tip.heuristic for tip in existing_tips}
             
             for heuristic in heuristics_to_use:
-                # Skip if tip already exists for this game and heuristic
+                # Check if tip already exists
                 if heuristic in existing_heuristics:
-                    continue
+                    if force:
+                        # Delete existing tips for this heuristic
+                        await TipCRUD.delete_for_game(db, game.id)
+                        existing_heuristics.discard(heuristic)
+                        # Re-fetch to get remaining tips
+                        remaining_tips = await TipCRUD.get_by_game(db, game.id)
+                        existing_heuristics = {tip.heuristic for tip in remaining_tips}
+                        # Now create new tip (will be counted as created)
+                    else:
+                        tips_skipped += 1
+                        continue
                 
                 winner, confidence, margin = await orchestrator.predict(game, heuristic)
                 
@@ -203,11 +223,12 @@ class TipCRUD:
                         confidence=confidence,
                         explanation="",  # Explanations can be generated separately
                     )
-                    tips_created.append(tip)
+                    tips_created += 1
                 except Exception as e:
                     # Handle unique constraint violation (race condition)
                     # If another request created tip, just skip it
                     if "uq_game_heuristic" in str(e) or "duplicate" in str(e).lower():
+                        tips_skipped += 1
                         continue
                     raise
             
@@ -231,9 +252,134 @@ class TipCRUD:
         
         return {
             "success": True,
-            "message": f"Generated {len(tips_created)} tips for round {round_id}, season {season}",
-            "tips_count": len(tips_created),
+            "message": f"Generated {tips_created} tips for round {round_id}, season {season}",
+            "tips_count": tips_created,
+            "tips_created": tips_created,
+            "tips_updated": tips_updated,
+            "tips_skipped": tips_skipped,
             "heuristics_used": heuristics_to_use,
             "season": season,
             "round_id": round_id,
+        }
+    
+    @staticmethod
+    async def generate_tips_for_game(
+        db: AsyncSession,
+        game_id: int,
+        heuristics: Optional[List[str]] = None,
+        force: bool = False
+    ) -> dict:
+        """Generate tips for a single game.
+        
+        Args:
+            db: Database session
+            game_id: Database ID of game
+            heuristics: Optional list of heuristics to generate (default: all)
+            force: Whether to force regeneration of existing tips (default: False)
+            
+        Returns:
+            Dict with generation results:
+            - tips_created: Number of tips created
+            - tips_updated: Number of tips updated
+            - tips_skipped: Number of tips skipped
+            - heuristics_used: List of heuristics used
+        """
+        from app.crud import GameCRUD, ModelPredictionCRUD
+        from app.orchestrator import ModelOrchestrator
+        
+        # Get game
+        game = await GameCRUD.get_by_id(db, game_id)
+        
+        if not game:
+            return {
+                "success": False,
+                "message": f"Game {game_id} not found",
+                "tips_created": 0,
+                "tips_updated": 0,
+                "tips_skipped": 0,
+                "heuristics_used": [],
+                "game_id": game_id,
+            }
+        
+        # Initialize orchestrator
+        orchestrator = ModelOrchestrator()
+        
+        # Determine which heuristics to use
+        if heuristics:
+            heuristics_to_use = [h for h in heuristics if h in orchestrator.get_available_heuristics()]
+        else:
+            heuristics_to_use = orchestrator.get_available_heuristics()
+        
+        # Track statistics
+        tips_created = 0
+        tips_updated = 0
+        tips_skipped = 0
+        
+        # Check if tips already exist for this game
+        existing_tips = await TipCRUD.get_by_game(db, game_id)
+        existing_heuristics = {tip.heuristic for tip in existing_tips}
+        
+        for heuristic in heuristics_to_use:
+            # Check if tip already exists
+            if heuristic in existing_heuristics:
+                if force:
+                    # Delete existing tips for this heuristic
+                    await TipCRUD.delete_for_game(db, game_id)
+                    existing_heuristics.discard(heuristic)
+                    # Re-fetch to get remaining tips
+                    remaining_tips = await TipCRUD.get_by_game(db, game_id)
+                    existing_heuristics = {tip.heuristic for tip in remaining_tips}
+                    # Now create new tip (will be counted as created)
+                else:
+                    tips_skipped += 1
+                    continue
+            
+            # Generate prediction using heuristic
+            winner, confidence, margin = await orchestrator.predict(game, heuristic)
+            
+            try:
+                tip = await TipCRUD.create(
+                    db=db,
+                    game_id=game_id,
+                    heuristic=heuristic,
+                    selected_team=winner,
+                    margin=margin,
+                    confidence=confidence,
+                    explanation="",  # Explanations can be generated separately
+                )
+                tips_created += 1
+            except Exception as e:
+                # Handle unique constraint violation (race condition)
+                # If another request created tip, just skip it
+                if "uq_game_heuristic" in str(e) or "duplicate" in str(e).lower():
+                    tips_skipped += 1
+                    continue
+                raise
+        
+        # Generate and store model predictions for this game
+        for model in orchestrator.models:
+            try:
+                winner, confidence, margin = await model.predict(game, db)
+                await ModelPredictionCRUD.create_or_update(
+                    db=db,
+                    game_id=game_id,
+                    model_name=model.get_name(),
+                    winner=winner,
+                    confidence=confidence,
+                    margin=margin,
+                )
+            except Exception as e:
+                # Log error but continue with other models
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.error(f"Error generating prediction for model {model.get_name()}: {e}", exc_info=True)
+        
+        return {
+            "success": True,
+            "message": f"Generated {tips_created} tips for game {game_id}",
+            "tips_created": tips_created,
+            "tips_updated": tips_updated,
+            "tips_skipped": tips_skipped,
+            "heuristics_used": heuristics_to_use,
+            "game_id": game_id,
         }

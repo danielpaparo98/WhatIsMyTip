@@ -167,3 +167,83 @@ class ModelPredictionCRUD:
         except Exception as e:
             await db.rollback()
             raise
+    
+    @staticmethod
+    async def save_predictions(
+        db: AsyncSession,
+        game_id: int,
+        predictions: List[dict],
+        update_existing: bool = True
+    ) -> dict:
+        """Save multiple model predictions for a game.
+        
+        Args:
+            db: Database session
+            game_id: Database ID of game
+            predictions: List of prediction dictionaries with keys:
+                - model_name: Name of the model
+                - winner: Predicted winner team
+                - confidence: Prediction confidence
+                - margin: Predicted margin
+            update_existing: Whether to update existing predictions (default: True)
+            
+        Returns:
+            Dictionary with statistics:
+            - created: Number of predictions created
+            - updated: Number of predictions updated
+            - skipped: Number of predictions skipped (when update_existing=False)
+        """
+        from app.cache import invalidate_cache_pattern
+        
+        try:
+            stats = {
+                "created": 0,
+                "updated": 0,
+                "skipped": 0
+            }
+            
+            # Get existing predictions for this game
+            existing_predictions = await ModelPredictionCRUD.get_by_game(db, game_id)
+            existing_model_names = {p.model_name for p in existing_predictions}
+            
+            for pred_data in predictions:
+                model_name = pred_data["model_name"]
+                
+                if model_name in existing_model_names:
+                    if update_existing:
+                        # Update existing prediction
+                        existing_pred = next(
+                            (p for p in existing_predictions if p.model_name == model_name),
+                            None
+                        )
+                        if existing_pred:
+                            existing_pred.winner = pred_data["winner"]
+                            existing_pred.confidence = pred_data["confidence"]
+                            existing_pred.margin = pred_data["margin"]
+                            stats["updated"] += 1
+                    else:
+                        # Skip existing prediction
+                        stats["skipped"] += 1
+                else:
+                    # Create new prediction
+                    await ModelPredictionCRUD.create(
+                        db=db,
+                        game_id=game_id,
+                        model_name=model_name,
+                        winner=pred_data["winner"],
+                        confidence=pred_data["confidence"],
+                        margin=pred_data["margin"],
+                    )
+                    stats["created"] += 1
+            
+            # Commit all changes
+            await db.commit()
+            
+            # Invalidate cache
+            invalidate_cache_pattern(short_cache, "model_predictions:")
+            invalidate_cache_pattern(short_cache, "model_predictions_by_games:")
+            
+            return stats
+        except Exception as e:
+            await db.rollback()
+            raise
