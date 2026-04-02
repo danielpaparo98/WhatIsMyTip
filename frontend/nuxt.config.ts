@@ -87,7 +87,8 @@ export default defineNuxtConfig({
       apiBase: process.env.API_BASE_URL || 'http://localhost:8000',
       umamiHost: process.env.UMAMI_HOST || '',
       umamiWebsiteId: process.env.UMAMI_WEBSITE_ID || '',
-      siteUrl: process.env.SITE_URL || 'https://whatismytip.com'
+      siteUrl: process.env.SITE_URL || 'https://whatismytip.com',
+      buyMeACoffeeUrl: process.env.NUXT_PUBLIC_BUY_ME_A_COFFEE_URL || ''
     }
   },
   

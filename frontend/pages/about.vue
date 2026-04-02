@@ -176,6 +176,8 @@ useHead({
 }
 
 .content {
+  max-width: 65ch;
+  margin: 0 auto;
   line-height: 1.8;
 }
 
@@ -183,6 +185,8 @@ useHead({
   display: flex;
   flex-direction: column;
   gap: 1.5rem;
+  max-width: 65ch;
+  margin: 0 auto;
 }
 
 .model-card {
@@ -208,6 +212,8 @@ useHead({
   display: flex;
   flex-direction: column;
   gap: 1.5rem;
+  max-width: 65ch;
+  margin: 0 auto;
 }
 
 .heuristic-card {
