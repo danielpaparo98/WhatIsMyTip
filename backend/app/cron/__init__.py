@@ -85,13 +85,14 @@ class CronJobManager:
         
         self.logger.info("Registering cron jobs...")
         
-        # Jobs will be registered in Phase 2
-        # Example:
-        # await self.register_job(
-        #     name="daily_game_sync",
-        #     schedule=settings.cron_daily_sync,
-        #     job_class=DailyGameSyncJob
-        # )
+        # Phase 2: Daily Game Sync Job
+        from app.cron.jobs.daily_sync import DailyGameSyncJob
+        
+        await self.register_job(
+            name="daily_game_sync",
+            schedule=settings.cron_daily_sync,
+            job_class=DailyGameSyncJob
+        )
         
         self.logger.info(f"Registered {len(self.jobs)} cron jobs")
     

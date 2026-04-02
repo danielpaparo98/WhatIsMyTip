@@ -4,7 +4,7 @@ import time
 import logging
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
-from typing import Dict, Tuple
+from typing import Dict, Tuple, Optional
 from app.models_ml.base import BaseModel
 from app.models import Game
 
@@ -153,6 +153,64 @@ class EloModel(BaseModel):
             total_time = time.time() - start_time
             cls._cache_initialized = True
             logger.info(f"EloModel.update_cache: Cache updated with {len(cls._ratings_cache)} teams in {total_time:.4f}s (update took {update_time:.4f}s)")
+            
+            # Save to database for persistence
+            await cls.save_to_cache(db, cls._ratings_cache)
+    
+    @classmethod
+    async def save_to_cache(cls, db: AsyncSession, ratings: Dict[str, float], season: Optional[int] = None):
+        """Save Elo ratings to database cache.
+        
+        Args:
+            db: Database session
+            ratings: Dictionary of team ratings to save
+            season: Optional season (defaults to current year)
+        """
+        from app.crud.elo_cache import EloCacheCRUD
+        from datetime import datetime
+        
+        if season is None:
+            season = datetime.now().year
+        
+        try:
+            await EloCacheCRUD.save_ratings(db, ratings, season)
+            logger.info(f"EloModel.save_to_cache: Saved {len(ratings)} ratings for season {season}")
+        except Exception as e:
+            logger.error(f"EloModel.save_to_cache: Failed to save ratings: {e}", exc_info=True)
+    
+    @classmethod
+    async def load_from_cache(cls, db: AsyncSession, season: Optional[int] = None) -> bool:
+        """Load Elo ratings from database cache.
+        
+        Args:
+            db: Database session
+            season: Optional season to load (defaults to current year)
+            
+        Returns:
+            True if ratings were loaded successfully, False otherwise
+        """
+        from app.crud.elo_cache import EloCacheCRUD
+        from datetime import datetime
+        
+        if season is None:
+            season = datetime.now().year
+        
+        try:
+            ratings = await EloCacheCRUD.load_ratings(db, season)
+            
+            if not ratings:
+                logger.info(f"EloModel.load_from_cache: No cached ratings found for season {season}")
+                return False
+            
+            async with cls._cache_lock:
+                cls._ratings_cache = ratings
+                cls._cache_initialized = True
+            
+            logger.info(f"EloModel.load_from_cache: Loaded {len(ratings)} ratings for season {season}")
+            return True
+        except Exception as e:
+            logger.error(f"EloModel.load_from_cache: Failed to load ratings: {e}", exc_info=True)
+            return False
     
     @classmethod
     def get_cached_ratings(cls) -> Dict[str, float]:
