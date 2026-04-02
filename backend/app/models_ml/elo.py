@@ -43,13 +43,13 @@ class EloModel(BaseModel):
             start_time = time.time()
             logger.info("EloModel._initialize_cache: Initializing Elo ratings cache")
             
-            # Get all teams
+            # Get all teams (excluding None values)
             result = await db.execute(
-                select(Game.home_team).distinct()
+                select(Game.home_team).distinct().where(Game.home_team != None)
             )
             home_teams = set(r[0] for r in result.all())
             result = await db.execute(
-                select(Game.away_team).distinct()
+                select(Game.away_team).distinct().where(Game.away_team != None)
             )
             away_teams = set(r[0] for r in result.all())
             all_teams = home_teams.union(away_teams)
@@ -104,13 +104,13 @@ class EloModel(BaseModel):
             start_time = time.time()
             logger.info("EloModel.update_cache: Updating Elo ratings cache")
             
-            # Get all teams
+            # Get all teams (excluding None values)
             result = await db.execute(
-                select(Game.home_team).distinct()
+                select(Game.home_team).distinct().where(Game.home_team != None)
             )
             home_teams = set(r[0] for r in result.all())
             result = await db.execute(
-                select(Game.away_team).distinct()
+                select(Game.away_team).distinct().where(Game.away_team != None)
             )
             away_teams = set(r[0] for r in result.all())
             all_teams = home_teams.union(away_teams)
