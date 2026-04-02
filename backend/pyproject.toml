@@ -17,6 +17,7 @@ dependencies = [
     "numpy>=2.0.0",
     "scikit-learn>=1.5.0",
     "alembic>=1.14.0",
+    "fastapi-crons>=0.1.0",
 ]
 
 [project.optional-dependencies]

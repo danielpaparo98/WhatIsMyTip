@@ -88,3 +88,51 @@ class GenerationProgress(Base):
     started_at = Column(DateTime, default=datetime.utcnow)
     completed_at = Column(DateTime, nullable=True)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class JobExecution(Base):
+    """Track execution history of cron jobs."""
+    __tablename__ = "job_executions"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    job_name = Column(String(100), index=True)
+    status = Column(String(20))  # pending, running, completed, failed
+    started_at = Column(DateTime, nullable=False)
+    completed_at = Column(DateTime, nullable=True)
+    duration_seconds = Column(Integer, nullable=True)
+    items_processed = Column(Integer, nullable=True)
+    items_failed = Column(Integer, nullable=True)
+    error_message = Column(Text, nullable=True)
+    result_summary = Column(Text, nullable=True)
+    created_at = Column(DateTime, server_default=func.now())
+
+
+class JobLock(Base):
+    """Prevent concurrent execution of jobs."""
+    __tablename__ = "job_locks"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    job_name = Column(String(100), unique=True)
+    locked_at = Column(DateTime, nullable=False)
+    locked_by = Column(String(100), nullable=True)
+    expires_at = Column(DateTime, nullable=False)
+    
+    __table_args__ = (
+        UniqueConstraint('job_name', name='uq_job_locks_job_name'),
+    )
+
+
+class EloCache(Base):
+    """Persist Elo ratings for faster initialization."""
+    __tablename__ = "elo_cache"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    team_name = Column(String(100), unique=True)
+    rating = Column(Float, nullable=False)
+    games_played = Column(Integer, default=0)
+    last_updated = Column(DateTime, nullable=False)
+    season = Column(Integer, nullable=False)
+    
+    __table_args__ = (
+        UniqueConstraint('team_name', name='uq_elo_cache_team_name'),
+    )
