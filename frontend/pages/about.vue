@@ -165,6 +165,9 @@ useHead({
 .hero h1 {
   font-size: clamp(2rem, 6vw, 4rem);
   margin-bottom: 1rem;
+  max-width: 80ch;
+  margin-left: auto;
+  margin-right: auto;
 }
 
 .section {
@@ -173,10 +176,13 @@ useHead({
 
 .section h2 {
   margin-bottom: 1.5rem;
+  max-width: 80ch;
+  margin-left: auto;
+  margin-right: auto;
 }
 
 .content {
-  max-width: 65ch;
+  max-width: 80ch;
   margin: 0 auto;
   line-height: 1.8;
 }
@@ -185,7 +191,7 @@ useHead({
   display: flex;
   flex-direction: column;
   gap: 1.5rem;
-  max-width: 65ch;
+  max-width: 80ch;
   margin: 0 auto;
 }
 
@@ -212,7 +218,7 @@ useHead({
   display: flex;
   flex-direction: column;
   gap: 1.5rem;
-  max-width: 65ch;
+  max-width: 80ch;
   margin: 0 auto;
 }
 
