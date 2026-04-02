@@ -371,3 +371,120 @@ class GameCRUD:
                 break
         
         return False
+    
+    @staticmethod
+    async def get_recently_finished_games(
+        db: AsyncSession,
+        buffer_minutes: int = 60
+    ) -> List[Game]:
+        """Find games that have recently finished but are not marked complete.
+        
+        Finds games where:
+        - completed = False
+        - Game date/time has passed
+        - At least buffer_minutes have passed since scheduled time
+        
+        Args:
+            db: Database session
+            buffer_minutes: Buffer time after scheduled game time (default: 60)
+            
+        Returns:
+            List of games that may be completed
+        """
+        from datetime import datetime, timedelta
+        
+        # Calculate cutoff time: now minus buffer
+        cutoff_time = datetime.utcnow() - timedelta(minutes=buffer_minutes)
+        
+        # Find games where:
+        # - completed = False
+        # - date is not null
+        # - date < cutoff_time (scheduled time has passed plus buffer)
+        result = await db.execute(
+            select(Game)
+            .where(
+                and_(
+                    Game.completed == False,
+                    Game.date.isnot(None),
+                    Game.date < cutoff_time
+                )
+            )
+            .order_by(Game.date.asc())
+        )
+        
+        return list(result.scalars().all())
+    
+    @staticmethod
+    async def update_game_completion(
+        db: AsyncSession,
+        game_id: int,
+        squiggle_data: dict
+    ) -> Optional[Game]:
+        """Update game with final scores from Squiggle data.
+        
+        Updates game with:
+        - Final scores from Squiggle
+        - Sets completed = True
+        - Updates last_synced_at timestamp
+        - Increments sync_version
+        
+        Args:
+            db: Database session
+            game_id: Database ID of the game
+            squiggle_data: Game data from Squiggle API
+            
+        Returns:
+            Updated Game object or None if game not found
+        """
+        from app.cache import invalidate_cache_pattern
+        from datetime import datetime
+        
+        # Get the game
+        result = await db.execute(
+            select(Game).where(Game.id == game_id)
+        )
+        game = result.scalar_one_or_none()
+        
+        if not game:
+            return None
+        
+        # Check if already completed
+        if game.completed:
+            return game
+        
+        # Parse complete status
+        complete_value = squiggle_data.get("complete", False)
+        if isinstance(complete_value, int):
+            is_complete = complete_value == 100
+        else:
+            is_complete = bool(complete_value)
+        
+        # Only update if Squiggle says it's complete
+        if not is_complete:
+            return None
+        
+        # Update scores
+        home_score_val = squiggle_data.get("hscore")
+        away_score_val = squiggle_data.get("ascore")
+        
+        if home_score_val is not None:
+            game.home_score = home_score_val
+        if away_score_val is not None:
+            game.away_score = away_score_val
+        
+        # Mark as completed
+        game.completed = True
+        game.last_synced_at = datetime.utcnow()
+        game.sync_version = (game.sync_version or 0) + 1
+        
+        # Commit changes
+        await db.commit()
+        await db.refresh(game)
+        
+        # Invalidate cache
+        invalidate_cache_pattern(short_cache, "game_by_id:")
+        invalidate_cache_pattern(short_cache, "games_by_round:")
+        invalidate_cache_pattern(short_cache, "upcoming_games:")
+        invalidate_cache_pattern(medium_cache, "games_by_season:")
+        
+        return game
