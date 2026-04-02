@@ -204,3 +204,106 @@ async def trigger_match_completion(
             status_code=500,
             detail=f"Match completion detection failed: {str(e)}"
         )
+
+
+class TipGenerationTriggerRequest(BaseModel):
+    """Request model for triggering tip generation."""
+    season: Optional[int] = None
+    round_id: Optional[int] = None
+    regenerate: bool = False
+
+
+class TipGenerationTriggerResponse(BaseModel):
+    """Response model for tip generation trigger."""
+    success: bool
+    message: str
+    season: Optional[int] = None
+    round_id: Optional[int] = None
+    games_processed: int = 0
+    tips_created: int = 0
+    tips_skipped: int = 0
+    tips_updated: int = 0
+    model_predictions_created: int = 0
+    model_predictions_updated: int = 0
+    errors: list = []
+    duration_seconds: float = 0.0
+
+
+@router.post("/tip-generation/trigger", response_model=TipGenerationTriggerResponse)
+@limiter.limit("10/minute")
+async def trigger_tip_generation(
+    request: Request,
+    trigger_request: TipGenerationTriggerRequest,
+    db: AsyncSession = Depends(get_db)
+):
+    """Manually trigger tip generation job.
+    
+    This endpoint allows admins to manually trigger tip generation
+    for a specific season/round or the next upcoming round.
+    
+    Args:
+        request: FastAPI request object
+        trigger_request: Request with optional season, round_id, and regenerate parameters
+        
+    Returns:
+        Tip generation results with statistics
+    """
+    from app.services.tip_generation import TipGenerationService
+    
+    season = trigger_request.season
+    round_id = trigger_request.round_id
+    regenerate = trigger_request.regenerate
+    
+    logger.info(
+        f"Manual tip generation triggered for "
+        f"season={season}, round_id={round_id}, regenerate={regenerate}"
+    )
+    
+    try:
+        # Create tip generation service
+        generation_service = TipGenerationService(
+            db_session=db,
+            season=season,
+            round_id=round_id
+        )
+        
+        # Generate tips
+        if season and round_id:
+            # Generate for specific round
+            generation_stats = await generation_service.generate_for_round(
+                season=season,
+                round_id=round_id,
+                regenerate=regenerate
+            )
+        else:
+            # Generate for next upcoming round
+            generation_stats = await generation_service.generate_for_next_upcoming_round(
+                regenerate=regenerate
+            )
+        
+        # Build response
+        response = TipGenerationTriggerResponse(
+            success=True,
+            message=generation_stats.get("message", "Tip generation completed"),
+            season=generation_stats.get("season"),
+            round_id=generation_stats.get("round_id"),
+            games_processed=generation_stats.get("games_processed", 0),
+            tips_created=generation_stats.get("tips_created", 0),
+            tips_skipped=generation_stats.get("tips_skipped", 0),
+            tips_updated=generation_stats.get("tips_updated", 0),
+            model_predictions_created=generation_stats.get("model_predictions_created", 0),
+            model_predictions_updated=generation_stats.get("model_predictions_updated", 0),
+            errors=generation_stats.get("errors", []),
+            duration_seconds=generation_stats.get("duration_seconds", 0.0)
+        )
+        
+        logger.info(f"Manual tip generation completed: {response.message}")
+        
+        return response
+    
+    except Exception as e:
+        logger.error(f"Manual tip generation failed: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Tip generation failed: {str(e)}"
+        )

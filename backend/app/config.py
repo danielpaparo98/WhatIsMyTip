@@ -43,6 +43,8 @@ class Settings(BaseSettings):
     # Tip Generation
     cron_tip_generation: str = "0 3 * * *"  # 3:00 AM daily
     tip_generation_timeout_seconds: int = 1800  # 30 minutes
+    tip_generation_enabled: bool = True
+    tip_generation_regenerate_existing: bool = False
     
     # Historical Data Refresh
     cron_historical_refresh: str = "0 4 * * 0"  # Sunday 4:00 AM

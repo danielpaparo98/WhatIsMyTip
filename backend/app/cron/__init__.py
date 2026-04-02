@@ -104,6 +104,16 @@ class CronJobManager:
             enabled=settings.match_completion_check_enabled
         )
         
+        # Phase 4: Tip Generation Job
+        from app.cron.jobs.tip_generation import TipGenerationJob
+        
+        await self.register_job(
+            name="tip_generation",
+            schedule=settings.cron_tip_generation,
+            job_class=TipGenerationJob,
+            enabled=settings.tip_generation_enabled
+        )
+        
         self.logger.info(f"Registered {len(self.jobs)} cron jobs")
     
     async def execute_job(
