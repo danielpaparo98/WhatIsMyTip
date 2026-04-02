@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Request, HTTPException
+from fastapi import FastAPI, Request, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import Response
@@ -12,6 +12,7 @@ from app.api import api_router
 from app.db import get_db
 from app.services.backtest import BacktestService
 from app.logger import get_logger
+from app.cron import init_cron_manager, get_cron_manager
 
 logger = get_logger(__name__)
 
@@ -49,20 +50,18 @@ app = FastAPI(
 )
 
 
-# Temporarily disabled startup event to allow server to start
-# @app.on_event("startup")
-# async def startup_event():
-#     """Run pre-generation of backtest data on startup."""
-#     db_gen = get_db()
-#     db = await db_gen.__anext__()
-#     try:
-#         service = BacktestService()
-#         await service.pre_generate_all_seasons(db)
-#     except Exception as e:
-#         # Log error but don't fail startup
-#         logger.warning(f"Failed to pre-generate backtest data on startup: {e}")
-#     finally:
-#         await db_gen.aclose()
+# Initialize CronJobManager
+cron_mgr = init_cron_manager(app)
+
+
+@app.on_event("startup")
+async def startup_event():
+    """Initialize cron jobs on startup."""
+    try:
+        await cron_mgr.register_jobs()
+        logger.info("Cron jobs registered successfully")
+    except Exception as e:
+        logger.error(f"Failed to register cron jobs: {e}")
 
 # Security headers middleware
 app.add_middleware(SecurityHeadersMiddleware)
@@ -119,6 +118,24 @@ async def health(request: Request):
         "database": db_status,
         "version": "1.0.0"
     }
+
+
+@app.get("/health/cron")
+@limiter.limit("60/minute")
+async def cron_health(request: Request, db: AsyncSession = Depends(get_db)):
+    """Health check endpoint for cron jobs."""
+    try:
+        health_status = await cron_mgr.get_health(db)
+        return health_status
+    except Exception as e:
+        logger.error(f"Cron health check failed: {e}")
+        return {
+            "status": "unhealthy",
+            "timestamp": None,
+            "jobs": [],
+            "database": "unknown",
+            "cron_enabled": settings.cron_enabled
+        }
 
 
 if __name__ == "__main__":
