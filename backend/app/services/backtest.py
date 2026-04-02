@@ -272,16 +272,17 @@ class BacktestService:
         Returns:
             CurrentSeasonResponse with YTD performance and projections
         """
-        # Get current year
+        # Get current year and date
         current_year = datetime.now().year
+        current_date = datetime.now()
         
-        # Get completed games for current season
+        # Get rounds completed for current season (games up to today, not just completed)
         result = await db.execute(
             select(func.count(func.distinct(Game.round_id)))
             .where(
                 and_(
                     Game.season == current_year,
-                    Game.completed == True,
+                    Game.date <= current_date,
                 )
             )
         )

@@ -40,6 +40,9 @@
                   ${{ heuristic.projected_annual_profit.toFixed(2) }}
                 </span>
               </div>
+              <div class="disclaimer">
+                <small>⚠️ Projections are based on early season performance and may change as the season progresses.</small>
+              </div>
               <div class="stat-row">
                 <span class="stat-label">Accuracy</span>
                 <span class="stat-value">{{ (heuristic.total_accuracy * 100).toFixed(1) }}%</span>
@@ -188,6 +191,8 @@
           </div>
           <div v-else class="empty-state">
             <p>No table data available for this season.</p>
+            <p class="empty-state-hint">This could be because the season hasn't started yet, tips haven't been generated, or there are no completed games. Try selecting a different season or check back later.</p>
+            <button @click="loadSeasonData" class="btn btn-secondary">Try Again</button>
           </div>
         </div>
         
@@ -214,6 +219,8 @@
           </div>
           <div v-else class="empty-state">
             <p>No chart data available for this season.</p>
+            <p class="empty-state-hint">This could be because the season hasn't started yet, tips haven't been generated, or there are no completed games. Try selecting a different season or check back later.</p>
+            <button @click="loadSeasonData" class="btn btn-secondary">Try Again</button>
           </div>
         </div>
   </section>
@@ -1101,6 +1108,48 @@ onMounted(async () => {
 
   .empty-state {
     padding: 4rem 2rem;
+    text-align: center;
+  }
+
+  .empty-state-hint {
+    color: var(--color-muted);
+    font-size: 0.875rem;
+    margin: 1rem 0;
+    line-height: 1.5;
+  }
+
+  .disclaimer {
+    margin-top: 1rem;
+    padding: 0.75rem;
+    background-color: rgba(251, 191, 36, 0.1);
+    border-left: 3px solid #fbbf24;
+    border-radius: 0.25rem;
+  }
+
+  .disclaimer small {
+    color: #fbbf24;
+    font-size: 0.75rem;
+    line-height: 1.4;
+  }
+
+  .btn {
+    padding: 0.625rem 1.25rem;
+    border-radius: 0.375rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s;
+    border: none;
+    font-size: 0.875rem;
+  }
+
+  .btn-secondary {
+    background-color: var(--color-secondary);
+    color: white;
+    margin-top: 1rem;
+  }
+
+  .btn-secondary:hover {
+    opacity: 0.9;
   }
 
   .charts-container {
