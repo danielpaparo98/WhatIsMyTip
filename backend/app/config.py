@@ -48,6 +48,9 @@ class Settings(BaseSettings):
     
     # Historical Data Refresh
     cron_historical_refresh: str = "0 4 * * 0"  # Sunday 4:00 AM
+    historic_refresh_enabled: bool = True
+    historic_refresh_seasons: str = "2010-2025"
+    historic_refresh_regenerate_tips: bool = False
     historical_refresh_start_year: int = 2010
     historical_refresh_timeout_seconds: int = 7200  # 2 hours
     

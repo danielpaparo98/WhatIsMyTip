@@ -307,3 +307,157 @@ async def trigger_tip_generation(
             status_code=500,
             detail=f"Tip generation failed: {str(e)}"
         )
+
+
+class HistoricRefreshTriggerRequest(BaseModel):
+    """Request model for triggering historic refresh."""
+    seasons: Optional[str] = None
+    round_id: Optional[int] = None
+    regenerate_tips: bool = False
+
+
+class HistoricRefreshTriggerResponse(BaseModel):
+    """Response model for historic refresh trigger."""
+    success: bool
+    message: str
+    seasons_processed: int = 0
+    games_synced: int = 0
+    tips_generated: int = 0
+    errors: list = []
+    duration_seconds: float = 0.0
+    season_stats: dict = {}
+
+
+@router.post("/historic-refresh/trigger", response_model=HistoricRefreshTriggerResponse)
+@limiter.limit("10/minute")
+async def trigger_historic_refresh(
+    request: Request,
+    trigger_request: HistoricRefreshTriggerRequest,
+    db: AsyncSession = Depends(get_db)
+):
+    """Manually trigger the historic data refresh job.
+    
+    This endpoint allows admins to manually trigger historic data refresh
+    for specific seasons or rounds.
+    
+    Args:
+        request: FastAPI request object
+        trigger_request: Request with optional seasons, round_id, and regenerate_tips parameters
+        
+    Returns:
+        Historic refresh results with statistics
+    """
+    from app.services.historic_data_refresh import HistoricDataRefreshService
+    
+    seasons_str = trigger_request.seasons or settings.historic_refresh_seasons
+    round_id = trigger_request.round_id
+    regenerate_tips = trigger_request.regenerate_tips
+    
+    logger.info(
+        f"Manual historic refresh triggered for "
+        f"seasons={seasons_str}, round_id={round_id}, regenerate_tips={regenerate_tips}"
+    )
+    
+    try:
+        # Create historic data refresh service
+        refresh_service = HistoricDataRefreshService(
+            db_session=db,
+            seasons=None,  # Will be parsed from string
+            round_id=round_id,
+            regenerate_tips=regenerate_tips
+        )
+        
+        # Refresh from string
+        refresh_stats = await refresh_service.refresh_from_string(
+            seasons_str=seasons_str,
+            round_id=round_id,
+            regenerate_tips=regenerate_tips
+        )
+        
+        # Build response
+        response = HistoricRefreshTriggerResponse(
+            success=True,
+            message=f"Successfully refreshed {refresh_stats['seasons_processed']} seasons",
+            seasons_processed=refresh_stats["seasons_processed"],
+            games_synced=refresh_stats["games_synced"],
+            tips_generated=refresh_stats["tips_generated"],
+            errors=refresh_stats.get("errors", []),
+            duration_seconds=refresh_stats.get("duration_seconds", 0.0),
+            season_stats=refresh_stats.get("season_stats", {})
+        )
+        
+        logger.info(f"Manual historic refresh completed: {response.message}")
+        
+        return response
+    
+    except Exception as e:
+        logger.error(f"Manual historic refresh failed: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Historic refresh failed: {str(e)}"
+        )
+
+
+class HistoricRefreshProgressResponse(BaseModel):
+    """Response model for historic refresh progress."""
+    progress_id: Optional[int] = None
+    operation_type: Optional[str] = None
+    total_items: Optional[int] = None
+    completed_items: Optional[int] = None
+    status: Optional[str] = None
+    started_at: Optional[str] = None
+    completed_at: Optional[str] = None
+    error_message: Optional[str] = None
+    progress_percentage: Optional[float] = None
+
+
+@router.get("/historic-refresh/progress", response_model=HistoricRefreshProgressResponse)
+@limiter.limit("30/minute")
+async def get_historic_refresh_progress(
+    request: Request,
+    db: AsyncSession = Depends(get_db)
+):
+    """Get current progress of historic refresh operations.
+    
+    This endpoint returns the current progress of the most recent
+    historic refresh operation.
+    
+    Args:
+        request: FastAPI request object
+        
+    Returns:
+        Historic refresh progress information
+    """
+    from app.services.historic_data_refresh import HistoricDataRefreshService
+    
+    logger.info("Fetching historic refresh progress")
+    
+    try:
+        # Create a temporary service instance to get progress
+        refresh_service = HistoricDataRefreshService(
+            db_session=db,
+            seasons=[],
+            round_id=None,
+            regenerate_tips=False
+        )
+        
+        # Get progress
+        progress = await refresh_service.get_progress()
+        
+        if progress:
+            response = HistoricRefreshProgressResponse(**progress)
+            logger.info(f"Historic refresh progress: {progress['status']}")
+        else:
+            response = HistoricRefreshProgressResponse(
+                message="No active historic refresh operation found"
+            )
+            logger.info("No active historic refresh operation found")
+        
+        return response
+    
+    except Exception as e:
+        logger.error(f"Failed to fetch historic refresh progress: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to fetch progress: {str(e)}"
+        )

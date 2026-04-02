@@ -90,6 +90,7 @@ class GenerationProgress(Base):
     started_at = Column(DateTime, default=datetime.utcnow)
     completed_at = Column(DateTime, nullable=True)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    job_execution_id = Column(Integer, nullable=True, index=True)  # Link to job execution
 
 
 class JobExecution(Base):

@@ -300,6 +300,25 @@ class GameCRUD:
         return None
     
     @staticmethod
+    async def get_rounds_for_season(db: AsyncSession, season: int) -> List[int]:
+        """Get all round numbers for a season.
+        
+        Args:
+            db: Database session
+            season: Season year
+            
+        Returns:
+            List of round numbers sorted ascending
+        """
+        result = await db.execute(
+            select(Game.round_id)
+            .where(Game.season == season)
+            .distinct()
+            .order_by(Game.round_id)
+        )
+        return [row[0] for row in result.all()]
+    
+    @staticmethod
     async def get_latest_completed_round(db: AsyncSession) -> Optional[Tuple[int, int]]:
         """Get the most recent completed round (season, round_id).
         
