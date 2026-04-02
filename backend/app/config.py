@@ -26,6 +26,10 @@ class Settings(BaseSettings):
     cron_enabled: bool = True
     cron_timezone: str = "Australia/Perth"
     
+    # Daily Sync Configuration
+    current_season: int = 2026
+    daily_sync_enabled: bool = True
+    
     # Daily Game Sync
     cron_daily_sync: str = "0 2 * * *"  # 2:00 AM daily
     daily_sync_timeout_seconds: int = 3600  # 1 hour

@@ -1,6 +1,6 @@
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, and_
-from typing import List, Optional, Tuple
+from typing import List, Optional, Tuple, Dict, Any
 from datetime import datetime
 from app.models import Game, Tip
 from app.squiggle import SquiggleClient
@@ -122,6 +122,111 @@ class GameCRUD:
         invalidate_cache_pattern(medium_cache, "games_by_season:")
         
         return game
+    
+    @staticmethod
+    async def create_or_update_with_tracking(
+        db: AsyncSession, game_data: dict
+    ) -> Dict[str, Any]:
+        """Create or update a game from Squiggle data with sync tracking.
+        
+        This method tracks sync metadata including last_synced_at and sync_version.
+        
+        Args:
+            db: Database session
+            game_data: Game data from Squiggle API
+            
+        Returns:
+            Dictionary with sync tracking info:
+            - action: "created", "updated", or "skipped"
+            - game: The Game object
+            - squiggle_id: The Squiggle game ID
+        """
+        from app.cache import invalidate_cache_pattern
+        
+        # Check if game exists by squiggle_id
+        game = await GameCRUD.get_by_squiggle_id(db, game_data["id"])
+        
+        # Parse complete status (Squiggle returns 100 for complete, not True/False)
+        complete_value = game_data.get("complete", False)
+        if isinstance(complete_value, int):
+            is_complete = complete_value == 100
+        else:
+            is_complete = bool(complete_value)
+        
+        # Get values with defaults for None
+        home_score_val = game_data.get("hscore")
+        away_score_val = game_data.get("ascore")
+        
+        action = "skipped"
+        now = datetime.utcnow()
+        
+        if game:
+            # Check if any data actually changed
+            changed = False
+            if game_data.get("hteam") is not None and game.home_team != game_data["hteam"]:
+                changed = True
+                game.home_team = game_data["hteam"]
+            if game_data.get("ateam") is not None and game.away_team != game_data["ateam"]:
+                changed = True
+                game.away_team = game_data["ateam"]
+            if home_score_val is not None and game.home_score != home_score_val:
+                changed = True
+                game.home_score = home_score_val
+            if away_score_val is not None and game.away_score != away_score_val:
+                changed = True
+                game.away_score = away_score_val
+            if game_data.get("venue") is not None and game.venue != game_data["venue"]:
+                changed = True
+                game.venue = game_data["venue"]
+            if game_data.get("date") is not None:
+                new_date = datetime.fromisoformat(game_data["date"].replace("Z", "+00:00"))
+                if game.date != new_date:
+                    changed = True
+                    game.date = new_date
+            if game.completed != is_complete:
+                changed = True
+                game.completed = is_complete
+            
+            if changed:
+                action = "updated"
+                game.last_synced_at = now
+                game.sync_version = (game.sync_version or 0) + 1
+            else:
+                # Still update last_synced_at even if no data changed
+                game.last_synced_at = now
+        else:
+            # Create new game
+            action = "created"
+            game = Game(
+                squiggle_id=game_data["id"],
+                round_id=game_data.get("round", 0),
+                season=game_data.get("year", 0),
+                home_team=game_data.get("hteam", ""),
+                away_team=game_data.get("ateam", ""),
+                home_score=home_score_val,
+                away_score=away_score_val,
+                venue=game_data.get("venue", ""),
+                date=datetime.fromisoformat(game_data["date"].replace("Z", "+00:00")),
+                completed=is_complete,
+                last_synced_at=now,
+                sync_version=1,
+            )
+            db.add(game)
+        
+        await db.commit()
+        await db.refresh(game)
+        
+        # Invalidate cache for game-related queries
+        invalidate_cache_pattern(short_cache, "game_by_id:")
+        invalidate_cache_pattern(short_cache, "games_by_round:")
+        invalidate_cache_pattern(short_cache, "upcoming_games:")
+        invalidate_cache_pattern(medium_cache, "games_by_season:")
+        
+        return {
+            "action": action,
+            "game": game,
+            "squiggle_id": game_data["id"]
+        }
     
     @staticmethod
     async def sync_from_squiggle(
