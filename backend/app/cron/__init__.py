@@ -114,6 +114,16 @@ class CronJobManager:
             enabled=settings.tip_generation_enabled
         )
         
+        # Phase 5: Historical Data Refresh Job
+        from app.cron.jobs.historic_refresh import HistoricDataRefreshJob
+        
+        await self.register_job(
+            name="historic_data_refresh",
+            schedule=settings.cron_historical_refresh,
+            job_class=HistoricDataRefreshJob,
+            enabled=settings.historic_refresh_enabled
+        )
+        
         self.logger.info(f"Registered {len(self.jobs)} cron jobs")
     
     async def execute_job(
