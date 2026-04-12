@@ -160,6 +160,8 @@ useHead({
 .hero {
   padding: 3rem 1.5rem;
   text-align: center;
+  max-width: 80ch;
+  margin: 0 auto;
 }
 
 .hero h1 {
@@ -169,6 +171,8 @@ useHead({
 
 .section {
   padding: 3rem 1.5rem;
+  max-width: 80ch;
+  margin: 0 auto;
 }
 
 .section h2 {
