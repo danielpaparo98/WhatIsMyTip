@@ -33,61 +33,65 @@
         </div>
 
         <!-- Games with Tips -->
-        <div v-if="loading" class="loading">
-          <div class="spinner"></div>
-        </div>
-        <div v-else-if="error" class="error">
-          <p>{{ error }}</p>
-          <button @click="loadGames" class="btn">Retry</button>
-        </div>
-        <div v-else-if="gamesWithTips.length === 0" class="empty">
-          <p>No tips available for this round.</p>
-          <button @click="generateTips" class="btn btn-primary">Generate Tips</button>
-        </div>
-        <div v-else class="games-grid">
-          <NuxtLink
-            v-for="game in gamesWithTips"
-            :key="game.id"
-            :to="`/game/${game.id}`"
-            class="game-card-link"
-          >
-            <div class="game-card">
-              <!-- Match Info -->
-            <div class="match-info">
-              <div class="teams">
-                <div class="team home">
-                  <img :src="getLogoUrl(game.home_team)" :alt="game.home_team" class="team-logo" />
+        <Transition name="fade" mode="out-in">
+          <div :key="selectedHeuristic">
+            <div v-if="loading" class="loading">
+              <div class="spinner"></div>
+            </div>
+            <div v-else-if="error" class="error">
+              <p>{{ error }}</p>
+              <button @click="loadGames" class="btn">Retry</button>
+            </div>
+            <div v-else-if="gamesWithTips.length === 0" class="empty">
+              <p>No tips available for this round.</p>
+              <button @click="generateTips" class="btn btn-primary">Generate Tips</button>
+            </div>
+            <div v-else class="games-grid">
+            <NuxtLink
+              v-for="game in gamesWithTips"
+              :key="game.id"
+              :to="`/game/${game.id}`"
+              class="game-card-link"
+            >
+              <div class="game-card">
+                <!-- Match Info -->
+              <div class="match-info">
+                <div class="teams">
+                  <div class="team home">
+                    <img :src="getLogoUrl(game.home_team)" :alt="game.home_team" class="team-logo" />
+                  </div>
+                  <span class="vs">VS</span>
+                  <div class="team away">
+                    <img :src="getLogoUrl(game.away_team)" :alt="game.away_team" class="team-logo" />
+                  </div>
                 </div>
-                <span class="vs">VS</span>
-                <div class="team away">
-                  <img :src="getLogoUrl(game.away_team)" :alt="game.away_team" class="team-logo" />
+                <div class="match-details">
+                  <span class="venue">{{ game.venue }}</span>
+                  <span class="date">{{ formatDate(game.date) }}</span>
                 </div>
               </div>
-              <div class="match-details">
-                <span class="venue">{{ game.venue }}</span>
-                <span class="date">{{ formatDate(game.date) }}</span>
+              
+              <!-- Tip Info -->
+              <div v-if="game.tip" class="tip-info">
+                <div class="tip-header">
+                  <span class="heuristic-badge">{{ formatHeuristic(game.tip.heuristic) }}</span>
+                  <span class="confidence">{{ Math.round(game.tip.confidence * 100) }}%</span>
+                </div>
+                <div class="tip-body">
+                  <h3>{{ game.tip.selected_team }}</h3>
+                  <p class="margin">Margin: {{ game.tip.margin }} pts</p>
+                </div>
+                <p v-if="game.tip.explanation" class="explanation">{{ game.tip.explanation }}</p>
               </div>
-            </div>
-            
-            <!-- Tip Info -->
-            <div v-if="game.tip" class="tip-info">
-              <div class="tip-header">
-                <span class="heuristic-badge">{{ formatHeuristic(game.tip.heuristic) }}</span>
-                <span class="confidence">{{ Math.round(game.tip.confidence * 100) }}%</span>
+              <div v-else class="no-tip">
+                <p>No tip available</p>
               </div>
-              <div class="tip-body">
-                <h3>{{ game.tip.selected_team }}</h3>
-                <p class="margin">Margin: {{ game.tip.margin }} pts</p>
+              
               </div>
-              <p v-if="game.tip.explanation" class="explanation">{{ game.tip.explanation }}</p>
-            </div>
-            <div v-else class="no-tip">
-              <p>No tip available</p>
-            </div>
-            
-            </div>
-          </NuxtLink>
+            </NuxtLink>
+          </div>
         </div>
+        </Transition>
   </section>
 </template>
 

@@ -1,6 +1,6 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import field_validator, Field
-from typing import List, Union
+from typing import List, Union, Optional
 
 
 class Settings(BaseSettings):
@@ -21,6 +21,53 @@ class Settings(BaseSettings):
     openrouter_base_url: str = "https://openrouter.ai/api/v1"
     
     environment: str = "development"
+    
+    # Cron Job Configuration
+    cron_enabled: bool = True
+    cron_timezone: str = "Australia/Perth"
+    
+    # Daily Sync Configuration
+    current_season: int = 2026
+    daily_sync_enabled: bool = True
+    
+    # Daily Game Sync
+    cron_daily_sync: str = "0 2 * * *"  # 2:00 AM daily
+    daily_sync_timeout_seconds: int = 3600  # 1 hour
+    
+    # Match Completion Detector
+    cron_match_completion_check: str = "*/15 * * * *"  # Every 15 minutes
+    match_completion_buffer_minutes: int = 60  # 1 hour buffer
+    match_completion_check_enabled: bool = True  # Enable/disable the job
+    completion_check_timeout_seconds: int = 300  # 5 minutes
+    
+    # Tip Generation
+    cron_tip_generation: str = "0 3 * * *"  # 3:00 AM daily
+    tip_generation_timeout_seconds: int = 1800  # 30 minutes
+    tip_generation_enabled: bool = True
+    tip_generation_regenerate_existing: bool = False
+    
+    # Historical Data Refresh
+    cron_historical_refresh: str = "0 4 * * 0"  # Sunday 4:00 AM
+    historic_refresh_enabled: bool = True
+    historic_refresh_seasons: str = "2010-2025"
+    historic_refresh_regenerate_tips: bool = False
+    historical_refresh_start_year: int = 2010
+    historical_refresh_timeout_seconds: int = 7200  # 2 hours
+    
+    # Retry Configuration
+    job_timeout_seconds: int = 3600
+    job_lock_expire_seconds: int = 7200
+    job_max_retries: int = 3
+    job_retry_delay_seconds: int = 60
+    
+    # Alerting Configuration
+    alert_enabled: bool = False
+    alert_webhook_url: Optional[str] = None
+    alert_email_recipients: List[str] = []
+    
+    # Monitoring Configuration
+    metrics_enabled: bool = True
+    metrics_retention_days: int = 30
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
     

@@ -261,12 +261,12 @@ const plugins: Plugin<'bar'>[] = []
   }
 
   .chart-wrapper {
-    height: 300px;
+    height: 400px;
   }
 
   .chart-loading,
   .chart-empty {
-    height: 300px;
+    height: 400px;
   }
 
   .spinner {
