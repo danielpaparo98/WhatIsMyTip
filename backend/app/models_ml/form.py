@@ -1,4 +1,3 @@
-import numpy as np
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_
 from typing import Dict, Tuple, List
@@ -59,7 +58,7 @@ class FormModel(BaseModel):
         return {
             "wins": wins,
             "losses": losses,
-            "avg_score_diff": np.mean(score_diffs) if score_diffs else 0,
+            "avg_score_diff": sum(score_diffs) / len(score_diffs) if score_diffs else 0,
             "games": len(games),
         }
     

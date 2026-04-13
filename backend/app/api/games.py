@@ -152,13 +152,13 @@ async def get_game_detail(
     - Model predictions from all 4 ML models (elo, form, home_advantage, value)
     """
     start_time = time.time()
-    logger.warning(f"get_game_detail: STARTING for game_id={game_id}")
+    logger.debug(f"get_game_detail: STARTING for game_id={game_id}")
     
     # 1. Fetch game by id
     game_start = time.time()
     game = await GameCRUD.get_by_id(db, game_id)
     game_time = time.time() - game_start
-    logger.warning(f"get_game_detail: Game fetch took {game_time:.4f}s")
+    logger.debug(f"get_game_detail: Game fetch took {game_time:.4f}s")
     
     if not game:
         raise HTTPException(status_code=404, detail="Game not found")
@@ -167,7 +167,7 @@ async def get_game_detail(
     tips_start = time.time()
     tips = await TipCRUD.get_by_game(db, game_id)
     tips_time = time.time() - tips_start
-    logger.warning(f"get_game_detail: Tips fetch took {tips_time:.4f}s, found {len(tips)} tips")
+    logger.debug(f"get_game_detail: Tips fetch took {tips_time:.4f}s, found {len(tips)} tips")
     
     # 3. Fetch stored model predictions
     model_predictions_start = time.time()
@@ -185,10 +185,10 @@ async def get_game_detail(
     ]
     
     model_predictions_time = time.time() - model_predictions_start
-    logger.warning(f"get_game_detail: Model predictions fetch took {model_predictions_time:.4f}s, found {len(model_predictions_list)} predictions")
+    logger.debug(f"get_game_detail: Model predictions fetch took {model_predictions_time:.4f}s, found {len(model_predictions_list)} predictions")
     
     total_time = time.time() - start_time
-    logger.warning(f"get_game_detail: COMPLETED in {total_time:.4f}s")
+    logger.debug(f"get_game_detail: COMPLETED in {total_time:.4f}s")
     
     # 4. Return combined response
     return GameDetailResponse(

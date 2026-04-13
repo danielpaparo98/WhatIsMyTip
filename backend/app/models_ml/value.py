@@ -1,4 +1,3 @@
-import numpy as np
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, case, or_
 from typing import Dict, Tuple, Optional

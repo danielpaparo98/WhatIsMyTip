@@ -1,3 +1,5 @@
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI, Request, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -15,6 +17,19 @@ from app.logger import get_logger
 from app.cron import init_cron_manager, get_cron_manager
 
 logger = get_logger(__name__)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Application lifespan: startup and shutdown logic."""
+    # Startup
+    try:
+        await cron_mgr.register_jobs()
+        logger.info("Cron jobs registered successfully")
+    except Exception as e:
+        logger.error(f"Failed to register cron jobs: {e}")
+    yield
+    # Shutdown (cleanup if needed)
 
 
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
@@ -61,21 +76,12 @@ app = FastAPI(
     docs_url=None if settings.environment == "production" else "/docs",
     redoc_url=None if settings.environment == "production" else "/redoc",
     openapi_url=None if settings.environment == "production" else "/openapi.json",
+    lifespan=lifespan,
 )
 
 
 # Initialize CronJobManager
 cron_mgr = init_cron_manager(app)
-
-
-@app.on_event("startup")
-async def startup_event():
-    """Initialize cron jobs on startup."""
-    try:
-        await cron_mgr.register_jobs()
-        logger.info("Cron jobs registered successfully")
-    except Exception as e:
-        logger.error(f"Failed to register cron jobs: {e}")
 
 # Security headers middleware
 app.add_middleware(SecurityHeadersMiddleware)

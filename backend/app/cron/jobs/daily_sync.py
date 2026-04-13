@@ -3,7 +3,7 @@
 from typing import Dict, Any
 from datetime import datetime
 
-from app.cron.base import BaseJob, TransientJobError, PermanentJobError
+from app.cron.base import BaseJob, classify_error
 from app.squiggle import SquiggleClient
 from app.services.game_sync import GameSyncService
 from app.models_ml.elo import EloModel
@@ -125,10 +125,6 @@ class DailyGameSyncJob(BaseJob):
             result["items_failed"] = result["items_processed"]
             result["summary"] = f"Failed: {error_msg}"
             
-            # Classify error type
-            if "timeout" in str(e).lower() or "network" in str(e).lower():
-                raise TransientJobError(error_msg)
-            else:
-                raise PermanentJobError(error_msg)
+            raise classify_error(e, "DailyGameSyncJob failed")
         
         return result
