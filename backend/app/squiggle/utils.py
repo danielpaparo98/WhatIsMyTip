@@ -14,10 +14,10 @@ def parse_squiggle_complete(value) -> bool:
     Returns:
         True if the game is complete, False otherwise.
     """
-    if isinstance(value, int):
-        return value == 100
     if isinstance(value, bool):
         return value
+    if isinstance(value, int):
+        return value == 100
     if isinstance(value, str):
         return value.lower() in ("100", "true", "yes")
     return False
