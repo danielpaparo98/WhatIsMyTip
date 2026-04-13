@@ -2,7 +2,82 @@
 
 ## Overview
 
-The WhatIsMyTip backend is a FastAPI-based application that provides AI-powered AFL tipping predictions. It uses ML models, heuristic layers, and AI explanations to generate accurate footy tips.
+The WhatIsMyTip backend is a FastAPI-based application that provides AI-powered AFL tipping predictions. It uses ML models, heuristic layers, and AI explanations to generate accurate footy tips. The system includes a comprehensive cron-based data collection infrastructure for automated data synchronization, match completion detection, tip generation, and historical data refresh.
+
+## Project Structure
+
+````
+backend/
+├── main.py                 # FastAPI application entry point
+├── pyproject.toml          # Python project configuration and dependencies
+├── uv.lock                 # Locked dependencies
+├── .env.example            # Environment variables template
+├── app/
+│   ├── __init__.py
+│   ├── config.py           # Application settings and configuration
+│   ├── api/                # API route handlers
+│   │   ├── __init__.py
+│   │   ├── tips.py         # Tips generation and retrieval endpoints
+│   │   ├── games.py        # Games data endpoints
+│   │   ├── sync.py         # Data synchronization endpoints
+│   │   ├── backtest.py     # Backtesting endpoints
+│   │   └── admin/          # Admin endpoints
+│   │       ├── __init__.py
+│   │       └── jobs.py     # Cron job management endpoints
+│   ├── crud/               # Database CRUD operations
+│   │   ├── __init__.py
+│   │   ├── tips.py         # Tip database operations
+│   │   ├── games.py        # Game database operations
+│   │   ├── jobs.py         # Job execution and lock operations
+│   │   ├── elo_cache.py    # Elo cache operations
+│   │   ├── generation_progress.py  # Generation progress tracking
+│   │   └── backtest.py     # Backtest result database operations
+│   ├── db/                 # Database session management
+│   │   └── __init__.py
+│   ├── models/             # Database models
+│   │   └── __init__.py
+│   ├── models_ml/          # ML prediction models
+│   │   ├── __init__.py
+│   │   ├── base.py         # Abstract base class for ML models
+│   │   ├── elo.py          # Elo rating model
+│   │   ├── form.py         # Team form model
+│   │   ├── home_advantage.py # Home advantage model
+│   │   └── value.py        # Value betting model
+│   ├── heuristics/         # Heuristic layers
+│   │   ├── __init__.py
+│   │   ├── base.py         # Abstract base class for heuristics
+│   │   ├── best_bet.py     # Conservative best bet heuristic
+│   │   ├── yolo.py         # High-risk YOLO heuristic
+│   │   └── high_risk_high_reward.py # Balanced high-risk heuristic
+│   ├── openrouter/         # OpenRouter AI client
+│   │   ├── __init__.py
+│   │   └── client.py       # AI explanation generation
+│   ├── schemas/            # Pydantic schemas for validation
+│   │   ├── __init__.py
+│   │   ├── tips.py         # Tip schemas
+│   │   ├── games.py        # Game schemas
+│   │   ├── cron.py         # Cron job schemas
+│   │   └── backtest.py     # Backtest schemas
+│   ├── services/           # Business logic services
+│   │   ├── __init__.py
+│   │   ├── explanation.py  # AI explanation service
+│   │   ├── game_sync.py    # Game synchronization service
+│   │   ├── tip_generation.py  # Tip generation service
+│   │   ├── match_completion.py # Match completion detection service
+│   │   └── historic_data_refresh.py  # Historical data refresh service
+│   └── cron/               # Cron job infrastructure
+│       ├── __init__.py
+│       ├── base.py         # Base cron job class
+│       └── jobs/           # Individual cron jobs
+│           ├── __init__.py
+│           ├── daily_sync.py
+│           ├── match_completion.py
+│           ├── tip_generation.py
+│           └── historic_refresh.py
+└── squiggle/               # Squiggle API client
+    ├── __init__.py
+    └── client.py           # Squiggle API integration
+````
 
 ## Project Structure
 
@@ -132,6 +207,160 @@ cp .env.example .env
 The backend uses SQLite for local development. The database file is created automatically when the first query is executed.
 
 For production, consider migrating to PostgreSQL or MySQL for better performance and scalability.
+
+## Cron Jobs System
+
+The WhatIsMyTip backend includes a comprehensive cron-based data collection system for automated operations. This system provides reliable, scheduled data scraping, match completion detection, tip generation, and historical data refresh capabilities.
+
+### Cron Job Overview
+
+The system manages four main cron jobs:
+
+| Job Name | Schedule | Purpose | Dependencies |
+|----------|----------|---------|--------------|
+| `daily_game_sync` | `0 2 * * *` (2:00 AM daily) | Sync all games for current season, update Elo cache | None |
+| `match_completion_detector` | `*/15 * * * *` (every 15 minutes) | Detect and scrape completed matches | None |
+| `tip_generation` | `0 3 * * *` (3:00 AM daily) | Generate tips for upcoming rounds | `daily_game_sync` |
+| `historical_data_refresh` | `0 4 * * 0` (4:00 AM Sundays) | Refresh historical data for missing seasons | None |
+
+### Job Execution Tracking
+
+All cron jobs track their execution history in the [`job_executions`](docs/migrations.md#job-executions-table) table, including:
+- Execution status (pending, running, completed, failed)
+- Start and completion timestamps
+- Duration in seconds
+- Items processed, succeeded, and failed
+- Error messages and details
+- Metadata for debugging
+
+### Job Locking
+
+The system uses the [`job_locks`](docs/migrations.md#job-locks-table) table to prevent concurrent execution of the same job, ensuring data integrity and preventing race conditions.
+
+### Admin API Endpoints
+
+The cron system provides admin endpoints for manual job triggering and monitoring:
+
+- `POST /api/admin/jobs/daily-sync/trigger` - Manually trigger daily game sync
+- `POST /api/admin/jobs/match-completion/trigger` - Manually trigger match completion detection
+- `POST /api/admin/jobs/tip-generation/trigger` - Manually trigger tip generation
+- `POST /api/admin/jobs/historic-refresh/trigger` - Manually trigger historical data refresh
+- `GET /api/admin/jobs/historic-refresh/progress` - Check historical refresh progress
+- `GET /api/health/cron` - Cron job health check endpoint
+
+### Job Monitoring
+
+Cron jobs are monitored through:
+- Application logs with structured JSON format
+- Job execution history in the database
+- Health check endpoint at `/api/health/cron`
+- Job metrics including success rates and durations
+
+## Services
+
+### GameSyncService ([`game_sync.py`](backend/app/services/game_sync.py))
+
+Responsible for syncing games from the Squiggle API.
+
+**Key Methods:**
+- `sync_current_season()` - Sync all games for the current season
+- `sync_season()` - Sync games for a specific season
+- `sync_round()` - Sync games for a specific round
+- `update_elo_cache()` - Update Elo ratings cache after sync
+
+### MatchCompletionDetector ([`match_completion.py`](backend/app/services/match_completion.py))
+
+Detects and processes completed matches.
+
+**Key Methods:**
+- `detect_completed_matches()` - Identify games ready for completion scraping
+- `scrape_completed_match()` - Fetch final scores from Squiggle API
+- `is_match_buffer_elapsed()` - Check if buffer time has passed
+- `process_completed_matches()` - Process all completed matches
+
+### TipGenerationService ([`tip_generation.py`](backend/app/services/tip_generation.py))
+
+Generates tips using ML models and heuristics.
+
+**Key Methods:**
+- `generate_for_round()` - Generate tips for a specific round
+- `generate_for_game()` - Generate tips for a single game
+- `generate_batch()` - Generate tips for multiple games
+- `regenerate_for_round()` - Regenerate tips for an existing round
+
+### HistoricDataRefreshService ([`historic_data_refresh.py`](backend/app/services/historic_data_refresh.py))
+
+Refreshes historical data for missing seasons/rounds.
+
+**Key Methods:**
+- `refresh_all_seasons()` - Refresh all historical seasons
+- `refresh_season()` - Refresh a specific season
+- `refresh_round()` - Refresh a specific round
+- `get_missing_data()` - Identify missing historical data
+- `track_progress()` - Track refresh progress
+
+## Database Schema
+
+### New Tables
+
+#### JobExecutions ([`job_executions`](backend/app/models/__init__.py))
+
+Tracks execution history of all cron jobs.
+
+**Columns:**
+- `id` - Primary key
+- `job_name` - Name of the cron job
+- `status` - Execution status (pending, running, completed, failed)
+- `started_at` - When the job started
+- `completed_at` - When the job completed (if successful)
+- `duration_seconds` - Execution duration
+- `items_processed` - Total items processed
+- `items_succeeded` - Items that succeeded
+- `items_failed` - Items that failed
+- `error_message` - Error message (if failed)
+- `error_details` - Structured error information (JSON)
+- `metadata` - Additional context (JSON)
+- `created_at` - Record creation timestamp
+
+#### JobLocks ([`job_locks`](backend/app/models/__init__.py))
+
+Prevents concurrent execution of the same job.
+
+**Columns:**
+- `id` - Primary key
+- `job_name` - Name of the cron job (unique)
+- `locked_at` - When the lock was acquired
+- `locked_by` - Hostname/pod identifier
+- `expires_at` - When the lock expires
+- `created_at` - Record creation timestamp
+
+#### EloCache ([`elo_cache`](backend/app/models/__init__.py))
+
+Persists Elo ratings cache for faster initialization.
+
+**Columns:**
+- `id` - Primary key
+- `team_name` - Team name (unique)
+- `rating` - Current Elo rating
+- `games_played` - Number of games played
+- `last_updated` - Last rating update timestamp
+- `created_at` - Record creation timestamp
+
+### Modified Tables
+
+#### Games
+
+**New Columns:**
+- `last_synced_at` - Track when the game was last synced from Squiggle
+- `sync_count` - Number of syncs for this game
+- `sync_version` - Version of sync data
+
+#### GenerationProgress
+
+**New Columns:**
+- `job_execution_id` - Link to job execution record
+- `current_item` - Track current item being processed
+- `estimated_remaining_seconds` - Estimated time remaining
 
 ## ML Models
 
@@ -487,10 +716,15 @@ The API includes comprehensive error handling:
 
 ## Next Steps
 
-- [ ] Add database migrations (Alembic)
+- [x] Add database migrations (Alembic)
+- [x] Implement cron-based data collection system
+- [x] Add job execution tracking
+- [x] Implement job locking mechanism
+- [x] Add admin API endpoints for job management
 - [ ] Implement user authentication
 - [ ] Add caching layer (Redis)
-- [ ] Set up logging and monitoring
+- [ ] Set up comprehensive logging and monitoring
 - [ ] Implement database backups
-- [ ] Add unit tests for all models
+- [ ] Add unit tests for all services
 - [ ] Performance optimization for large datasets
+- [ ] Add alerting for job failures
