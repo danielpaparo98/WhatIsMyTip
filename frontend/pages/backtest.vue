@@ -15,10 +15,10 @@
           </p>
         </div>
         
-        <div v-if="currentSeasonLoading" class="loading">
+        <div v-if="currentSeasonLoading" class="loading" role="status" aria-live="polite">
           <div class="spinner"></div>
         </div>
-        <div v-else-if="currentSeasonError" class="error">
+        <div v-else-if="currentSeasonError" class="error" role="status" aria-live="polite">
           <p>{{ currentSeasonError }}</p>
         </div>
         <div v-else class="current-season-cards">
@@ -66,7 +66,7 @@
         <h2>Performance Comparison</h2>
         
         <div class="controls">
-          <select v-model="selectedSeason" class="select" :disabled="seasonsLoading || syncing">
+          <select v-model="selectedSeason" class="select" :disabled="seasonsLoading || syncing" aria-label="Select season year">
             <option v-if="seasonsLoading" disabled>Loading seasons...</option>
             <option v-for="year in availableYears" :key="year" :value="year">
               {{ year }}
@@ -97,14 +97,14 @@
           </div>
         </div>
 
-        <div v-if="syncing" class="loading sync-message">
+        <div v-if="syncing" class="loading sync-message" role="status" aria-live="polite">
           <div class="spinner"></div>
           <p>Syncing historical data for {{ selectedSeason }}...</p>
         </div>
-        <div v-else-if="loading" class="loading">
+        <div v-else-if="loading" class="loading" role="status" aria-live="polite">
           <div class="spinner"></div>
         </div>
-        <div v-else-if="error" class="error">
+        <div v-else-if="error" class="error" role="status" aria-live="polite">
           <p>{{ error }}</p>
         </div>
         
@@ -137,14 +137,14 @@
         
         <!-- Table View -->
         <div v-else-if="viewMode === 'table'" class="table-section">
-          <div v-if="syncing" class="loading sync-message">
+          <div v-if="syncing" class="loading sync-message" role="status" aria-live="polite">
             <div class="spinner"></div>
             <p>Syncing historical data for {{ selectedSeason }}...</p>
           </div>
-          <div v-else-if="tableLoading" class="loading">
+          <div v-else-if="tableLoading" class="loading" role="status" aria-live="polite">
             <div class="spinner"></div>
           </div>
-          <div v-else-if="tableError" class="error">
+          <div v-else-if="tableError" class="error" role="status" aria-live="polite">
             <p>{{ tableError }}</p>
           </div>
           <div v-else-if="tableData && tableData.heuristics.length > 0" class="tables-container">
@@ -198,14 +198,14 @@
         
         <!-- Charts View -->
         <div v-else-if="viewMode === 'charts'" class="charts-section">
-          <div v-if="syncing" class="loading sync-message">
+          <div v-if="syncing" class="loading sync-message" role="status" aria-live="polite">
             <div class="spinner"></div>
             <p>Syncing historical data for {{ selectedSeason }}...</p>
           </div>
-          <div v-else-if="chartsLoading" class="loading">
+          <div v-else-if="chartsLoading" class="loading" role="status" aria-live="polite">
             <div class="spinner"></div>
           </div>
-          <div v-else-if="chartsError" class="error">
+          <div v-else-if="chartsError" class="error" role="status" aria-live="polite">
             <p>{{ chartsError }}</p>
           </div>
           <div v-else-if="chartData && chartData.length > 0" class="charts-container">
@@ -227,17 +227,12 @@
 </template>
 
 <script setup lang="ts">
-definePageMeta({
-  layout: 'default'
-})
-
-import { ref, watch, onMounted } from 'vue'
-
 const api = useApi()
+const { formatHeuristic } = useFormatters()
 
 // Page-specific SEO
 useHead({
-  title: 'Backtesting | AFL Prediction Performance & Accuracy',
+  title: 'Backtesting',
   meta: [
     { name: 'description', content: 'View historical performance and accuracy of our AFL prediction heuristics. Analyze year-to-date profit, accuracy rates, and betting performance across multiple seasons.' },
     { name: 'keywords', content: 'AFL backtesting, AFL prediction accuracy, AFL betting performance, AFL tipping results, AFL profit analysis, AFL historical performance' },
@@ -357,6 +352,8 @@ watch(selectedSeason, async () => {
     await loadComparisonData()
   } else if (viewMode.value === 'table') {
     await loadTableData()
+  } else if (viewMode.value === 'charts') {
+    await loadChartData()
   }
 })
 
@@ -366,7 +363,7 @@ watch(viewMode, async (newMode) => {
     await loadComparisonData()
   } else if (newMode === 'table' && !tableData.value) {
     await loadTableData()
-  } else if (newMode === 'charts' && !chartData.value) {
+  } else if (newMode === 'charts') {
     await loadChartData()
   }
 })
@@ -396,15 +393,6 @@ const loadChartData = async () => {
   }
 }
 
-const formatHeuristic = (h: string) => {
-  const labels: Record<string, string> = {
-    best_bet: 'Best Bet',
-    yolo: 'YOLO',
-    high_risk_high_reward: 'High Risk / High Reward'
-  }
-  return labels[h] || h
-}
-
 const loadCurrentSeasonData = async () => {
   currentSeasonLoading.value = true
   currentSeasonError.value = null
@@ -420,9 +408,11 @@ const loadCurrentSeasonData = async () => {
 }
 
 onMounted(async () => {
-  await loadAvailableSeasons()
-  await loadCurrentSeasonData()
-  await loadComparisonData()
+  await Promise.all([
+    loadAvailableSeasons(),
+    loadCurrentSeasonData(),
+    loadComparisonData(),
+  ])
 })
 </script>
 
@@ -951,6 +941,21 @@ onMounted(async () => {
   }
 }
 
+/* Disclaimer — visible on all screen sizes */
+.disclaimer {
+  margin-top: 1rem;
+  padding: 0.75rem;
+  background-color: rgba(251, 191, 36, 0.1);
+  border-left: 3px solid #fbbf24;
+  border-radius: 0.25rem;
+}
+
+.disclaimer small {
+  color: #fbbf24;
+  font-size: 0.75rem;
+  line-height: 1.4;
+}
+
 /* Desktop styles */
 @media (min-width: 1025px) {
   .hero {
@@ -1116,20 +1121,6 @@ onMounted(async () => {
     font-size: 0.875rem;
     margin: 1rem 0;
     line-height: 1.5;
-  }
-
-  .disclaimer {
-    margin-top: 1rem;
-    padding: 0.75rem;
-    background-color: rgba(251, 191, 36, 0.1);
-    border-left: 3px solid #fbbf24;
-    border-radius: 0.25rem;
-  }
-
-  .disclaimer small {
-    color: #fbbf24;
-    font-size: 0.75rem;
-    line-height: 1.4;
   }
 
   .btn {

@@ -277,7 +277,7 @@ class CronJobManager:
         Returns:
             CronHealthResponse
         """
-        from datetime import datetime
+        from datetime import datetime, timezone
         
         # Check database connectivity
         try:
@@ -301,7 +301,7 @@ class CronJobManager:
         
         return CronHealthResponse(
             status=overall_status,
-            timestamp=datetime.utcnow(),
+            timestamp=datetime.now(timezone.utc),
             jobs=job_statuses,
             database=db_status,
             cron_enabled=self.enabled

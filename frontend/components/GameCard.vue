@@ -6,12 +6,12 @@
     </div>
     <div class="game-body">
       <div class="team home">
-        <img :src="getLogoUrl(homeTeam)" :alt="homeTeam" class="team-logo" />
+        <img :src="getLogoUrl(homeTeam)" :alt="homeTeam + ' logo'" class="team-logo" loading="lazy" width="56" height="56" />
         <span v-if="homeScore !== null" class="score">{{ homeScore }}</span>
       </div>
       <div class="vs">VS</div>
       <div class="team away">
-        <img :src="getLogoUrl(awayTeam)" :alt="awayTeam" class="team-logo" />
+        <img :src="getLogoUrl(awayTeam)" :alt="awayTeam + ' logo'" class="team-logo" loading="lazy" width="56" height="56" />
         <span v-if="awayScore !== null" class="score">{{ awayScore }}</span>
       </div>
     </div>
@@ -20,6 +20,9 @@
 </template>
 
 <script setup lang="ts">
+import { useTeamLogos } from '~/composables/useTeamLogos'
+import { useFormatters } from '~/composables/useFormatters'
+
 interface Props {
   roundId: number
   date: string
@@ -32,41 +35,9 @@ interface Props {
 
 defineProps<Props>()
 
-const formatDate = (dateStr: string) => {
-  const date = new Date(dateStr)
-  return date.toLocaleDateString('en-AU', {
-    weekday: 'short',
-    day: 'numeric',
-    month: 'short'
-  })
-}
-
-const getLogoUrl = (teamName: string): string => {
-  // Map team names to logo filenames
-  const logoMap: Record<string, string> = {
-    'Adelaide': 'Adelaide.png',
-    'Brisbane Lions': 'Brisbane.png',
-    'Carlton': 'Carlton.png',
-    'Collingwood': 'Collingwood.png',
-    'Essendon': 'Essendon.png',
-    'Fremantle': 'Fremantle.png',
-    'Geelong': 'Geelong.png',
-    'Gold Coast': 'GoldCoast.png',
-    'Greater Western Sydney': 'Giants.png',
-    'Hawthorn': 'Hawthorn.png',
-    'Melbourne': 'Melbourne.png',
-    'North Melbourne': 'NorthMelbourne.png',
-    'Port Adelaide': 'PortAdelaide.png',
-    'Richmond': 'Richmond.png',
-    'St Kilda': 'StKilda.png',
-    'Sydney': 'Sydney.png',
-    'West Coast': 'WestCoast.png',
-    'Western Bulldogs': 'Bulldogs.png',
-  }
-  
-  const filename = logoMap[teamName] || ''
-  return filename ? `/logos/${filename}` : ''
-}
+const { getLogoUrl } = useTeamLogos()
+const { formatDateShort } = useFormatters()
+const formatDate = formatDateShort
 </script>
 
 <style scoped>

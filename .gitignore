@@ -24,6 +24,9 @@ htmlcov/
 .env
 .env.local
 .env.*.local
+.env.production
+.env.*
+!.env.example
 *.env
 
 # IDE files

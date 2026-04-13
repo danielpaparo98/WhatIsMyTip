@@ -1,5 +1,5 @@
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, insert
+from sqlalchemy import select, insert, delete, func
 from typing import List, Optional
 from app.models import ModelPrediction
 from app.cache import cached, short_cache
@@ -146,17 +146,17 @@ class ModelPredictionCRUD:
     
     @staticmethod
     async def delete_for_game(db: AsyncSession, game_id: int) -> int:
-        """Delete all model predictions for a game."""
+        """Delete all model predictions for a game using a bulk DELETE."""
         from app.cache import invalidate_cache_pattern
         
         try:
-            result = await db.execute(
-                select(ModelPrediction).where(ModelPrediction.game_id == game_id)
+            # Count before deleting
+            count_result = await db.execute(
+                select(func.count()).where(ModelPrediction.game_id == game_id)
             )
-            predictions = result.scalars().all()
-            count = len(predictions)
-            for prediction in predictions:
-                db.delete(prediction)
+            count = count_result.scalar() or 0
+            
+            await db.execute(delete(ModelPrediction).where(ModelPrediction.game_id == game_id))
             await db.commit()
             
             # Invalidate cache

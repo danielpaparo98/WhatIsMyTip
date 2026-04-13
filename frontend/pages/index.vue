@@ -21,10 +21,12 @@
         </div>
 
         <!-- Heuristic Selector -->
-        <div class="heuristic-selector">
+        <div class="heuristic-selector" role="tablist" aria-label="Heuristic filter">
           <button
             v-for="h in heuristics"
             :key="h.value"
+            role="tab"
+            :aria-selected="selectedHeuristic === h.value"
             @click="selectedHeuristic = h.value"
             :class="['heuristic-btn', { active: selectedHeuristic === h.value }]"
           >
@@ -35,14 +37,14 @@
         <!-- Games with Tips -->
         <Transition name="fade" mode="out-in">
           <div :key="selectedHeuristic">
-            <div v-if="loading" class="loading">
+            <div v-if="loading" class="loading" role="status" aria-live="polite">
               <div class="spinner"></div>
             </div>
-            <div v-else-if="error" class="error">
+            <div v-else-if="error" class="error" role="status" aria-live="polite">
               <p>{{ error }}</p>
               <button @click="loadGames" class="btn">Retry</button>
             </div>
-            <div v-else-if="gamesWithTips.length === 0" class="empty">
+            <div v-else-if="gamesWithTips.length === 0" class="empty" role="status" aria-live="polite">
               <p>No tips available for this round.</p>
               <button @click="generateTips" class="btn btn-primary">Generate Tips</button>
             </div>
@@ -58,11 +60,11 @@
               <div class="match-info">
                 <div class="teams">
                   <div class="team home">
-                    <img :src="getLogoUrl(game.home_team)" :alt="game.home_team" class="team-logo" />
+                    <img :src="getLogoUrl(game.home_team)" :alt="game.home_team + ' logo'" class="team-logo" loading="lazy" width="40" height="40" />
                   </div>
                   <span class="vs">VS</span>
                   <div class="team away">
-                    <img :src="getLogoUrl(game.away_team)" :alt="game.away_team" class="team-logo" />
+                    <img :src="getLogoUrl(game.away_team)" :alt="game.away_team + ' logo'" class="team-logo" loading="lazy" width="40" height="40" />
                   </div>
                 </div>
                 <div class="match-details">
@@ -96,15 +98,13 @@
 </template>
 
 <script setup lang="ts">
-definePageMeta({
-  layout: 'default'
-})
-
 const api = useApi()
+const { getLogoUrl } = useTeamLogos()
+const { formatHeuristic, formatDate: formatDateUtil } = useFormatters()
 
 // Page-specific SEO
 useHead({
-  title: 'AFL Tips & Predictions | AI-Powered Footy Tipping',
+  title: 'AFL Tips & Predictions',
   meta: [
     { name: 'description', content: 'Get AI-powered AFL tips and predictions for the current round. Expert footy tipping advice with smart heuristics, betting tips, and round predictions backed by machine learning models.' },
     { name: 'keywords', content: 'AFL tips, AFL predictions, AFL betting tips, AFL footy tips, AFL round predictions, AFL betting advice, footy tipping, AFL betting' },
@@ -138,6 +138,8 @@ const error = ref<string | null>(null)
 const gamesWithTips = ref<any[]>([])
 const latestRound = ref<any>(null)
 const selectedHeuristic = ref<string>('best_bet')
+const AUTO_REFRESH_MS = 5 * 60 * 1000
+let autoRefreshTimer: ReturnType<typeof setInterval> | null = null
 
 const heuristics = [
   { value: 'best_bet', label: 'Best Bet' },
@@ -175,6 +177,29 @@ const loadGames = async () => {
   }
 }
 
+const hasRoundChanged = (nextRound: any) => {
+  if (!latestRound.value) return true
+  return (
+    latestRound.value.season !== nextRound?.season ||
+    latestRound.value.round_id !== nextRound?.round_id
+  )
+}
+
+const refreshCurrentView = async () => {
+  try {
+    const nextRound = await api.getLatestRound()
+    const shouldSwitchRound = hasRoundChanged(nextRound)
+    latestRound.value = nextRound
+
+    // Keep current view fresh and automatically switch when the latest round changes.
+    if (shouldSwitchRound || !loading.value) {
+      await loadGames()
+    }
+  } catch (e) {
+    console.error('Auto-refresh failed:', e)
+  }
+}
+
 const generateTips = async () => {
   try {
     const season = latestRound.value?.season || new Date().getFullYear()
@@ -187,62 +212,7 @@ const generateTips = async () => {
   }
 }
 
-const formatDate = (dateStr: string) => {
-  const date = new Date(dateStr)
-  return date.toLocaleDateString('en-AU', {
-    weekday: 'short',
-    day: 'numeric',
-    month: 'short',
-    hour: '2-digit',
-    minute: '2-digit'
-  })
-}
-
-const formatHeuristic = (h: string) => {
-  const labels: Record<string, string> = {
-    best_bet: 'Best Bet',
-    yolo: 'YOLO',
-    high_risk_high_reward: 'High Risk'
-  }
-  return labels[h] || h
-}
-
-const getModelDisplayName = (modelName: string) => {
-  const names: Record<string, string> = {
-    elo: 'Elo Rating',
-    form: 'Form',
-    home_advantage: 'Home Advantage',
-    value: 'Value'
-  }
-  return names[modelName] || modelName
-}
-
-const getLogoUrl = (teamName: string): string => {
-  // Map team names to logo filenames
-  const logoMap: Record<string, string> = {
-    'Adelaide': 'Adelaide.png',
-    'Brisbane Lions': 'Brisbane.png',
-    'Carlton': 'Carlton.png',
-    'Collingwood': 'Collingwood.png',
-    'Essendon': 'Essendon.png',
-    'Fremantle': 'Fremantle.png',
-    'Geelong': 'Geelong.png',
-    'Gold Coast': 'GoldCoast.png',
-    'Greater Western Sydney': 'Giants.png',
-    'Hawthorn': 'Hawthorn.png',
-    'Melbourne': 'Melbourne.png',
-    'North Melbourne': 'NorthMelbourne.png',
-    'Port Adelaide': 'PortAdelaide.png',
-    'Richmond': 'Richmond.png',
-    'St Kilda': 'StKilda.png',
-    'Sydney': 'Sydney.png',
-    'West Coast': 'WestCoast.png',
-    'Western Bulldogs': 'Bulldogs.png',
-  }
-  
-  const filename = logoMap[teamName] || ''
-  return filename ? `/logos/${filename}` : ''
-}
+const formatDate = formatDateUtil
 
 // Reload games when heuristic changes
 watch(selectedHeuristic, () => {
@@ -252,6 +222,19 @@ watch(selectedHeuristic, () => {
 onMounted(() => {
   loadLatestRound()
   loadGames()
+  const refreshCallback = async () => {
+    if (document.visibilityState === 'visible') {
+      await refreshCurrentView()
+    }
+  }
+  autoRefreshTimer = setInterval(refreshCallback, AUTO_REFRESH_MS)
+})
+
+onUnmounted(() => {
+  if (autoRefreshTimer) {
+    clearInterval(autoRefreshTimer)
+    autoRefreshTimer = null
+  }
 })
 </script>
 

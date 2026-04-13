@@ -1,6 +1,6 @@
 """Admin API endpoints for cron job management."""
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, Header
 from sqlalchemy.ext.asyncio import AsyncSession
 from slowapi import Limiter
 from slowapi.util import get_remote_address
@@ -12,9 +12,18 @@ from app.config import settings
 from app.logger import get_logger
 
 
-router = APIRouter()
-limiter = Limiter(key_func=get_remote_address)
 logger = get_logger(__name__)
+
+
+async def verify_admin_api_key(x_api_key: str = Header(..., description="Admin API key")):
+    """Verify the admin API key for protected endpoints."""
+    if not settings.admin_api_key or x_api_key != settings.admin_api_key:
+        raise HTTPException(status_code=401, detail="Invalid or missing API key")
+    return x_api_key
+
+
+router = APIRouter(dependencies=[Depends(verify_admin_api_key)])
+limiter = Limiter(key_func=get_remote_address)
 
 
 class DailySyncTriggerRequest(BaseModel):
@@ -108,7 +117,7 @@ async def trigger_daily_sync(
         logger.error(f"Manual daily sync failed: {str(e)}", exc_info=True)
         raise HTTPException(
             status_code=500,
-            detail=f"Daily sync failed: {str(e)}"
+            detail="Internal server error. Please try again later."
         )
 
 
@@ -202,7 +211,7 @@ async def trigger_match_completion(
         logger.error(f"Manual match completion detection failed: {str(e)}", exc_info=True)
         raise HTTPException(
             status_code=500,
-            detail=f"Match completion detection failed: {str(e)}"
+            detail="Internal server error. Please try again later."
         )
 
 
@@ -305,7 +314,7 @@ async def trigger_tip_generation(
         logger.error(f"Manual tip generation failed: {str(e)}", exc_info=True)
         raise HTTPException(
             status_code=500,
-            detail=f"Tip generation failed: {str(e)}"
+            detail="Internal server error. Please try again later."
         )
 
 
@@ -394,7 +403,7 @@ async def trigger_historic_refresh(
         logger.error(f"Manual historic refresh failed: {str(e)}", exc_info=True)
         raise HTTPException(
             status_code=500,
-            detail=f"Historic refresh failed: {str(e)}"
+            detail="Internal server error. Please try again later."
         )
 
 
@@ -459,5 +468,5 @@ async def get_historic_refresh_progress(
         logger.error(f"Failed to fetch historic refresh progress: {str(e)}", exc_info=True)
         raise HTTPException(
             status_code=500,
-            detail=f"Failed to fetch progress: {str(e)}"
+            detail="Internal server error. Please try again later."
         )

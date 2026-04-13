@@ -21,6 +21,7 @@ class Settings(BaseSettings):
     openrouter_base_url: str = "https://openrouter.ai/api/v1"
     
     environment: str = "development"
+    admin_api_key: str = ""  # Set via ADMIN_API_KEY env var
     
     # Cron Job Configuration
     cron_enabled: bool = True
@@ -30,12 +31,12 @@ class Settings(BaseSettings):
     current_season: int = 2026
     daily_sync_enabled: bool = True
     
-    # Daily Game Sync
-    cron_daily_sync: str = "0 2 * * *"  # 2:00 AM daily
+    # Game Sync (frequent to keep live round data fresh)
+    cron_daily_sync: str = "*/15 * * * *"  # Every 15 minutes
     daily_sync_timeout_seconds: int = 3600  # 1 hour
     
     # Match Completion Detector
-    cron_match_completion_check: str = "*/15 * * * *"  # Every 15 minutes
+    cron_match_completion_check: str = "5,20,35,50 * * * *"  # Every 15 min, offset by 5
     match_completion_buffer_minutes: int = 60  # 1 hour buffer
     match_completion_check_enabled: bool = True  # Enable/disable the job
     completion_check_timeout_seconds: int = 300  # 5 minutes

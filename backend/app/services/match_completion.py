@@ -1,11 +1,12 @@
 """Service for detecting and processing completed matches."""
 
 from typing import Dict, Any, List, Optional
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from sqlalchemy.ext.asyncio import AsyncSession
 import time
 
 from app.squiggle import SquiggleClient
+from app.squiggle.utils import parse_squiggle_complete
 from app.crud.games import GameCRUD
 from app.logger import get_logger
 
@@ -115,11 +116,7 @@ class MatchCompletionDetectorService:
                         continue
                     
                     # Check if the game is complete in Squiggle
-                    complete_value = squiggle_data.get("complete", False)
-                    if isinstance(complete_value, int):
-                        is_complete = complete_value == 100
-                    else:
-                        is_complete = bool(complete_value)
+                    is_complete = parse_squiggle_complete(squiggle_data.get("complete", False))
                     
                     if is_complete:
                         # Update game with final scores
@@ -189,7 +186,7 @@ class MatchCompletionDetectorService:
             
             # Check if buffer has elapsed
             if game.date:
-                buffer_elapsed = datetime.utcnow() >= game.date + timedelta(minutes=self.buffer_minutes)
+                buffer_elapsed = datetime.now(timezone.utc) >= game.date + timedelta(minutes=self.buffer_minutes)
             else:
                 buffer_elapsed = False
             
@@ -205,11 +202,7 @@ class MatchCompletionDetectorService:
             squiggle_data = await self.client.get_game(squiggle_id)
             
             # Check completion status
-            complete_value = squiggle_data.get("complete", False)
-            if isinstance(complete_value, int):
-                is_complete = complete_value == 100
-            else:
-                is_complete = bool(complete_value)
+            is_complete = parse_squiggle_complete(squiggle_data.get("complete", False))
             
             if is_complete:
                 # Update game

@@ -73,32 +73,10 @@ async def get_games_with_tips(
             else:
                 tips = []
             
-            # If no tips exist for this round, generate them synchronously
-            # This is now safe due to the lock
+            # If no tips exist for this round, return empty response
+            # Tips should be generated via the cron job, not synchronously in the API path
             if not tips:
-                logger.info(f"No tips found for round {round_id}, season {season}. Generating now...")
-                generation_result = await TipCRUD.regenerate_tips_for_round(db, season, round_id)
-            
-                if generation_result["success"]:
-                    logger.info(f"{generation_result['message']}")
-                    
-                    # Fetch the newly generated tips
-                    if heuristic:
-                        result = await db.execute(
-                            select(Tip)
-                            .where(
-                                Tip.game_id.in_(game_ids),
-                                Tip.heuristic == heuristic
-                            )
-                        )
-                    else:
-                        result = await db.execute(
-                            select(Tip)
-                            .where(Tip.game_id.in_(game_ids))
-                        )
-                    tips = list(result.scalars().all())
-                else:
-                    logger.warning(f"Failed to generate tips: {generation_result['message']}")
+                logger.info(f"No tips found for round {round_id}, season {season}. Returning pending state.")
         
         # Create a dict of game_id -> tip
         tips_by_game = {tip.game_id: tip for tip in tips}
@@ -198,6 +176,11 @@ async def get_tips_by_heuristic(
     db: AsyncSession = Depends(get_db),
 ):
     """Get tips by heuristic type."""
+    if heuristic not in VALID_HEURISTICS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid heuristic '{heuristic}'. Must be one of: {', '.join(sorted(VALID_HEURISTICS))}"
+        )
     tips = await TipCRUD.get_by_heuristic(db, heuristic, limit=limit)
     return TipListResponse(
         tips=[TipResponse.model_validate(t) for t in tips],

@@ -1,7 +1,7 @@
-import numpy as np
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, case, or_
-from typing import Dict, Tuple
+from typing import Dict, Tuple, Optional
+from datetime import date
 from app.models_ml.base import BaseModel
 from app.models import Game
 
@@ -15,33 +15,69 @@ class ValueModel(BaseModel):
     def get_name(self) -> str:
         return "Value"
     
-    async def _calculate_win_rates(self, db: AsyncSession):
-        """Calculate historical win rates for each team."""
-        teams_result = await db.execute(
-            select(Game.home_team).distinct().union(select(Game.away_team).distinct())
-        )
-        teams = [r[0] for r in teams_result.all()]
+    async def _calculate_win_rates(self, db: AsyncSession, before_date: Optional[date] = None):
+        """Calculate historical win rates for each team.
         
-        for team in teams:
-            result = await db.execute(
-                select(
-                    func.count().label("total"),
-                    func.sum(
-                        case((Game.home_score > Game.away_score, 1), else_=0)
-                    ).label("wins"),
-                )
-                .where(
-                    or_(Game.home_team == team, Game.away_team == team),
-                    Game.completed == True,
-                )
+        Only uses games that occurred BEFORE the given date
+        to ensure no data leakage in backtesting.
+        
+        Uses aggregated queries instead of per-team queries to avoid N+1.
+        
+        Args:
+            db: Database session
+            before_date: Only consider games before this date (None = use all games)
+        """
+        # Build base filter
+        base_filter = [Game.completed == True]
+        if before_date is not None:
+            base_filter.append(Game.date < before_date)
+        
+        # Single query for home games
+        home_query = (
+            select(
+                Game.home_team.label("team"),
+                func.count().label("total"),
+                func.sum(
+                    case((Game.home_score > Game.away_score, 1), else_=0)
+                ).label("wins"),
             )
-            
-            total, wins = result.one()
+            .where(*base_filter)
+            .group_by(Game.home_team)
+        )
+        home_result = await db.execute(home_query)
+        home_stats = {row.team: {"total": row.total, "wins": row.wins or 0} for row in home_result.all()}
+        
+        # Single query for away games
+        away_query = (
+            select(
+                Game.away_team.label("team"),
+                func.count().label("total"),
+                func.sum(
+                    case((Game.away_score > Game.home_score, 1), else_=0)
+                ).label("wins"),
+            )
+            .where(*base_filter)
+            .group_by(Game.away_team)
+        )
+        away_result = await db.execute(away_query)
+        away_stats = {row.team: {"total": row.total, "wins": row.wins or 0} for row in away_result.all()}
+        
+        # Combine home and away stats
+        all_teams = set(home_stats.keys()) | set(away_stats.keys())
+        self.team_win_rates = {}
+        for team in all_teams:
+            home = home_stats.get(team, {"total": 0, "wins": 0})
+            away = away_stats.get(team, {"total": 0, "wins": 0})
+            total = home["total"] + away["total"]
+            wins = home["wins"] + away["wins"]
             self.team_win_rates[team] = (wins / total) if total > 0 else 0.5
     
     async def predict(self, game: Game, db: AsyncSession) -> Tuple[str, float, int]:
-        """Predict winner based on value (undervalued teams)."""
-        await self._calculate_win_rates(db)
+        """Predict winner based on value (undervalued teams).
+        
+        Uses only historical data before the prediction game's date.
+        """
+        await self._calculate_win_rates(db, before_date=game.date)
         
         home_rate = self.team_win_rates.get(game.home_team, 0.5)
         away_rate = self.team_win_rates.get(game.away_team, 0.5)

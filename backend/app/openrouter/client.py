@@ -10,6 +10,7 @@ class OpenRouterClient:
         self.client = AsyncOpenAI(
             api_key=settings.openrouter_api_key,
             base_url=settings.openrouter_base_url,
+            timeout=30.0,
         )
         self.model = settings.openrouter_model
     

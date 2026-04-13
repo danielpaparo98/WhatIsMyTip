@@ -2,7 +2,9 @@ name: Scheduled Tasks
 
 on:
   schedule:
-    # Run every Monday at 9:00 AM UTC (Monday evening in Australia)
+    # Keep fixtures/results fresh throughout the day
+    - cron: '*/15 * * * *'
+    # Weekly heavier jobs (tip generation + backtest)
     - cron: '0 9 * * 1'
   workflow_dispatch:
 
@@ -13,12 +15,23 @@ jobs:
     steps:
       - name: Sync games
         run: |
-          curl -X POST "https://api.whatismytip.com/api/sync/games"
+          HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+            -X POST \
+            -H "X-Api-Key: ${{ secrets.ADMIN_API_KEY }}" \
+            -H "Content-Type: application/json" \
+            -d '{}' \
+            "${{ secrets.API_BASE_URL }}/api/admin/jobs/daily-sync/trigger")
+          if [ "$HTTP_STATUS" -ne 200 ] && [ "$HTTP_STATUS" -ne 201 ]; then
+            echo "Sync games failed with HTTP status $HTTP_STATUS"
+            exit 1
+          fi
+          echo "Sync games completed successfully"
 
   generate-tips:
     name: Generate Weekly Tips
     runs-on: ubuntu-latest
     needs: sync-games
+    if: github.event_name == 'workflow_dispatch' || github.event.schedule == '0 9 * * 1'
     steps:
       - name: Get current round info
         id: round-info
@@ -28,12 +41,22 @@ jobs:
       
       - name: Generate tips
         run: |
-          YEAR=${{ steps.round-info.outputs.year }}
-          curl -X POST "https://api.whatismytip.com/api/tips/generate?season=$YEAR&round=1"
+          HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+            -X POST \
+            -H "X-Api-Key: ${{ secrets.ADMIN_API_KEY }}" \
+            -H "Content-Type: application/json" \
+            -d '{}' \
+            "${{ secrets.API_BASE_URL }}/api/admin/jobs/tip-generation/trigger")
+          if [ "$HTTP_STATUS" -ne 200 ] && [ "$HTTP_STATUS" -ne 201 ]; then
+            echo "Tip generation failed with HTTP status $HTTP_STATUS"
+            exit 1
+          fi
+          echo "Tip generation completed successfully"
 
   run-backtest:
     name: Run Weekly Backtest
     runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch' || github.event.schedule == '0 9 * * 1'
     steps:
       - name: Get current year
         id: year-info
@@ -44,4 +67,11 @@ jobs:
       - name: Run backtest
         run: |
           YEAR=${{ steps.year-info.outputs.year }}
-          curl -X POST "https://api.whatismytip.com/api/backtest/run?season=$YEAR"
+          HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+            -X POST \
+            "https://api.whatismytip.com/api/backtest/run?season=$YEAR")
+          if [ "$HTTP_STATUS" -ne 200 ] && [ "$HTTP_STATUS" -ne 201 ]; then
+            echo "Backtest failed with HTTP status $HTTP_STATUS"
+            exit 1
+          fi
+          echo "Backtest completed successfully"
