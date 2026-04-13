@@ -2,6 +2,7 @@
 
 from typing import Dict, Any
 from datetime import datetime
+from zoneinfo import ZoneInfo
 
 from app.cron.base import BaseJob, classify_error
 from app.squiggle import SquiggleClient
@@ -67,6 +68,25 @@ class DailyGameSyncJob(BaseJob):
             "games_updated": 0,
             "games_skipped": 0
         }
+        
+        # Off-season reduced frequency: Oct-Feb only sync once per day (2-4 AM)
+        try:
+            tz = ZoneInfo(self.settings.cron_timezone)
+            now_local = datetime.now(tz)
+            current_month = now_local.month
+            current_hour = now_local.hour
+            
+            if current_month in (10, 11, 12, 1, 2):
+                if current_hour < 2 or current_hour >= 4:
+                    self.logger.info(
+                        f"Skipping daily sync - off-season reduced frequency "
+                        f"(month={current_month}, hour={current_hour})"
+                    )
+                    result["summary"] = "Skipped daily sync - off-season reduced frequency"
+                    return result
+                self.logger.info("Off-season: running once-daily sync in 2-4 AM window")
+        except Exception as e:
+            self.logger.warning(f"Could not determine off-season status, proceeding with sync: {e}")
         
         try:
             # Create Squiggle client

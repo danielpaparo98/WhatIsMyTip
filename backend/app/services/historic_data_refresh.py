@@ -1,5 +1,6 @@
 """Service for refreshing historical data from Squiggle API."""
 
+import asyncio
 from typing import Dict, Any, List, Optional
 from sqlalchemy.ext.asyncio import AsyncSession
 from datetime import datetime
@@ -234,6 +235,9 @@ class HistoricDataRefreshService:
                         stats["errors"].append(error_msg)
                         season_stats["errors"].append(error_msg)
                         stats["season_stats"][season] = season_stats
+                    
+                    # Pause between seasons to be a good API citizen
+                    await asyncio.sleep(1)
                 
                 # Mark progress as completed
                 if self.progress_id:
