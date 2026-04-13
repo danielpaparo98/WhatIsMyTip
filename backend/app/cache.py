@@ -135,7 +135,9 @@ def cached(
         @wraps(func)
         async def async_wrapper(*args, **kwargs):
             # Build cache key from function name and arguments
-            cache_key = f"{key_prefix}{func.__name__}:{str(args)}:{str(sorted(kwargs.items()))}"
+            # Skip first arg (typically db session) to avoid non-deterministic memory addresses
+            cache_args = args[1:] if args else ()
+            cache_key = f"{key_prefix}{func.__name__}:{str(cache_args)}:{str(sorted(kwargs.items()))}"
             
             # Try to get from cache
             import time
@@ -164,7 +166,9 @@ def cached(
         @wraps(func)
         def sync_wrapper(*args, **kwargs):
             # Build cache key from function name and arguments
-            cache_key = f"{key_prefix}{func.__name__}:{str(args)}:{str(sorted(kwargs.items()))}"
+            # Skip first arg (typically db session) to avoid non-deterministic memory addresses
+            cache_args = args[1:] if args else ()
+            cache_key = f"{key_prefix}{func.__name__}:{str(cache_args)}:{str(sorted(kwargs.items()))}"
             
             # Try to get from cache
             import time

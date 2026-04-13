@@ -1,6 +1,6 @@
 """CRUD operations for job executions and locks."""
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional, List
 from sqlalchemy import select, and_, func
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -24,7 +24,7 @@ class JobExecutionCRUD:
         execution = JobExecution(
             job_name=job_name,
             status=status,
-            started_at=datetime.utcnow(),
+            started_at=datetime.now(timezone.utc),
             items_processed=0,
             items_failed=0
         )
@@ -197,7 +197,7 @@ class JobExecutionCRUD:
         days_to_keep: int = 30
     ) -> int:
         """Delete old job execution records."""
-        cutoff_date = datetime.utcnow() - timedelta(days=days_to_keep)
+        cutoff_date = datetime.now(timezone.utc) - timedelta(days=days_to_keep)
         
         result = await self.db.execute(
             select(JobExecution.id).where(JobExecution.started_at < cutoff_date)
@@ -237,7 +237,7 @@ class JobLockCRUD:
             JobLock if lock was acquired, None if already locked
         """
         # Check if lock already exists and is not expired
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         result = await self.db.execute(
             select(JobLock).where(JobLock.job_name == job_name)
         )
@@ -307,7 +307,7 @@ class JobLockCRUD:
             return False
         
         # Check if lock is expired
-        if lock.expires_at < datetime.utcnow():
+        if lock.expires_at < datetime.now(timezone.utc):
             # Lock is expired, delete it
             await self.db.delete(lock)
             await self.db.commit()
@@ -317,7 +317,7 @@ class JobLockCRUD:
     
     async def cleanup_expired_locks(self) -> int:
         """Delete expired job locks."""
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         
         result = await self.db.execute(
             select(JobLock).where(JobLock.expires_at < now)
@@ -332,7 +332,7 @@ class JobLockCRUD:
     
     async def get_all_locks(self) -> List[JobLock]:
         """Get all active job locks."""
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         result = await self.db.execute(
             select(JobLock).where(JobLock.expires_at > now)
         )

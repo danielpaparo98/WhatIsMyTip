@@ -3,7 +3,7 @@
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_
 from typing import Dict, Optional
-from datetime import datetime
+from datetime import datetime, timezone
 
 from app.models import EloCache
 from app.logger import get_logger
@@ -33,7 +33,7 @@ class EloCacheCRUD:
         Returns:
             Number of ratings saved
         """
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         saved_count = 0
         
         for team_name, rating in ratings.items():

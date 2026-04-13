@@ -22,35 +22,55 @@ class ValueModel(BaseModel):
         Only uses games that occurred BEFORE the given date
         to ensure no data leakage in backtesting.
         
+        Uses aggregated queries instead of per-team queries to avoid N+1.
+        
         Args:
             db: Database session
             before_date: Only consider games before this date (None = use all games)
         """
-        teams_result = await db.execute(
-            select(Game.home_team).distinct().union(select(Game.away_team).distinct())
-        )
-        teams = [r[0] for r in teams_result.all()]
+        # Build base filter
+        base_filter = [Game.completed == True]
+        if before_date is not None:
+            base_filter.append(Game.date < before_date)
         
-        for team in teams:
-            query = (
-                select(
-                    func.count().label("total"),
-                    func.sum(
-                        case((Game.home_score > Game.away_score, 1), else_=0)
-                    ).label("wins"),
-                )
-                .where(
-                    or_(Game.home_team == team, Game.away_team == team),
-                    Game.completed == True,
-                )
+        # Single query for home games
+        home_query = (
+            select(
+                Game.home_team.label("team"),
+                func.count().label("total"),
+                func.sum(
+                    case((Game.home_score > Game.away_score, 1), else_=0)
+                ).label("wins"),
             )
-            
-            if before_date is not None:
-                query = query.where(Game.date < before_date)
-            
-            result = await db.execute(query)
-            
-            total, wins = result.one()
+            .where(*base_filter)
+            .group_by(Game.home_team)
+        )
+        home_result = await db.execute(home_query)
+        home_stats = {row.team: {"total": row.total, "wins": row.wins or 0} for row in home_result.all()}
+        
+        # Single query for away games
+        away_query = (
+            select(
+                Game.away_team.label("team"),
+                func.count().label("total"),
+                func.sum(
+                    case((Game.away_score > Game.home_score, 1), else_=0)
+                ).label("wins"),
+            )
+            .where(*base_filter)
+            .group_by(Game.away_team)
+        )
+        away_result = await db.execute(away_query)
+        away_stats = {row.team: {"total": row.total, "wins": row.wins or 0} for row in away_result.all()}
+        
+        # Combine home and away stats
+        all_teams = set(home_stats.keys()) | set(away_stats.keys())
+        self.team_win_rates = {}
+        for team in all_teams:
+            home = home_stats.get(team, {"total": 0, "wins": 0})
+            away = away_stats.get(team, {"total": 0, "wins": 0})
+            total = home["total"] + away["total"]
+            wins = home["wins"] + away["wins"]
             self.team_win_rates[team] = (wins / total) if total > 0 else 0.5
     
     async def predict(self, game: Game, db: AsyncSession) -> Tuple[str, float, int]:

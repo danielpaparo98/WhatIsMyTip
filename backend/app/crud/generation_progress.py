@@ -2,7 +2,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_, func
 from typing import List, Optional
 from app.models import GenerationProgress
-from datetime import datetime
+from datetime import datetime, timezone
 
 
 class GenerationProgressCRUD:
@@ -33,7 +33,7 @@ class GenerationProgressCRUD:
             total_items=total_items,
             season=season,
             status="pending",
-            started_at=datetime.utcnow(),
+            started_at=datetime.now(timezone.utc),
             job_execution_id=job_execution_id,
         )
         db.add(progress)
@@ -70,12 +70,12 @@ class GenerationProgressCRUD:
             return None
         
         progress.completed_items = completed_items
-        progress.updated_at = datetime.utcnow()
+        progress.updated_at = datetime.now(timezone.utc)
         
         if status:
             progress.status = status
             if status in ["completed", "failed"]:
-                progress.completed_at = datetime.utcnow()
+                progress.completed_at = datetime.now(timezone.utc)
         
         if error_message:
             progress.error_message = error_message
@@ -208,12 +208,12 @@ class GenerationProgressCRUD:
             return None
         
         progress.status = "completed"
-        progress.completed_at = datetime.utcnow()
+        progress.completed_at = datetime.now(timezone.utc)
         
         if completed_items is not None:
             progress.completed_items = completed_items
         
-        progress.updated_at = datetime.utcnow()
+        progress.updated_at = datetime.now(timezone.utc)
         
         await db.commit()
         await db.refresh(progress)
@@ -246,13 +246,13 @@ class GenerationProgressCRUD:
             return None
         
         progress.status = "failed"
-        progress.completed_at = datetime.utcnow()
+        progress.completed_at = datetime.now(timezone.utc)
         progress.error_message = error_message
         
         if completed_items is not None:
             progress.completed_items = completed_items
         
-        progress.updated_at = datetime.utcnow()
+        progress.updated_at = datetime.now(timezone.utc)
         
         await db.commit()
         await db.refresh(progress)

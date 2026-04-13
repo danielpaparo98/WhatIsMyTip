@@ -1,7 +1,7 @@
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, and_
 from typing import List, Optional, Tuple, Dict, Any
-from datetime import datetime
+from datetime import datetime, timezone
 from app.models import Game, Tip
 from app.squiggle import SquiggleClient
 from app.cache import cached, short_cache, medium_cache
@@ -158,7 +158,7 @@ class GameCRUD:
         away_score_val = game_data.get("ascore")
         
         action = "skipped"
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         
         if game:
             # Check if any data actually changed
@@ -413,7 +413,7 @@ class GameCRUD:
         from datetime import datetime, timedelta
         
         # Calculate cutoff time: now minus buffer
-        cutoff_time = datetime.utcnow() - timedelta(minutes=buffer_minutes)
+        cutoff_time = datetime.now(timezone.utc) - timedelta(minutes=buffer_minutes)
         
         # Find games where:
         # - completed = False
@@ -493,7 +493,7 @@ class GameCRUD:
         
         # Mark as completed
         game.completed = True
-        game.last_synced_at = datetime.utcnow()
+        game.last_synced_at = datetime.now(timezone.utc)
         game.sync_version = (game.sync_version or 0) + 1
         
         # Commit changes

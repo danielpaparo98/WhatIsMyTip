@@ -252,15 +252,15 @@ class TipGenerationService:
                 raise
         
         # Generate and store model predictions for this game
+        # Fetch all existing predictions once (N+1 fix)
+        existing_predictions = await ModelPredictionCRUD.get_by_game(self.db, game.id)
+        existing_by_model = {p.model_name: p for p in existing_predictions}
+        
         for model in self.orchestrator.models:
             try:
-                # Check if prediction already exists
-                existing_predictions = await ModelPredictionCRUD.get_by_game(self.db, game.id)
-                existing_model_names = {p.model_name for p in existing_predictions}
-                
                 winner, confidence, margin = await model.predict(game, self.db)
                 
-                if model.get_name() in existing_model_names:
+                if model.get_name() in existing_by_model:
                     if regenerate:
                         # Update existing prediction
                         await ModelPredictionCRUD.create_or_update(
