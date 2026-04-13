@@ -3,7 +3,7 @@ import time
 import logging
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, and_, func
+from sqlalchemy import select, func
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 from typing import Optional, List
@@ -32,31 +32,8 @@ async def get_games(
     """Get games with optional filtering."""
     if latest:
         current_year = datetime.now().year
-        
-        # Step 1: Try to find upcoming games in current year (earliest date)
-        result = await db.execute(
-            select(
-                Game.season,
-                Game.round_id,
-                func.count(Game.id).label("game_count"),
-            )
-            .where(and_(Game.completed == False, Game.season == current_year))
-            .group_by(Game.season, Game.round_id)
-            .order_by(Game.round_id.asc())
-            .limit(1)
-        )
-        latest_round = result.first()
-        
-        if latest_round:
-            return {
-                "season": latest_round[0],
-                "round_id": latest_round[1],
-                "game_count": latest_round[2],
-                "is_current_year": True,
-                "has_upcoming": True,
-            }
-        
-        # Step 2: Try to find latest round in current year (even if completed)
+
+        # Step 1: Find the latest round in the current year
         result = await db.execute(
             select(
                 Game.season,
@@ -69,17 +46,17 @@ async def get_games(
             .limit(1)
         )
         latest_round = result.first()
-        
+
         if latest_round:
             return {
                 "season": latest_round[0],
                 "round_id": latest_round[1],
                 "game_count": latest_round[2],
                 "is_current_year": True,
-                "has_upcoming": False,
+                "has_upcoming": True,
             }
-        
-        # Step 3: Fall back to most recent round from any year
+
+        # Step 2: Fallback - if no current year data, find latest round from any year
         result = await db.execute(
             select(
                 Game.season,
@@ -91,7 +68,7 @@ async def get_games(
             .limit(1)
         )
         latest_round = result.first()
-        
+
         if latest_round:
             return {
                 "season": latest_round[0],
@@ -100,7 +77,7 @@ async def get_games(
                 "is_current_year": False,
                 "has_upcoming": False,
             }
-        
+
         return {
             "season": None,
             "round_id": None,
