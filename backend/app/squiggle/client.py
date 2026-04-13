@@ -17,6 +17,12 @@ class SquiggleClient:
     async def close(self):
         await self.client.aclose()
     
+    async def __aenter__(self):
+        return self
+    
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        await self.close()
+    
     async def get_games(
         self,
         year: Optional[int] = None,
@@ -64,40 +70,3 @@ class SquiggleClient:
         response.raise_for_status()
         return response.json()
     
-    async def get_teams(self) -> List[Dict[str, Any]]:
-        """Fetch all teams from Squiggle API.
-        
-        Returns:
-            List of team dictionaries
-        """
-        response = await self.client.get(f"{self.base_url}/teams")
-        response.raise_for_status()
-        return response.json()
-    
-    async def get_stats(
-        self,
-        year: Optional[int] = None,
-        round: Optional[int] = None,
-        team: Optional[str] = None,
-    ) -> List[Dict[str, Any]]:
-        """Fetch team statistics from Squiggle API.
-        
-        Args:
-            year: Filter by season year
-            round: Filter by round number
-            team: Filter by team name
-            
-        Returns:
-            List of statistics dictionaries
-        """
-        params = {}
-        if year:
-            params["year"] = year
-        if round:
-            params["round"] = round
-        if team:
-            params["team"] = team
-        
-        response = await self.client.get(f"{self.base_url}/stats", params=params)
-        response.raise_for_status()
-        return response.json()

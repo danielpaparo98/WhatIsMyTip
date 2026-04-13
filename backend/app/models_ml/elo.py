@@ -1,10 +1,9 @@
 import asyncio
-import numpy as np
 import time
 import logging
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
-from typing import Dict, Tuple, Optional
+from typing import Dict, List, Sequence, Tuple, Optional
 from app.models_ml.base import BaseModel
 from app.models import Game
 
@@ -22,6 +21,10 @@ class EloModel(BaseModel):
     _cache_initialized = False
     _cache_lock = asyncio.Lock()
     
+    # Default parameters for class-level cache operations
+    _DEFAULT_K_FACTOR = 32.0
+    _DEFAULT_HOME_ADVANTAGE = 50.0
+    
     def __init__(self, k_factor: float = 32.0, home_advantage: float = 50.0):
         self.k_factor = k_factor
         self.home_advantage = home_advantage
@@ -31,6 +34,46 @@ class EloModel(BaseModel):
     
     def get_name(self) -> str:
         return "Elo"
+    
+    @staticmethod
+    def _compute_ratings_from_games(
+        games: Sequence[Game],
+        initial_ratings: Dict[str, float],
+        k_factor: float = 32.0,
+        home_advantage: float = 50.0,
+    ) -> Dict[str, float]:
+        """Compute Elo ratings by processing a list of games.
+        
+        This is the single source of truth for the Elo rating computation loop.
+        All methods that compute ratings should delegate to this method.
+        
+        Args:
+            games: List of completed Game objects, ordered chronologically
+            initial_ratings: Starting ratings dict (modified in-place and returned)
+            k_factor: Elo K-factor for rating updates
+            home_advantage: Home advantage bonus in Elo points
+            
+        Returns:
+            Updated ratings dictionary (same object as initial_ratings)
+        """
+        for game in games:
+            home_rating = initial_ratings.get(game.home_team, 1500.0)
+            away_rating = initial_ratings.get(game.away_team, 1500.0)
+            
+            # Expected scores
+            expected_home = 1.0 / (1.0 + 10.0 ** ((away_rating - home_rating - home_advantage) / 400.0))
+            expected_away = 1.0 - expected_home
+            
+            # Actual scores
+            if game.home_score is not None and game.away_score is not None:
+                actual_home = 1.0 if game.home_score > game.away_score else 0.0
+                actual_away = 1.0 - actual_home
+                
+                # Update ratings
+                initial_ratings[game.home_team] = home_rating + k_factor * (actual_home - expected_home)
+                initial_ratings[game.away_team] = away_rating + k_factor * (actual_away - expected_away)
+        
+        return initial_ratings
     
     @classmethod
     async def _initialize_cache(cls, db: AsyncSession):
@@ -69,24 +112,13 @@ class EloModel(BaseModel):
             
             logger.info(f"EloModel._initialize_cache: Loaded {len(games)} completed games from database (query took {query_time:.4f}s)")
             
-            # Process games in chronological order
+            # Process games in chronological order using shared computation
             update_start = time.time()
-            for game in games:
-                home_rating = cls._ratings_cache.get(game.home_team, 1500.0)
-                away_rating = cls._ratings_cache.get(game.away_team, 1500.0)
-                
-                # Expected scores
-                expected_home = 1.0 / (1.0 + 10.0 ** ((away_rating - home_rating - 50.0) / 400.0))
-                expected_away = 1.0 - expected_home
-                
-                # Actual scores
-                if game.home_score is not None and game.away_score is not None:
-                    actual_home = 1.0 if game.home_score > game.away_score else 0.0
-                    actual_away = 1.0 - actual_home
-                    
-                    # Update ratings
-                    cls._ratings_cache[game.home_team] = home_rating + 32.0 * (actual_home - expected_home)
-                    cls._ratings_cache[game.away_team] = away_rating + 32.0 * (actual_away - expected_away)
+            cls._compute_ratings_from_games(
+                games, cls._ratings_cache,
+                k_factor=cls._DEFAULT_K_FACTOR,
+                home_advantage=cls._DEFAULT_HOME_ADVANTAGE,
+            )
             
             update_time = time.time() - update_start
             total_time = time.time() - start_time
@@ -130,24 +162,13 @@ class EloModel(BaseModel):
             
             logger.info(f"EloModel.update_cache: Loaded {len(games)} completed games from database (query took {query_time:.4f}s)")
             
-            # Process games in chronological order
+            # Process games in chronological order using shared computation
             update_start = time.time()
-            for game in games:
-                home_rating = cls._ratings_cache.get(game.home_team, 1500.0)
-                away_rating = cls._ratings_cache.get(game.away_team, 1500.0)
-                
-                # Expected scores
-                expected_home = 1.0 / (1.0 + 10.0 ** ((away_rating - home_rating - 50.0) / 400.0))
-                expected_away = 1.0 - expected_home
-                
-                # Actual scores
-                if game.home_score is not None and game.away_score is not None:
-                    actual_home = 1.0 if game.home_score > game.away_score else 0.0
-                    actual_away = 1.0 - actual_home
-                    
-                    # Update ratings
-                    cls._ratings_cache[game.home_team] = home_rating + 32.0 * (actual_home - expected_home)
-                    cls._ratings_cache[game.away_team] = away_rating + 32.0 * (actual_away - expected_away)
+            cls._compute_ratings_from_games(
+                games, cls._ratings_cache,
+                k_factor=cls._DEFAULT_K_FACTOR,
+                home_advantage=cls._DEFAULT_HOME_ADVANTAGE,
+            )
             
             update_time = time.time() - update_start
             total_time = time.time() - start_time
@@ -243,8 +264,6 @@ class EloModel(BaseModel):
     
     async def _update_ratings(self, db: AsyncSession):
         """Update Elo ratings based on historical games."""
-        from sqlalchemy import and_
-        
         start_time = time.time()
         
         async with self._lock:
@@ -257,29 +276,18 @@ class EloModel(BaseModel):
             games = result.scalars().all()
             query_time = time.time() - query_start
             
-            logger.warning(f"EloModel._update_ratings: LOADED {len(games)} COMPLETED GAMES FROM DATABASE (query took {query_time:.4f}s)")
+            logger.debug(f"EloModel._update_ratings: Loaded {len(games)} completed games from database (query took {query_time:.4f}s)")
             
             update_start = time.time()
-            for game in games:
-                home_rating = self.ratings.get(game.home_team, 1500.0)
-                away_rating = self.ratings.get(game.away_team, 1500.0)
-                
-                # Expected scores
-                expected_home = 1.0 / (1.0 + 10.0 ** ((away_rating - home_rating - self.home_advantage) / 400.0))
-                expected_away = 1.0 - expected_home
-                
-                # Actual scores
-                if game.home_score is not None and game.away_score is not None:
-                    actual_home = 1.0 if game.home_score > game.away_score else 0.0
-                    actual_away = 1.0 - actual_home
-                    
-                    # Update ratings
-                    self.ratings[game.home_team] = home_rating + self.k_factor * (actual_home - expected_home)
-                    self.ratings[game.away_team] = away_rating + self.k_factor * (actual_away - expected_away)
+            self._compute_ratings_from_games(
+                games, self.ratings,
+                k_factor=self.k_factor,
+                home_advantage=self.home_advantage,
+            )
             
             update_time = time.time() - update_start
             total_time = time.time() - start_time
-            logger.warning(f"EloModel._update_ratings: UPDATED RATINGS FOR {len(games)} GAMES (update took {update_time:.4f}s, total {total_time:.4f}s)")
+            logger.debug(f"EloModel._update_ratings: Updated ratings for {len(games)} games (update took {update_time:.4f}s, total {total_time:.4f}s)")
     
     async def predict(self, game: Game, db: AsyncSession) -> Tuple[str, float, int]:
         """Predict winner using Elo ratings with point-in-time data.
@@ -383,22 +391,11 @@ class EloModel(BaseModel):
         
         logger.info(f"EloModel._compute_point_in_time_ratings: Loaded {len(games)} historical games before {game.date} (query took {query_time:.4f}s)")
         
-        # Process games in chronological order to calculate ratings
-        for historical_game in games:
-            home_rating = ratings.get(historical_game.home_team, 1500.0)
-            away_rating = ratings.get(historical_game.away_team, 1500.0)
-            
-            # Expected scores
-            expected_home = 1.0 / (1.0 + 10.0 ** ((away_rating - home_rating - 50.0) / 400.0))
-            expected_away = 1.0 - expected_home
-            
-            # Actual scores
-            if historical_game.home_score is not None and historical_game.away_score is not None:
-                actual_home = 1.0 if historical_game.home_score > historical_game.away_score else 0.0
-                actual_away = 1.0 - actual_home
-                
-                # Update ratings
-                ratings[historical_game.home_team] = home_rating + 32.0 * (actual_home - expected_home)
-                ratings[historical_game.away_team] = away_rating + 32.0 * (actual_away - expected_away)
+        # Process games using shared computation
+        self._compute_ratings_from_games(
+            games, ratings,
+            k_factor=self._DEFAULT_K_FACTOR,
+            home_advantage=self._DEFAULT_HOME_ADVANTAGE,
+        )
         
         return ratings

@@ -28,6 +28,26 @@ class PermanentJobError(JobError):
     pass
 
 
+def classify_error(error: Exception, context: str = "") -> JobError:
+    """Classify an error as transient or permanent.
+    
+    Inspects the error message for keywords like 'timeout' or 'network'
+    to determine whether the error is likely transient (retryable) or
+    permanent.
+    
+    Args:
+        error: The exception to classify.
+        context: Optional context string to prefix the error message.
+        
+    Returns:
+        TransientJobError or PermanentJobError with appropriate message.
+    """
+    error_msg = f"{context}: {str(error)}" if context else str(error)
+    if "timeout" in str(error).lower() or "network" in str(error).lower():
+        return TransientJobError(error_msg)
+    return PermanentJobError(error_msg)
+
+
 class BaseJob(ABC):
     """Base class for all cron jobs.
     

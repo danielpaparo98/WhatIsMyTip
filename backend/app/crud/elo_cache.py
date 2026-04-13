@@ -1,7 +1,7 @@
 """CRUD operations for Elo ratings cache."""
 
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, and_
+from sqlalchemy import select, and_, delete, func
 from typing import Dict, Optional
 from datetime import datetime, timezone
 
@@ -131,7 +131,7 @@ class EloCacheCRUD:
     
     @staticmethod
     async def clear_cache(db: AsyncSession, season: Optional[int] = None) -> int:
-        """Clear cached Elo ratings.
+        """Clear cached Elo ratings using a bulk DELETE.
         
         Args:
             db: Database session
@@ -140,20 +140,22 @@ class EloCacheCRUD:
         Returns:
             Number of entries deleted
         """
+        # Count before deleting
         if season is not None:
-            # Delete ratings for specific season
-            result = await db.execute(
-                select(EloCache).where(EloCache.season == season)
+            count_result = await db.execute(
+                select(func.count()).select_from(EloCache).where(EloCache.season == season)
             )
         else:
-            # Delete all ratings
-            result = await db.execute(select(EloCache))
+            count_result = await db.execute(
+                select(func.count()).select_from(EloCache)
+            )
+        count = count_result.scalar() or 0
         
-        entries = result.scalars().all()
-        count = len(entries)
-        
-        for entry in entries:
-            await db.delete(entry)
+        # Bulk delete
+        if season is not None:
+            await db.execute(delete(EloCache).where(EloCache.season == season))
+        else:
+            await db.execute(delete(EloCache))
         
         await db.commit()
         logger.info(f"Cleared {count} Elo ratings from cache (season: {season or 'all'})")

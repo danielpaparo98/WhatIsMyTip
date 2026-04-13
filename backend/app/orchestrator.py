@@ -43,7 +43,7 @@ class ModelOrchestrator:
             Tuple of (winner, confidence, margin)
         """
         start_time = time.time()
-        logger.warning(f"ModelOrchestrator.predict: STARTING for game {game.id} with heuristic '{heuristic}'")
+        logger.debug(f"ModelOrchestrator.predict: STARTING for game {game.id} with heuristic '{heuristic}'")
         
         if heuristic not in self.heuristics:
             raise ValueError(f"Unknown heuristic: {heuristic}")
@@ -58,7 +58,7 @@ class ModelOrchestrator:
             try:
                 result = await model.predict(game, db)
                 model_predict_time = time.time() - model_predict_start
-                logger.warning(f"ModelOrchestrator.predict: {model.get_name()} model took {model_predict_time:.4f}s")
+                logger.debug(f"ModelOrchestrator.predict: {model.get_name()} model took {model_predict_time:.4f}s")
                 return model.get_name(), result
             except Exception as e:
                 model_predict_time = time.time() - model_predict_start
@@ -75,7 +75,7 @@ class ModelOrchestrator:
             model_predictions[model_name] = prediction
         
         model_total_time = time.time() - model_start
-        logger.warning(f"ModelOrchestrator.predict: ALL MODELS took {model_total_time:.4f}s")
+        logger.debug(f"ModelOrchestrator.predict: ALL MODELS took {model_total_time:.4f}s")
         
         # Apply heuristic
         heuristic_obj = self.heuristics[heuristic]
@@ -84,7 +84,7 @@ class ModelOrchestrator:
         heuristic_time = time.time() - heuristic_start
         
         total_time = time.time() - start_time
-        logger.warning(f"ModelOrchestrator.predict: COMPLETED in {total_time:.4f}s (heuristic: {heuristic_time:.4f}s)")
+        logger.debug(f"ModelOrchestrator.predict: COMPLETED in {total_time:.4f}s (heuristic: {heuristic_time:.4f}s)")
         
         return result
     
@@ -104,7 +104,7 @@ class ModelOrchestrator:
             Dict of heuristic -> {"model_predictions": dict, "tip": tuple}
         """
         start_time = time.time()
-        logger.warning(f"ModelOrchestrator.predict_all: STARTING for game {game.id}")
+        logger.debug(f"ModelOrchestrator.predict_all: STARTING for game {game.id}")
         
         # Run all models once in parallel
         model_predictions: Dict[str, Tuple[str, float, int]] = {}
@@ -116,7 +116,7 @@ class ModelOrchestrator:
             try:
                 result = await model.predict(game, db)
                 model_predict_time = time.time() - model_predict_start
-                logger.warning(f"ModelOrchestrator.predict_all: {model.get_name()} model took {model_predict_time:.4f}s")
+                logger.debug(f"ModelOrchestrator.predict_all: {model.get_name()} model took {model_predict_time:.4f}s")
                 return model.get_name(), result
             except Exception as e:
                 model_predict_time = time.time() - model_predict_start
@@ -130,7 +130,7 @@ class ModelOrchestrator:
             model_predictions[model_name] = prediction
         
         model_total_time = time.time() - model_start
-        logger.warning(f"ModelOrchestrator.predict_all: ALL MODELS took {model_total_time:.4f}s")
+        logger.debug(f"ModelOrchestrator.predict_all: ALL MODELS took {model_total_time:.4f}s")
         
         # Apply all heuristics to the same model predictions
         all_results = {}
@@ -138,14 +138,14 @@ class ModelOrchestrator:
             heuristic_start = time.time()
             tip = await heuristic_obj.apply(game, model_predictions)
             heuristic_time = time.time() - heuristic_start
-            logger.warning(f"ModelOrchestrator.predict_all: heuristic '{heuristic_name}' took {heuristic_time:.4f}s")
+            logger.debug(f"ModelOrchestrator.predict_all: heuristic '{heuristic_name}' took {heuristic_time:.4f}s")
             all_results[heuristic_name] = {
                 "model_predictions": model_predictions,
                 "tip": tip
             }
         
         total_time = time.time() - start_time
-        logger.warning(f"ModelOrchestrator.predict_all: COMPLETED in {total_time:.4f}s")
+        logger.debug(f"ModelOrchestrator.predict_all: COMPLETED in {total_time:.4f}s")
         
         return all_results
     

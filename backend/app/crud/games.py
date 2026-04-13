@@ -4,6 +4,7 @@ from typing import List, Optional, Tuple, Dict, Any
 from datetime import datetime, timezone
 from app.models import Game, Tip
 from app.squiggle import SquiggleClient
+from app.squiggle.utils import parse_squiggle_complete
 from app.cache import cached, short_cache, medium_cache
 
 
@@ -64,64 +65,12 @@ class GameCRUD:
     async def create_or_update(
         db: AsyncSession, game_data: dict
     ) -> Game:
-        """Create or update a game from Squiggle data."""
-        from app.cache import invalidate_cache_pattern
+        """Create or update a game from Squiggle data.
         
-        # Check if game exists by squiggle_id
-        game = await GameCRUD.get_by_squiggle_id(db, game_data["id"])
-        
-        # Parse complete status (Squiggle returns 100 for complete, not True/False)
-        complete_value = game_data.get("complete", False)
-        if isinstance(complete_value, int):
-            is_complete = complete_value == 100
-        else:
-            is_complete = bool(complete_value)
-        
-        # Get values with defaults for None
-        home_score_val = game_data.get("hscore")
-        away_score_val = game_data.get("ascore")
-        
-        if game:
-            # Update existing game
-            if game_data.get("hteam") is not None:
-                setattr(game, 'home_team', game_data["hteam"])
-            if game_data.get("ateam") is not None:
-                setattr(game, 'away_team', game_data["ateam"])
-            if home_score_val is not None:
-                setattr(game, 'home_score', home_score_val)
-            if away_score_val is not None:
-                setattr(game, 'away_score', away_score_val)
-            if game_data.get("venue") is not None:
-                setattr(game, 'venue', game_data["venue"])
-            if game_data.get("date") is not None:
-                setattr(game, 'date', datetime.fromisoformat(game_data["date"].replace("Z", "+00:00")))
-            setattr(game, 'completed', is_complete)
-        else:
-            # Create new game
-            game = Game(
-                squiggle_id=game_data["id"],
-                round_id=game_data.get("round", 0),
-                season=game_data.get("year", 0),
-                home_team=game_data.get("hteam", ""),
-                away_team=game_data.get("ateam", ""),
-                home_score=home_score_val,
-                away_score=away_score_val,
-                venue=game_data.get("venue", ""),
-                date=datetime.fromisoformat(game_data["date"].replace("Z", "+00:00")),
-                completed=is_complete,
-            )
-            db.add(game)
-        
-        await db.commit()
-        await db.refresh(game)
-        
-        # Invalidate cache for game-related queries
-        invalidate_cache_pattern(short_cache, "game_by_id:")
-        invalidate_cache_pattern(short_cache, "games_by_round:")
-        invalidate_cache_pattern(short_cache, "upcoming_games:")
-        invalidate_cache_pattern(medium_cache, "games_by_season:")
-        
-        return game
+        Delegates to create_or_update_with_tracking and returns just the Game.
+        """
+        result = await GameCRUD.create_or_update_with_tracking(db, game_data)
+        return result["game"]
     
     @staticmethod
     async def create_or_update_with_tracking(
@@ -147,11 +96,7 @@ class GameCRUD:
         game = await GameCRUD.get_by_squiggle_id(db, game_data["id"])
         
         # Parse complete status (Squiggle returns 100 for complete, not True/False)
-        complete_value = game_data.get("complete", False)
-        if isinstance(complete_value, int):
-            is_complete = complete_value == 100
-        else:
-            is_complete = bool(complete_value)
+        is_complete = parse_squiggle_complete(game_data.get("complete", False))
         
         # Get values with defaults for None
         home_score_val = game_data.get("hscore")
@@ -343,55 +288,6 @@ class GameCRUD:
         return None
     
     @staticmethod
-    async def are_current_tips_stale(db: AsyncSession) -> bool:
-        """Check if current tips are stale and need regeneration.
-        
-        Tips are stale if the latest completed round's game dates have passed
-        and tips don't exist for the next round.
-        
-        Args:
-            db: Database session
-            
-        Returns:
-            True if tips are stale, False otherwise
-        """
-        latest_round = await GameCRUD.get_latest_completed_round(db)
-        
-        if not latest_round:
-            # No completed rounds yet, tips are not stale
-            return False
-        
-        season, round_id = latest_round
-        
-        # Get games from the latest completed round
-        games = await GameCRUD.get_by_round(db, season, round_id)
-        
-        if not games:
-            return False
-        
-        # Check if any game date has passed
-        now = datetime.now()
-        for game in games:
-            if game.date and game.date < now:
-                # Games have passed, check if next round has tips
-                next_round = await GameCRUD.get_next_upcoming_round(db)
-                if next_round:
-                    next_season, next_round_id = next_round
-                    # Check if tips exist for next round
-                    next_games = await GameCRUD.get_by_round(db, next_season, next_round_id)
-                    if next_games:
-                        game_ids = [g.id for g in next_games]
-                        result = await db.execute(
-                            select(Tip).where(Tip.game_id.in_(game_ids))
-                        )
-                        existing_tips = list(result.scalars().all())
-                        if not existing_tips:
-                            return True
-                break
-        
-        return False
-    
-    @staticmethod
     async def get_recently_finished_games(
         db: AsyncSession,
         buffer_minutes: int = 60
@@ -472,11 +368,7 @@ class GameCRUD:
             return game
         
         # Parse complete status
-        complete_value = squiggle_data.get("complete", False)
-        if isinstance(complete_value, int):
-            is_complete = complete_value == 100
-        else:
-            is_complete = bool(complete_value)
+        is_complete = parse_squiggle_complete(squiggle_data.get("complete", False))
         
         # Only update if Squiggle says it's complete
         if not is_complete:

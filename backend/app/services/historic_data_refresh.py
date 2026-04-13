@@ -4,7 +4,6 @@ from typing import Dict, Any, List, Optional
 from sqlalchemy.ext.asyncio import AsyncSession
 from datetime import datetime
 import time
-import re
 
 from app.squiggle import SquiggleClient
 from app.services.game_sync import GameSyncService
