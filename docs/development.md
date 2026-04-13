@@ -2,7 +2,18 @@
 
 ## Overview
 
-This guide covers setting up and working with the WhatIsMyTip development environment. It includes instructions for local development, testing, and contributing to the project.
+This guide covers setting up and working with the WhatIsMyTip development environment. It includes instructions for local development, testing, and contributing to the project. The project now includes a comprehensive cron-based data collection system for automated operations.
+
+## Development Environment Setup
+
+### Prerequisites
+
+- **Bun** (JavaScript runtime and package manager)
+- **uv** (Python package manager)
+- **Python 3.11+**
+- **Node.js 18+** (for Nuxt 4)
+- **Git** (for version control)
+- **Croniter** (for cron schedule validation) - Python package
 
 ## Development Environment Setup
 
@@ -89,6 +100,144 @@ The backend API will be available at `http://localhost:8000`
    - Swagger UI: `http://localhost:8000/docs`
    - ReDoc: `http://localhost:8000/redoc`
 
+### Running Cron Jobs
+
+#### Starting with Cron Jobs Enabled
+
+By default, cron jobs are enabled in development mode. The FastAPI application automatically registers all cron jobs on startup.
+
+**Start the application:**
+```bash
+cd backend
+uv run uvicorn main:app --reload
+```
+
+**Verify cron jobs are registered:**
+```bash
+curl http://localhost:8000/api/health/cron
+```
+
+Expected response:
+```json
+{
+  "status": "healthy",
+  "timestamp": "2026-04-02T15:00:00.000Z",
+  "jobs": [
+    {
+      "name": "daily_game_sync",
+      "status": "enabled",
+      "last_run": null,
+      "next_run": "2026-04-03T02:00:00.000Z"
+    },
+    {
+      "name": "match_completion_detector",
+      "status": "enabled",
+      "last_run": null,
+      "next_run": "2026-04-02T15:15:00.000Z"
+    },
+    {
+      "name": "tip_generation",
+      "status": "enabled",
+      "last_run": null,
+      "next_run": "2026-04-03T03:00:00.000Z"
+    },
+    {
+      "name": "historical_data_refresh",
+      "status": "enabled",
+      "last_run": null,
+      "next_run": "2026-04-06T04:00:00.000Z"
+    }
+  ]
+}
+```
+
+#### Cron Job Registration
+
+Cron jobs are registered in [`backend/app/main.py`](backend/app/main.py) using the `fastapi-crons` library:
+
+```python
+from fastapi_crons import CronJob
+
+@app.on_event("startup")
+async def startup_cron_jobs():
+    from app.cron.jobs import (
+        daily_game_sync,
+        match_completion_detector,
+        tip_generation,
+        historical_data_refresh
+    )
+```
+
+Each job is defined in [`backend/app/cron/jobs/`](backend/app/cron/jobs/) with a cron schedule and implementation.
+
+#### Manual Job Triggering
+
+You can manually trigger any cron job via the admin API:
+
+```bash
+# Trigger daily game sync
+curl -X POST http://localhost:8000/api/admin/jobs/daily-sync/trigger
+
+# Trigger match completion detection
+curl -X POST http://localhost:8000/api/admin/jobs/match-completion/trigger
+
+# Trigger tip generation
+curl -X POST http://localhost:8000/api/admin/jobs/tip-generation/trigger
+
+# Trigger historical data refresh
+curl -X POST http://localhost:8000/api/admin/jobs/historic-refresh/trigger
+
+# Check historical refresh progress
+curl http://localhost:8000/api/admin/jobs/historic-refresh/progress
+```
+
+#### Testing Cron Jobs Locally
+
+**Option 1: Trigger Manually**
+Trigger jobs via the admin API endpoints as shown above.
+
+**Option 2: Wait for Scheduled Time**
+Cron jobs run on their scheduled times. You can verify they're running by:
+1. Checking application logs for job execution
+2. Querying the `job_executions` table in the database
+3. Checking the health endpoint after scheduled times
+
+**Option 3: Use a Cron Simulator**
+For faster testing, you can modify the cron schedule temporarily:
+
+Edit [`backend/app/config.py`](backend/app/config.py) to change schedules:
+```python
+# Change to run every minute for testing
+daily_sync_schedule: str = "*/1 * * * *"
+```
+
+After testing, revert to the original schedule.
+
+#### Disabling Cron Jobs
+
+To disable all cron jobs temporarily:
+
+1. Set environment variable:
+   ```bash
+   export CRON_ENABLED=false
+   ```
+
+2. Restart the application:
+   ```bash
+   uv run uvicorn main:app --reload
+   ```
+
+To enable again:
+   ```bash
+   export CRON_ENABLED=true
+   uv run uvicorn main:app --reload
+   ```
+
+To disable individual jobs, use the admin API:
+```bash
+curl -X POST http://localhost:8000/api/admin/jobs/daily-sync/disable
+```
+
 ### Running Both Frontend and Backend
 
 Use a terminal multiplexer like **tmux** or **screen** to run both servers:
@@ -165,6 +314,7 @@ whatismytip/
    - Run frontend tests: `cd frontend && bun run lint && bun run typecheck`
    - Run backend tests: `cd backend && uv run pytest`
    - Test manually in browser
+   - Test cron jobs if applicable
 
 4. **Commit Changes**:
    ```bash
@@ -198,6 +348,7 @@ whatismytip/
 - Follow ruff rules configured in `backend/pyproject.toml`
 - Use descriptive variable and function names
 - Use async/await for all database operations
+- Use croniter for schedule validation
 
 #### Documentation
 
@@ -205,6 +356,228 @@ whatismytip/
 - Document all functions and classes
 - Include code examples where appropriate
 - Use Markdown formatting
+
+### Adding New Cron Jobs
+
+#### 1. Create Cron Job File
+
+Create a new file in [`backend/app/cron/jobs/`](backend/app/cron/jobs/):
+
+```python
+# backend/app/cron/jobs/my_new_job.py
+from fastapi_crons import CronJob
+from app.services.my_service import MyService
+from app.logger import get_logger
+
+logger = get_logger(__name__)
+
+@app.on_event("startup")
+async def register_my_job():
+    @CronJob(app, schedule="0 4 * * *")  # Daily at 4 AM
+    async def my_cron_job():
+        logger.info("Starting my cron job")
+        
+        try:
+            service = MyService()
+            result = await service.execute()
+            logger.info(f"Job completed successfully: {result}")
+        except Exception as e:
+            logger.error(f"Job failed: {e}", exc_info=True)
+```
+
+#### 2. Create Service
+
+Create the corresponding service in [`backend/app/services/`](backend/app/services/):
+
+```python
+# backend/app/services/my_service.py
+from app.logger import get_logger
+
+logger = get_logger(__name__)
+
+class MyService:
+    async def execute(self) -> dict:
+        """Execute the service logic."""
+        logger.info("MyService executing")
+        # Your logic here
+        return {"status": "success", "items_processed": 10}
+```
+
+#### 3. Add Environment Variables
+
+Update [`backend/app/config.py`](backend/app/config.py) with configuration:
+
+```python
+class Settings(BaseSettings):
+    # ... existing settings ...
+    
+    # New cron job configuration
+    my_job_enabled: bool = True
+    my_job_schedule: str = "0 4 * * *"
+    my_job_timeout_seconds: int = 1800
+```
+
+#### 4. Update Documentation
+
+Update relevant documentation files:
+- [`docs/backend.md`](backend.md) - Add service description
+- [`docs/development.md`](development.md) - Add usage instructions
+- [`docs/api.md`](api.md) - Add API endpoints if needed
+
+#### 5. Test the Cron Job
+
+```bash
+# Start the application
+cd backend
+uv run uvicorn main:app --reload
+
+# Trigger manually
+curl -X POST http://localhost:8000/api/admin/jobs/my-job/trigger
+
+# Check job execution history
+sqlite3 whatismytip.db "SELECT * FROM job_executions WHERE job_name='my_job' ORDER BY created_at DESC LIMIT 10;"
+```
+
+### Modifying Existing Cron Jobs
+
+#### Update Schedule
+
+Edit the cron schedule in the job definition:
+
+```python
+# Change from daily to hourly
+@CronJob(app, schedule="0 * * * *")
+async def my_job():
+    pass
+```
+
+#### Update Configuration
+
+Update environment variables in [`.env.example`](backend/.env.example):
+
+```bash
+MY_JOB_SCHEDULE="0 * * * *"
+MY_JOB_ENABLED=true
+```
+
+#### Update Service Logic
+
+Modify the service implementation in [`backend/app/services/`](backend/app/services/).
+
+#### Test Changes
+
+```bash
+# Restart the application to register changes
+cd backend
+uv run uvicorn main:app --reload
+
+# Trigger manually to test
+curl -X POST http://localhost:8000/api/admin/jobs/my-job/trigger
+```
+
+### Testing Cron Jobs
+
+#### Unit Tests
+
+Write unit tests for cron jobs:
+
+```python
+# backend/tests/test_cron_jobs.py
+import pytest
+from httpx import AsyncClient
+from main import app
+
+@pytest.mark.asyncio
+async def test_daily_sync_job():
+    async with AsyncClient(app=app, base_url="http://test") as ac:
+        response = await ac.post("/api/admin/jobs/daily-sync/trigger")
+        assert response.status_code == 200
+        assert response.json()["status"] == "success"
+```
+
+#### Integration Tests
+
+Test the complete cron job workflow:
+
+```python
+# backend/tests/test_cron_integration.py
+import pytest
+from app.services.game_sync import GameSyncService
+
+@pytest.mark.asyncio
+async def test_game_sync_service():
+    service = GameSyncService()
+    result = await service.sync_current_season(db)
+    assert result.games_synced > 0
+    assert result.duration_seconds > 0
+```
+
+#### Manual Testing
+
+1. Start the application with cron jobs enabled
+2. Trigger jobs via admin API
+3. Verify execution in logs
+4. Check database for job execution records
+5. Verify data was processed correctly
+
+### Debugging Cron Job Issues
+
+#### Check Job Status
+
+```bash
+curl http://localhost:8000/api/health/cron
+```
+
+#### View Job Execution History
+
+```bash
+cd backend
+sqlite3 whatismytip.db
+
+# View recent executions
+SELECT * FROM job_executions ORDER BY created_at DESC LIMIT 10;
+
+# View failed executions
+SELECT * FROM job_executions WHERE status='failed' ORDER BY created_at DESC LIMIT 10;
+
+# View specific job executions
+SELECT * FROM job_executions WHERE job_name='daily_game_sync';
+```
+
+#### Check Job Locks
+
+```bash
+# View active locks
+SELECT * FROM job_locks WHERE expires_at > datetime('now');
+```
+
+#### Review Application Logs
+
+```bash
+# Check for job execution logs
+grep "daily_game_sync" logs/app.log
+
+# Check for errors
+grep "ERROR" logs/app.log | grep "cron"
+```
+
+#### Common Issues
+
+**Issue**: Cron job not running
+- Check `CRON_ENABLED=true`
+- Verify cron schedule is valid
+- Check application logs for startup errors
+
+**Issue**: Job stuck in "running" status
+- Check for stale locks: `SELECT * FROM job_locks WHERE expires_at < datetime('now');`
+- Remove stale locks: `DELETE FROM job_locks WHERE expires_at < datetime('now');`
+- Check job timeout configuration
+
+**Issue**: Job failing repeatedly
+- Check error messages in job_executions table
+- Review application logs
+- Verify service logic
+- Check API rate limits
 
 ## Adding New ML Models
 

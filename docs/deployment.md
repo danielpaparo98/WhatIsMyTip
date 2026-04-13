@@ -3,7 +3,7 @@
 ## Overview
 
 This guide covers deploying WhatIsMyTip.com to Digital Ocean. The deployment consists of:
-- **Backend**: FastAPI application on Digital Ocean App Platform
+- **Backend**: FastAPI application with cron-based data collection on Digital Ocean App Platform
 - **Frontend**: Static Nuxt 4 site on Digital Ocean App Platform (static site hosting)
 
 ## Prerequisites
@@ -77,6 +77,25 @@ Add the following environment variables in the App Platform dashboard:
 | `OPENROUTER_MODEL` | `gptoss-120b` |
 | `OPENROUTER_BASE_URL` | `https://openrouter.ai/api/v1` |
 | `ENVIRONMENT` | `production` |
+
+**Cron Job Configuration:**
+
+| Variable | Value |
+|----------|-------|
+| `CRON_ENABLED` | `true` |
+| `CRON_TIMEZONE` | `Australia/Perth` |
+| `DAILY_SYNC_ENABLED` | `true` |
+| `MATCH_COMPLETION_CHECK_ENABLED` | `true` |
+| `MATCH_COMPLETION_BUFFER_MINUTES` | `60` |
+| `TIP_GENERATION_ENABLED` | `true` |
+| `TIP_GENERATION_REGENERATE_EXISTING` | `false` |
+| `HISTORIC_REFRESH_ENABLED` | `true` |
+| `HISTORIC_REFRESH_SEASONS` | `2010,2011,2012,2013,2014,2015,2016,2017,2018,2019,2020,2021,2022,2023,2024` |
+| `HISTORIC_REFRESH_REGENERATE_TIPS` | `true` |
+| `JOB_TIMEOUT_SECONDS` | `3600` |
+| `JOB_LOCK_EXPIRE_SECONDS` | `3600` |
+| `JOB_MAX_RETRIES` | `3` |
+| `JOB_RETRY_DELAY_SECONDS` | `1` |
 
 ### Step 4: Configure Scale
 
@@ -277,6 +296,59 @@ View logs in the App Platform dashboard:
 ### Log Retention
 
 Logs are retained for 7 days by default.
+
+### Cron Job Deployment
+
+#### Cron Job Scheduling
+
+Cron jobs run automatically based on their configured schedules:
+
+- **Daily Game Sync**: 2:00 AM daily
+- **Match Completion Detector**: Every 15 minutes
+- **Tip Generation**: 3:00 AM daily
+- **Historical Data Refresh**: 4:00 AM Sundays
+
+These schedules are configured in the environment variables and use the system timezone (`Australia/Perth`).
+
+#### Monitoring Cron Job Execution
+
+Monitor cron job execution through:
+
+1. **Health Check Endpoint**:
+   ```bash
+   curl https://whatismytip.com/api/health/cron
+   ```
+
+2. **Application Logs**: Check for job execution logs in App Platform logs
+3. **Job Execution History**: Query the `job_executions` table in the database
+
+Example query to check recent job executions:
+```bash
+sqlite3 whatismytip.db "SELECT * FROM job_executions ORDER BY created_at DESC LIMIT 10;"
+```
+
+#### Troubleshooting Cron Job Issues
+
+**Issue**: Cron job not running
+- Verify `CRON_ENABLED=true` in environment variables
+- Check application logs for startup errors
+- Verify cron schedules are valid
+
+**Issue**: Job stuck in "running" status
+- Check for stale locks in the `job_locks` table
+- Review job timeout configuration
+- Check application logs for errors
+
+**Issue**: High API error rate
+- Verify Squiggle API is accessible
+- Check rate limit settings
+- Review retry configuration
+
+**Issue**: Tips not generating
+- Verify tip generation job is enabled
+- Check if games exist for upcoming rounds
+- Verify ModelOrchestrator is working
+- Check job execution logs for errors
 
 ## Health Checks
 
