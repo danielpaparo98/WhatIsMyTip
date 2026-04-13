@@ -352,6 +352,8 @@ watch(selectedSeason, async () => {
     await loadComparisonData()
   } else if (viewMode.value === 'table') {
     await loadTableData()
+  } else if (viewMode.value === 'charts') {
+    await loadChartData()
   }
 })
 
@@ -361,7 +363,7 @@ watch(viewMode, async (newMode) => {
     await loadComparisonData()
   } else if (newMode === 'table' && !tableData.value) {
     await loadTableData()
-  } else if (newMode === 'charts' && !chartData.value) {
+  } else if (newMode === 'charts') {
     await loadChartData()
   }
 })
