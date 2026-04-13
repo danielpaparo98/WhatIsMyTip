@@ -198,6 +198,11 @@ async def get_tips_by_heuristic(
     db: AsyncSession = Depends(get_db),
 ):
     """Get tips by heuristic type."""
+    if heuristic not in VALID_HEURISTICS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid heuristic '{heuristic}'. Must be one of: {', '.join(sorted(VALID_HEURISTICS))}"
+        )
     tips = await TipCRUD.get_by_heuristic(db, heuristic, limit=limit)
     return TipListResponse(
         tips=[TipResponse.model_validate(t) for t in tips],

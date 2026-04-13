@@ -103,14 +103,14 @@ class InMemoryCache:
 
 
 # Global cache instances with different TTLs
-# Short-lived cache (5 minutes) for frequently changing data
-short_cache = InMemoryCache(default_ttl=300.0, max_size=1000)
+# Short-lived cache (1 minute) for frequently changing data
+short_cache = InMemoryCache(default_ttl=60, max_size=500)
 
-# Medium-lived cache (15 minutes) for moderately changing data
-medium_cache = InMemoryCache(default_ttl=900.0, max_size=500)
+# Medium-lived cache (5 minutes) for moderately changing data
+medium_cache = InMemoryCache(default_ttl=300, max_size=200)
 
 # Long-lived cache (1 hour) for rarely changing data
-long_cache = InMemoryCache(default_ttl=3600.0, max_size=100)
+long_cache = InMemoryCache(default_ttl=3600, max_size=100)
 
 
 def cached(
