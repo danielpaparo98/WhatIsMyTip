@@ -1,7 +1,7 @@
 """Service for detecting and processing completed matches."""
 
 from typing import Dict, Any, List, Optional
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from sqlalchemy.ext.asyncio import AsyncSession
 import time
 
@@ -189,7 +189,7 @@ class MatchCompletionDetectorService:
             
             # Check if buffer has elapsed
             if game.date:
-                buffer_elapsed = datetime.utcnow() >= game.date + timedelta(minutes=self.buffer_minutes)
+                buffer_elapsed = datetime.now(timezone.utc) >= game.date + timedelta(minutes=self.buffer_minutes)
             else:
                 buffer_elapsed = False
             
