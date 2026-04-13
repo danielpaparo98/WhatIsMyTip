@@ -1,20 +1,22 @@
 <template>
   <div class="game-detail-page">
     <!-- Loading State -->
-    <div v-if="loading" class="loading">
+    <div v-if="loading" class="loading" role="status" aria-live="polite">
       <div class="spinner"></div>
       <p>Loading game details...</p>
     </div>
 
     <!-- Error State -->
-    <div v-else-if="error" class="error">
+    <div v-else-if="error" class="error" role="status" aria-live="polite">
       <h2>Error</h2>
       <p>{{ error }}</p>    </div>
 
     <!-- Game Detail Content -->
     <div v-else-if="gameDetail" class="content">
+      <NuxtLink to="/" class="back-link">← Back to Tips</NuxtLink>
+
       <!-- Header Section -->
-      <section class="game-header-section">        
+      <section class="game-header-section">
         <div class="game-info">
           <div class="round-season">
             <span class="round">Round {{ gameDetail.game.round_id }}</span>
@@ -26,7 +28,7 @@
 
           <div class="teams">
             <div class="team home">
-              <img :src="getLogoUrl(gameDetail.game.home_team)" :alt="gameDetail.game.home_team" class="team-logo" />
+              <img :src="getLogoUrl(gameDetail.game.home_team)" :alt="gameDetail.game.home_team + ' logo'" class="team-logo" loading="lazy" width="80" height="80" />
               <span class="team-name">{{ gameDetail.game.home_team }}</span>
               <span v-if="gameDetail.game.home_score !== null" class="score">{{ gameDetail.game.home_score }}</span>
             </div>
@@ -34,7 +36,7 @@
             <div class="vs">VS</div>
             
             <div class="team away">
-              <img :src="getLogoUrl(gameDetail.game.away_team)" :alt="gameDetail.game.away_team" class="team-logo" />
+              <img :src="getLogoUrl(gameDetail.game.away_team)" :alt="gameDetail.game.away_team + ' logo'" class="team-logo" loading="lazy" width="80" height="80" />
               <span class="team-name">{{ gameDetail.game.away_team }}</span>
               <span v-if="gameDetail.game.away_score !== null" class="score">{{ gameDetail.game.away_score }}</span>
             </div>
@@ -103,6 +105,8 @@ import type { GameDetailResponse } from '~/composables/useApi'
 
 const route = useRoute()
 const { getGameDetail } = useApi()
+const { getLogoUrl } = useTeamLogos()
+const { formatDateShort, formatTime, getModelDisplayName } = useFormatters()
 
 const gameDetail = ref<GameDetailResponse | null>(null)
 const loading = ref(true)
@@ -124,51 +128,8 @@ onMounted(async () => {
   }
 })
 
-// Format date consistently with GameCard
-const formatDate = (dateStr: string) => {
-  const date = new Date(dateStr)
-  return date.toLocaleDateString('en-AU', {
-    weekday: 'short',
-    day: 'numeric',
-    month: 'short'
-  })
-}
-
-// Format time
-const formatTime = (dateStr: string) => {
-  const date = new Date(dateStr)
-  return date.toLocaleTimeString('en-AU', {
-    hour: '2-digit',
-    minute: '2-digit'
-  })
-}
-
-// Get logo URL using the same mapping as GameCard
-const getLogoUrl = (teamName: string): string => {
-  const logoMap: Record<string, string> = {
-    'Adelaide': 'Adelaide.png',
-    'Brisbane Lions': 'Brisbane.png',
-    'Carlton': 'Carlton.png',
-    'Collingwood': 'Collingwood.png',
-    'Essendon': 'Essendon.png',
-    'Fremantle': 'Fremantle.png',
-    'Geelong': 'Geelong.png',
-    'Gold Coast': 'GoldCoast.png',
-    'Greater Western Sydney': 'Giants.png',
-    'Hawthorn': 'Hawthorn.png',
-    'Melbourne': 'Melbourne.png',
-    'North Melbourne': 'NorthMelbourne.png',
-    'Port Adelaide': 'PortAdelaide.png',
-    'Richmond': 'Richmond.png',
-    'St Kilda': 'StKilda.png',
-    'Sydney': 'Sydney.png',
-    'West Coast': 'WestCoast.png',
-    'Western Bulldogs': 'Bulldogs.png',
-  }
-  
-  const filename = logoMap[teamName] || ''
-  return filename ? `/logos/${filename}` : ''
-}
+// Use shared formatters
+const formatDate = formatDateShort
 
 // Get heuristic display name
 const getHeuristicClass = (heuristic: string): string => {
@@ -180,21 +141,10 @@ const getHeuristicClass = (heuristic: string): string => {
   return classes[heuristic] || ''
 }
 
-// Get model display name
-const getModelDisplayName = (modelName: string): string => {
-  const names: Record<string, string> = {
-    'elo': 'Elo Rating',
-    'form': 'Form',
-    'home_advantage': 'Home Advantage',
-    'value': 'Value'
-  }
-  return names[modelName] || modelName
-}
-
 // Set page meta
 useHead({
-  title: () => gameDetail.value 
-    ? `${gameDetail.value.game.home_team} vs ${gameDetail.value.game.away_team} - Game Details`
+  title: () => gameDetail.value
+    ? `${gameDetail.value.game.home_team} vs ${gameDetail.value.game.away_team}`
     : 'Game Details'
 })
 </script>
