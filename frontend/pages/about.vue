@@ -119,13 +119,9 @@
 </template>
 
 <script setup lang="ts">
-definePageMeta({
-  layout: 'default'
-})
-
 // Page-specific SEO
 useHead({
-  title: 'About | WhatIsMyTip - AI-Powered AFL Tipping',
+  title: 'About',
   meta: [
     { name: 'description', content: 'Learn about WhatIsMyTip\'s AI-powered AFL tipping system. Discover our machine learning models, heuristics, and how we generate accurate AFL predictions and betting tips.' },
     { name: 'keywords', content: 'AFL tipping models, AFL prediction algorithms, machine learning AFL, AFL betting models, Elo ratings AFL, AFL form analysis, AFL home advantage' },

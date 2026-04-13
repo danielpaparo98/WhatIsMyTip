@@ -1,3 +1,10 @@
+"""DEPRECATED: This service is not called from anywhere in the application.
+
+This module is retained for reference but should not be used in production.
+If explanation functionality is needed, it should be integrated into the
+tip generation pipeline directly.
+"""
+
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import Optional
 from app.models import Game, Tip

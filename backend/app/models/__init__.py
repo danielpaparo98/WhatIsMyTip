@@ -1,6 +1,6 @@
 from sqlalchemy import Column, Integer, String, Float, DateTime, Text, Boolean, UniqueConstraint
 from sqlalchemy.sql import func
-from datetime import datetime
+from datetime import datetime, timezone
 from app.db import Base
 
 
@@ -87,9 +87,9 @@ class GenerationProgress(Base):
     completed_items = Column(Integer, default=0)
     status = Column(String(20), default="pending")  # pending, in_progress, completed, failed
     error_message = Column(Text, nullable=True)
-    started_at = Column(DateTime, default=datetime.utcnow)
+    started_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     completed_at = Column(DateTime, nullable=True)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
     job_execution_id = Column(Integer, nullable=True, index=True)  # Link to job execution
 
 

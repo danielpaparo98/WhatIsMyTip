@@ -2,7 +2,7 @@
 
 ## Overview
 
-WhatIsMyTip provides a RESTful API for AFL tipping predictions, backtesting, and game data. The API is built with FastAPI and includes ML models, heuristic layers, and AI-powered explanations.
+WhatIsMyTip provides a RESTful API for AFL tipping predictions, backtesting, and game data. The API is built with FastAPI and includes ML models, heuristic layers, and AI-powered explanations. The system also includes a comprehensive cron-based data collection infrastructure.
 
 ## Base URL
 
@@ -591,6 +591,315 @@ curl -X POST "http://localhost:8000/api/backtest/run?season=2024&heuristic=best_
 
 # Compare heuristics
 curl "http://localhost:8000/api/backtest/compare?season=2024"
+```
+
+### Cron Jobs Health Check
+
+```
+GET /health/cron
+```
+
+Check the health status of all cron jobs.
+
+**Response**:
+```json
+{
+  "status": "healthy",
+  "timestamp": "2026-04-02T15:00:00.000Z",
+  "jobs": [
+    {
+      "name": "daily_game_sync",
+      "status": "enabled",
+      "last_run": "2026-04-02T02:00:00.000Z",
+      "next_run": "2026-04-03T02:00:00.000Z",
+      "last_duration_seconds": 234.5,
+      "success_rate": 0.98
+    },
+    {
+      "name": "match_completion_detector",
+      "status": "enabled",
+      "last_run": "2026-04-02T15:15:00.000Z",
+      "next_run": "2026-04-02T15:30:00.000Z",
+      "last_duration_seconds": 12.3,
+      "success_rate": 0.99
+    },
+    {
+      "name": "tip_generation",
+      "status": "enabled",
+      "last_run": "2026-04-02T03:00:00.000Z",
+      "next_run": "2026-04-03T03:00:00.000Z",
+      "last_duration_seconds": 456.7,
+      "success_rate": 0.95
+    },
+    {
+      "name": "historical_data_refresh",
+      "status": "enabled",
+      "last_run": "2026-04-01T04:00:00.000Z",
+      "next_run": "2026-04-06T04:00:00.000Z",
+      "last_duration_seconds": 1200.0,
+      "success_rate": 0.92
+    }
+  ],
+  "database": "connected",
+  "squiggle_api": "reachable"
+}
+```
+
+### Admin API - Cron Job Management
+
+#### Trigger Cron Job Manually
+
+```
+POST /api/admin/jobs/{job_name}/trigger
+```
+
+Manually trigger a cron job.
+
+**Job Names**:
+- `daily-sync`
+- `match-completion`
+- `tip-generation`
+- `historic-refresh`
+
+**Response**:
+```json
+{
+  "status": "success",
+  "message": "Job triggered successfully",
+  "job_name": "daily_sync",
+  "job_execution_id": 123
+}
+```
+
+**Example**:
+```bash
+# Trigger daily game sync
+curl -X POST http://localhost:8000/api/admin/jobs/daily-sync/trigger
+
+# Trigger match completion detection
+curl -X POST http://localhost:8000/api/admin/jobs/match-completion/trigger
+
+# Trigger tip generation
+curl -X POST http://localhost:8000/api/admin/jobs/tip-generation/trigger
+
+# Trigger historical data refresh
+curl -X POST http://localhost:8000/api/admin/jobs/historic-refresh/trigger
+```
+
+#### Check Historical Refresh Progress
+
+```
+GET /api/admin/jobs/historic-refresh/progress
+```
+
+Check the progress of the historical data refresh job.
+
+**Response**:
+```json
+{
+  "status": "running",
+  "operation_type": "refresh_season",
+  "current_season": 2024,
+  "current_round": 5,
+  "total_seasons": 15,
+  "total_rounds": 23,
+  "items_processed": 5,
+  "items_succeeded": 5,
+  "items_failed": 0,
+  "current_item": "Round 5 - Game 42",
+  "estimated_remaining_seconds": 1800,
+  "started_at": "2026-04-02T03:00:00.000Z"
+}
+```
+
+#### Get Job Execution History
+
+```
+GET /api/admin/jobs/{job_name}/executions
+```
+
+Get execution history for a specific cron job.
+
+**Query Parameters**:
+- `limit` (optional): Maximum number of executions to return (default: 10, max: 100)
+- `status` (optional): Filter by status (pending, running, completed, failed)
+
+**Response**:
+```json
+{
+  "job_name": "daily_game_sync",
+  "executions": [
+    {
+      "id": 123,
+      "status": "completed",
+      "started_at": "2026-04-02T02:00:00.000Z",
+      "completed_at": "2026-04-02T02:04:00.000Z",
+      "duration_seconds": 240.5,
+      "items_processed": 45,
+      "items_succeeded": 45,
+      "items_failed": 0,
+      "error_message": null
+    },
+    {
+      "id": 122,
+      "status": "completed",
+      "started_at": "2026-04-01T02:00:00.000Z",
+      "completed_at": "2026-04-01T02:03:00.000Z",
+      "duration_seconds": 180.2,
+      "items_processed": 45,
+      "items_succeeded": 45,
+      "items_failed": 0,
+      "error_message": null
+    }
+  ],
+  "count": 2
+}
+```
+
+**Example**:
+```bash
+# Get last 10 executions of daily sync
+curl http://localhost:8000/api/admin/jobs/daily-sync/executions
+
+# Get failed executions
+curl http://localhost:8000/api/admin/jobs/daily-sync/executions?status=failed
+
+# Get last 50 executions
+curl http://localhost:8000/api/admin/jobs/daily-sync/executions?limit=50
+```
+
+#### Enable/Disable Cron Job
+
+```
+POST /api/admin/jobs/{job_name}/enable
+POST /api/admin/jobs/{job_name}/disable
+```
+
+Enable or disable a cron job.
+
+**Response**:
+```json
+{
+  "status": "success",
+  "message": "Job daily_sync has been enabled",
+  "job_name": "daily_sync",
+  "enabled": true
+}
+```
+
+**Example**:
+```bash
+# Enable daily game sync
+curl -X POST http://localhost:8000/api/admin/jobs/daily-sync/enable
+
+# Disable match completion detector
+curl -X POST http://localhost:8000/api/admin/jobs/match-completion/disable
+```
+
+### Admin API - Manual Operations
+
+#### Manually Sync Season
+
+```
+POST /api/admin/sync/season/{season}
+```
+
+Manually sync games for a specific season.
+
+**Query Parameters**:
+- `force_refresh` (optional): Force refresh even if already synced (default: false)
+
+**Response**:
+```json
+{
+  "status": "success",
+  "message": "Season 2025 sync completed",
+  "season": 2025,
+  "games_synced": 45,
+  "games_created": 10,
+  "games_updated": 35,
+  "job_execution_id": 124
+}
+```
+
+**Example**:
+```bash
+# Sync season 2025
+curl -X POST http://localhost:8000/api/admin/sync/season/2025
+
+# Force refresh season 2024
+curl -X POST "http://localhost:8000/api/admin/sync/season/2024?force_refresh=true"
+```
+
+#### Manually Generate Tips for Round
+
+```
+POST /api/admin/generate-tips/{season}/{round_id}
+```
+
+Manually generate tips for a specific round.
+
+**Query Parameters**:
+- `force_regenerate` (optional): Regenerate existing tips (default: false)
+- `heuristics` (optional): Comma-separated list of heuristics (default: all)
+
+**Response**:
+```json
+{
+  "status": "success",
+  "message": "Tips generated for round 1, 2025",
+  "season": 2025,
+  "round_id": 1,
+  "tips_created": 10,
+  "heuristics_used": ["best_bet", "yolo", "high_risk_high_reward"],
+  "job_execution_id": 125
+}
+```
+
+**Example**:
+```bash
+# Generate tips for round 1, 2025
+curl -X POST http://localhost:8000/api/admin/generate-tips/2025/1
+
+# Regenerate tips with only best_bet heuristic
+curl -X POST "http://localhost:8000/api/admin/generate-tips/2025/1?force_regenerate=true&heuristics=best_bet"
+```
+
+#### Manually Refresh Historical Data
+
+```
+POST /api/admin/refresh-historical
+POST /api/admin/refresh-historical/{season}
+```
+
+Manually refresh historical data.
+
+**Query Parameters** (for all seasons):
+- `seasons` (optional): Comma-separated list of seasons (default: all configured seasons)
+- `regenerate_tips` (optional): Regenerate tips during refresh (default: true)
+
+**Response**:
+```json
+{
+  "status": "success",
+  "message": "Historical data refresh completed",
+  "seasons_processed": 15,
+  "total_games_synced": 345,
+  "total_tips_generated": 3450,
+  "job_execution_id": 126
+}
+```
+
+**Example**:
+```bash
+# Refresh all configured seasons
+curl -X POST http://localhost:8000/api/admin/refresh-historical
+
+# Refresh specific seasons
+curl -X POST "http://localhost:8000/api/admin/refresh-historical?seasons=2024,2023,2022"
+
+# Refresh with tip regeneration
+curl -X POST "http://localhost:8000/api/admin/refresh-historical?regenerate_tips=true"
 ```
 
 ## Squiggle API

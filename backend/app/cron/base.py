@@ -3,7 +3,7 @@
 import time
 import asyncio
 from abc import ABC, abstractmethod
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional, Dict, Any, Type
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -26,6 +26,26 @@ class TransientJobError(JobError):
 class PermanentJobError(JobError):
     """Exception for permanent errors that should not be retried."""
     pass
+
+
+def classify_error(error: Exception, context: str = "") -> JobError:
+    """Classify an error as transient or permanent.
+    
+    Inspects the error message for keywords like 'timeout' or 'network'
+    to determine whether the error is likely transient (retryable) or
+    permanent.
+    
+    Args:
+        error: The exception to classify.
+        context: Optional context string to prefix the error message.
+        
+    Returns:
+        TransientJobError or PermanentJobError with appropriate message.
+    """
+    error_msg = f"{context}: {str(error)}" if context else str(error)
+    if "timeout" in str(error).lower() or "network" in str(error).lower():
+        return TransientJobError(error_msg)
+    return PermanentJobError(error_msg)
 
 
 class BaseJob(ABC):
@@ -139,7 +159,7 @@ class BaseJob(ABC):
             await execution_crud.update_execution(
                 execution_id=execution.id,
                 status="completed",
-                completed_at=datetime.utcnow(),
+                completed_at=datetime.now(timezone.utc),
                 duration_seconds=int(duration),
                 items_processed=result.get("items_processed", 0),
                 items_failed=result.get("items_failed", 0),
@@ -163,7 +183,7 @@ class BaseJob(ABC):
             await execution_crud.update_execution(
                 execution_id=execution.id,
                 status="failed",
-                completed_at=datetime.utcnow(),
+                completed_at=datetime.now(timezone.utc),
                 duration_seconds=int(duration),
                 error_message=str(e),
                 result_summary={"error_type": "transient"}
@@ -189,7 +209,7 @@ class BaseJob(ABC):
             await execution_crud.update_execution(
                 execution_id=execution.id,
                 status="failed",
-                completed_at=datetime.utcnow(),
+                completed_at=datetime.now(timezone.utc),
                 duration_seconds=int(duration),
                 error_message=str(e),
                 result_summary={"error_type": "permanent"}
@@ -215,7 +235,7 @@ class BaseJob(ABC):
             await execution_crud.update_execution(
                 execution_id=execution.id,
                 status="failed",
-                completed_at=datetime.utcnow(),
+                completed_at=datetime.now(timezone.utc),
                 duration_seconds=int(duration),
                 error_message=str(e),
                 result_summary={"error_type": "unexpected"}

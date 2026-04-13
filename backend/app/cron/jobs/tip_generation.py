@@ -3,7 +3,7 @@
 from typing import Dict, Any, Optional
 from datetime import datetime
 
-from app.cron.base import BaseJob, TransientJobError, PermanentJobError
+from app.cron.base import BaseJob, classify_error
 from app.services.tip_generation import TipGenerationService
 from app.crud.games import GameCRUD
 from app.logger import get_logger
@@ -171,10 +171,6 @@ class TipGenerationJob(BaseJob):
             result["summary"] = f"Failed: {error_msg}"
             result["errors"].append(error_msg)
             
-            # Classify error type
-            if "timeout" in str(e).lower() or "network" in str(e).lower():
-                raise TransientJobError(error_msg)
-            else:
-                raise PermanentJobError(error_msg)
+            raise classify_error(e, "TipGenerationJob failed")
         
         return result

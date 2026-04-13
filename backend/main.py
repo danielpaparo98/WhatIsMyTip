@@ -1,3 +1,5 @@
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI, Request, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -17,6 +19,19 @@ from app.cron import init_cron_manager, get_cron_manager
 logger = get_logger(__name__)
 
 
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Application lifespan: startup and shutdown logic."""
+    # Startup
+    try:
+        await cron_mgr.register_jobs()
+        logger.info("Cron jobs registered successfully")
+    except Exception as e:
+        logger.error(f"Failed to register cron jobs: {e}")
+    yield
+    # Shutdown (cleanup if needed)
+
+
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     """Middleware to add security headers to all responses."""
     
@@ -24,9 +39,20 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         response: Response = await call_next(request)
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = "DENY"
-        response.headers["X-XSS-Protection"] = "1; mode=block"
         response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
-        response.headers["Content-Security-Policy"] = "default-src 'self'"
+        csp = (
+            "default-src 'self'; "
+            "script-src 'self' https://analytics.whatismytip.com; "
+            "img-src 'self' data: https:; "
+            "style-src 'self' 'unsafe-inline'; "
+            "connect-src 'self'; "
+            "font-src 'self'; "
+            "frame-ancestors 'none'"
+        )
+        response.headers["Content-Security-Policy"] = csp
+        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+        response.headers["Cross-Origin-Opener-Policy"] = "same-origin"
         return response
 
 
@@ -47,21 +73,15 @@ app = FastAPI(
     title="WhatIsMyTip API",
     description="AI-powered footy tipping API",
     version="0.1.0",
+    docs_url=None if settings.environment == "production" else "/docs",
+    redoc_url=None if settings.environment == "production" else "/redoc",
+    openapi_url=None if settings.environment == "production" else "/openapi.json",
+    lifespan=lifespan,
 )
 
 
 # Initialize CronJobManager
 cron_mgr = init_cron_manager(app)
-
-
-@app.on_event("startup")
-async def startup_event():
-    """Initialize cron jobs on startup."""
-    try:
-        await cron_mgr.register_jobs()
-        logger.info("Cron jobs registered successfully")
-    except Exception as e:
-        logger.error(f"Failed to register cron jobs: {e}")
 
 # Security headers middleware
 app.add_middleware(SecurityHeadersMiddleware)

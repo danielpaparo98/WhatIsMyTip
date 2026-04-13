@@ -1,5 +1,5 @@
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, and_, insert
+from sqlalchemy import select, and_, insert, delete
 from typing import List, Optional
 from app.models import Tip
 from app.cache import cached, short_cache, medium_cache
@@ -118,15 +118,18 @@ class TipCRUD:
     
     @staticmethod
     async def delete_for_game(db: AsyncSession, game_id: int) -> int:
-        """Delete all tips for a game with proper transaction management."""
+        """Delete all tips for a game using a bulk DELETE."""
         from app.cache import invalidate_cache_pattern
+        from sqlalchemy import func
         
         try:
-            result = await db.execute(select(Tip).where(Tip.game_id == game_id))
-            tips = result.scalars().all()
-            count = len(tips)
-            for tip in tips:
-                db.delete(tip)
+            # Count before deleting
+            count_result = await db.execute(
+                select(func.count()).where(Tip.game_id == game_id)
+            )
+            count = count_result.scalar() or 0
+            
+            await db.execute(delete(Tip).where(Tip.game_id == game_id))
             await db.commit()
             
             # Invalidate cache for tip-related queries

@@ -30,6 +30,7 @@ import {
   type Plugin,
 } from 'chart.js'
 import { Bar } from 'vue-chartjs'
+import { useChartTheme } from '~/composables/useChartTheme'
 
 ChartJS.register(
   CategoryScale,
@@ -59,30 +60,11 @@ const props = withDefaults(defineProps<Props>(), {
   loading: false
 })
 
+const { getHeuristicColors, getHeuristicLabel } = useChartTheme()
+
 const hasData = computed(() => {
   return props.data && props.data.length > 0 && props.data.some(h => h.rounds && h.rounds.length > 0)
 })
-
-const heuristicColors: Record<string, { border: string; background: string }> = {
-  best_bet: {
-    border: '#3b82f6',
-    background: 'rgba(59, 130, 246, 0.8)'
-  },
-  high_risk_high_reward: {
-    border: '#f97316',
-    background: 'rgba(249, 115, 22, 0.8)'
-  },
-  yolo: {
-    border: '#ef4444',
-    background: 'rgba(239, 68, 68, 0.8)'
-  }
-}
-
-const heuristicLabels: Record<string, string> = {
-  best_bet: 'Best Bet',
-  yolo: 'YOLO',
-  high_risk_high_reward: 'High Risk / High Reward'
-}
 
 const chartData = computed(() => {
   if (!hasData.value) return { labels: [], datasets: [] }
@@ -96,10 +78,7 @@ const chartData = computed(() => {
 
   // Create datasets for each heuristic
   const datasets = props.data.map(heuristicData => {
-    const colors = heuristicColors[heuristicData.heuristic] || {
-      border: '#6b7280',
-      background: 'rgba(107, 114, 128, 0.8)'
-    }
+    const colors = getHeuristicColors(heuristicData.heuristic, 0.8)
 
     const data = sortedRounds.map(roundId => {
       const roundData = heuristicData.rounds.find(r => r.round_id === roundId)
@@ -107,7 +86,7 @@ const chartData = computed(() => {
     })
 
     return {
-      label: heuristicLabels[heuristicData.heuristic] || heuristicData.heuristic,
+      label: getHeuristicLabel(heuristicData.heuristic),
       data,
       backgroundColor: colors.background,
       borderColor: colors.border,

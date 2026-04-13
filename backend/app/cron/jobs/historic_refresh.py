@@ -3,7 +3,7 @@
 from typing import Dict, Any, List, Optional
 from datetime import datetime
 
-from app.cron.base import BaseJob, TransientJobError, PermanentJobError
+from app.cron.base import BaseJob, classify_error
 from app.services.historic_data_refresh import HistoricDataRefreshService
 from app.logger import get_logger
 
@@ -128,11 +128,7 @@ class HistoricDataRefreshJob(BaseJob):
             result["items_failed"] = len(self.seasons)
             result["summary"] = f"Failed: {error_msg}"
             
-            # Classify error type
-            if "timeout" in str(e).lower() or "network" in str(e).lower():
-                raise TransientJobError(error_msg)
-            else:
-                raise PermanentJobError(error_msg)
+            raise classify_error(e, "HistoricDataRefreshJob failed")
         
         return result
     
@@ -203,8 +199,4 @@ class HistoricDataRefreshJob(BaseJob):
             error_msg = f"HistoricDataRefreshJob failed: {str(e)}"
             self.logger.error(error_msg, exc_info=True)
             
-            # Classify error type
-            if "timeout" in str(e).lower() or "network" in str(e).lower():
-                raise TransientJobError(error_msg)
-            else:
-                raise PermanentJobError(error_msg)
+            raise classify_error(e, "HistoricDataRefreshJob failed")

@@ -13,6 +13,8 @@
 </template>
 
 <script setup lang="ts">
+import { HEURISTIC_LABELS } from '~/composables/useFormatters'
+
 interface Props {
   heuristic: string
   selectedTeam: string
@@ -24,12 +26,7 @@ interface Props {
 const props = defineProps<Props>()
 
 const heuristicLabel = computed(() => {
-  const labels: Record<string, string> = {
-    best_bet: 'Best Bet',
-    yolo: 'YOLO',
-    high_risk_high_reward: 'High Risk / High Reward'
-  }
-  return labels[props.heuristic] || props.heuristic
+  return HEURISTIC_LABELS[props.heuristic] || props.heuristic
 })
 </script>
 

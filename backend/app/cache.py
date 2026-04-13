@@ -103,14 +103,14 @@ class InMemoryCache:
 
 
 # Global cache instances with different TTLs
-# Short-lived cache (5 minutes) for frequently changing data
-short_cache = InMemoryCache(default_ttl=300.0, max_size=1000)
+# Short-lived cache (1 minute) for frequently changing data
+short_cache = InMemoryCache(default_ttl=60, max_size=500)
 
-# Medium-lived cache (15 minutes) for moderately changing data
-medium_cache = InMemoryCache(default_ttl=900.0, max_size=500)
+# Medium-lived cache (5 minutes) for moderately changing data
+medium_cache = InMemoryCache(default_ttl=300, max_size=200)
 
 # Long-lived cache (1 hour) for rarely changing data
-long_cache = InMemoryCache(default_ttl=3600.0, max_size=100)
+long_cache = InMemoryCache(default_ttl=3600, max_size=100)
 
 
 def cached(
@@ -135,7 +135,9 @@ def cached(
         @wraps(func)
         async def async_wrapper(*args, **kwargs):
             # Build cache key from function name and arguments
-            cache_key = f"{key_prefix}{func.__name__}:{str(args)}:{str(sorted(kwargs.items()))}"
+            # Skip first arg (typically db session) to avoid non-deterministic memory addresses
+            cache_args = args[1:] if args else ()
+            cache_key = f"{key_prefix}{func.__name__}:{str(cache_args)}:{str(sorted(kwargs.items()))}"
             
             # Try to get from cache
             import time
@@ -164,7 +166,9 @@ def cached(
         @wraps(func)
         def sync_wrapper(*args, **kwargs):
             # Build cache key from function name and arguments
-            cache_key = f"{key_prefix}{func.__name__}:{str(args)}:{str(sorted(kwargs.items()))}"
+            # Skip first arg (typically db session) to avoid non-deterministic memory addresses
+            cache_args = args[1:] if args else ()
+            cache_key = f"{key_prefix}{func.__name__}:{str(cache_args)}:{str(sorted(kwargs.items()))}"
             
             # Try to get from cache
             import time
