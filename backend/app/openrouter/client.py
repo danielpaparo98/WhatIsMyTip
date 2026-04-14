@@ -1,6 +1,9 @@
+import logging
 from openai import AsyncOpenAI
 from typing import Optional
 from app.config import settings
+
+logger = logging.getLogger(__name__)
 
 
 class OpenRouterClient:
@@ -33,6 +36,15 @@ class OpenRouterClient:
             Human-readable explanation string
         """
         
+        # If no API key is configured, return fallback immediately
+        if not settings.openrouter_api_key:
+            logger.warning(
+                "OpenRouter API key not configured, using fallback explanation"
+            )
+            return self._generate_fallback_explanation(
+                game, prediction, heuristic
+            )
+        
         # Build context for the AI
         context = self._build_prompt_context(
             game, prediction, heuristic, model_predictions
@@ -59,7 +71,8 @@ class OpenRouterClient:
             return explanation
             
         except Exception as e:
-            # Fallback to simple explanation if AI fails
+            # Log the error but fallback to simple explanation
+            logger.error(f"OpenRouter AI explanation failed: {e}", exc_info=True)
             return self._generate_fallback_explanation(
                 game, prediction, heuristic
             )
