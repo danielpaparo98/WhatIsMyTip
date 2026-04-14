@@ -5,6 +5,7 @@ from datetime import datetime
 
 from app.cron.base import BaseJob, classify_error
 from app.services.tip_generation import TipGenerationService
+from app.services.explanation import ExplanationService
 from app.crud.games import GameCRUD
 from app.logger import get_logger
 
@@ -158,6 +159,33 @@ class TipGenerationJob(BaseJob):
             
             if result["items_failed"] > 0:
                 summary_parts.append(f"Failed: {result['items_failed']}")
+            
+            result["summary"] = "; ".join(summary_parts)
+            
+            # Generate AI explanations for the round's tips
+            try:
+                explanation_service = ExplanationService()
+                explanation_count = await explanation_service.generate_for_round(
+                    self.db_session, season, round_id
+                )
+                if explanation_count > 0:
+                    summary_parts.append(
+                        f"Generated {explanation_count} AI explanations"
+                    )
+                    result["explanations_generated"] = explanation_count
+                    self.logger.info(
+                        f"Generated {explanation_count} AI explanations for "
+                        f"season {season}, round {round_id}"
+                    )
+                await explanation_service.close()
+            except Exception as e:
+                # Explanation failure should not fail the job
+                self.logger.warning(
+                    f"Explanation generation failed for season {season}, "
+                    f"round {round_id}: {e}",
+                    exc_info=True,
+                )
+                summary_parts.append("Explanation generation failed (tips still saved)")
             
             result["summary"] = "; ".join(summary_parts)
             
