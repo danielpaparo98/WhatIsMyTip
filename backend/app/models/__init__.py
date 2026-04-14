@@ -1,4 +1,5 @@
-from sqlalchemy import Column, Integer, String, Float, DateTime, Text, Boolean, UniqueConstraint
+from sqlalchemy import Column, Integer, String, Float, DateTime, Text, Boolean, UniqueConstraint, ForeignKey
+from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from datetime import datetime, timezone
 from app.db import Base
@@ -139,3 +140,14 @@ class EloCache(Base):
     __table_args__ = (
         UniqueConstraint('team_name', name='uq_elo_cache_team_name'),
     )
+
+
+class MatchAnalysis(Base):
+    __tablename__ = "match_analyses"
+
+    id = Column(Integer, primary_key=True, index=True)
+    game_id = Column(Integer, ForeignKey("games.id"), unique=True, nullable=False, index=True)
+    analysis_text = Column(Text, nullable=False)  # The casual talking points
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    game = relationship("Game", backref="match_analysis")
