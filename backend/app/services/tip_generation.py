@@ -11,6 +11,7 @@ from app.crud.tips import TipCRUD
 from app.crud.model_predictions import ModelPredictionCRUD
 from app.models import Game
 from app.logger import get_logger
+from app.services.explanation import ExplanationService
 
 
 logger = get_logger(__name__)
@@ -294,6 +295,25 @@ class TipGenerationService:
                     exc_info=True
                 )
                 # Continue with other models even if one fails
+        
+        # Generate AI explanations for newly created tips
+        if game_stats["tips_created"] > 0:
+            try:
+                explanation_service = ExplanationService()
+                explanation_count = await explanation_service.generate_for_game_tips(
+                    self.db, game.id
+                )
+                if explanation_count > 0:
+                    self.logger.info(
+                        f"Generated {explanation_count} AI explanations for game {game.id}"
+                    )
+                await explanation_service.close()
+            except Exception as e:
+                # Explanation failure should not break tip generation
+                self.logger.warning(
+                    f"Explanation generation failed for game {game.id}: {e}",
+                    exc_info=True,
+                )
         
         return game_stats
     
