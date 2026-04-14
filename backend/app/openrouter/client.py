@@ -136,6 +136,115 @@ Confidence: {prediction['confidence']:.0%}
         else:  # high_risk_high_reward
             return f"Targeting an upset with {winner}. Models are split, creating a high-risk high-reward opportunity. Predicted margin: {margin} points."
     
+    async def generate_match_analysis(
+        self,
+        game: dict,
+        model_predictions: Optional[dict] = None,
+    ) -> str:
+        """Generate casual, tongue-in-cheek talking points for a match.
+
+        Args:
+            game: Game dictionary with keys: home_team, away_team, venue, date
+            model_predictions: Optional dict of model_name -> (winner, confidence, margin)
+
+        Returns:
+            Casual talking points string
+        """
+
+        # If no API key is configured, return fallback immediately
+        if not settings.openrouter_api_key:
+            logger.warning(
+                "OpenRouter API key not configured, using fallback match analysis"
+            )
+            return self._generate_fallback_match_analysis(game)
+
+        # Build context for the AI
+        context = self._build_match_analysis_context(game, model_predictions)
+
+        try:
+            response = await self.client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": self._get_match_analysis_system_prompt(),
+                    },
+                    {
+                        "role": "user",
+                        "content": context,
+                    },
+                ],
+                max_tokens=400,
+                temperature=0.8,
+            )
+
+            analysis = response.choices[0].message.content.strip()
+            return analysis
+
+        except Exception as e:
+            logger.error(f"OpenRouter AI match analysis failed: {e}", exc_info=True)
+            return self._generate_fallback_match_analysis(game)
+
+    def _get_match_analysis_system_prompt(self) -> str:
+        """Get the system prompt for match analysis generation."""
+        return """You are a witty, slightly sarcastic AFL footy fan who helps people sound knowledgeable \
+about upcoming matches at BBQs, pubs, and watercooler conversations. Your job is to give \
+casual talking points that someone can drop into conversation to sound like they know \
+their footy — even if they haven't watched a game all season.
+
+Keep it fun, tongue-in-cheek, and relatable. Use Aussie footy slang where natural. \
+Each talking point should be something someone could casually say in conversation.
+
+Format your response as 4-5 short, punchy talking points separated by newlines. \
+Each point should be 1-2 sentences max. No bullet points or numbers — just the raw \
+talking points as conversational snippets."""
+
+    def _build_match_analysis_context(
+        self,
+        game: dict,
+        model_predictions: Optional[dict],
+    ) -> str:
+        """Build the prompt context for match analysis generation."""
+        context = f"""Game: {game['home_team']} vs {game['away_team']} at {game['venue']}
+Date: {game.get('date', 'TBD')}
+
+"""
+
+        if model_predictions:
+            context += "Model predictions:\n"
+            for model_name, (winner, confidence, margin) in model_predictions.items():
+                context += f"- {model_name}: {winner} ({confidence:.0%}, {margin} pts)\n"
+
+            # Calculate consensus
+            winners = [w for w, c, m in model_predictions.values()]
+            margins = [m for w, c, m in model_predictions.values()]
+            confidences = [c for w, c, m in model_predictions.values()]
+
+            if winners:
+                from collections import Counter
+                most_picked = Counter(winners).most_common(1)[0]
+                avg_margin = sum(margins) / len(margins)
+                avg_confidence = sum(confidences) / len(confidences)
+                context += f"\nConsensus: {most_picked[0]} picked by {most_picked[1]}/{len(model_predictions)} models"
+                context += f"\nAverage predicted margin: {avg_margin:.0f} pts"
+                context += f"\nAverage confidence: {avg_confidence:.0%}\n"
+
+        context += "\nGenerate casual talking points for this match:"
+
+        return context
+
+    def _generate_fallback_match_analysis(self, game: dict) -> str:
+        """Generate a simple fallback match analysis if AI fails."""
+        home = game.get("home_team", "the home side")
+        away = game.get("away_team", "the visitors")
+        return (
+            f"Look, {home} at home, you'd back them wouldn't you? "
+            f"But {away} have been known to upset the apple cart.\n"
+            f"Apparently the bookies have this one as a coin flip, so basically nobody knows. "
+            f"Perfect — your opinion is as good as anyone's.\n"
+            f"Just nod confidently if someone mentions the margin. It's all about the vibe."
+        )
+
     async def close(self):
         """Close the client connection."""
         await self.client.close()

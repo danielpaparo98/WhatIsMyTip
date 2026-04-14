@@ -1,7 +1,8 @@
 from .games import GameResponse, GameListResponse, GameDetailResponse, ModelPrediction
 from .tips import TipResponse, TipCreate, TipListResponse
+from .match_analysis import MatchAnalysisResponse
 
-# Rebuild GameDetailResponse to resolve forward reference to TipResponse
+# Rebuild GameDetailResponse to resolve forward references
 GameDetailResponse.model_rebuild()
 from .backtest import (
     BacktestResponse,
@@ -24,6 +25,7 @@ __all__ = [
     "TipResponse",
     "TipCreate",
     "TipListResponse",
+    "MatchAnalysisResponse",
     "BacktestResponse",
     "BacktestListResponse",
     "AvailableSeasonsResponse",
