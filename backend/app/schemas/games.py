@@ -4,6 +4,7 @@ from typing import Optional, List, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from app.schemas.tips import TipResponse
+    from app.schemas.match_analysis import MatchAnalysisResponse
 
 
 class GameResponse(BaseModel):
@@ -34,6 +35,7 @@ class GameDetailResponse(BaseModel):
     game: GameResponse
     tips: List['TipResponse']  # All tips for all heuristics
     model_predictions: List[ModelPrediction]  # On-demand predictions from all 4 models
+    match_analysis: Optional['MatchAnalysisResponse'] = None  # AI-generated casual talking points
 
 
 class GameListResponse(BaseModel):

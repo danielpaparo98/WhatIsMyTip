@@ -10,8 +10,9 @@ from typing import Optional, List
 from datetime import datetime, timezone
 
 from app.db import get_db
-from app.crud import GameCRUD, TipCRUD, ModelPredictionCRUD
+from app.crud import GameCRUD, TipCRUD, ModelPredictionCRUD, MatchAnalysisCRUD
 from app.schemas import GameResponse, GameListResponse, GameDetailResponse, ModelPrediction as ModelPredictionSchema
+from app.schemas.match_analysis import MatchAnalysisResponse
 from app.models import Game
 
 router = APIRouter()
@@ -162,12 +163,20 @@ async def get_game_detail(
     model_predictions_time = time.time() - model_predictions_start
     logger.debug(f"get_game_detail: Model predictions fetch took {model_predictions_time:.4f}s, found {len(model_predictions_list)} predictions")
     
+    # 4. Fetch match analysis if available
+    analysis_start = time.time()
+    match_analysis_db = await MatchAnalysisCRUD.get_by_game_id(db, game_id)
+    match_analysis = MatchAnalysisResponse.model_validate(match_analysis_db) if match_analysis_db else None
+    analysis_time = time.time() - analysis_start
+    logger.debug(f"get_game_detail: Match analysis fetch took {analysis_time:.4f}s")
+
     total_time = time.time() - start_time
     logger.debug(f"get_game_detail: COMPLETED in {total_time:.4f}s")
     
-    # 4. Return combined response
+    # 5. Return combined response
     return GameDetailResponse(
         game=GameResponse.model_validate(game),
         tips=[tip for tip in tips],
-        model_predictions=model_predictions_list
+        model_predictions=model_predictions_list,
+        match_analysis=match_analysis
     )
