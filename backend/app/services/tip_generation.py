@@ -314,7 +314,28 @@ class TipGenerationService:
                     f"Explanation generation failed for game {game.id}: {e}",
                     exc_info=True,
                 )
-        
+
+        # Generate match analysis talking points
+        if game_stats["tips_created"] > 0:
+            try:
+                from .match_analysis import MatchAnalysisService
+
+                match_analysis_service = MatchAnalysisService()
+                analysis = await match_analysis_service.generate_and_store_analysis(
+                    self.db, game
+                )
+                if analysis:
+                    self.logger.info(
+                        f"Generated match analysis for game {game.id}"
+                    )
+                await match_analysis_service.close()
+            except Exception as e:
+                # Match analysis failure should not break tip generation
+                self.logger.warning(
+                    f"Match analysis generation failed for game {game.id}: {e}",
+                    exc_info=True,
+                )
+
         return game_stats
     
     async def generate_batch(

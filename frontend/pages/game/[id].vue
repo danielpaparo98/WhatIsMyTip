@@ -96,6 +96,12 @@
           </div>
         </div>
       </section>
+
+      <!-- Match Analysis / BBQ Talking Points -->
+      <section v-if="gameDetail.match_analysis" class="match-analysis-section">
+        <h2 class="section-title">Match Analysis</h2>
+        <MatchAnalysisCard :analysis="gameDetail.match_analysis" />
+      </section>
     </div>
   </div>
 </template>
@@ -350,7 +356,8 @@ useHead({
 }
 
 .tips-section,
-.models-section {
+.models-section,
+.match-analysis-section {
   margin-bottom: 2rem;
 }
 
