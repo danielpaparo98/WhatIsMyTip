@@ -31,10 +31,18 @@ export interface ModelPrediction {
   margin: number
 }
 
+export interface MatchAnalysis {
+  id: number
+  game_id: number
+  analysis_text: string
+  created_at: string
+}
+
 export interface GameDetailResponse {
   game: Game
   tips: Tip[]
   model_predictions: ModelPrediction[]
+  match_analysis: MatchAnalysis | null
 }
 
 export interface GameWithTip {
