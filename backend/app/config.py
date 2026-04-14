@@ -17,7 +17,7 @@ class Settings(BaseSettings):
     
     # OpenRouter Configuration
     openrouter_api_key: str = ""
-    openrouter_model: str = "google/gemini-2.0-flash-001"
+    openrouter_model: str = "google/gemma-4-26b-a4b-it:free"
     openrouter_base_url: str = "https://openrouter.ai/api/v1"
     
     environment: str = "development"
