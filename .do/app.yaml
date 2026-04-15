@@ -32,7 +32,7 @@ services:
   instance_size_slug: apps-s-1vcpu-0.5gb
   name: whatismytip-backend
   source_dir: backend
-  build_command: rm -f whatismytip.db && uv sync && uv run alembic upgrade head && uv run python scripts/generate_historical_data.py
+  build_command: rm -f whatismytip.db && uv sync && uv run alembic upgrade head
   run_command: uvicorn main:app --host 0.0.0.0 --port $PORT
   envs:
   - key: DATABASE_URL
