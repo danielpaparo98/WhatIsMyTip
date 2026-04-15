@@ -55,14 +55,19 @@ Usage:
 import argparse
 import asyncio
 import logging
+import os
 import sys
 import time
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-# Add parent directory to path for imports
-sys.path.insert(0, str(Path(__file__).parent.parent))
+# Resolve project root (parent of scripts/) and ensure we operate from there
+# so that relative SQLite paths like ./whatismytip.db resolve correctly.
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
+# Add project root to path for imports
+sys.path.insert(0, str(PROJECT_ROOT))
 
 from app.db import AsyncSessionLocal
 from app.config import settings
@@ -75,6 +80,42 @@ logging.basicConfig(
     handlers=[logging.StreamHandler(sys.stdout)],
 )
 logger = logging.getLogger("refresh_data")
+
+
+# ---------------------------------------------------------------------------
+# Database initialisation
+# ---------------------------------------------------------------------------
+
+
+def ensure_db_ready() -> None:
+    """Change to the project root and run Alembic migrations.
+
+    When this script is invoked from an arbitrary directory (e.g. ``~/scripts``
+    on the production pod) the relative SQLite path ``./whatismytip.db`` would
+    resolve against the *current* working directory instead of the project
+    root.  We fix that by ``os.chdir``-ing into the project root **before**
+    the engine is created (the module-level ``engine`` in ``app.db`` is lazily
+    evaluated on first use, so changing dir here is sufficient).
+
+    We also run ``alembic upgrade head`` so that the schema is guaranteed to
+    exist even on a fresh / empty database.
+    """
+    os.chdir(PROJECT_ROOT)
+    logger.info(f"Working directory set to {PROJECT_ROOT}")
+
+    from alembic.config import Config as AlembicConfig
+    from alembic import command as alembic_cmd
+
+    alembic_cfg = AlembicConfig(str(PROJECT_ROOT / "alembic.ini"))
+    # Ensure the (sync) URL matches settings – Alembic env.py also does this,
+    # but setting it here keeps things consistent when run outside the normal
+    # build pipeline.
+    sync_url = settings.database_url.replace("+aiosqlite", "")
+    alembic_cfg.set_main_option("sqlalchemy.url", sync_url)
+
+    logger.info("Running Alembic migrations …")
+    alembic_cmd.upgrade(alembic_cfg, "head")
+    logger.info("Database schema is up to date")
 
 
 # ---------------------------------------------------------------------------
@@ -570,6 +611,11 @@ def main() -> None:
 
     if args.verbose:
         logging.getLogger().setLevel(logging.DEBUG)
+
+    # Ensure we're in the project root and the database schema exists before
+    # doing anything.  This must happen *before* ``asyncio.run`` so that the
+    # working directory is correct when the SQLAlchemy engine is created.
+    ensure_db_ready()
 
     asyncio.run(run_pipeline(args))
 
