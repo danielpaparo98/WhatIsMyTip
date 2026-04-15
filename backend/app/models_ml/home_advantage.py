@@ -19,7 +19,7 @@ class HomeAdvantageModel(BaseModel):
         self.overall_home_advantage: float = 0.0
     
     def get_name(self) -> str:
-        return "HomeAdvantage"
+        return "home_advantage"
     
     async def _calculate_home_advantage(self, db: AsyncSession, game: Game):
         """Calculate home advantage statistics using only historical data.

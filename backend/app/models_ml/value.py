@@ -13,7 +13,7 @@ class ValueModel(BaseModel):
         self.team_win_rates: Dict[str, float] = {}
     
     def get_name(self) -> str:
-        return "Value"
+        return "value"
     
     async def _calculate_win_rates(self, db: AsyncSession, before_date: Optional[date] = None):
         """Calculate historical win rates for each team.
