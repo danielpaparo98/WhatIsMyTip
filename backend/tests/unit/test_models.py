@@ -12,7 +12,7 @@ class TestEloModel:
 
     def test_elo_get_name(self):
         model = EloModel()
-        assert model.get_name() == "Elo"
+        assert model.get_name() == "elo"
 
     def test_elo_default_k_factor(self):
         model = EloModel()
@@ -39,7 +39,7 @@ class TestFormModel:
 
     def test_form_get_name(self):
         model = FormModel()
-        assert model.get_name() == "Form"
+        assert model.get_name() == "form"
 
     def test_form_default_games_to_consider(self):
         model = FormModel()
@@ -57,7 +57,7 @@ class TestHomeAdvantageModel:
 
     def test_home_advantage_get_name(self):
         model = HomeAdvantageModel()
-        assert model.get_name() == "HomeAdvantage"
+        assert model.get_name() == "home_advantage"
 
     def test_home_advantage_initial_state(self):
         model = HomeAdvantageModel()
@@ -72,7 +72,7 @@ class TestValueModel:
 
     def test_value_get_name(self):
         model = ValueModel()
-        assert model.get_name() == "Value"
+        assert model.get_name() == "value"
 
     def test_value_initial_state(self):
         model = ValueModel()

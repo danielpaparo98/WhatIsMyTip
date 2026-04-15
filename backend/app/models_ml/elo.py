@@ -33,7 +33,7 @@ class EloModel(BaseModel):
         self._lock = asyncio.Lock()
     
     def get_name(self) -> str:
-        return "Elo"
+        return "elo"
     
     @staticmethod
     def _compute_ratings_from_games(

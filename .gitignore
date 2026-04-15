@@ -58,3 +58,8 @@ Desktop.ini
 *.tmp
 *.temp
 .cache/
+
+# Debug screenshots and test artifacts
+frontend/debug-*.png
+frontend/frontend/
+frontend/test-screenshots/
