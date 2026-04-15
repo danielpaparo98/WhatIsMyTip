@@ -12,7 +12,7 @@ class FormModel(BaseModel):
         self.games_to_consider = games_to_consider
     
     def get_name(self) -> str:
-        return "Form"
+        return "form"
     
     async def _get_recent_form(
         self, db: AsyncSession, team: str, before_date
