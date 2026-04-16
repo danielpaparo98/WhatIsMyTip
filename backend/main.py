@@ -1,4 +1,5 @@
 from contextlib import asynccontextmanager
+import asyncio
 
 from fastapi import FastAPI, Request, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
@@ -19,6 +20,54 @@ from app.cron import init_cron_manager, get_cron_manager
 logger = get_logger(__name__)
 
 
+async def _run_initial_sync() -> None:
+    """Run an initial game sync on startup to ensure data is available.
+    
+    This is critical for fresh deployments where the database is empty.
+    """
+    from app.db import AsyncSessionLocal
+    from app.squiggle import SquiggleClient
+    from app.services.game_sync import GameSyncService
+    from app.models_ml.elo import EloModel
+    
+    try:
+        async with AsyncSessionLocal() as db:
+            # Check if we have any games for the current season
+            from sqlalchemy import select, func
+            from app.models import Game
+            from datetime import datetime
+            
+            current_year = datetime.now().year
+            result = await db.execute(
+                select(func.count(Game.id)).where(Game.season == current_year)
+            )
+            game_count = result.scalar() or 0
+            
+            if game_count == 0:
+                logger.info(
+                    f"No games found for {current_year}, running initial sync..."
+                )
+                async with SquiggleClient() as client:
+                    sync_service = GameSyncService(
+                        squiggle_client=client,
+                        db_session=db,
+                        season=current_year
+                    )
+                    stats = await sync_service.sync_games()
+                    logger.info(
+                        f"Initial sync complete: created={stats['games_created']}, "
+                        f"updated={stats['games_updated']}, total={stats['total_games']}"
+                    )
+                    
+                    # Update Elo ratings cache after initial sync
+                    await EloModel.update_cache(db)
+                    logger.info("Elo ratings cache updated after initial sync")
+            else:
+                logger.info(f"Found {game_count} games for {current_year}, skipping initial sync")
+    except Exception as e:
+        logger.error(f"Initial sync failed (non-fatal): {e}")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan: startup and shutdown logic."""
@@ -26,10 +75,20 @@ async def lifespan(app: FastAPI):
     try:
         await cron_mgr.register_jobs()
         logger.info("Cron jobs registered successfully")
+        
+        # Start the background scheduler
+        cron_mgr.start_scheduler()
+        logger.info("Cron scheduler started")
     except Exception as e:
         logger.error(f"Failed to register cron jobs: {e}")
+    
+    # Run initial data sync in the background (non-blocking)
+    asyncio.create_task(_run_initial_sync())
+    
     yield
-    # Shutdown (cleanup if needed)
+    
+    # Shutdown
+    cron_mgr.stop_scheduler()
 
 
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
