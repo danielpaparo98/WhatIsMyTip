@@ -18,6 +18,8 @@ dependencies = [
     "scikit-learn>=1.5.0",
     "alembic>=1.14.0",
     "fastapi-crons>=0.1.0",
+    "croniter>=2.0.0",
+    "tzdata>=2024.1",  # Cross-platform timezone data for zoneinfo
 ]
 
 [project.optional-dependencies]
