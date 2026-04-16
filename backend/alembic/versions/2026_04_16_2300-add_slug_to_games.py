@@ -57,12 +57,14 @@ def upgrade() -> None:
             sa.update(games).where(games.c.id == row[0]).values(slug=slug)
         )
 
-    # Step 3: Make column non-nullable and add unique constraint + index
-    op.alter_column("games", "slug", nullable=False)
-    op.create_index("ix_games_slug", "games", ["slug"], unique=True)
+    # Step 3: Make column non-nullable and add unique constraint (batch mode for SQLite)
+    with op.batch_alter_table("games") as batch_op:
+        batch_op.alter_column("slug", nullable=False)
+        batch_op.create_unique_constraint("ix_games_slug", ["slug"])
 
 
 def downgrade() -> None:
     """Remove slug column from games table."""
-    op.drop_index("ix_games_slug", table_name="games")
-    op.drop_column("games", "slug")
+    with op.batch_alter_table("games") as batch_op:
+        batch_op.drop_constraint("ix_games_slug", type_="unique")
+        batch_op.drop_column("slug")
