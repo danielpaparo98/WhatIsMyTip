@@ -121,12 +121,12 @@ const error = ref<string | null>(null)
 // Fetch game detail on mount
 onMounted(async () => {
   try {
-    const gameId = parseInt(route.params.id as string)
-    if (isNaN(gameId)) {
-      throw new Error('Invalid game ID')
+    const slug = route.params.slug as string
+    if (!slug || !/^[a-zA-Z0-9]{10,12}$/.test(slug)) {
+      throw new Error('Invalid game slug')
     }
     
-    gameDetail.value = await getGameDetail(gameId)
+    gameDetail.value = await getGameDetail(slug)
   } catch (err) {
     error.value = err instanceof Error ? err.message : 'Failed to load game details'
   } finally {

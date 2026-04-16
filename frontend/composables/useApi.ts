@@ -1,6 +1,7 @@
 // TypeScript interfaces for game detail response
 export interface Game {
   id: number
+  slug: string
   squiggle_id: number
   round_id: number
   season: number
@@ -47,6 +48,7 @@ export interface GameDetailResponse {
 
 export interface GameWithTip {
   id: number
+  slug: string
   squiggle_id: number
   round_id: number
   season: number
@@ -110,14 +112,14 @@ export const useApi = () => {
     return response.json()
   }
   
-  const getGame = async (gameId: number) => {
-    const response = await fetchWithTimeout(`/api/games/${gameId}`)
+  const getGame = async (slug: string) => {
+    const response = await fetchWithTimeout(`/api/games/${slug}`)
     if (!response.ok) throw new Error('Failed to fetch game')
     return response.json()
   }
   
-  const getGameDetail = async (gameId: number): Promise<GameDetailResponse> => {
-    const response = await fetchWithTimeout(`/api/games/${gameId}/detail`)
+  const getGameDetail = async (slug: string): Promise<GameDetailResponse> => {
+    const response = await fetchWithTimeout(`/api/games/${slug}/detail`)
     if (!response.ok) throw new Error('Failed to fetch game detail')
     return response.json()
   }
