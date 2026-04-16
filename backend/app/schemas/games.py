@@ -9,6 +9,7 @@ if TYPE_CHECKING:
 
 class GameResponse(BaseModel):
     id: int
+    slug: str
     squiggle_id: int
     round_id: int
     season: int

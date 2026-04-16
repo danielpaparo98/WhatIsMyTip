@@ -103,6 +103,7 @@ async def get_games_with_tips(
         for game in games:
             game_dict = {
                 "id": game.id,
+                "slug": game.slug,
                 "squiggle_id": game.squiggle_id,
                 "round_id": game.round_id,
                 "season": game.season,

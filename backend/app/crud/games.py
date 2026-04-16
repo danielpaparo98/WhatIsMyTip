@@ -6,6 +6,7 @@ from app.models import Game, Tip
 from app.squiggle import SquiggleClient
 from app.squiggle.utils import parse_squiggle_complete
 from app.cache import cached, short_cache, medium_cache
+from app.utils import generate_slug
 
 
 class GameCRUD:
@@ -16,6 +17,13 @@ class GameCRUD:
     async def get_by_id(db: AsyncSession, game_id: int) -> Optional[Game]:
         """Get a game by database ID."""
         result = await db.execute(select(Game).where(Game.id == game_id))
+        return result.scalar_one_or_none()
+    
+    @staticmethod
+    @cached(cache=short_cache, key_prefix="game_by_slug:")
+    async def get_by_slug(db: AsyncSession, slug: str) -> Optional[Game]:
+        """Get a game by its public slug identifier."""
+        result = await db.execute(select(Game).where(Game.slug == slug))
         return result.scalar_one_or_none()
     
     @staticmethod
@@ -140,9 +148,11 @@ class GameCRUD:
                 # Still update last_synced_at even if no data changed
                 game.last_synced_at = now
         else:
-            # Create new game
+            # Create new game with a unique slug
             action = "created"
+            slug = await GameCRUD._generate_unique_slug(db)
             game = Game(
+                slug=slug,
                 squiggle_id=game_data["id"],
                 round_id=game_data.get("round", 0),
                 season=game_data.get("year", 0),
@@ -163,6 +173,7 @@ class GameCRUD:
         
         # Invalidate cache for game-related queries
         invalidate_cache_pattern(short_cache, "game_by_id:")
+        invalidate_cache_pattern(short_cache, "game_by_slug:")
         invalidate_cache_pattern(short_cache, "games_by_round:")
         invalidate_cache_pattern(short_cache, "upcoming_games:")
         invalidate_cache_pattern(medium_cache, "games_by_season:")
@@ -394,8 +405,33 @@ class GameCRUD:
         
         # Invalidate cache
         invalidate_cache_pattern(short_cache, "game_by_id:")
+        invalidate_cache_pattern(short_cache, "game_by_slug:")
         invalidate_cache_pattern(short_cache, "games_by_round:")
         invalidate_cache_pattern(short_cache, "upcoming_games:")
         invalidate_cache_pattern(medium_cache, "games_by_season:")
+    
+    @staticmethod
+    async def _generate_unique_slug(db: AsyncSession, max_attempts: int = 10) -> str:
+        """Generate a unique slug, retrying if collisions occur.
         
-        return game
+        Args:
+            db: Database session
+            max_attempts: Maximum number of retry attempts
+            
+        Returns:
+            A unique slug string
+            
+        Raises:
+            RuntimeError: If unable to generate a unique slug after max_attempts
+        """
+        for _ in range(max_attempts):
+            slug = generate_slug()
+            existing = await db.execute(
+                select(Game).where(Game.slug == slug)
+            )
+            if existing.scalar_one_or_none() is None:
+                return slug
+        
+        raise RuntimeError(
+            f"Failed to generate a unique slug after {max_attempts} attempts"
+        )
