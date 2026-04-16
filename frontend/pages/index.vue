@@ -52,7 +52,7 @@
             <NuxtLink
               v-for="game in gamesWithTips"
               :key="game.id"
-              :to="`/game/${game.id}`"
+              :to="`/game/${game.slug}`"
               class="game-card-link"
             >
               <div class="game-card">
