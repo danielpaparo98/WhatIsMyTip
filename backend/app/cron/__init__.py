@@ -1,8 +1,13 @@
-"""Cron job management using fastapi-crons."""
+"""Cron job management with built-in asyncio scheduler."""
 
+import asyncio
 import socket
 import os
+from datetime import datetime, timezone
 from typing import Optional, Dict, Any, List
+from zoneinfo import ZoneInfo
+
+from croniter import croniter
 from fastapi import FastAPI
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -20,10 +25,11 @@ logger = get_logger(__name__)
 
 
 class CronJobManager:
-    """Manager for cron jobs using fastapi-crons.
+    """Manager for cron jobs with built-in asyncio scheduler.
     
     This class handles:
     - Registration of cron jobs with schedules
+    - Background scheduling using croniter for cron expression evaluation
     - Job execution tracking
     - Job locking to prevent concurrent execution
     - Manual job triggering
@@ -41,6 +47,8 @@ class CronJobManager:
         self.instance_id = f"{socket.gethostname()}-{os.getpid()}"
         self.enabled = settings.cron_enabled
         self.logger = logger
+        self._scheduler_task: Optional[asyncio.Task] = None
+        self._running = False
         
     async def register_job(
         self,
@@ -125,6 +133,124 @@ class CronJobManager:
         )
         
         self.logger.info(f"Registered {len(self.jobs)} cron jobs")
+    
+    def start_scheduler(self) -> None:
+        """Start the background scheduler task.
+        
+        Launches an asyncio task that evaluates cron schedules and
+        triggers jobs at the appropriate times.
+        """
+        if not self.enabled:
+            self.logger.info("Cron jobs disabled, not starting scheduler")
+            return
+        
+        if self._scheduler_task is not None:
+            self.logger.warning("Scheduler already running")
+            return
+        
+        self._running = True
+        self._scheduler_task = asyncio.create_task(self._scheduler_loop())
+        self.logger.info("Background cron scheduler started")
+    
+    def stop_scheduler(self) -> None:
+        """Stop the background scheduler task."""
+        self._running = False
+        if self._scheduler_task is not None:
+            self._scheduler_task.cancel()
+            self._scheduler_task = None
+            self.logger.info("Background cron scheduler stopped")
+    
+    async def _scheduler_loop(self) -> None:
+        """Main scheduler loop that evaluates cron schedules and triggers jobs.
+        
+        Uses croniter to determine when each job should run next.
+        Polls every 30 seconds to check if any jobs are due.
+        """
+        self.logger.info("Scheduler loop started")
+        
+        # Track the last run time for each job to avoid duplicate triggers
+        last_triggered: Dict[str, datetime] = {}
+        
+        # Give the app a moment to fully start before first check
+        await asyncio.sleep(10)
+        
+        while self._running:
+            try:
+                now = datetime.now(tz=ZoneInfo(settings.cron_timezone))
+                
+                for job_name, job_config in self.jobs.items():
+                    if not job_config.get("enabled", True):
+                        continue
+                    
+                    schedule = job_config["schedule"]
+                    
+                    try:
+                        cron = croniter(schedule, now)
+                        # Get the previous fire time (the most recent time this cron
+                        # expression would have triggered). If it's within the last
+                        # 60 seconds and we haven't already triggered for it, run the job.
+                        prev_fire = cron.get_prev(datetime)
+                        
+                        if prev_fire.tzinfo is None:
+                            prev_fire = prev_fire.replace(tzinfo=ZoneInfo(settings.cron_timezone))
+                        
+                        last_fire = last_triggered.get(job_name)
+                        
+                        # Trigger if we've never run this job, or if the previous
+                        # fire time is newer than our last trigger
+                        if last_fire is None or prev_fire > last_fire:
+                            # Check that the fire time is within the last 2 minutes
+                            # to avoid triggering for old schedules on startup
+                            delta = (now - prev_fire).total_seconds()
+                            if 0 <= delta <= 120:
+                                self.logger.info(
+                                    f"Scheduler triggering job: {job_name} "
+                                    f"(fire_time={prev_fire.isoformat()}, delta={delta:.0f}s)"
+                                )
+                                last_triggered[job_name] = prev_fire
+                                
+                                # Execute in a separate task so we don't block the loop
+                                asyncio.create_task(
+                                    self._execute_scheduled_job(job_name)
+                                )
+                    except Exception as e:
+                        self.logger.error(
+                            f"Error evaluating schedule for {job_name}: {e}",
+                            extra={"job_name": job_name}
+                        )
+                
+                # Poll every 30 seconds
+                await asyncio.sleep(30)
+                
+            except asyncio.CancelledError:
+                self.logger.info("Scheduler loop cancelled")
+                break
+            except Exception as e:
+                self.logger.error(f"Unexpected error in scheduler loop: {e}")
+                await asyncio.sleep(30)
+    
+    async def _execute_scheduled_job(self, job_name: str) -> None:
+        """Execute a scheduled job with its own database session.
+        
+        Args:
+            job_name: Name of the job to execute
+        """
+        from app.db import AsyncSessionLocal
+        
+        try:
+            async with AsyncSessionLocal() as db:
+                try:
+                    result = await self.execute_job(job_name, db)
+                    self.logger.info(
+                        f"Scheduled job {job_name} completed: {result.status} - {result.message}"
+                    )
+                finally:
+                    await db.close()
+        except Exception as e:
+            self.logger.error(
+                f"Failed to execute scheduled job {job_name}: {e}",
+                extra={"job_name": job_name}
+            )
     
     async def execute_job(
         self,
