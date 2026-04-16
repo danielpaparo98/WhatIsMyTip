@@ -100,25 +100,25 @@ async def get_games(
     )
 
 
-@router.get("/{game_id}", response_model=GameResponse)
+@router.get("/{slug}", response_model=GameResponse)
 @limiter.limit("60/minute")
 async def get_game(
     request: Request,
-    game_id: int,
+    slug: str,
     db: AsyncSession = Depends(get_db),
 ):
-    """Get a specific game by ID."""
-    game = await GameCRUD.get_by_id(db, game_id)
+    """Get a specific game by slug."""
+    game = await GameCRUD.get_by_slug(db, slug)
     if not game:
         raise HTTPException(status_code=404, detail="Game not found")
     return GameResponse.model_validate(game)
 
 
-@router.get("/{game_id}/detail", response_model=GameDetailResponse)
+@router.get("/{slug}/detail", response_model=GameDetailResponse)
 @limiter.limit("60/minute")
 async def get_game_detail(
     request: Request,
-    game_id: int,
+    slug: str,
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -128,16 +128,18 @@ async def get_game_detail(
     - Model predictions from all 4 ML models (elo, form, home_advantage, value)
     """
     start_time = time.time()
-    logger.debug(f"get_game_detail: STARTING for game_id={game_id}")
+    logger.debug(f"get_game_detail: STARTING for slug={slug}")
     
-    # 1. Fetch game by id
+    # 1. Fetch game by slug
     game_start = time.time()
-    game = await GameCRUD.get_by_id(db, game_id)
+    game = await GameCRUD.get_by_slug(db, slug)
     game_time = time.time() - game_start
     logger.debug(f"get_game_detail: Game fetch took {game_time:.4f}s")
     
     if not game:
         raise HTTPException(status_code=404, detail="Game not found")
+    
+    game_id = game.id
     
     # 2. Fetch all tips for this game (all heuristics)
     tips_start = time.time()

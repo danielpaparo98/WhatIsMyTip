@@ -9,6 +9,7 @@ class Game(Base):
     __tablename__ = "games"
     
     id = Column(Integer, primary_key=True, index=True)
+    slug = Column(String(12), unique=True, index=True, nullable=False)
     squiggle_id = Column(Integer, unique=True, index=True)
     round_id = Column(Integer, index=True)
     season = Column(Integer, index=True)
