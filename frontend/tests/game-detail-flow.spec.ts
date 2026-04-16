@@ -2,7 +2,7 @@ import { test, expect } from '@playwright/test';
 
 test.describe('Game Detail Flow - End to End', () => {
   const BASE_URL = 'http://localhost:3000';
-  let gameId: string;
+  let gameSlug: string;
 
   test.beforeEach(async ({ page }) => {
     // Set default viewport to desktop
@@ -44,16 +44,16 @@ test.describe('Game Detail Flow - End to End', () => {
     await test.step('Click on first game card', async () => {
       const firstCardLink = page.locator('.game-card-link').first();
       
-      // Get the game ID from the href
+      // Get the game slug from the href
       const href = await firstCardLink.getAttribute('href');
-      expect(href).toMatch(/\/game\/\d+/);
-      gameId = href!.split('/').pop()!;
+      expect(href).toMatch(/\/game\/[a-zA-Z0-9]+/);
+      gameSlug = href!.split('/').pop()!;
       
       // Click on the game card
       await firstCardLink.click();
       
       // Verify navigation to game detail page
-      await expect(page).toHaveURL(`${BASE_URL}/game/${gameId}`);
+      await expect(page).toHaveURL(`${BASE_URL}/game/${gameSlug}`);
     });
 
     // Step 4: Verify Game Detail Page Content
@@ -225,7 +225,7 @@ test.describe('Game Detail Flow - End to End', () => {
 
   test('should handle error states gracefully', async ({ page }) => {
     // Navigate to a non-existent game
-    await page.goto(`${BASE_URL}/game/999999`);
+    await page.goto(`${BASE_URL}/game/invalidslug123`);
     
     // Wait for error state
     await page.waitForSelector('.error', { timeout: 10000 });
