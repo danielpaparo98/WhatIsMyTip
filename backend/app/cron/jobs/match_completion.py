@@ -28,6 +28,7 @@ class MatchCompletionDetectionJob(BaseJob):
     
     def __init__(
         self,
+        job_name: str,
         db_session,
         settings,
         instance_id: str = None,
@@ -36,13 +37,14 @@ class MatchCompletionDetectionJob(BaseJob):
         """Initialize the MatchCompletionDetectionJob.
         
         Args:
+            job_name: Name of the job
             db_session: Database session
             settings: Application settings
             instance_id: Optional instance identifier
             buffer_minutes: Optional buffer minutes override (defaults to settings)
         """
         super().__init__(
-            job_name="match_completion_detector",
+            job_name=job_name,
             db_session=db_session,
             settings=settings,
             instance_id=instance_id

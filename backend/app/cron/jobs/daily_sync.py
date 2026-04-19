@@ -26,6 +26,7 @@ class DailyGameSyncJob(BaseJob):
     
     def __init__(
         self,
+        job_name: str,
         db_session,
         settings,
         instance_id: str = None,
@@ -34,13 +35,14 @@ class DailyGameSyncJob(BaseJob):
         """Initialize the DailyGameSyncJob.
         
         Args:
+            job_name: Name of the job
             db_session: Database session
             settings: Application settings
             instance_id: Optional instance identifier
             season: Optional season to sync (defaults to current year)
         """
         super().__init__(
-            job_name="daily_game_sync",
+            job_name=job_name,
             db_session=db_session,
             settings=settings,
             instance_id=instance_id
