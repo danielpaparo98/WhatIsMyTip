@@ -92,6 +92,15 @@
               </div>
             </NuxtLink>
           </div>
+          <!-- Generate Tips button when games exist but tips are missing -->
+          <div v-if="hasGamesWithoutTips && !generating" class="generate-tips-bar">
+            <p>Tips haven't been generated for this round yet.</p>
+            <button @click="generateTips" class="btn btn-primary">Generate Tips</button>
+          </div>
+          <div v-if="generating" class="generate-tips-bar generating">
+            <div class="spinner"></div>
+            <p>Generating tips…</p>
+          </div>
         </div>
         </Transition>
   </section>
@@ -138,8 +147,13 @@ const error = ref<string | null>(null)
 const gamesWithTips = ref<any[]>([])
 const latestRound = ref<any>(null)
 const selectedHeuristic = ref<string>('best_bet')
+const generating = ref(false)
 const AUTO_REFRESH_MS = 5 * 60 * 1000
 let autoRefreshTimer: ReturnType<typeof setInterval> | null = null
+
+const hasGamesWithoutTips = computed(() => {
+  return gamesWithTips.value.length > 0 && gamesWithTips.value.some(g => !g.tip)
+})
 
 const heuristics = [
   { value: 'best_bet', label: 'Best Bet' },
@@ -201,6 +215,8 @@ const refreshCurrentView = async () => {
 }
 
 const generateTips = async () => {
+  generating.value = true
+  error.value = null
   try {
     const season = latestRound.value?.season || new Date().getFullYear()
     const round = latestRound.value?.round_id || 1
@@ -209,6 +225,8 @@ const generateTips = async () => {
   } catch (e) {
     error.value = 'Failed to generate tips'
     console.error(e)
+  } finally {
+    generating.value = false
   }
 }
 
@@ -347,6 +365,38 @@ onUnmounted(() => {
 .loading, .error, .empty {
   text-align: center;
   padding: 3rem 1.5rem;
+}
+
+/* Generate Tips Bar */
+.generate-tips-bar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 1rem;
+  padding: 1.25rem 1.5rem;
+  margin-top: 1.5rem;
+  border: 1px dashed var(--color-border);
+  text-align: center;
+  flex-wrap: wrap;
+}
+
+.generate-tips-bar p {
+  margin: 0;
+  color: var(--color-muted);
+  font-size: 0.875rem;
+}
+
+.generate-tips-bar.generating {
+  gap: 0.75rem;
+}
+
+.generate-tips-bar.generating .spinner {
+  width: 18px;
+  height: 18px;
+  border: 2px solid var(--color-border);
+  border-top-color: var(--color-text);
+  border-radius: 50%;
+  animation: spin 0.6s linear infinite;
 }
 
 /* Games Grid */
