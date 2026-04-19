@@ -179,7 +179,8 @@ class HistoricDataRefreshService:
                             tip_result = await tip_service.generate_for_round(
                                 season=season,
                                 round_id=self.round_id,
-                                regenerate=self.regenerate_tips
+                                regenerate=self.regenerate_tips,
+                                skip_nlp=True  # Skip AI explanations for historic data
                             )
                             
                             season_stats["tips_generated"] = tip_result["tips_created"] + tip_result["tips_updated"]
@@ -201,7 +202,8 @@ class HistoricDataRefreshService:
                                     tip_result = await tip_service.generate_for_round(
                                         season=season,
                                         round_id=round_id,
-                                        regenerate=self.regenerate_tips
+                                        regenerate=self.regenerate_tips,
+                                        skip_nlp=True  # Skip AI explanations for historic data
                                     )
                                     season_stats["tips_generated"] += tip_result["tips_created"] + tip_result["tips_updated"]
                                     
