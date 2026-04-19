@@ -3,13 +3,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, true
 from slowapi import Limiter
 from slowapi.util import get_remote_address
-from typing import Optional
+from typing import Optional, List
 
 from app.db import get_db
 from app.crud import TipCRUD, GameCRUD, ModelPredictionCRUD
 from app.schemas import TipResponse, TipListResponse, ModelPrediction as ModelPredictionSchema
 from app.models import Game, Tip
 from app.logger import get_logger
+from app.services.tip_generation import TipGenerationService
 
 router = APIRouter()
 limiter = Limiter(key_func=get_remote_address)
@@ -166,6 +167,76 @@ async def get_tips(
     except Exception as e:
         logger.error(f"Error in get_tips: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="An error occurred while fetching tips")
+
+
+@router.post("/generate")
+@limiter.limit("10/minute")
+async def generate_tips(
+    request: Request,
+    season: int = Query(..., description="Season year"),
+    round_id: int = Query(..., alias="round", description="Round number"),
+    heuristics: Optional[List[str]] = Query(None, description="Heuristics to generate"),
+    regenerate: bool = Query(False, description="Regenerate existing tips"),
+    db: AsyncSession = Depends(get_db),
+):
+    """Generate tips for a specific round on demand.
+    
+    This endpoint allows the frontend to trigger tip generation when
+    tips don't exist for the displayed round. It generates tips for
+    all heuristics (or specified ones) and returns a summary.
+    """
+    # Validate heuristic parameters
+    if heuristics:
+        invalid = [h for h in heuristics if h not in VALID_HEURISTICS]
+        if invalid:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid heuristic(s): {', '.join(invalid)}. "
+                       f"Must be one of: {', '.join(VALID_HEURISTICS)}"
+            )
+    
+    try:
+        # Check that games exist for this round
+        games = await GameCRUD.get_by_round(db, season, round_id)
+        if not games:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No games found for season {season}, round {round_id}"
+            )
+        
+        # Generate tips using the service
+        generation_service = TipGenerationService(
+            db_session=db,
+            season=season,
+            round_id=round_id
+        )
+        
+        stats = await generation_service.generate_for_round(
+            season=season,
+            round_id=round_id,
+            regenerate=regenerate,
+        )
+        
+        logger.info(
+            f"On-demand tip generation for season {season}, round {round_id}: "
+            f"{stats['tips_created']} created, {stats['tips_skipped']} skipped"
+        )
+        
+        return {
+            "status": "success",
+            "season": season,
+            "round_id": round_id,
+            "games_processed": stats["games_processed"],
+            "tips_created": stats["tips_created"],
+            "tips_skipped": stats["tips_skipped"],
+            "tips_updated": stats.get("tips_updated", 0),
+            "errors": stats.get("errors", []),
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error in generate_tips: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="An error occurred while generating tips")
 
 
 @router.get("/{heuristic}", response_model=TipListResponse)

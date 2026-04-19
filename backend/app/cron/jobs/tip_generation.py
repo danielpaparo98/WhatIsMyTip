@@ -28,6 +28,7 @@ class TipGenerationJob(BaseJob):
     
     def __init__(
         self,
+        job_name: str,
         db_session,
         settings,
         instance_id: str = None,
@@ -38,6 +39,7 @@ class TipGenerationJob(BaseJob):
         """Initialize the TipGenerationJob.
         
         Args:
+            job_name: Name of the job
             db_session: Database session
             settings: Application settings
             instance_id: Optional instance identifier
@@ -46,7 +48,7 @@ class TipGenerationJob(BaseJob):
             regenerate: Optional flag to regenerate existing tips (defaults to settings)
         """
         super().__init__(
-            job_name="tip_generation",
+            job_name=job_name,
             db_session=db_session,
             settings=settings,
             instance_id=instance_id
