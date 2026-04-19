@@ -52,7 +52,8 @@ class TipGenerationService:
         self,
         season: int,
         round_id: int,
-        regenerate: bool = False
+        regenerate: bool = False,
+        skip_nlp: bool = False
     ) -> Dict[str, Any]:
         """Generate tips for a specific round.
         
@@ -60,6 +61,7 @@ class TipGenerationService:
             season: Season year
             round_id: Round number
             regenerate: Whether to regenerate existing tips (default: False)
+            skip_nlp: Skip AI explanation and match analysis generation (default: False)
             
         Returns:
             Dictionary with generation statistics:
@@ -76,7 +78,7 @@ class TipGenerationService:
             - round_id: Round processed
         """
         start_time = time.time()
-        self.logger.info(f"Starting tip generation for season {season}, round {round_id}, regenerate={regenerate}")
+        self.logger.info(f"Starting tip generation for season {season}, round {round_id}, regenerate={regenerate}, skip_nlp={skip_nlp}")
         
         stats = {
             "games_processed": 0,
@@ -105,7 +107,7 @@ class TipGenerationService:
             # Process each game
             for game in games:
                 try:
-                    game_stats = await self._generate_for_game(game, regenerate)
+                    game_stats = await self._generate_for_game(game, regenerate, skip_nlp=skip_nlp)
                     
                     stats["games_processed"] += 1
                     stats["tips_created"] += game_stats.get("tips_created", 0)
@@ -185,13 +187,15 @@ class TipGenerationService:
     async def _generate_for_game(
         self,
         game: Game,
-        regenerate: bool = False
+        regenerate: bool = False,
+        skip_nlp: bool = False
     ) -> Dict[str, Any]:
         """Generate tips and predictions for a single game.
         
         Args:
             game: Game to generate tips for
             regenerate: Whether to regenerate existing tips
+            skip_nlp: Skip AI explanation and match analysis generation (default: False)
             
         Returns:
             Dictionary with game-level statistics
@@ -297,7 +301,7 @@ class TipGenerationService:
                 # Continue with other models even if one fails
         
         # Generate AI explanations for newly created tips
-        if game_stats["tips_created"] > 0:
+        if not skip_nlp and game_stats["tips_created"] > 0:
             try:
                 explanation_service = ExplanationService()
                 explanation_count = await explanation_service.generate_for_game_tips(
@@ -316,7 +320,7 @@ class TipGenerationService:
                 )
 
         # Generate match analysis talking points
-        if game_stats["tips_created"] > 0:
+        if not skip_nlp and game_stats["tips_created"] > 0:
             try:
                 from .match_analysis import MatchAnalysisService
 
