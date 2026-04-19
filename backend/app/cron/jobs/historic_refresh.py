@@ -24,6 +24,7 @@ class HistoricDataRefreshJob(BaseJob):
     
     def __init__(
         self,
+        job_name: str,
         db_session,
         settings,
         instance_id: Optional[str] = None,
@@ -34,6 +35,7 @@ class HistoricDataRefreshJob(BaseJob):
         """Initialize the HistoricDataRefreshJob.
         
         Args:
+            job_name: Name of the job
             db_session: Database session
             settings: Application settings
             instance_id: Optional instance identifier
@@ -42,7 +44,7 @@ class HistoricDataRefreshJob(BaseJob):
             regenerate_tips: Whether to regenerate existing tips (default: False)
         """
         super().__init__(
-            job_name="historic_data_refresh",
+            job_name=job_name,
             db_session=db_session,
             settings=settings,
             instance_id=instance_id

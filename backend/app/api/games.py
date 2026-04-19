@@ -8,8 +8,10 @@ from slowapi import Limiter
 from slowapi.util import get_remote_address
 from typing import Optional, List
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 
 from app.db import get_db
+from app.config import settings
 from app.crud import GameCRUD, TipCRUD, ModelPredictionCRUD, MatchAnalysisCRUD
 from app.schemas import GameResponse, GameListResponse, GameDetailResponse, ModelPrediction as ModelPredictionSchema
 from app.schemas.match_analysis import MatchAnalysisResponse
@@ -33,19 +35,25 @@ async def get_games(
     """Get games with optional filtering."""
     if latest:
         current_year = datetime.now().year
-        now = datetime.now(timezone.utc)
+        # Use the configured cron timezone (Australia/Perth) so that naive
+        # game-datetimes stored in local Australian time are compared against
+        # the correct wall-clock time.  We strip tzinfo so the comparison is
+        # naive-vs-naive, which PostgreSQL handles as a simple timestamp compare.
+        now = datetime.now(tz=ZoneInfo(settings.cron_timezone)).replace(tzinfo=None)
 
-        # Step 1: Find the round containing the nearest upcoming/future game
+        # Step 1: Find the round containing the nearest truly upcoming game
+        # (not yet completed AND scheduled in the future).
         future_game = await db.execute(
             select(Game.round_id, Game.season)
-            .where(Game.date >= now)
+            .where(and_(Game.date >= now, Game.completed == False))
             .order_by(Game.date.asc())
             .limit(1)
         )
         target = future_game.first()
         has_upcoming = target is not None
 
-        # Step 2: Fallback - if no future games, find the round with the most recent past game
+        # Step 2: Fallback - if no future upcoming games, find the round with
+        # the most recent past game (completed or not).
         if not target:
             past_game = await db.execute(
                 select(Game.round_id, Game.season)
