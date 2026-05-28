@@ -1,0 +1,107 @@
+packages:
+  api:
+    functions:
+      games:
+        handler: packages/api/games/__init__.py
+        runtime: python:3
+        web: true
+        environment:
+          DATABASE_URL: ${DATABASE_URL}
+          REDIS_URL: ${REDIS_URL}
+        annotations:
+          require-whisk-auth: false
+      tips:
+        handler: packages/api/tips/__init__.py
+        runtime: python:3
+        web: true
+        environment:
+          DATABASE_URL: ${DATABASE_URL}
+          REDIS_URL: ${REDIS_URL}
+        annotations:
+          require-whisk-auth: false
+      backtest:
+        handler: packages/api/backtest/__init__.py
+        runtime: python:3
+        web: true
+        environment:
+          DATABASE_URL: ${DATABASE_URL}
+          REDIS_URL: ${REDIS_URL}
+        annotations:
+          require-whisk-auth: false
+      admin:
+        handler: packages/api/admin/__init__.py
+        runtime: python:3
+        web: true
+        environment:
+          DATABASE_URL: ${DATABASE_URL}
+          REDIS_URL: ${REDIS_URL}
+          ADMIN_API_KEY: ${ADMIN_API_KEY}
+        annotations:
+          require-whisk-auth: false
+
+  cron:
+    functions:
+      daily-sync:
+        handler: packages/cron/daily-sync/__init__.py
+        runtime: python:3
+        web: false
+        environment:
+          DATABASE_URL: ${DATABASE_URL}
+          REDIS_URL: ${REDIS_URL}
+          SQUIGGLE_API_BASE: ${SQUIGGLE_API_BASE}
+          SQUIGGLE_CONTACT_EMAIL: ${SQUIGGLE_CONTACT_EMAIL}
+        triggers:
+          daily-sync-trigger:
+            type: schedule
+            cron: "*/15 * * * *"
+      match-completion:
+        handler: packages/cron/match-completion/__init__.py
+        runtime: python:3
+        web: false
+        environment:
+          DATABASE_URL: ${DATABASE_URL}
+          REDIS_URL: ${REDIS_URL}
+          SQUIGGLE_API_BASE: ${SQUIGGLE_API_BASE}
+          SQUIGGLE_CONTACT_EMAIL: ${SQUIGGLE_CONTACT_EMAIL}
+        triggers:
+          match-completion-trigger:
+            type: schedule
+            cron: "5,20,35,50 * * * *"
+      tip-generation:
+        handler: packages/cron/tip-generation/__init__.py
+        runtime: python:3
+        web: false
+        environment:
+          DATABASE_URL: ${DATABASE_URL}
+          REDIS_URL: ${REDIS_URL}
+          OPENROUTER_API_KEY: ${OPENROUTER_API_KEY}
+          OPENROUTER_MODEL: ${OPENROUTER_MODEL}
+        triggers:
+          tip-generation-trigger:
+            type: schedule
+            cron: "0 3 * * *"
+      historic-refresh:
+        handler: packages/cron/historic-refresh/__init__.py
+        runtime: python:3
+        web: false
+        environment:
+          DATABASE_URL: ${DATABASE_URL}
+          REDIS_URL: ${REDIS_URL}
+          SQUIGGLE_API_BASE: ${SQUIGGLE_API_BASE}
+          SQUIGGLE_CONTACT_EMAIL: ${SQUIGGLE_CONTACT_EMAIL}
+          OPENROUTER_API_KEY: ${OPENROUTER_API_KEY}
+          OPENROUTER_MODEL: ${OPENROUTER_MODEL}
+        triggers:
+          historic-refresh-trigger:
+            type: schedule
+            cron: "0 4 * * 0"
+
+environment:
+  DATABASE_URL: ${DATABASE_URL}
+  REDIS_URL: ${REDIS_URL}
+  SQUIGGLE_API_BASE: ${SQUIGGLE_API_BASE}
+  SQUIGGLE_CONTACT_EMAIL: ${SQUIGGLE_CONTACT_EMAIL}
+  OPENROUTER_API_KEY: ${OPENROUTER_API_KEY}
+  OPENROUTER_MODEL: ${OPENROUTER_MODEL}
+  ADMIN_API_KEY: ${ADMIN_API_KEY}
+  ENVIRONMENT: ${ENVIRONMENT}
