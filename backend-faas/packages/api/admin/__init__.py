@@ -17,11 +17,12 @@ import json
 import os
 import sys
 import traceback
+from urllib.parse import parse_qs
 
 # Make shared package importable from the function's working directory
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
-from packages.shared.db import _get_session_factory
+from packages.shared.db import _get_session_factory, dispose_engine
 from packages.shared.cache import close_redis_pool
 from packages.shared.config import settings
 from packages.shared.logger import get_logger
@@ -37,7 +38,14 @@ def _parse_request(args: dict) -> tuple:
     """Parse DO Function args into (method, path, query, body, headers)."""
     method = args.get("__ow_method", "GET").upper()
     path = args.get("__ow_path", "/").strip("/")
-    query = args.get("__ow_query", {}) or {}
+    raw_query = args.get("__ow_query", "")
+    if isinstance(raw_query, str) and raw_query:
+        parsed = parse_qs(raw_query)
+        query = {k: v[0] if len(v) == 1 else v for k, v in parsed.items()}
+    elif isinstance(raw_query, dict):
+        query = raw_query
+    else:
+        query = {}
     body_raw = args.get("__ow_body", "")
     headers = args.get("__ow_headers", {}) or {}
 
@@ -66,7 +74,7 @@ def _response(status_code: int, data=None, error: str | None = None) -> dict:
         "statusCode": status_code,
         "headers": {
             "Content-Type": "application/json",
-            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Origin": settings.cors_origins[0] if settings.cors_origins else "*",
             "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
             "Access-Control-Allow-Headers": "Content-Type, X-API-Key",
         },
@@ -397,3 +405,4 @@ async def main(args: dict) -> dict:
             return _response(500, error=str(e))
         finally:
             await close_redis_pool()
+            await dispose_engine()

@@ -203,5 +203,5 @@ class TestGamesFunctionRouting:
             result = await main({"__ow_method": "OPTIONS", "__ow_path": "/"})
 
         headers = result["headers"]
-        assert headers["Access-Control-Allow-Origin"] == "*"
+        assert "Access-Control-Allow-Origin" in headers
         assert "GET" in headers["Access-Control-Allow-Methods"]

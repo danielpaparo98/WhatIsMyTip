@@ -14,7 +14,7 @@ from datetime import datetime
 # Make shared package importable from the function's working directory
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
-from packages.shared.db import _get_session_factory
+from packages.shared.db import _get_session_factory, dispose_engine
 from packages.shared.cache import close_redis_pool
 from packages.shared.config import settings
 from packages.shared.logger import get_logger
@@ -160,3 +160,4 @@ async def main(args: dict) -> dict:
                 except Exception:
                     logger.error(f"Failed to release lock: {traceback.format_exc()}")
             await close_redis_pool()
+            await dispose_engine()

@@ -1,6 +1,15 @@
+from datetime import datetime
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import field_validator, Field
 from typing import List, Union, Optional
+
+
+def _default_season() -> int:
+    now = datetime.now()
+    # AFL season runs roughly March-September
+    # If we're in Oct-Feb, we're in off-season, still reference current year
+    return now.year
 
 
 class Settings(BaseSettings):
@@ -27,7 +36,7 @@ class Settings(BaseSettings):
     cron_timezone: str = "Australia/Perth"
     
     # Daily Sync Configuration
-    current_season: int = 2026
+    current_season: int = Field(default_factory=_default_season)
     daily_sync_enabled: bool = True
     
     # Game Sync (frequent to keep live round data fresh)
@@ -52,7 +61,7 @@ class Settings(BaseSettings):
     historic_refresh_seasons: str = "2010-2025"
     historic_refresh_regenerate_tips: bool = False
     historical_refresh_start_year: int = 2010
-    historical_refresh_timeout_seconds: int = 7200  # 2 hours
+    historical_refresh_timeout_seconds: int = 3300  # 55 minutes
     
     # Retry Configuration
     job_timeout_seconds: int = 3600

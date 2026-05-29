@@ -140,7 +140,7 @@ class TestTipsFunctionRouting:
             result = await main({
                 "__ow_method": "GET",
                 "__ow_path": "/games-with-tips",
-                "__ow_query": {},
+                "__ow_query": "",
             })
 
         assert result["statusCode"] == 400
@@ -162,7 +162,7 @@ class TestTipsFunctionRouting:
                 "__ow_method": "POST",
                 "__ow_path": "/generate",
                 "__ow_body": "{}",
-                "__ow_query": {},
+                "__ow_query": "",
             })
 
         assert result["statusCode"] == 400
@@ -186,7 +186,7 @@ class TestTipsFunctionRouting:
                 "__ow_method": "POST",
                 "__ow_path": "/generate",
                 "__ow_body": json.dumps({"season": 2025, "round": 1}),
-                "__ow_query": {},
+                "__ow_query": "",
             })
 
         assert result["statusCode"] == 404
@@ -223,7 +223,7 @@ class TestTipsFunctionRouting:
                 "__ow_method": "POST",
                 "__ow_path": "/generate",
                 "__ow_body": json.dumps({"season": 2025, "round": 1}),
-                "__ow_query": {},
+                "__ow_query": "",
             })
 
         assert result["statusCode"] == 200

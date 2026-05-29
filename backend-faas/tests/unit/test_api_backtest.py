@@ -99,7 +99,7 @@ class TestBacktestFunctionRouting:
             result = await main({
                 "__ow_method": "GET",
                 "__ow_path": "/compare",
-                "__ow_query": {},
+                "__ow_query": "",
             })
 
         assert result["statusCode"] == 400
@@ -129,7 +129,7 @@ class TestBacktestFunctionRouting:
             result = await main({
                 "__ow_method": "GET",
                 "__ow_path": "/compare",
-                "__ow_query": {"season": "2025"},
+                "__ow_query": "season=2025",
             })
 
         assert result["statusCode"] == 200
@@ -175,7 +175,7 @@ class TestBacktestFunctionRouting:
             result = await main({
                 "__ow_method": "GET",
                 "__ow_path": "/table",
-                "__ow_query": {},
+                "__ow_query": "",
             })
 
         assert result["statusCode"] == 400
