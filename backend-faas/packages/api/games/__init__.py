@@ -9,13 +9,11 @@ Routes:
     GET  /{slug}/detail        Full game detail with tips, predictions, analysis
 """
 
-import json
 import os
 import sys
 import time
 import traceback
 from datetime import datetime
-from urllib.parse import parse_qs
 from zoneinfo import ZoneInfo
 
 # Make shared package importable from the function's working directory
@@ -34,80 +32,11 @@ from packages.shared.schemas import (
 )
 from packages.shared.schemas.match_analysis import MatchAnalysisResponse
 from packages.shared.models import Game
+from packages.shared.api_helpers import parse_request, response, segments, to_dict, int_query, bool_query
 
 from sqlalchemy import select, func, and_
 
 logger = get_logger(__name__)
-
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-def _parse_request(args: dict) -> tuple:
-    """Parse DO Function args into (method, path, query, body, headers)."""
-    method = args.get("__ow_method", "GET").upper()
-    path = args.get("__ow_path", "/").strip("/")
-    raw_query = args.get("__ow_query", "")
-    if isinstance(raw_query, str) and raw_query:
-        parsed = parse_qs(raw_query)
-        query = {k: v[0] if len(v) == 1 else v for k, v in parsed.items()}
-    elif isinstance(raw_query, dict):
-        query = raw_query
-    else:
-        query = {}
-    body_raw = args.get("__ow_body", "")
-    headers = args.get("__ow_headers", {}) or {}
-
-    body: dict = {}
-    if body_raw:
-        if isinstance(body_raw, str):
-            try:
-                body = json.loads(body_raw)
-            except json.JSONDecodeError:
-                body = {}
-        elif isinstance(body_raw, dict):
-            body = body_raw
-
-    return method, path, query, body, headers
-
-
-def _response(status_code: int, data=None, error: str | None = None) -> dict:
-    """Build a DO Function response dict."""
-    body = {}
-    if error:
-        body = {"error": error}
-    elif data is not None:
-        body = data
-
-    return {
-        "statusCode": status_code,
-        "headers": {
-            "Content-Type": "application/json",
-            "Access-Control-Allow-Origin": settings.cors_origins[0] if settings.cors_origins else "*",
-            "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-            "Access-Control-Allow-Headers": "Content-Type, X-API-Key",
-        },
-        "body": body,
-    }
-
-
-def _segments(path: str) -> list[str]:
-    """Split path into non-empty segments."""
-    return [s for s in path.split("/") if s]
-
-
-def _to_dict(obj):
-    """Recursively convert Pydantic models / lists to JSON-safe dicts."""
-    if obj is None:
-        return None
-    if hasattr(obj, "model_dump"):
-        return obj.model_dump(mode="json")
-    if isinstance(obj, list):
-        return [_to_dict(item) for item in obj]
-    if isinstance(obj, dict):
-        return {k: _to_dict(v) for k, v in obj.items()}
-    return obj
 
 
 # ---------------------------------------------------------------------------
@@ -116,10 +45,10 @@ def _to_dict(obj):
 
 async def _handle_list_games(session, query: dict) -> dict:
     """GET / — list games with optional filtering."""
-    latest = _bool_query(query, "latest")
-    upcoming = _bool_query(query, "upcoming")
-    season = _int_query(query, "season")
-    round_id = _int_query(query, "round")
+    latest = bool_query(query, "latest")
+    upcoming = bool_query(query, "upcoming")
+    season = int_query(query, "season")
+    round_id = int_query(query, "round")
 
     if latest:
         current_year = datetime.now().year
@@ -156,7 +85,7 @@ async def _handle_list_games(session, query: dict) -> dict:
             )
             row = result.first()
             if row:
-                return _response(
+                return response(
                     200,
                     data={
                         "season": row.season,
@@ -167,7 +96,7 @@ async def _handle_list_games(session, query: dict) -> dict:
                     },
                 )
 
-        return _response(
+        return response(
             200,
             data={
                 "season": None,
@@ -191,16 +120,16 @@ async def _handle_list_games(session, query: dict) -> dict:
         games=[GameResponse.model_validate(g) for g in games],
         count=len(games),
     )
-    return _response(200, data=_to_dict(resp))
+    return response(200, data=to_dict(resp))
 
 
 async def _handle_get_game(session, slug: str) -> dict:
     """GET /{slug} — get a single game by slug."""
     game = await GameCRUD.get_by_slug(session, slug)
     if not game:
-        return _response(404, error="Game not found")
+        return response(404, error="Game not found")
     resp = GameResponse.model_validate(game)
-    return _response(200, data=_to_dict(resp))
+    return response(200, data=to_dict(resp))
 
 
 async def _handle_game_detail(session, slug: str) -> dict:
@@ -210,7 +139,7 @@ async def _handle_game_detail(session, slug: str) -> dict:
 
     game = await GameCRUD.get_by_slug(session, slug)
     if not game:
-        return _response(404, error="Game not found")
+        return response(404, error="Game not found")
 
     game_id = game.id
 
@@ -246,26 +175,7 @@ async def _handle_game_detail(session, slug: str) -> dict:
         model_predictions=model_predictions_list,
         match_analysis=match_analysis,
     )
-    return _response(200, data=_to_dict(resp))
-
-
-# ---------------------------------------------------------------------------
-# Query-param helpers
-# ---------------------------------------------------------------------------
-
-def _int_query(query: dict, key: str) -> int | None:
-    val = query.get(key)
-    if val is None:
-        return None
-    try:
-        return int(val)
-    except (ValueError, TypeError):
-        return None
-
-
-def _bool_query(query: dict, key: str) -> bool:
-    val = query.get(key, "").lower()
-    return val in ("true", "1", "yes")
+    return response(200, data=to_dict(resp))
 
 
 # ---------------------------------------------------------------------------
@@ -274,12 +184,12 @@ def _bool_query(query: dict, key: str) -> bool:
 
 async def main(args: dict) -> dict:
     """DO Function entry point."""
-    method, path, query, body, headers = _parse_request(args)
-    segs = _segments(path)
+    method, path, query, body, headers = parse_request(args)
+    segs = segments(path)
 
     # Handle CORS preflight
     if method == "OPTIONS":
-        return _response(204)
+        return response(204)
 
     factory = _get_session_factory()
     async with factory() as session:
@@ -296,11 +206,11 @@ async def main(args: dict) -> dict:
                 slug = segs[0]
                 return await _handle_game_detail(session, slug)
 
-            return _response(404, error="Not found")
+            return response(404, error="Not found")
 
         except Exception as e:
             logger.error(f"Error in games function: {e}\n{traceback.format_exc()}")
-            return _response(500, error=str(e))
+            return response(500, error=str(e))
         finally:
             await close_redis_pool()
             await dispose_engine()

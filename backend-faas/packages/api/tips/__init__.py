@@ -10,11 +10,9 @@ Routes:
     POST /generate             Generate tips for a round
 """
 
-import json
 import os
 import sys
 import traceback
-from urllib.parse import parse_qs
 
 # Make shared package importable from the function's working directory
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
@@ -31,6 +29,7 @@ from packages.shared.schemas import (
 )
 from packages.shared.models import Game, Tip
 from packages.shared.services.tip_generation import TipGenerationService
+from packages.shared.api_helpers import parse_request, response, segments, to_dict, int_query, bool_query
 
 from sqlalchemy import select
 
@@ -40,105 +39,20 @@ VALID_HEURISTICS = ["best_bet", "high_risk_high_reward", "yolo"]
 
 
 # ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-def _parse_request(args: dict) -> tuple:
-    """Parse DO Function args into (method, path, query, body, headers)."""
-    method = args.get("__ow_method", "GET").upper()
-    path = args.get("__ow_path", "/").strip("/")
-    raw_query = args.get("__ow_query", "")
-    if isinstance(raw_query, str) and raw_query:
-        parsed = parse_qs(raw_query)
-        query = {k: v[0] if len(v) == 1 else v for k, v in parsed.items()}
-    elif isinstance(raw_query, dict):
-        query = raw_query
-    else:
-        query = {}
-    body_raw = args.get("__ow_body", "")
-    headers = args.get("__ow_headers", {}) or {}
-
-    body: dict = {}
-    if body_raw:
-        if isinstance(body_raw, str):
-            try:
-                body = json.loads(body_raw)
-            except json.JSONDecodeError:
-                body = {}
-        elif isinstance(body_raw, dict):
-            body = body_raw
-
-    return method, path, query, body, headers
-
-
-def _response(status_code: int, data=None, error: str | None = None) -> dict:
-    """Build a DO Function response dict."""
-    body = {}
-    if error:
-        body = {"error": error}
-    elif data is not None:
-        body = data
-
-    return {
-        "statusCode": status_code,
-        "headers": {
-            "Content-Type": "application/json",
-            "Access-Control-Allow-Origin": settings.cors_origins[0] if settings.cors_origins else "*",
-            "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-            "Access-Control-Allow-Headers": "Content-Type, X-API-Key",
-        },
-        "body": body,
-    }
-
-
-def _segments(path: str) -> list[str]:
-    """Split path into non-empty segments."""
-    return [s for s in path.split("/") if s]
-
-
-def _to_dict(obj):
-    """Recursively convert Pydantic models / lists to JSON-safe dicts."""
-    if obj is None:
-        return None
-    if hasattr(obj, "model_dump"):
-        return obj.model_dump(mode="json")
-    if isinstance(obj, list):
-        return [_to_dict(item) for item in obj]
-    if isinstance(obj, dict):
-        return {k: _to_dict(v) for k, v in obj.items()}
-    return obj
-
-
-def _int_query(query: dict, key: str) -> int | None:
-    val = query.get(key)
-    if val is None:
-        return None
-    try:
-        return int(val)
-    except (ValueError, TypeError):
-        return None
-
-
-def _bool_query(query: dict, key: str) -> bool:
-    val = query.get(key, "").lower()
-    return val in ("true", "1", "yes")
-
-
-# ---------------------------------------------------------------------------
 # Route handlers
 # ---------------------------------------------------------------------------
 
 async def _handle_games_with_tips(session, query: dict) -> dict:
     """GET /games-with-tips — games with tips for a round."""
-    season = _int_query(query, "season")
-    round_id = _int_query(query, "round")
+    season = int_query(query, "season")
+    round_id = int_query(query, "round")
     heuristic = query.get("heuristic", "best_bet")
 
     if not season or not round_id:
-        return _response(400, error="Both 'season' and 'round' query parameters are required")
+        return response(400, error="Both 'season' and 'round' query parameters are required")
 
     if heuristic and heuristic not in VALID_HEURISTICS:
-        return _response(
+        return response(
             400,
             error=f"Invalid heuristic. Must be one of: {', '.join(VALID_HEURISTICS)}",
         )
@@ -155,7 +69,7 @@ async def _handle_games_with_tips(session, query: dict) -> dict:
             games = list(games_result.scalars().all())
 
             if not games:
-                return _response(200, data={"games": [], "count": 0})
+                return response(200, data={"games": [], "count": 0})
 
             game_ids = [g.id for g in games]
             if game_ids:
@@ -229,17 +143,17 @@ async def _handle_games_with_tips(session, query: dict) -> dict:
 
             games_with_tips.append(game_dict)
 
-        return _response(200, data={"games": games_with_tips, "count": len(games_with_tips)})
+        return response(200, data={"games": games_with_tips, "count": len(games_with_tips)})
 
     except Exception as e:
         logger.error(f"Error in get_games_with_tips: {e}", exc_info=True)
-        return _response(500, error="An error occurred while fetching tips")
+        return response(500, error="An error occurred while fetching tips")
 
 
 async def _handle_list_tips(session, query: dict) -> dict:
     """GET / — list tips with optional filtering."""
-    season = _int_query(query, "season")
-    round_id = _int_query(query, "round")
+    season = int_query(query, "season")
+    round_id = int_query(query, "round")
     heuristic = query.get("heuristic")
 
     try:
@@ -254,27 +168,27 @@ async def _handle_list_tips(session, query: dict) -> dict:
             tips=[TipResponse.model_validate(t) for t in tips],
             count=len(tips),
         )
-        return _response(200, data=_to_dict(resp))
+        return response(200, data=to_dict(resp))
 
     except Exception as e:
         logger.error(f"Error in get_tips: {e}", exc_info=True)
-        return _response(500, error="An error occurred while fetching tips")
+        return response(500, error="An error occurred while fetching tips")
 
 
 async def _handle_generate_tips(session, query: dict, body: dict) -> dict:
     """POST /generate — generate tips for a specific round."""
     # Accept params from query or body
-    season = _int_query(query, "season") or body.get("season")
-    round_id = _int_query(query, "round") or body.get("round")
-    regenerate = _bool_query(query, "regenerate") or body.get("regenerate", False)
+    season = int_query(query, "season") or body.get("season")
+    round_id = int_query(query, "round") or body.get("round")
+    regenerate = bool_query(query, "regenerate") or body.get("regenerate", False)
 
     if not season or not round_id:
-        return _response(400, error="Both 'season' and 'round' are required")
+        return response(400, error="Both 'season' and 'round' are required")
 
     try:
         games = await GameCRUD.get_by_round(session, season, round_id)
         if not games:
-            return _response(
+            return response(
                 404,
                 error=f"No games found for season {season}, round {round_id}",
             )
@@ -296,7 +210,7 @@ async def _handle_generate_tips(session, query: dict, body: dict) -> dict:
             f"{stats['tips_created']} created, {stats['tips_skipped']} skipped"
         )
 
-        return _response(
+        return response(
             200,
             data={
                 "status": "success",
@@ -312,18 +226,18 @@ async def _handle_generate_tips(session, query: dict, body: dict) -> dict:
 
     except Exception as e:
         logger.error(f"Error in generate_tips: {e}", exc_info=True)
-        return _response(500, error="An error occurred while generating tips")
+        return response(500, error="An error occurred while generating tips")
 
 
 async def _handle_tips_by_heuristic(session, heuristic: str, query: dict) -> dict:
     """GET /{heuristic} — tips by heuristic type."""
     if heuristic not in VALID_HEURISTICS:
-        return _response(
+        return response(
             400,
             error=f"Invalid heuristic '{heuristic}'. Must be one of: {', '.join(sorted(VALID_HEURISTICS))}",
         )
 
-    limit = _int_query(query, "limit") or 100
+    limit = int_query(query, "limit") or 100
     limit = max(1, min(500, limit))
 
     tips = await TipCRUD.get_by_heuristic(session, heuristic, limit=limit)
@@ -331,7 +245,7 @@ async def _handle_tips_by_heuristic(session, heuristic: str, query: dict) -> dic
         tips=[TipResponse.model_validate(t) for t in tips],
         count=len(tips),
     )
-    return _response(200, data=_to_dict(resp))
+    return response(200, data=to_dict(resp))
 
 
 # ---------------------------------------------------------------------------
@@ -340,12 +254,12 @@ async def _handle_tips_by_heuristic(session, heuristic: str, query: dict) -> dic
 
 async def main(args: dict) -> dict:
     """DO Function entry point."""
-    method, path, query, body, headers = _parse_request(args)
-    segs = _segments(path)
+    method, path, query, body, headers = parse_request(args)
+    segs = segments(path)
 
     # Handle CORS preflight
     if method == "OPTIONS":
-        return _response(204)
+        return response(204)
 
     factory = _get_session_factory()
     async with factory() as session:
@@ -368,11 +282,11 @@ async def main(args: dict) -> dict:
             if method == "GET" and len(segs) == 0:
                 return await _handle_list_tips(session, query)
 
-            return _response(404, error="Not found")
+            return response(404, error="Not found")
 
         except Exception as e:
             logger.error(f"Error in tips function: {e}\n{traceback.format_exc()}")
-            return _response(500, error=str(e))
+            return response(500, error=str(e))
         finally:
             await close_redis_pool()
             await dispose_engine()
