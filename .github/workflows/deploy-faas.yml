@@ -52,6 +52,16 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v4
 
+      # NOTE: Environment variables (DATABASE_URL, REDIS_URL, OPENAI_API_KEY, etc.)
+      # must be configured at the namespace level via the DigitalOcean dashboard
+      # or using `doctl serverless namespaces env-vars`. They are NOT set by this
+      # workflow to avoid exposing secrets in CI logs. If a new env var is added,
+      # update the namespace configuration accordingly.
+      #
+      # To set namespace env vars from CI:
+      #   doctl serverless namespaces env-vars set --database-url="${{ secrets.DATABASE_URL }}" ...
+      # See: https://docs.digitalocean.com/products/functions/how-to/use-environment-variables/
+
       - name: Deploy functions
         run: doctl serverless deploy .
 
