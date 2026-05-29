@@ -68,10 +68,51 @@ export interface GamesWithTipsResponse {
   count: number
 }
 
+/**
+ * Route prefix → FaaS function URL mapping.
+ * Built once from Nuxt runtime config. When any FaaS URL is present,
+ * API calls are routed to the correct function instead of the monolithic
+ * apiBase URL.
+ */
+type FnUrlMap = Record<string, string>
+
 export const useApi = () => {
   const config = useRuntimeConfig()
-  const apiBase = config.public.apiBase
-  
+  const apiBase = config.public.apiBase as string
+
+  // Build FaaS function URL map from runtime config
+  const fnUrlMap: FnUrlMap = {
+    '/api/games': config.public.gamesFnUrl as string,
+    '/api/tips': config.public.tipsFnUrl as string,
+    '/api/backtest': config.public.backtestFnUrl as string,
+    '/api/admin': config.public.adminFnUrl as string,
+  }
+
+  // FaaS mode is active when at least one function URL is configured
+  const isFaasMode = Object.values(fnUrlMap).some((url) => url && url.length > 0)
+
+  /**
+   * Resolve a logical API path to the correct full URL.
+   *
+   * In legacy mode: `{apiBase}/api/games/...`
+   * In FaaS mode:   `{gamesFnUrl}/...` (strips the `/api/games` prefix)
+   */
+  const resolveUrl = (path: string): string => {
+    if (isFaasMode) {
+      // Sort prefixes longest-first so `/api/games` doesn't match before `/api/games-with-tips`
+      const sortedPrefixes = Object.keys(fnUrlMap).sort((a, b) => b.length - a.length)
+      for (const prefix of sortedPrefixes) {
+        const fnUrl = fnUrlMap[prefix]
+        if (fnUrl && path.startsWith(prefix)) {
+          const subPath = path.slice(prefix.length)
+          return `${fnUrl}${subPath}`
+        }
+      }
+    }
+    // Legacy mode or unmatched route — use monolithic backend
+    return `${apiBase}${path}`
+  }
+
   const fetchWithTimeout = async (
     url: string,
     options: RequestInit = {},
@@ -79,9 +120,10 @@ export const useApi = () => {
   ) => {
     const controller = new AbortController()
     const id = setTimeout(() => controller.abort(), timeout)
-    
+
     try {
-      const response = await fetch(`${apiBase}${url}`, {
+      const resolved = resolveUrl(url)
+      const response = await fetch(resolved, {
         ...options,
         signal: controller.signal,
       })
