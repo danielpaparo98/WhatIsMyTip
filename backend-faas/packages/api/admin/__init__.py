@@ -24,23 +24,9 @@ from packages.shared.db import _get_session_factory, dispose_engine
 from packages.shared.cache import close_redis_pool
 from packages.shared.config import settings
 from packages.shared.logger import get_logger
-from packages.shared.api_helpers import parse_request, response, segments
+from packages.shared.api_helpers import parse_request, response, segments, verify_api_key
 
 logger = get_logger(__name__)
-
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-def _verify_api_key(headers: dict) -> bool:
-    """Check X-API-Key header against configured ADMIN_API_KEY."""
-    api_key = headers.get("x-api-key") or headers.get("X-API-Key")
-    if not api_key:
-        return False
-    if not settings.admin_api_key:
-        return False
-    return api_key == settings.admin_api_key
 
 
 # ---------------------------------------------------------------------------
@@ -313,11 +299,23 @@ async def main(args: dict) -> dict:
 
     # Handle CORS preflight
     if method == "OPTIONS":
-        return response(204)
+        return response(204, request_args=args)
 
-    # Authenticate all admin endpoints
-    if not _verify_api_key(headers):
-        return response(401, error="Invalid or missing API key")
+    # Health check — no auth required
+    if method == "GET" and segs == ["health"]:
+        from datetime import datetime as _dt, timezone as _tz
+        return response(
+            200,
+            data={
+                "status": "healthy",
+                "timestamp": _dt.now(_tz.utc).isoformat(),
+            },
+            request_args=args,
+        )
+
+    # Authenticate all other admin endpoints
+    if not verify_api_key(headers, query, body):
+        return response(401, error="Invalid or missing API key", request_args=args)
 
     factory = _get_session_factory()
     async with factory() as session:
@@ -344,11 +342,11 @@ async def main(args: dict) -> dict:
             if method == "GET" and segs == ["historic-refresh", "progress"]:
                 return await _handle_historic_refresh_progress(session)
 
-            return response(404, error="Not found")
+            return response(404, error="Not found", request_args=args)
 
         except Exception as e:
             logger.error(f"Error in admin function: {e}\n{traceback.format_exc()}")
-            return response(500, error=str(e))
+            return response(500, error=str(e), request_args=args)
         finally:
             await close_redis_pool()
             await dispose_engine()

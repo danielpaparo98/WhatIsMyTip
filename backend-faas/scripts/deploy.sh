@@ -70,18 +70,20 @@ echo -e "${GREEN}Functions deployed!${NC}"
 echo -e "${YELLOW}Function URLs:${NC}"
 doctl serverless functions list
 
-# Verify deployment
+# Verify deployment via health check endpoint
 echo -e "${YELLOW}Verifying deployment...${NC}"
-FUNCTION_URL=$(doctl serverless functions list --format URL --no-header | head -1)
+FUNCTION_URL=$(doctl serverless functions list --format URL --no-header | grep admin | head -1)
 if [ -n "$FUNCTION_URL" ]; then
-    HEALTH_URL="${FUNCTION_URL%/}/games"
+    HEALTH_URL="${FUNCTION_URL%/}/health"
     HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$HEALTH_URL" || true)
-    if [ "$HTTP_STATUS" -eq 200 ] || [ "$HTTP_STATUS" -eq 404 ]; then
-        echo -e "${GREEN}Deployment verified! (HTTP $HTTP_STATUS)${NC}"
+    if [ "$HTTP_STATUS" -eq 200 ]; then
+        echo -e "${GREEN}Deployment verified! Health check passed (HTTP $HTTP_STATUS)${NC}"
     else
-        echo -e "${YELLOW}Warning: Unexpected response (HTTP $HTTP_STATUS)${NC}"
+        echo -e "${YELLOW}Warning: Health check returned HTTP $HTTP_STATUS${NC}"
         echo -e "${YELLOW}The functions may still be starting up.${NC}"
     fi
+else
+    echo -e "${YELLOW}Warning: Could not find admin function URL for health check${NC}"
 fi
 
 echo -e "${GREEN}=== Deployment complete! ===${NC}"

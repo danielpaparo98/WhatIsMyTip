@@ -146,6 +146,52 @@ class TestTipsFunctionRouting:
         assert result["statusCode"] == 400
 
     @pytest.mark.asyncio
+    async def test_post_generate_missing_api_key_returns_401(self):
+        """POST /generate without API key returns 401."""
+        from packages.api.tips import main
+
+        mock_session = AsyncMock()
+
+        with patch("packages.api.tips._get_session_factory") as mock_factory, \
+             patch("packages.api.tips.close_redis_pool", new_callable=AsyncMock):
+
+            mock_factory.return_value.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+            mock_factory.return_value.return_value.__aexit__ = AsyncMock(return_value=None)
+
+            result = await main({
+                "__ow_method": "POST",
+                "__ow_path": "/generate",
+                "__ow_body": json.dumps({"season": 2025, "round": 1}),
+                "__ow_query": "",
+                "__ow_headers": {},
+            })
+
+        assert result["statusCode"] == 401
+
+    @pytest.mark.asyncio
+    async def test_post_generate_invalid_api_key_returns_401(self):
+        """POST /generate with wrong API key returns 401."""
+        from packages.api.tips import main
+
+        mock_session = AsyncMock()
+
+        with patch("packages.api.tips._get_session_factory") as mock_factory, \
+             patch("packages.api.tips.close_redis_pool", new_callable=AsyncMock):
+
+            mock_factory.return_value.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+            mock_factory.return_value.return_value.__aexit__ = AsyncMock(return_value=None)
+
+            result = await main({
+                "__ow_method": "POST",
+                "__ow_path": "/generate",
+                "__ow_body": json.dumps({"season": 2025, "round": 1}),
+                "__ow_query": "",
+                "__ow_headers": {"x-api-key": "wrong-key"},
+            })
+
+        assert result["statusCode"] == 401
+
+    @pytest.mark.asyncio
     async def test_post_generate_missing_params(self):
         """POST /generate without season/round returns 400."""
         from packages.api.tips import main
@@ -163,6 +209,7 @@ class TestTipsFunctionRouting:
                 "__ow_path": "/generate",
                 "__ow_body": "{}",
                 "__ow_query": "",
+                "__ow_headers": {"x-api-key": "test-api-key"},
             })
 
         assert result["statusCode"] == 400
@@ -187,13 +234,14 @@ class TestTipsFunctionRouting:
                 "__ow_path": "/generate",
                 "__ow_body": json.dumps({"season": 2025, "round": 1}),
                 "__ow_query": "",
+                "__ow_headers": {"x-api-key": "test-api-key"},
             })
 
         assert result["statusCode"] == 404
 
     @pytest.mark.asyncio
     async def test_post_generate_success(self):
-        """POST /generate with valid params returns 200 with stats."""
+        """POST /generate with valid params and API key returns 200 with stats."""
         from packages.api.tips import main
 
         mock_session = AsyncMock()
@@ -224,6 +272,7 @@ class TestTipsFunctionRouting:
                 "__ow_path": "/generate",
                 "__ow_body": json.dumps({"season": 2025, "round": 1}),
                 "__ow_query": "",
+                "__ow_headers": {"x-api-key": "test-api-key"},
             })
 
         assert result["statusCode"] == 200

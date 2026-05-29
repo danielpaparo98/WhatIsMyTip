@@ -34,7 +34,7 @@ class TestHistoricRefreshFunction:
 
     @pytest.mark.asyncio
     async def test_successful_batch_processing(self):
-        """A normal historic-refresh run completes with statusCode 200."""
+        """A normal historic-refresh run processes all batches and returns 200."""
         mod = _import_historic_refresh()
 
         mock_session = AsyncMock()
@@ -70,9 +70,10 @@ class TestHistoricRefreshFunction:
             result = await mod.main({})
 
         assert result["statusCode"] == 200
-        assert "Processed 4/4 seasons" in result["body"]["message"]
-        assert "Synced 120 games" in result["body"]["message"]
-        assert "Generated 80 tips" in result["body"]["message"]
+        # Batch chaining: all 4 batches processed (16 seasons total)
+        assert "Processed 16 seasons across 4 batch(es)" in result["body"]["message"]
+        assert "Synced 480 games" in result["body"]["message"]
+        assert "Generated 320 tips" in result["body"]["message"]
 
     @pytest.mark.asyncio
     async def test_lock_acquisition_failure(self):
@@ -133,7 +134,7 @@ class TestHistoricRefreshFunction:
 
     @pytest.mark.asyncio
     async def test_batch_selection_with_start_season(self):
-        """When start_season is provided in args, the correct batch is selected."""
+        """When start_season is provided, processing starts from that batch and continues."""
         mod = _import_historic_refresh()
 
         mock_session = AsyncMock()
@@ -166,20 +167,21 @@ class TestHistoricRefreshFunction:
             mock_refresh = mock_refresh_cls.return_value
             mock_refresh.refresh_from_string = AsyncMock(return_value=mock_stats)
 
-            # start_season=2020 should select the batch [2018, 2019, 2020, 2021]
+            # start_season=2020 should start from batch [2018, 2019, 2020, 2021]
+            # and continue through remaining batches (3 batches total)
             result = await mod.main({"start_season": "2020"})
 
         assert result["statusCode"] == 200
-        # Verify the service was constructed with the correct seasons
-        constructor_call = mock_refresh_cls.call_args
-        assert constructor_call.kwargs["seasons"] == [2018, 2019, 2020, 2021]
-        # Verify refresh_from_string was called with the correct seasons_str
-        refresh_call = mock_refresh.refresh_from_string.call_args
-        assert refresh_call.kwargs["seasons_str"] == "2018,2019,2020,2021"
+        # Should process 3 batches (2018-2021, 2022-2025, and the one before was skipped)
+        # First constructor call should be with the batch containing 2020
+        first_constructor_call = mock_refresh_cls.call_args_list[0]
+        assert first_constructor_call.kwargs["seasons"] == [2018, 2019, 2020, 2021]
+        # Verify refresh_from_string was called 2 times (2 remaining batches from index 2)
+        assert mock_refresh.refresh_from_string.await_count == 2
 
     @pytest.mark.asyncio
     async def test_batch_selection_default(self):
-        """When no start_season is provided, the first batch (2010-2013) is used."""
+        """When no start_season is provided, all batches are processed starting from the first."""
         mod = _import_historic_refresh()
 
         mock_session = AsyncMock()
@@ -212,9 +214,12 @@ class TestHistoricRefreshFunction:
             mock_refresh = mock_refresh_cls.return_value
             mock_refresh.refresh_from_string = AsyncMock(return_value=mock_stats)
 
-            # No start_season provided — should default to first batch
+            # No start_season provided — should default to first batch and process all
             result = await mod.main({})
 
         assert result["statusCode"] == 200
-        constructor_call = mock_refresh_cls.call_args
-        assert constructor_call.kwargs["seasons"] == [2010, 2011, 2012, 2013]
+        # First constructor call should be with the first batch
+        first_constructor_call = mock_refresh_cls.call_args_list[0]
+        assert first_constructor_call.kwargs["seasons"] == [2010, 2011, 2012, 2013]
+        # All 4 batches should be processed
+        assert mock_refresh.refresh_from_string.await_count == 4

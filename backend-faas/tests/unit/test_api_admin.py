@@ -69,7 +69,7 @@ class TestAdminDailySync:
 
         with patch("packages.api.admin._get_session_factory") as mock_factory, \
              patch("packages.api.admin.close_redis_pool", new_callable=AsyncMock), \
-             patch("packages.api.admin._verify_api_key", return_value=True), \
+             patch("packages.api.admin.verify_api_key", return_value=True), \
              patch("packages.api.admin._handle_daily_sync", new_callable=AsyncMock) as mock_handler:
 
             mock_factory.return_value.return_value.__aenter__ = AsyncMock(return_value=mock_session)
@@ -113,7 +113,7 @@ class TestAdminTipGeneration:
 
         with patch("packages.api.admin._get_session_factory") as mock_factory, \
              patch("packages.api.admin.close_redis_pool", new_callable=AsyncMock), \
-             patch("packages.api.admin._verify_api_key", return_value=True), \
+             patch("packages.api.admin.verify_api_key", return_value=True), \
              patch("packages.api.admin._handle_tip_generation", new_callable=AsyncMock) as mock_handler:
 
             mock_factory.return_value.return_value.__aenter__ = AsyncMock(return_value=mock_session)
@@ -154,7 +154,7 @@ class TestAdminHistoricRefreshProgress:
 
         with patch("packages.api.admin._get_session_factory") as mock_factory, \
              patch("packages.api.admin.close_redis_pool", new_callable=AsyncMock), \
-             patch("packages.api.admin._verify_api_key", return_value=True), \
+             patch("packages.api.admin.verify_api_key", return_value=True), \
              patch("packages.api.admin._handle_historic_refresh_progress", new_callable=AsyncMock) as mock_handler:
 
             mock_factory.return_value.return_value.__aenter__ = AsyncMock(return_value=mock_session)
@@ -183,7 +183,7 @@ class TestAdminRouting:
 
         with patch("packages.api.admin._get_session_factory") as mock_factory, \
              patch("packages.api.admin.close_redis_pool", new_callable=AsyncMock), \
-             patch("packages.api.admin._verify_api_key", return_value=True):
+             patch("packages.api.admin.verify_api_key", return_value=True):
 
             mock_factory.return_value.return_value.__aenter__ = AsyncMock(return_value=mock_session)
             mock_factory.return_value.return_value.__aexit__ = AsyncMock(return_value=None)
@@ -205,7 +205,7 @@ class TestAdminRouting:
 
         with patch("packages.api.admin._get_session_factory") as mock_factory, \
              patch("packages.api.admin.close_redis_pool", new_callable=AsyncMock), \
-             patch("packages.api.admin._verify_api_key", return_value=True), \
+             patch("packages.api.admin.verify_api_key", return_value=True), \
              patch("packages.api.admin._handle_match_completion", new_callable=AsyncMock) as mock_handler:
 
             mock_factory.return_value.return_value.__aenter__ = AsyncMock(return_value=mock_session)
@@ -230,7 +230,7 @@ class TestAdminRouting:
 
         with patch("packages.api.admin._get_session_factory") as mock_factory, \
              patch("packages.api.admin.close_redis_pool", new_callable=AsyncMock), \
-             patch("packages.api.admin._verify_api_key", return_value=True), \
+             patch("packages.api.admin.verify_api_key", return_value=True), \
              patch("packages.api.admin._handle_historic_refresh", new_callable=AsyncMock) as mock_handler:
 
             mock_factory.return_value.return_value.__aenter__ = AsyncMock(return_value=mock_session)

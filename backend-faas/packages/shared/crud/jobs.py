@@ -2,7 +2,7 @@
 
 from datetime import datetime, timedelta, timezone
 from typing import Optional, List
-from sqlalchemy import select, and_, func
+from sqlalchemy import select, and_, func, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -231,39 +231,48 @@ class JobLockCRUD:
         locked_by: str,
         expires_seconds: int = 3600
     ) -> Optional[JobLock]:
-        """Acquire a job lock.
-        
+        """Acquire a job lock atomically using INSERT ... ON CONFLICT.
+
+        Uses a single SQL statement to atomically acquire the lock,
+        preventing race conditions where two concurrent invocations
+        could both acquire the same lock.
+
         Returns:
             JobLock if lock was acquired, None if already locked
         """
-        # Check if lock already exists and is not expired
         now = datetime.now(timezone.utc)
+        expires_at = now + timedelta(seconds=expires_seconds)
+
+        # Single atomic statement:
+        # - If no row exists → INSERT succeeds → lock acquired
+        # - If row exists and expired → UPDATE applies → lock acquired
+        # - If row exists and not expired → WHERE fails → no change
+        stmt = text("""
+            INSERT INTO job_locks (job_name, locked_at, locked_by, expires_at)
+            VALUES (:job_name, :now, :locked_by, :expires_at)
+            ON CONFLICT (job_name)
+            DO UPDATE SET locked_at = :now, locked_by = :locked_by, expires_at = :expires_at
+            WHERE job_locks.expires_at < :now
+        """)
         result = await self.db.execute(
-            select(JobLock).where(JobLock.job_name == job_name)
+            stmt,
+            {
+                "job_name": job_name,
+                "now": now,
+                "locked_by": locked_by,
+                "expires_at": expires_at,
+            },
         )
-        existing_lock = result.scalar_one_or_none()
-        
-        if existing_lock:
-            # Check if lock is expired
-            if existing_lock.expires_at > now:
-                # Lock is still valid
-                return None
-            else:
-                # Lock is expired, delete it
-                await self.db.delete(existing_lock)
-                await self.db.commit()
-        
-        # Create new lock
-        lock = JobLock(
-            job_name=job_name,
-            locked_by=locked_by,
-            locked_at=now,
-            expires_at=now + timedelta(seconds=expires_seconds)
-        )
-        self.db.add(lock)
         await self.db.commit()
-        await self.db.refresh(lock)
-        return lock
+
+        if result.rowcount > 0:
+            # Lock was acquired — fetch the row to return as ORM object
+            fetch_result = await self.db.execute(
+                select(JobLock).where(JobLock.job_name == job_name)
+            )
+            return fetch_result.scalar_one_or_none()
+
+        return None
     
     async def release_lock(
         self,

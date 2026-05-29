@@ -5,6 +5,7 @@ Replaces the in-memory cache for FaaS environments where instances are ephemeral
 Uses redis.asyncio for non-blocking operations with lazy connection initialization
 to handle FaaS cold starts gracefully.
 """
+import hashlib
 import json
 import time
 import logging
@@ -13,6 +14,7 @@ from functools import wraps
 
 import redis.asyncio as redis
 from redis.asyncio import ConnectionPool
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from .config import settings
 
@@ -119,6 +121,37 @@ medium_cache = RedisCache(default_ttl=300, prefix="wimt:m:")
 long_cache = RedisCache(default_ttl=3600, prefix="wimt:l:")
 
 
+def _make_cache_key(func_id: str, args: tuple, kwargs: dict) -> str:
+    """Generate a deterministic, hash-based cache key.
+
+    Filters out non-serializable arguments (e.g. AsyncSession objects)
+    that should not be part of the cache key.
+
+    Args:
+        func_id: Function identifier (prefix + name).
+        args: Positional arguments (already excluding self/db session).
+        kwargs: Keyword arguments.
+
+    Returns:
+        MD5 hex digest string for use as a cache key.
+    """
+    # Filter out non-serializable positional args (sessions, None)
+    filtered_args = tuple(
+        a for a in args
+        if not isinstance(a, (AsyncSession, type(None)))
+    )
+
+    # Filter out non-serializable keyword args
+    filtered_kwargs = {
+        k: v for k, v in kwargs.items()
+        if not isinstance(v, (AsyncSession, type(None)))
+    }
+
+    # Build a deterministic string representation
+    key_data = f"{func_id}:{filtered_args}:{sorted(filtered_kwargs.items())}"
+    return hashlib.md5(key_data.encode()).hexdigest()
+
+
 def cached(
     cache: RedisCache = medium_cache,
     key_prefix: str = "",
@@ -143,7 +176,7 @@ def cached(
             # Build cache key from function name and arguments
             # Skip first arg (typically db session) to avoid non-deterministic memory addresses
             cache_args = args[1:] if args else ()
-            cache_key = f"{key_prefix}{func.__name__}:{str(cache_args)}:{str(sorted(kwargs.items()))}"
+            cache_key = _make_cache_key(f"{key_prefix}{func.__name__}", cache_args, kwargs)
             
             # Try to get from cache
             start_time = time.time()

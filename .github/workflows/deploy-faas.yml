@@ -62,12 +62,12 @@ jobs:
       #   doctl serverless namespaces env-vars set --database-url="${{ secrets.DATABASE_URL }}" ...
       # See: https://docs.digitalocean.com/products/functions/how-to/use-environment-variables/
 
-      - name: Deploy functions
-        run: doctl serverless deploy .
-
       - name: Run migrations
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
         run: |
           uv sync
           uv run alembic upgrade head
+
+      - name: Deploy functions
+        run: doctl serverless deploy .

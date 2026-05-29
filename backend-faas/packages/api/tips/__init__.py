@@ -29,7 +29,7 @@ from packages.shared.schemas import (
 )
 from packages.shared.models import Game, Tip
 from packages.shared.services.tip_generation import TipGenerationService
-from packages.shared.api_helpers import parse_request, response, segments, to_dict, int_query, bool_query
+from packages.shared.api_helpers import parse_request, response, segments, to_dict, int_query, bool_query, verify_api_key
 
 from sqlalchemy import select
 
@@ -259,15 +259,21 @@ async def main(args: dict) -> dict:
 
     # Handle CORS preflight
     if method == "OPTIONS":
-        return response(204)
+        return response(204, request_args=args)
 
     factory = _get_session_factory()
     async with factory() as session:
         try:
             # ---- Routing ----
 
-            # POST /generate
+            # POST /generate — requires API key auth
             if method == "POST" and len(segs) == 1 and segs[0] == "generate":
+                if not verify_api_key(headers, query, body):
+                    return response(
+                        401,
+                        error="Invalid or missing API key",
+                        request_args=args,
+                    )
                 return await _handle_generate_tips(session, query, body)
 
             # GET /games-with-tips
@@ -282,11 +288,11 @@ async def main(args: dict) -> dict:
             if method == "GET" and len(segs) == 0:
                 return await _handle_list_tips(session, query)
 
-            return response(404, error="Not found")
+            return response(404, error="Not found", request_args=args)
 
         except Exception as e:
             logger.error(f"Error in tips function: {e}\n{traceback.format_exc()}")
-            return response(500, error=str(e))
+            return response(500, error=str(e), request_args=args)
         finally:
             await close_redis_pool()
             await dispose_engine()

@@ -83,8 +83,18 @@ def _resolve_batch(args: dict) -> list[int]:
     return batches[0]
 
 
+# Maximum runtime before yielding to avoid exceeding DO Functions timeout.
+# 50 minutes leaves a 10-minute buffer under the 60-minute scheduled limit.
+MAX_RUNTIME_SECONDS = 3000
+
+
 async def main(args: dict) -> dict:
     """Scheduled function entry point.
+
+    Processes batches of seasons in a loop with a time check to stay
+    under the DO Functions 60-minute timeout. If there are more batches
+    to process after the current one, continues processing as long as
+    there is sufficient time remaining.
 
     Args:
         args: Environment variables and trigger metadata from DO scheduler.
@@ -117,46 +127,82 @@ async def main(args: dict) -> dict:
             execution = await execution_crud.create_execution(JOB_NAME, status="running")
             await session.commit()
 
-            # 3. Resolve which batch to process
-            seasons = _resolve_batch(args)
-            seasons_str = ",".join(str(s) for s in seasons)
+            # 3. Determine starting batch and build full batch list
+            first_batch = _resolve_batch(args)
+            batches = _build_batches()
 
-            logger.info(
-                f"Starting historic data refresh for batch: {seasons_str}"
-            )
+            # Find the index of the first batch to process
+            start_idx = 0
+            for i, batch in enumerate(batches):
+                if batch == first_batch:
+                    start_idx = i
+                    break
 
-            # 4. Execute job logic
-            start_time = time.time()
+            # 4. Process batches with time check
+            overall_start = time.time()
+            total_seasons_processed = 0
+            total_games_synced = 0
+            total_tips_generated = 0
+            total_errors = 0
+            batches_processed = 0
 
-            refresh_service = HistoricDataRefreshService(
-                db_session=session,
-                seasons=seasons,
-                round_id=None,
-                regenerate_tips=settings.historic_refresh_regenerate_tips,
-            )
+            for batch_idx in range(start_idx, len(batches)):
+                # Check if we have time for another batch
+                elapsed = time.time() - overall_start
+                if elapsed > MAX_RUNTIME_SECONDS:
+                    logger.warning(
+                        f"Approaching timeout after {elapsed:.0f}s, "
+                        f"processed {batches_processed} batch(es). "
+                        f"Remaining batches will need another invocation."
+                    )
+                    break
 
-            refresh_stats = await refresh_service.refresh_from_string(
-                seasons_str=seasons_str,
-                round_id=None,
-                regenerate_tips=settings.historic_refresh_regenerate_tips,
-            )
+                seasons = batches[batch_idx]
+                seasons_str = ",".join(str(s) for s in seasons)
 
-            seasons_processed = refresh_stats["seasons_processed"]
-            games_synced = refresh_stats["games_synced"]
-            tips_generated = refresh_stats["tips_generated"]
-            error_count = len(refresh_stats.get("errors", []))
+                logger.info(
+                    f"Processing batch {batch_idx + 1}/{len(batches)}: {seasons_str}"
+                )
 
-            duration = time.time() - start_time
+                batch_start = time.time()
+
+                refresh_service = HistoricDataRefreshService(
+                    db_session=session,
+                    seasons=seasons,
+                    round_id=None,
+                    regenerate_tips=settings.historic_refresh_regenerate_tips,
+                )
+
+                refresh_stats = await refresh_service.refresh_from_string(
+                    seasons_str=seasons_str,
+                    round_id=None,
+                    regenerate_tips=settings.historic_refresh_regenerate_tips,
+                )
+
+                batch_duration = time.time() - batch_start
+                total_seasons_processed += refresh_stats["seasons_processed"]
+                total_games_synced += refresh_stats["games_synced"]
+                total_tips_generated += refresh_stats["tips_generated"]
+                total_errors += len(refresh_stats.get("errors", []))
+                batches_processed += 1
+
+                logger.info(
+                    f"Batch {seasons_str} completed in {batch_duration:.1f}s: "
+                    f"{refresh_stats['seasons_processed']} seasons, "
+                    f"{refresh_stats['games_synced']} games, "
+                    f"{refresh_stats['tips_generated']} tips"
+                )
 
             # Build summary
+            overall_duration = time.time() - overall_start
             summary_parts = [
-                f"Processed {seasons_processed}/{len(seasons)} seasons (batch: {seasons_str})",
-                f"Synced {games_synced} games",
-                f"Generated {tips_generated} tips",
+                f"Processed {total_seasons_processed} seasons across {batches_processed} batch(es)",
+                f"Synced {total_games_synced} games",
+                f"Generated {total_tips_generated} tips",
             ]
 
-            if error_count > 0:
-                summary_parts.append(f"Failed: {error_count} season(s)")
+            if total_errors > 0:
+                summary_parts.append(f"Failed: {total_errors} season(s)")
 
             summary = "; ".join(summary_parts)
             logger.info(f"{JOB_NAME} completed: {summary}")
@@ -165,9 +211,9 @@ async def main(args: dict) -> dict:
             await execution_crud.update_execution(
                 execution.id,
                 status="completed",
-                duration_seconds=int(duration),
-                items_processed=seasons_processed,
-                items_failed=error_count,
+                duration_seconds=int(overall_duration),
+                items_processed=total_seasons_processed,
+                items_failed=total_errors,
                 result_summary=summary,
             )
             await session.commit()

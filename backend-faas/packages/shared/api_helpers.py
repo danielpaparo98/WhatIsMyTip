@@ -1,7 +1,9 @@
 """Shared API helper functions for Digital Ocean Functions."""
 
 import json
+import secrets
 from urllib.parse import parse_qs
+from typing import Optional
 
 from packages.shared.config import settings
 
@@ -34,19 +36,87 @@ def parse_request(args: dict) -> tuple:
     return method, path, query, body, headers
 
 
-def response(status_code: int, data=None, error: str | None = None) -> dict:
-    """Build a DO Function response dict."""
+def verify_api_key(headers: dict, query: dict | None = None, body: dict | None = None) -> bool:
+    """Verify the API key from request headers, query params, or body.
+
+    Uses secrets.compare_digest() for timing-attack resistance.
+
+    Args:
+        headers: Request headers dict.
+        query: Optional query parameters dict.
+        body: Optional request body dict.
+
+    Returns:
+        True if the API key matches the configured ADMIN_API_KEY.
+    """
+    api_key: Optional[str] = None
+
+    # Check headers (case-insensitive via lower() comparison)
+    if headers:
+        api_key = headers.get("x-api-key") or headers.get("X-Api-Key")
+
+    # Check query params
+    if not api_key and query:
+        api_key = query.get("api_key")
+
+    # Check body
+    if not api_key and body:
+        api_key = body.get("api_key")
+
+    if not api_key or not settings.admin_api_key:
+        return False
+
+    return secrets.compare_digest(api_key, settings.admin_api_key)
+
+
+def _resolve_cors_origin(request_args: dict | None = None) -> str:
+    """Determine the Access-Control-Allow-Origin value for a response.
+
+    Checks the request's Origin header against the configured allowed
+    origins list. Returns the matching origin or '*' if no match / no
+    configured origins.
+    """
+    if not request_args:
+        return settings.cors_origins[0] if settings.cors_origins else "*"
+
+    headers = request_args.get("__ow_headers", {}) or {}
+    request_origin = headers.get("origin") or headers.get("Origin", "")
+
+    if request_origin:
+        allowed = settings.cors_origins_list
+        if allowed and request_origin in allowed:
+            return request_origin
+
+    return settings.cors_origins[0] if settings.cors_origins else "*"
+
+
+def response(
+    status_code: int,
+    data=None,
+    error: str | None = None,
+    request_args: dict | None = None,
+) -> dict:
+    """Build a DO Function response dict with proper CORS headers.
+
+    Args:
+        status_code: HTTP status code.
+        data: Response body data (used when no error).
+        error: Error message string.
+        request_args: Original DO Function args (used for CORS origin matching).
+    """
     body = {}
     if error:
         body = {"error": error}
     elif data is not None:
         body = data
 
+    origin = _resolve_cors_origin(request_args)
+
     return {
         "statusCode": status_code,
         "headers": {
             "Content-Type": "application/json",
-            "Access-Control-Allow-Origin": settings.cors_origins[0] if settings.cors_origins else "*",
+            "Access-Control-Allow-Origin": origin,
             "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
             "Access-Control-Allow-Headers": "Content-Type, X-API-Key",
         },
