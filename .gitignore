@@ -59,6 +59,9 @@ Desktop.ini
 *.temp
 .cache/
 
+# Generated seed data CSVs
+seed_data/
+
 # Debug screenshots and test artifacts
 frontend/debug-*.png
 frontend/frontend/
