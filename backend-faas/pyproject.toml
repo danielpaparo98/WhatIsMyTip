@@ -35,3 +35,8 @@ packages = ["packages"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+
+[dependency-groups]
+dev = [
+    "psycopg2-binary>=2.9.12",
+]

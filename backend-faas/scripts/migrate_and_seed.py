@@ -43,6 +43,38 @@ from typing import Dict, List, Optional, Sequence
 _BACKEND_FAAS_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_BACKEND_FAAS_DIR))
 
+
+# ---------------------------------------------------------------------------
+# **IMPORTANT**: Pre-parse ``--database-url`` from ``sys.argv`` and set it in
+# ``os.environ`` BEFORE importing ``packages.shared.*``.  The shared
+# ``config`` module creates a ``Settings`` singleton at import time which
+# captures ``DATABASE_URL`` from the environment.  If we don't set it early,
+# the Alembic ``env.py`` (which reads ``settings.database_url``) will use
+# the default / .env value instead of the CLI-supplied connection string.
+# ---------------------------------------------------------------------------
+
+
+def _early_url_from_argv() -> Optional[str]:
+    """Extract ``--database-url`` / ``-d`` value from ``sys.argv``."""
+    args = sys.argv[1:]
+    for i, arg in enumerate(args):
+        if arg in ("-d", "--database-url") and i + 1 < len(args):
+            return args[i + 1]
+        if arg.startswith("--database-url="):
+            return arg.split("=", 1)[1]
+    return None
+
+
+_early_url = _early_url_from_argv()
+if _early_url:
+    # Convert to async form for the settings singleton (which expects +asyncpg)
+    os.environ["DATABASE_URL"] = _early_url.replace(
+        "postgresql://", "postgresql+asyncpg://", 1
+    ) if "+asyncpg" not in _early_url else _early_url
+
+
+# NOW safe to import shared packages — the Settings singleton will pick up
+# the correct DATABASE_URL from os.environ.
 from alembic import command
 from alembic.config import Config as AlembicConfig
 from sqlalchemy import text
@@ -102,10 +134,13 @@ def _to_async_url(url: str) -> str:
     """Ensure a PostgreSQL URL uses the ``asyncpg`` driver.
 
     Accepts both ``postgresql://...`` and ``postgresql+asyncpg://...`` forms.
+    Also converts ``sslmode=...`` to ``ssl=...`` for ``asyncpg`` compatibility.
     """
-    if "+asyncpg" in url:
-        return url
-    return url.replace("postgresql://", "postgresql+asyncpg://", 1)
+    if "+asyncpg" not in url:
+        url = url.replace("postgresql://", "postgresql+asyncpg://", 1)
+    # asyncpg uses ``ssl`` instead of ``sslmode``.
+    url = url.replace("sslmode=", "ssl=")
+    return url
 
 
 def _to_sync_url(url: str) -> str:
@@ -131,7 +166,7 @@ def _parse_value(col_type: object, raw: str):
         return None
 
     # Import column types locally to avoid circular issues.
-    from sqlalchemy import Boolean, Float, Integer
+    from sqlalchemy import Boolean, DateTime, Float, Integer
 
     if isinstance(col_type, Integer):
         return int(raw)
@@ -139,7 +174,16 @@ def _parse_value(col_type: object, raw: str):
         return float(raw)
     if isinstance(col_type, Boolean):
         return raw.lower() in ("true", "1", "yes")
-    # String / Text / DateTime — return as-is (let SQLAlchemy handle).
+    if isinstance(col_type, DateTime):
+        # asyncpg requires actual datetime objects, not strings.
+        dt = datetime.fromisoformat(raw)
+        # If the column does NOT store timezone info (DateTime without
+        # ``timezone=True``), strip the tzinfo so asyncpg doesn't choke
+        # mixing naive and aware datetimes in the same statement.
+        if not col_type.timezone and dt.tzinfo is not None:
+            dt = dt.replace(tzinfo=None)
+        return dt
+    # String / Text — return as-is.
     return raw
 
 
@@ -168,13 +212,20 @@ def run_migrations(database_url: str, verbose: bool = False) -> None:
 
     *database_url* should be a **sync** PostgreSQL URL
     (``postgresql://...``).
+
+    Sets ``DATABASE_URL`` in ``os.environ`` so that the Alembic ``env.py``
+    (which reads from ``packages.shared.config.settings``) picks up the
+    correct connection string even when the ``.env`` file is absent.
     """
+    # Ensure the Alembic env.py resolves the correct URL via settings.
+    os.environ["DATABASE_URL"] = database_url
+
     cfg = _build_alembic_config(database_url)
     if verbose:
-        print(f"🔄 Running Alembic upgrade head on {database_url.split('@')[-1]} ...")
+        print(f"[>>] Running Alembic upgrade head on {database_url.split('@')[-1]} ...")
     command.upgrade(cfg, "head")
     if verbose:
-        print("✅ Migrations complete.")
+        print("[OK] Migrations complete.")
 
 
 # ---------------------------------------------------------------------------
@@ -190,7 +241,7 @@ async def clear_database(async_url: str, verbose: bool = False) -> None:
             for table in _CLEAR_TABLES:
                 await conn.execute(text(f"DELETE FROM {table}"))
         if verbose:
-            print("🗑️  Existing data cleared.")
+            print("[--] Existing data cleared.")
     finally:
         await engine.dispose()
 
@@ -224,7 +275,7 @@ async def seed_from_csv(
 
                 if not csv_path.exists():
                     if verbose:
-                        print(f"⚠️  Skipping {csv_name} (file not found)")
+                        print(f"[!!] Skipping {csv_name} (file not found)")
                     continue
 
                 rows: List[Dict[str, str]] = []
@@ -238,22 +289,41 @@ async def seed_from_csv(
 
                 if not rows:
                     if verbose:
-                        print(f"⚠️  {csv_name} is empty — skipping")
+                        print(f"[!!] {csv_name} is empty -- skipping")
                     continue
 
                 objects = [_row_to_orm(model_cls, r) for r in rows]
+
+                # Renumber primary-key IDs for tables that are NOT foreign-key
+                # targets.  Some CSV files were exported with per-season ID
+                # counters (e.g. backtest_results) leading to duplicate PKs.
+                # Tables referenced via FK (games) must keep original IDs so
+                # child rows (tips, model_predictions, match_analyses) still
+                # resolve correctly.
+                fk_target_tables = {
+                    "games",  # referenced by tips, model_predictions, match_analyses
+                }
+                pk_col = model_cls.__table__.primary_key.columns
+                if (
+                    len(pk_col) == 1
+                    and model_cls.__tablename__ not in fk_target_tables
+                ):
+                    pk_name = list(pk_col.keys())[0]
+                    for idx, obj in enumerate(objects, start=1):
+                        setattr(obj, pk_name, idx)
+
                 session.add_all(objects)
                 await session.flush()
 
                 table_name = model_cls.__tablename__
                 counts[table_name] = len(objects)
                 if verbose:
-                    print(f"  ✅ {table_name}: {len(objects)} records from {csv_name}")
+                    print(f"  [OK] {table_name}: {len(objects)} records from {csv_name}")
 
             await session.commit()
 
         if verbose:
-            print("\n🌱 Seed complete! Summary:")
+            print("\n[OK] Seed complete! Summary:")
             for table, count in counts.items():
                 print(f"   {table}: {count} records")
 
@@ -292,7 +362,7 @@ def _resolve_database_url(args: argparse.Namespace) -> str:
                 return url
 
     print(
-        "❌ No database URL provided. Use --database-url or set DATABASE_URL.",
+        "[ERROR] No database URL provided. Use --database-url or set DATABASE_URL.",
         file=sys.stderr,
     )
     sys.exit(1)
@@ -360,7 +430,7 @@ def main() -> None:
     # --- Seeding (optional) ---
     if args.seed:
         if args.verbose:
-            print(f"\n🌱 Loading seed data from {seed_dir} ...")
+            print(f"\n[>>] Loading seed data from {seed_dir} ...")
         asyncio.run(
             seed_from_csv(
                 async_url,
