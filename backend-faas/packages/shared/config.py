@@ -61,7 +61,7 @@ class Settings(BaseSettings):
     historic_refresh_seasons: str = "2010-2025"
     historic_refresh_regenerate_tips: bool = False
     historical_refresh_start_year: int = 2010
-    historical_refresh_timeout_seconds: int = 3300  # 55 minutes
+    historical_refresh_timeout_seconds: int = 900  # 15 minutes (DO Functions hard limit)
     
     # Retry Configuration
     job_timeout_seconds: int = 3600

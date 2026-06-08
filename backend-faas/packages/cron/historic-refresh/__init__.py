@@ -3,27 +3,22 @@
 Triggered Sunday at 4 AM by the DO scheduler. Refreshes historical game data
 and tips for seasons 2010–2025 from the Squiggle API.
 
-**Batch processing**: DO Functions have a 60-minute max timeout for scheduled
-functions, but a full refresh takes ~2 hours. Seasons are therefore processed
-in batches of 4 (e.g. 2010–2013, 2014–2017, 2018–2021, 2022–2025). Each batch
-should complete within 30 minutes.
-
-The ``start_season`` parameter (from ``args`` or the ``START_SEASON`` env var)
-determines which batch to process. When omitted the function defaults to the
-first batch (2010).
+**Batch processing with continuation**: DO Functions have a 15-minute max timeout
+for scheduled functions. Seasons are processed in batches of 2. When the
+function runs out of time before completing all seasons, it stores the remaining
+seasons in Redis so the next invocation can resume from where it left off.
 """
 
 import os
 import sys
 import time
 import traceback
-from datetime import datetime
 
 # Make shared package importable from the function's working directory
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
 from packages.shared.db import _get_session_factory, dispose_engine
-from packages.shared.cache import close_redis_pool
+from packages.shared.cache import RedisCache, close_redis_pool
 from packages.shared.config import settings
 from packages.shared.logger import get_logger
 from packages.shared.crud.jobs import JobExecutionCRUD, JobLockCRUD
@@ -37,73 +32,51 @@ LOCKED_BY = "faas-historic-refresh"
 # All seasons covered by the historic refresh
 ALL_SEASONS = list(range(2010, 2026))
 
-# Number of seasons per batch (keeps each invocation under 30 min)
-BATCH_SIZE = 4
+# Number of seasons per batch — finer granularity keeps each batch short
+# within the 15-minute limit.
+BATCH_SIZE = 2
+
+# Redis key for continuation state (prefix "wimt:" is added by RedisCache).
+CONTINUATION_KEY = "historic-refresh:remaining"
+
+# TTL for the continuation marker — 1 week is plenty for a weekly job.
+CONTINUATION_TTL = 7 * 24 * 3600
 
 
-def _build_batches() -> list[list[int]]:
-    """Split ALL_SEASONS into batches of BATCH_SIZE."""
+def _build_batches(seasons: list[int] | None = None) -> list[list[int]]:
+    """Split *seasons* into batches of ``BATCH_SIZE``.
+
+    Args:
+        seasons: List of season years.  Defaults to ``ALL_SEASONS``.
+    """
+    source = seasons if seasons is not None else ALL_SEASONS
     return [
-        ALL_SEASONS[i : i + BATCH_SIZE]
-        for i in range(0, len(ALL_SEASONS), BATCH_SIZE)
+        source[i : i + BATCH_SIZE]
+        for i in range(0, len(source), BATCH_SIZE)
     ]
 
 
-def _resolve_batch(args: dict) -> list[int]:
-    """Determine which batch to process.
-
-    Priority:
-        1. ``start_season`` key in *args* (e.g. from a self-triggered call)
-        2. ``START_SEASON`` environment variable
-        3. Default: first batch (2010–2013)
-
-    Returns:
-        List of season years for the selected batch.
-    """
-    start_season = args.get("start_season") or os.environ.get("START_SEASON")
-
-    if start_season:
-        try:
-            start_year = int(start_season)
-            # Find the batch that contains this year
-            for batch in _build_batches():
-                if start_year in batch:
-                    logger.info(f"Selected batch containing start_season={start_year}: {batch}")
-                    return batch
-            # If start_year is outside the range, fall through to default
-            logger.warning(
-                f"start_season={start_year} not found in any batch, using default"
-            )
-        except (ValueError, TypeError):
-            logger.warning(f"Invalid start_season value: {start_season}, using default")
-
-    # Default to first batch
-    batches = _build_batches()
-    logger.info(f"Using default (first) batch: {batches[0]}")
-    return batches[0]
-
-
 # Maximum runtime before yielding to avoid exceeding DO Functions timeout.
-# 50 minutes leaves a 10-minute buffer under the 60-minute scheduled limit.
-MAX_RUNTIME_SECONDS = 3000
+# 13 minutes leaves a 2-minute safety buffer under the 15-minute hard limit.
+MAX_RUNTIME_SECONDS = 780
 
 
 async def main(args: dict) -> dict:
     """Scheduled function entry point.
 
-    Processes batches of seasons in a loop with a time check to stay
-    under the DO Functions 60-minute timeout. If there are more batches
-    to process after the current one, continues processing as long as
-    there is sufficient time remaining.
+    Processes batches of seasons in a loop with a time check to stay under
+    the DO Functions 15-minute timeout.  If time runs out, the remaining
+    seasons are stored in Redis so the next invocation can resume.
 
     Args:
         args: Environment variables and trigger metadata from DO scheduler.
-              May contain ``start_season`` to select a specific batch.
 
     Returns:
         dict with statusCode and body.
     """
     factory = _get_session_factory()
+    cache = RedisCache()
+
     async with factory() as session:
         execution = None
         lock_crud = JobLockCRUD(session)
@@ -127,16 +100,21 @@ async def main(args: dict) -> dict:
             execution = await execution_crud.create_execution(JOB_NAME, status="running")
             await session.commit()
 
-            # 3. Determine starting batch and build full batch list
-            first_batch = _resolve_batch(args)
-            batches = _build_batches()
+            # 3. Determine seasons to process — check Redis continuation marker first
+            remaining = await cache.get(CONTINUATION_KEY)
+            if remaining:
+                seasons_to_process = remaining
+                logger.info(
+                    f"Resuming from continuation marker: "
+                    f"{len(seasons_to_process)} seasons remaining"
+                )
+            else:
+                seasons_to_process = list(ALL_SEASONS)
+                logger.info(
+                    f"Starting fresh: processing all {len(seasons_to_process)} seasons"
+                )
 
-            # Find the index of the first batch to process
-            start_idx = 0
-            for i, batch in enumerate(batches):
-                if batch == first_batch:
-                    start_idx = i
-                    break
+            batches = _build_batches(seasons_to_process)
 
             # 4. Process batches with time check
             overall_start = time.time()
@@ -146,18 +124,26 @@ async def main(args: dict) -> dict:
             total_errors = 0
             batches_processed = 0
 
-            for batch_idx in range(start_idx, len(batches)):
+            for batch_idx, seasons in enumerate(batches):
                 # Check if we have time for another batch
                 elapsed = time.time() - overall_start
                 if elapsed > MAX_RUNTIME_SECONDS:
+                    # Store remaining seasons in Redis for next invocation
+                    remaining_seasons = []
+                    for remaining_batch in batches[batch_idx:]:
+                        remaining_seasons.extend(remaining_batch)
+                    await cache.set(
+                        CONTINUATION_KEY,
+                        remaining_seasons,
+                        ttl=CONTINUATION_TTL,
+                    )
                     logger.warning(
                         f"Approaching timeout after {elapsed:.0f}s, "
                         f"processed {batches_processed} batch(es). "
-                        f"Remaining batches will need another invocation."
+                        f"Stored {len(remaining_seasons)} remaining seasons in Redis."
                     )
                     break
 
-                seasons = batches[batch_idx]
                 seasons_str = ",".join(str(s) for s in seasons)
 
                 logger.info(
@@ -192,6 +178,11 @@ async def main(args: dict) -> dict:
                     f"{refresh_stats['games_synced']} games, "
                     f"{refresh_stats['tips_generated']} tips"
                 )
+
+            # If all batches were processed, clear the continuation marker
+            if batches_processed == len(batches):
+                await cache.delete(CONTINUATION_KEY)
+                logger.info("All seasons processed, continuation marker cleared")
 
             # Build summary
             overall_duration = time.time() - overall_start
