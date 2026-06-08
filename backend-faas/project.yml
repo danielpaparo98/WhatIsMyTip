@@ -1,5 +1,5 @@
 packages:
-  api:
+  - name: api
     functions:
       games:
         handler: packages/api/games/__init__.py
@@ -39,7 +39,7 @@ packages:
         annotations:
           require-whisk-auth: false
 
-  cron:
+  - name: cron
     functions:
       daily-sync:
         handler: packages/cron/daily-sync/__init__.py
