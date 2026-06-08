@@ -403,7 +403,7 @@ def seed_games(
 
     games: List[Game] = []
     squiggle_id = squiggle_id_start
-    game_id = (season - 2020) * 10000  # Unique ID space per season
+    game_id = (season - 2010) * 10000  # Unique ID space per season
 
     for round_id in range(1, rounds + 1):
         is_completed = round_id <= completed_rounds
@@ -733,7 +733,7 @@ async def seed_database(
         Dict mapping table names to number of records created.
     """
     if seasons is None:
-        seasons = [2025, 2026]
+        seasons = list(range(2010, 2027))
 
     rng = random.Random(seed)
     counts: Dict[str, int] = {}
@@ -764,7 +764,7 @@ async def seed_database(
                         season=season,
                         rounds=ROUNDS_PER_SEASON,
                         completed_rounds=current_round,
-                        squiggle_id_start=10000 + (season - 2025) * 1000,
+                        squiggle_id_start=10000 + (season - 2010) * 1000,
                     )
                 else:
                     # Past season: fully completed
@@ -773,7 +773,7 @@ async def seed_database(
                         season=season,
                         rounds=ROUNDS_PER_SEASON,
                         completed_rounds=ROUNDS_PER_SEASON,
-                        squiggle_id_start=10000 + (season - 2025) * 1000,
+                        squiggle_id_start=10000 + (season - 2010) * 1000,
                     )
                 all_games.extend(games)
 

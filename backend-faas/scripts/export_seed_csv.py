@@ -7,6 +7,7 @@ to a CSV file in backend-faas/seed_data/.
 
 Usage:
     uv run python scripts/export_seed_csv.py
+    uv run python scripts/export_seed_csv.py --seasons 2010-2026
     uv run python scripts/export_seed_csv.py --seed 123
     uv run python scripts/export_seed_csv.py --output-dir ./my_output
 """
@@ -66,10 +67,23 @@ def write_csv(filepath: str, rows: List[dict]) -> None:
     print(f"  -> {os.path.basename(filepath)}: {len(rows)} records")
 
 
+def _parse_seasons(seasons_str: str) -> list[int]:
+    """Parse a seasons string like '2010-2026' or '2025,2026' into a list of ints."""
+    if "-" in seasons_str and "," not in seasons_str:
+        parts = seasons_str.split("-")
+        return list(range(int(parts[0]), int(parts[1]) + 1))
+    return [int(s) for s in seasons_str.split(",")]
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Export seed data to CSV files")
     parser.add_argument(
         "--seed", type=int, default=42, help="Random seed (default: 42)"
+    )
+    parser.add_argument(
+        "--seasons",
+        default="2010-2026",
+        help="Seasons to generate (e.g. '2010-2026' or '2025,2026'). Default: 2010-2026",
     )
     parser.add_argument(
         "--output-dir",
@@ -85,30 +99,34 @@ def main() -> None:
     os.makedirs(output_dir, exist_ok=True)
 
     rng = random.Random(args.seed)
-    seasons = [2025, 2026]
+    seasons = _parse_seasons(args.seasons)
+    latest_season = max(seasons)
 
     print(f"Generating seed data with seed={args.seed}...")
+    print(f"Seasons: {seasons[0]}-{seasons[-1]} ({len(seasons)} seasons)")
     print(f"Output directory: {output_dir}\n")
 
     # --- Games ---
     print("Generating games...")
     all_games = []
     for season in seasons:
-        if season == max(seasons):
+        if season == latest_season:
+            # Current season: partially completed
             games = seed_games(
                 rng,
                 season=season,
                 rounds=ROUNDS_PER_SEASON,
                 completed_rounds=12,
-                squiggle_id_start=10000 + (season - 2025) * 1000,
+                squiggle_id_start=10000 + (season - 2010) * 1000,
             )
         else:
+            # Past season: fully completed
             games = seed_games(
                 rng,
                 season=season,
                 rounds=ROUNDS_PER_SEASON,
                 completed_rounds=ROUNDS_PER_SEASON,
-                squiggle_id_start=10000 + (season - 2025) * 1000,
+                squiggle_id_start=10000 + (season - 2010) * 1000,
             )
         all_games.extend(games)
     write_csv(os.path.join(output_dir, "games.csv"), [orm_to_dict(g) for g in all_games])
@@ -128,7 +146,7 @@ def main() -> None:
 
     # --- Elo Cache ---
     print("Generating Elo cache...")
-    elo_entries = seed_elo_cache(rng, max(seasons))
+    elo_entries = seed_elo_cache(rng, latest_season)
     write_csv(
         os.path.join(output_dir, "elo_cache.csv"),
         [orm_to_dict(e) for e in elo_entries],
@@ -138,7 +156,7 @@ def main() -> None:
     print("Generating backtest results...")
     backtest_results = []
     for season in seasons:
-        if season == max(seasons):
+        if season == latest_season:
             backtest_results.extend(seed_backtest_results(rng, season, rounds=12))
         else:
             backtest_results.extend(seed_backtest_results(rng, season, rounds=ROUNDS_PER_SEASON))
