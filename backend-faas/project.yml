@@ -1,3 +1,8 @@
+# DigitalOcean Functions Project Configuration
+# NOTE: Cron expressions use UTC. AWST (Australia/Perth) = UTC+8, no DST.
+# To convert: UTC_time = AWST_time - 8 (mod 24)
+# e.g., 3 AM AWST = 19:00 UTC previous day
+
 packages:
   - name: api
     functions:
@@ -5,6 +10,9 @@ packages:
         handler: packages/api/games/__init__.py
         runtime: python:3
         web: true
+        limits:
+          timeout: 300000   # 5 minutes — generous for API requests
+          memory: 256       # 256 MB
         environment:
           DATABASE_URL: ${DATABASE_URL}
           REDIS_URL: ${REDIS_URL}
@@ -14,6 +22,9 @@ packages:
         handler: packages/api/tips/__init__.py
         runtime: python:3
         web: true
+        limits:
+          timeout: 300000   # 5 minutes — generous for API requests
+          memory: 256       # 256 MB
         environment:
           DATABASE_URL: ${DATABASE_URL}
           REDIS_URL: ${REDIS_URL}
@@ -23,6 +34,9 @@ packages:
         handler: packages/api/backtest/__init__.py
         runtime: python:3
         web: true
+        limits:
+          timeout: 300000   # 5 minutes — generous for API requests
+          memory: 256       # 256 MB
         environment:
           DATABASE_URL: ${DATABASE_URL}
           REDIS_URL: ${REDIS_URL}
@@ -32,6 +46,9 @@ packages:
         handler: packages/api/admin/__init__.py
         runtime: python:3
         web: true
+        limits:
+          timeout: 300000   # 5 minutes — generous for API requests
+          memory: 256       # 256 MB
         environment:
           DATABASE_URL: ${DATABASE_URL}
           REDIS_URL: ${REDIS_URL}
@@ -45,6 +62,9 @@ packages:
         handler: packages/cron/daily-sync/__init__.py
         runtime: python:3
         web: false
+        limits:
+          timeout: 600000   # 10 minutes — sync can take a while during season
+          memory: 256       # 256 MB
         environment:
           DATABASE_URL: ${DATABASE_URL}
           REDIS_URL: ${REDIS_URL}
@@ -58,6 +78,9 @@ packages:
         handler: packages/cron/match-completion/__init__.py
         runtime: python:3
         web: false
+        limits:
+          timeout: 600000   # 10 minutes
+          memory: 256       # 256 MB
         environment:
           DATABASE_URL: ${DATABASE_URL}
           REDIS_URL: ${REDIS_URL}
@@ -71,6 +94,9 @@ packages:
         handler: packages/cron/tip-generation/__init__.py
         runtime: python:3
         web: false
+        limits:
+          timeout: 900000   # 15 minutes — max allowed, tip gen includes AI calls
+          memory: 512       # 512 MB — heavier processing with ML + AI
         environment:
           DATABASE_URL: ${DATABASE_URL}
           REDIS_URL: ${REDIS_URL}
@@ -79,11 +105,14 @@ packages:
         triggers:
           tip-generation-trigger:
             type: schedule
-            cron: "0 3 * * *"
+            cron: "0 19 * * *"    # 19:00 UTC = 03:00 AWST
       historic-refresh:
         handler: packages/cron/historic-refresh/__init__.py
         runtime: python:3
         web: false
+        limits:
+          timeout: 900000   # 15 minutes — max allowed, will be restructured to fit
+          memory: 512       # 512 MB — batch processing of 16 seasons
         environment:
           DATABASE_URL: ${DATABASE_URL}
           REDIS_URL: ${REDIS_URL}
@@ -94,7 +123,7 @@ packages:
         triggers:
           historic-refresh-trigger:
             type: schedule
-            cron: "0 4 * * 0"
+            cron: "0 20 * * 6"    # 20:00 UTC Saturday = 04:00 AWST Sunday
 
 environment:
   DATABASE_URL: ${DATABASE_URL}
