@@ -15,6 +15,20 @@ from datetime import datetime, timezone
 
 
 # ---------------------------------------------------------------------------
+# Pytest CLI options
+# ---------------------------------------------------------------------------
+
+def pytest_addoption(parser: pytest.Parser) -> None:
+    """Register the --run-integration flag for integration tests."""
+    parser.addoption(
+        "--run-integration",
+        action="store_true",
+        default=False,
+        help="Run integration tests that require PostgreSQL and Redis",
+    )
+
+
+# ---------------------------------------------------------------------------
 # Redis mock
 # ---------------------------------------------------------------------------
 
