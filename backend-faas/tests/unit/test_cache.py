@@ -316,9 +316,17 @@ class TestCloseRedisPool:
             await close_redis_pool()  # should not raise
 
     @pytest.mark.asyncio
-    async def test_close_closes_and_resets_pool(self):
-        """close_redis_pool acloses the pool and sets it to None."""
+    async def test_close_without_force_does_not_close_pool(self):
+        """close_redis_pool(force=False) keeps the pool alive for warm starts."""
         mock_pool = AsyncMock()
         with patch("packages.shared.cache._pool", mock_pool):
-            await close_redis_pool()
+            await close_redis_pool(force=False)
+        mock_pool.aclose.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_close_with_force_closes_and_resets_pool(self):
+        """close_redis_pool(force=True) acloses the pool and sets it to None."""
+        mock_pool = AsyncMock()
+        with patch("packages.shared.cache._pool", mock_pool):
+            await close_redis_pool(force=True)
         mock_pool.aclose.assert_awaited_once()

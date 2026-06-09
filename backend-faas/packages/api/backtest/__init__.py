@@ -166,6 +166,7 @@ async def main(args: dict) -> dict:
 
     factory = _get_session_factory()
     async with factory() as session:
+        had_error = False
         try:
             # ---- Routing ----
 
@@ -195,8 +196,9 @@ async def main(args: dict) -> dict:
             return response(404, error="Not found")
 
         except Exception as e:
+            had_error = True
             logger.error(f"Error in backtest function: {e}\n{traceback.format_exc()}")
             return response(500, error=str(e))
         finally:
-            await close_redis_pool()
-            await dispose_engine()
+            await close_redis_pool(force=had_error)
+            await dispose_engine(force=had_error)

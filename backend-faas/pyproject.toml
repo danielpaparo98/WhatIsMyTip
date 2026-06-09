@@ -11,7 +11,6 @@ dependencies = [
     "pydantic-settings>=2.6",
     "openai>=1.57.0",
     "redis>=5.0.0",
-    "alembic>=1.14.0",
     "tzdata>=2024.1",
 ]
 
@@ -38,5 +37,6 @@ asyncio_mode = "auto"
 
 [dependency-groups]
 dev = [
+    "alembic>=1.14.0",
     "psycopg2-binary>=2.9.12",
 ]

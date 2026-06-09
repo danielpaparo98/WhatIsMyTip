@@ -235,9 +235,16 @@ async def invalidate_cache_pattern(cache: RedisCache, pattern: str) -> int:
     return keys_deleted
 
 
-async def close_redis_pool() -> None:
-    """Close the Redis connection pool. Call during FaaS runtime shutdown."""
+async def close_redis_pool(force: bool = False) -> None:
+    """Close the Redis connection pool.
+
+    Only force-closes when ``force=True`` (i.e. on error). On normal
+    completion the pool is kept alive so warm starts can reuse connections.
+
+    Args:
+        force: When True, close and reset the pool. Defaults to False.
+    """
     global _pool
-    if _pool is not None:
+    if _pool is not None and force:
         await _pool.aclose()
         _pool = None

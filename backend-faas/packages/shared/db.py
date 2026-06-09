@@ -12,20 +12,23 @@ class Base(DeclarativeBase):
 
 def get_engine():
     """Get or create the async engine (singleton pattern for FaaS cold starts).
-    
+
     Uses conservative pool settings suitable for serverless/FaaS environments:
-    - pool_size=2: Small base pool for limited FaaS memory
-    - max_overflow=3: Allow brief spikes above base pool
+    - pool_size=1: Each invocation only needs 1 connection
+    - max_overflow=1: Allow 1 extra during brief spikes
     - pool_pre_ping=True: Verify connections before use
     - pool_recycle=300: Recycle connections every 5 minutes
+
+    With 8 functions × (pool_size=1 + max_overflow=1) = 16 max connections,
+    well within the ~25 connection limit of a dev database.
     """
     global _engine
     if _engine is None:
         _engine = create_async_engine(
             settings.database_url,
             echo=settings.environment == "development",
-            pool_size=2,
-            max_overflow=3,
+            pool_size=1,
+            max_overflow=1,
             pool_pre_ping=True,
             pool_recycle=300,
         )
@@ -45,13 +48,17 @@ def _get_session_factory():
     return _async_session_factory
 
 
-async def dispose_engine():
+async def dispose_engine(force: bool = False) -> None:
     """Dispose of the engine and its connection pool.
-    
-    Call this during FaaS runtime shutdown to cleanly release connections.
+
+    Only actually disposes when ``force=True`` (i.e. on error). On normal
+    completion the engine is kept alive so warm starts can reuse the pool.
+
+    Args:
+        force: When True, dispose and reset the engine. Defaults to False.
     """
     global _engine, _async_session_factory
-    if _engine is not None:
+    if _engine is not None and force:
         await _engine.dispose()
         _engine = None
         _async_session_factory = None

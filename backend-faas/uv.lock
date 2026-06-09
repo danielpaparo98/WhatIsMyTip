@@ -1153,7 +1153,6 @@ name = "whatismytip-faas"
 version = "1.0.0"
 source = { editable = "." }
 dependencies = [
-    { name = "alembic" },
     { name = "asyncpg" },
     { name = "httpx" },
     { name = "openai" },
@@ -1176,12 +1175,12 @@ dev = [
 
 [package.dev-dependencies]
 dev = [
+    { name = "alembic" },
     { name = "psycopg2-binary" },
 ]
 
 [package.metadata]
 requires-dist = [
-    { name = "alembic", specifier = ">=1.14.0" },
     { name = "asyncpg", specifier = ">=0.30.0" },
     { name = "httpx", specifier = ">=0.28.0" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.13" },
@@ -1199,7 +1198,10 @@ requires-dist = [
 ]
 
 [package.metadata.requires-dev]
-dev = [{ name = "psycopg2-binary", specifier = ">=2.9.12" }]
+dev = [
+    { name = "alembic", specifier = ">=1.14.0" },
+    { name = "psycopg2-binary", specifier = ">=2.9.12" },
+]
 
 [[package]]
 name = "wrapt"

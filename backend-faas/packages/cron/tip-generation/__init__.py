@@ -43,6 +43,7 @@ async def main(args: dict) -> dict:
         lock_crud = JobLockCRUD(session)
         execution_crud = JobExecutionCRUD(session)
         locked = False
+        had_error = False
 
         try:
             # 1. Acquire lock
@@ -172,6 +173,7 @@ async def main(args: dict) -> dict:
             return {"statusCode": 200, "body": {"message": summary}}
 
         except Exception as e:
+            had_error = True
             logger.error(f"{JOB_NAME} error: {e}\n{traceback.format_exc()}")
             if execution:
                 try:
@@ -192,5 +194,5 @@ async def main(args: dict) -> dict:
                     await session.commit()
                 except Exception:
                     logger.error(f"Failed to release lock: {traceback.format_exc()}")
-            await close_redis_pool()
-            await dispose_engine()
+            await close_redis_pool(force=had_error)
+            await dispose_engine(force=had_error)
