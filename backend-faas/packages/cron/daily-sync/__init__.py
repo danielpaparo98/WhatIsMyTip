@@ -25,6 +25,7 @@ from packages.shared.crud.jobs import JobExecutionCRUD, JobLockCRUD
 from packages.shared.squiggle import SquiggleClient
 from packages.shared.services.game_sync import GameSyncService
 from packages.shared.models_ml.elo import EloModel
+from packages.shared.alerting import AlertingService
 
 logger = get_logger(__name__)
 
@@ -160,6 +161,16 @@ async def main(args: dict) -> dict:
                     await session.commit()
                 except Exception:
                     logger.error(f"Failed to update execution record: {traceback.format_exc()}")
+            try:
+                alerting = AlertingService()
+                await alerting.send_failure_alert(
+                    job_name=JOB_NAME,
+                    error=str(e),
+                    execution_id=str(execution.id) if execution else None,
+                    duration_seconds=time.time() - start_time,
+                )
+            except Exception:
+                logger.error(f"Failed to send alert: {traceback.format_exc()}")
             return {"statusCode": 500, "body": {"error": str(e)}}
 
         finally:

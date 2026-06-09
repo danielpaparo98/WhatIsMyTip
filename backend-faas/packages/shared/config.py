@@ -73,6 +73,7 @@ class Settings(BaseSettings):
     alert_enabled: bool = False
     alert_webhook_url: Optional[str] = None
     alert_email_recipients: List[str] = []
+    alert_timeout_seconds: int = 10  # webhook timeout
     
     # Monitoring Configuration
     metrics_enabled: bool = True

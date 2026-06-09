@@ -245,3 +245,41 @@ class TestAdminRouting:
             })
 
         assert result["statusCode"] == 200
+
+
+class TestAdminMetrics:
+    """Test GET /metrics endpoint."""
+
+    @pytest.mark.asyncio
+    async def test_metrics_endpoint(self):
+        """GET /metrics returns job metrics with auth."""
+        from packages.api.admin import main
+
+        mock_session = AsyncMock()
+
+        with patch("packages.api.admin._get_session_factory") as mock_factory, \
+             patch("packages.api.admin.close_redis_pool", new_callable=AsyncMock), \
+             patch("packages.api.admin.verify_api_key", return_value=True), \
+             patch("packages.api.admin._handle_metrics", new_callable=AsyncMock) as mock_handler:
+
+            mock_factory.return_value.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+            mock_factory.return_value.return_value.__aexit__ = AsyncMock(return_value=None)
+            mock_handler.return_value = {
+                "statusCode": 200,
+                "body": {
+                    "metrics": {},
+                    "system": {"python_version": "3.12.0", "platform": "Windows"},
+                    "alerting_enabled": False,
+                },
+            }
+
+            result = await main({
+                "__ow_method": "GET",
+                "__ow_path": "/metrics",
+                "__ow_headers": {"x-api-key": "test-api-key"},
+            })
+
+        assert result["statusCode"] == 200
+        assert "metrics" in result["body"]
+        assert "system" in result["body"]
+        assert "alerting_enabled" in result["body"]

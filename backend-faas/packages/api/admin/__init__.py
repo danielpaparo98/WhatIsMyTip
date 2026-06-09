@@ -11,11 +11,14 @@ Routes:
     POST /tip-generation/trigger       Trigger tip generation
     POST /historic-refresh/trigger     Trigger historic data refresh
     GET  /historic-refresh/progress    Get refresh progress
+    GET  /metrics                      Get job execution metrics
 """
 
 import os
+import platform
 import sys
 import traceback
+from datetime import datetime, timezone
 
 # Make shared package importable from the function's working directory
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
@@ -25,6 +28,13 @@ from packages.shared.cache import close_redis_pool
 from packages.shared.config import settings
 from packages.shared.logger import get_logger
 from packages.shared.api_helpers import parse_request, response, segments, verify_api_key
+from packages.shared.squiggle import SquiggleClient
+from packages.shared.services.game_sync import GameSyncService
+from packages.shared.services.match_completion import MatchCompletionDetectorService
+from packages.shared.services.tip_generation import TipGenerationService
+from packages.shared.services.historic_data_refresh import HistoricDataRefreshService
+from packages.shared.models_ml.elo import EloModel
+from packages.shared.crud.jobs import JobExecutionCRUD
 
 logger = get_logger(__name__)
 
@@ -35,10 +45,6 @@ logger = get_logger(__name__)
 
 async def _handle_daily_sync(session, body: dict) -> dict:
     """POST /daily-sync/trigger — trigger daily game sync."""
-    from packages.shared.squiggle import SquiggleClient
-    from packages.shared.services.game_sync import GameSyncService
-    from packages.shared.models_ml.elo import EloModel
-
     season = body.get("season") or settings.current_season
 
     logger.info(f"Manual daily sync triggered for season {season}")
@@ -82,10 +88,6 @@ async def _handle_daily_sync(session, body: dict) -> dict:
 
 async def _handle_match_completion(session, body: dict) -> dict:
     """POST /match-completion/trigger — trigger match completion detection."""
-    from packages.shared.squiggle import SquiggleClient
-    from packages.shared.services.match_completion import MatchCompletionDetectorService
-    from packages.shared.models_ml.elo import EloModel
-
     buffer_minutes = body.get("buffer_minutes") or settings.match_completion_buffer_minutes
 
     logger.info(f"Manual match completion detection triggered with {buffer_minutes} minute buffer")
@@ -139,8 +141,6 @@ async def _handle_match_completion(session, body: dict) -> dict:
 
 async def _handle_tip_generation(session, body: dict) -> dict:
     """POST /tip-generation/trigger — trigger tip generation."""
-    from packages.shared.services.tip_generation import TipGenerationService
-
     season = body.get("season")
     round_id = body.get("round_id")
     regenerate = body.get("regenerate", False)
@@ -193,8 +193,6 @@ async def _handle_tip_generation(session, body: dict) -> dict:
 
 async def _handle_historic_refresh(session, body: dict) -> dict:
     """POST /historic-refresh/trigger — trigger historic data refresh."""
-    from packages.shared.services.historic_data_refresh import HistoricDataRefreshService
-
     seasons_str = body.get("seasons") or settings.historic_refresh_seasons
     round_id = body.get("round_id")
     regenerate_tips = body.get("regenerate_tips", False)
@@ -239,8 +237,6 @@ async def _handle_historic_refresh(session, body: dict) -> dict:
 
 async def _handle_historic_refresh_progress(session) -> dict:
     """GET /historic-refresh/progress — get refresh progress."""
-    from packages.shared.services.historic_data_refresh import HistoricDataRefreshService
-
     logger.info("Fetching historic refresh progress")
 
     try:
@@ -288,6 +284,32 @@ async def _handle_historic_refresh_progress(session) -> dict:
         return response(500, error="Internal server error. Please try again later.")
 
 
+async def _handle_metrics(session) -> dict:
+    """GET /metrics — return job execution metrics for observability."""
+    job_names = [
+        "daily-sync",
+        "match-completion",
+        "tip-generation",
+        "historic-refresh",
+    ]
+
+    execution_crud = JobExecutionCRUD(session)
+    metrics = {}
+    for job_name in job_names:
+        metrics[job_name] = await execution_crud.get_job_metrics(job_name)
+
+    system_info = {
+        "python_version": platform.python_version(),
+        "platform": platform.system(),
+    }
+
+    return response(200, data={
+        "metrics": metrics,
+        "system": system_info,
+        "alerting_enabled": settings.alert_enabled,
+    })
+
+
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
@@ -303,12 +325,11 @@ async def main(args: dict) -> dict:
 
     # Health check — no auth required
     if method == "GET" and segs == ["health"]:
-        from datetime import datetime as _dt, timezone as _tz
         return response(
             200,
             data={
                 "status": "healthy",
-                "timestamp": _dt.now(_tz.utc).isoformat(),
+                "timestamp": datetime.now(timezone.utc).isoformat(),
             },
             request_args=args,
         )
@@ -342,6 +363,10 @@ async def main(args: dict) -> dict:
             # GET /historic-refresh/progress
             if method == "GET" and segs == ["historic-refresh", "progress"]:
                 return await _handle_historic_refresh_progress(session)
+
+            # GET /metrics
+            if method == "GET" and segs == ["metrics"]:
+                return await _handle_metrics(session)
 
             return response(404, error="Not found", request_args=args)
 

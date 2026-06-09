@@ -23,6 +23,7 @@ from packages.shared.config import settings
 from packages.shared.logger import get_logger
 from packages.shared.crud.jobs import JobExecutionCRUD, JobLockCRUD
 from packages.shared.services.historic_data_refresh import HistoricDataRefreshService
+from packages.shared.alerting import AlertingService
 
 logger = get_logger(__name__)
 
@@ -143,6 +144,15 @@ async def main(args: dict) -> dict:
                         f"processed {batches_processed} batch(es). "
                         f"Stored {len(remaining_seasons)} remaining seasons in Redis."
                     )
+                    try:
+                        alerting = AlertingService()
+                        await alerting.send_timeout_alert(
+                            job_name=JOB_NAME,
+                            elapsed_seconds=elapsed,
+                            remaining_work=f"{len(remaining_seasons)} seasons remaining",
+                        )
+                    except Exception:
+                        logger.error(f"Failed to send timeout alert: {traceback.format_exc()}")
                     break
 
                 seasons_str = ",".join(str(s) for s in seasons)
@@ -225,6 +235,15 @@ async def main(args: dict) -> dict:
                     await session.commit()
                 except Exception:
                     logger.error(f"Failed to update execution record: {traceback.format_exc()}")
+            try:
+                alerting = AlertingService()
+                await alerting.send_failure_alert(
+                    job_name=JOB_NAME,
+                    error=str(e),
+                    execution_id=str(execution.id) if execution else None,
+                )
+            except Exception:
+                logger.error(f"Failed to send alert: {traceback.format_exc()}")
             return {"statusCode": 500, "body": {"error": str(e)}}
 
         finally:
