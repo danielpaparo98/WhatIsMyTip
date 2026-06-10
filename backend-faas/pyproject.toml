@@ -12,6 +12,8 @@ dependencies = [
     "openai>=1.57.0",
     "redis>=5.0.0",
     "tzdata>=2024.1",
+    "beautifulsoup4>=4.12",
+    "lxml>=5.0",
 ]
 
 [project.optional-dependencies]
