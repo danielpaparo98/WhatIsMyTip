@@ -93,6 +93,7 @@ _VENUE_NORMALIZE_MAP: Dict[str, str] = {
     "UTAS Stadium": "UTAS Stadium",
     "Manuka Oval": "Manuka Oval",
     # Historical / alternate names
+    "Docklands": "Marvel Stadium",
     "Docklands Stadium": "Marvel Stadium",
     "Etihad Stadium": "Marvel Stadium",
     "Perth Stadium": "Optus Stadium",
