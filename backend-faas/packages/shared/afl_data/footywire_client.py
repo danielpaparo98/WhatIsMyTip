@@ -148,11 +148,13 @@ class FootyWireClient:
         return result
 
     def _parse_injury_table(self, soup: BeautifulSoup) -> List[Dict[str, Any]]:
-        """Parse injury HTML table from FootyWire.
+        """Parse injury HTML tables from FootyWire.
 
-        Looks for table rows within the injury list and extracts team, player,
-        injury type, and return timeline. Skips rows with empty player or injury
-        fields, as well as header rows.
+        FootyWire structures the injury list as one <table> per team:
+          - Row 0: Team header, e.g. "Brisbane Lions (14 Players)"
+          - Row 1: Mobile/hidden row (skip — contains concatenated data)
+          - Row 2: Column headers: Player | Injury | Returning
+          - Row 3+: Individual injury rows with 3 cells each
 
         Args:
             soup: Parsed HTML document
@@ -161,47 +163,57 @@ class FootyWireClient:
             List of injury dicts with team, player, injury, return_timeline keys.
         """
         injuries: List[Dict[str, Any]] = []
+        import re
 
-        # Find the injury table — FootyWire uses class "injurylist"
-        tables = soup.find_all("table", class_="injurylist")
-        if not tables:
-            # Fallback: look for any table with team/player cells
-            tables = soup.find_all("table")
+        tables = soup.find_all("table")
 
         for table in tables:
-            for row in table.find_all("tr"):
+            rows = table.find_all("tr")
+
+            # Skip tiny tables (not injury data) and huge container tables
+            # Individual team tables have ~7-25 rows; container tables have 200+
+            if len(rows) < 3 or len(rows) > 35:
+                continue
+
+            # Extract team name from the first row
+            first_row_cells = rows[0].find_all("td")
+            if not first_row_cells:
+                continue
+
+            team_header = first_row_cells[0].get_text(strip=True)
+            # Only process tables where row 0 matches "Team Name (N Players)"
+            if not re.match(r".+\(\d+\s+Players?\)", team_header):
+                continue
+            # Extract team name before the parenthetical player count
+            # e.g. "Brisbane Lions (14 Players)" → "Brisbane Lions"
+            team_name = re.sub(r"\s*\(\d+\s+Players?\)", "", team_header).strip()
+
+            # Parse data rows (skip header rows)
+            for row in rows[1:]:
                 cells = row.find_all("td")
 
-                # Skip header rows (th cells or not enough td cells)
-                if len(cells) < 4:
+                # Need exactly 3 cells: Player, Injury, Returning
+                if len(cells) != 3:
                     continue
 
-                # Skip if any cell contains th (header row disguised)
-                if row.find("th"):
-                    continue
+                player_text = cells[0].get_text(strip=True)
+                injury_text = cells[1].get_text(strip=True)
+                return_text = cells[2].get_text(strip=True)
 
-                team = cells[0].get_text(strip=True)
-                # Player name may be inside an anchor
-                player_cell = cells[1]
-                anchor = player_cell.find("a")
-                player = (
-                    anchor.get_text(strip=True)
-                    if anchor
-                    else player_cell.get_text(strip=True)
-                )
-                injury = cells[2].get_text(strip=True)
-                return_timeline = cells[3].get_text(strip=True)
+                # Skip header rows
+                if player_text.lower() == "player":
+                    continue
 
                 # Skip rows with empty player or injury
-                if not player or not injury:
+                if not player_text or not injury_text:
                     continue
 
                 injuries.append(
                     {
-                        "team": team,
-                        "player": player,
-                        "injury": injury,
-                        "return_timeline": return_timeline,
+                        "team": team_name,
+                        "player": player_text,
+                        "injury": injury_text,
+                        "return_timeline": return_text,
                     }
                 )
 

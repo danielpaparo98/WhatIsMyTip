@@ -10,6 +10,17 @@ class Base(DeclarativeBase):
     pass
 
 
+def _normalize_async_url(url: str) -> str:
+    """Normalize database URL for async drivers.
+
+    asyncpg does not support ``sslmode`` as a query parameter; it requires
+    ``ssl=require`` instead.  This helper converts the URL transparently.
+    """
+    if "+asyncpg" in url and "sslmode=" in url:
+        url = url.replace("sslmode=require", "ssl=require")
+    return url
+
+
 def get_engine():
     """Get or create the async engine (singleton pattern for FaaS cold starts).
 
@@ -24,8 +35,9 @@ def get_engine():
     """
     global _engine
     if _engine is None:
+        db_url = _normalize_async_url(settings.database_url)
         _engine = create_async_engine(
-            settings.database_url,
+            db_url,
             echo=settings.environment == "development",
             pool_size=1,
             max_overflow=1,

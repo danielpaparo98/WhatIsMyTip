@@ -16,24 +16,33 @@ from packages.shared.afl_data.footywire_client import FootyWireClient
 
 INJURY_LIST_HTML = """
 <html><body>
-<div class="injurylist">
-<table class="injurylist">
-<tr><th>Team</th><th>Player</th><th>Injury</th><th>Return</th></tr>
-<tr><td class="team">Richmond</td><td class="player"><a href="/afl/footy/pp-dustin_martin">Dustin Martin</a></td><td>Calf</td><td>1-2 weeks</td></tr>
-<tr><td class="team">Melbourne</td><td class="player"><a href="/afl/footy/pp-christian_petracca">Christian Petracca</a></td><td>Knee</td><td>Test</td></tr>
-<tr><td class="team">Collingwood</td><td class="player"><a href="/afl/footy/pp-scott_pendlebury">Scott Pendlebury</a></td><td>Hamstring</td><td>3-4 weeks</td></tr>
+<!-- Team 1: Richmond (3 Players) -->
+<table>
+<tr><td>Richmond (3 Players)</td></tr>
+<tr><td></td><td>Dustin MartinCalf1-2 weeksChristian PetraccaKneeTestScott PendleburyHamstring3-4 weeks</td><td>Player</td><td>Injury</td><td>Returning</td><td>Dustin Martin</td><td>Calf</td><td>1-2 weeks</td><td>Christian Petracca</td><td>Knee</td><td>Test</td><td>Scott Pendlebury</td><td>Hamstring</td><td>3-4 weeks</td><td></td></tr>
+<tr><td>Player</td><td>Injury</td><td>Returning</td></tr>
+<tr><td>Dustin Martin</td><td>Calf</td><td>1-2 weeks</td></tr>
+<tr><td>Christian Petracca</td><td>Knee</td><td>Test</td></tr>
+<tr><td>Scott Pendlebury</td><td>Hamstring</td><td>3-4 weeks</td></tr>
 </table>
-</div>
 </body></html>
 """
 
 INJURY_LIST_WITH_EMPTY_ROWS_HTML = """
 <html><body>
-<table class="injurylist">
-<tr><th>Team</th><th>Player</th><th>Injury</th><th>Return</th></tr>
-<tr><td class="team">Richmond</td><td class="player"><a href="#">Dustin Martin</a></td><td>Calf</td><td>1-2 weeks</td></tr>
-<tr><td class="team">Melbourne</td><td class="player"></td><td></td><td>TBC</td></tr>
-<tr><td class="team">Carlton</td><td class="player"><a href="#">Patrick Cripps</a></td><td>Ankle</td><td>2 weeks</td></tr>
+<!-- Team with empty rows -->
+<table>
+<tr><td>Richmond (2 Players)</td></tr>
+<tr><td></td><td>mobile-hidden-row</td></tr>
+<tr><td>Player</td><td>Injury</td><td>Returning</td></tr>
+<tr><td>Dustin Martin</td><td>Calf</td><td>1-2 weeks</td></tr>
+<tr><td></td><td></td><td>TBC</td></tr>
+</table>
+<table>
+<tr><td>Carlton (1 Players)</td></tr>
+<tr><td></td><td>mobile-hidden-row</td></tr>
+<tr><td>Player</td><td>Injury</td><td>Returning</td></tr>
+<tr><td>Patrick Cripps</td><td>Ankle</td><td>2 weeks</td></tr>
 </table>
 </body></html>
 """
@@ -101,20 +110,18 @@ class TestGetInjuryList:
         assert isinstance(result, list)
         assert len(result) == 3
 
-        # First injury
+        # All injuries are under "Richmond" team in the test HTML
         assert result[0]["team"] == "Richmond"
         assert result[0]["player"] == "Dustin Martin"
         assert result[0]["injury"] == "Calf"
         assert result[0]["return_timeline"] == "1-2 weeks"
 
-        # Second injury
-        assert result[1]["team"] == "Melbourne"
+        assert result[1]["team"] == "Richmond"
         assert result[1]["player"] == "Christian Petracca"
         assert result[1]["injury"] == "Knee"
         assert result[1]["return_timeline"] == "Test"
 
-        # Third injury
-        assert result[2]["team"] == "Collingwood"
+        assert result[2]["team"] == "Richmond"
         assert result[2]["player"] == "Scott Pendlebury"
         assert result[2]["injury"] == "Hamstring"
         assert result[2]["return_timeline"] == "3-4 weeks"
@@ -361,9 +368,11 @@ class TestParseInjuryTable:
 
         result = client._parse_injury_table(soup)
 
+        # Richmond has 1 valid + 1 empty; Carlton has 1 valid
         assert len(result) == 2
-        # First and third rows have valid data; second is empty
+        assert result[0]["team"] == "Richmond"
         assert result[0]["player"] == "Dustin Martin"
+        assert result[1]["team"] == "Carlton"
         assert result[1]["player"] == "Patrick Cripps"
 
     def test_skip_header_rows(self):

@@ -608,6 +608,7 @@ async def seed_player_data(
                     print("👤 Seeding players from AFL Tables...")
                 count = await seed_players(session, seasons, verbose=verbose)
                 counts["players"] = count
+                await session.commit()
                 if verbose:
                     print(f"   Created {count} player records")
 
@@ -617,6 +618,7 @@ async def seed_player_data(
                     print("🌤️  Seeding match weather data...")
                 count = await seed_match_weather(session, seasons, verbose=verbose)
                 counts["match_weather"] = count
+                await session.commit()
                 if verbose:
                     print(f"   Created {count} weather records")
 
@@ -626,6 +628,7 @@ async def seed_player_data(
                     print("📊 Seeding player match stats...")
                 count = await seed_player_match_stats(session, seasons, verbose=verbose)
                 counts["player_match_stats"] = count
+                await session.commit()
                 if verbose:
                     print(f"   Created {count} stat records")
 
@@ -635,6 +638,7 @@ async def seed_player_data(
                     print("⚡ Seeding player advanced stats...")
                 count = await seed_player_advanced_stats(session, seasons, verbose=verbose)
                 counts["player_advanced_stats"] = count
+                await session.commit()
                 if verbose:
                     print(f"   Created {count} advanced stat records")
 
@@ -644,11 +648,9 @@ async def seed_player_data(
                     print("🏥 Seeding injury data...")
                 count = await seed_injuries(session, verbose=verbose)
                 counts["injuries"] = count
+                await session.commit()
                 if verbose:
                     print(f"   Upserted {count} injury records")
-
-            # Commit everything
-            await session.commit()
 
             if verbose:
                 print("\n✅ Player data seed complete! Summary:")
