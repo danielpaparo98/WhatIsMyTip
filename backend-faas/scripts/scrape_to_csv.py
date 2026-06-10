@@ -167,7 +167,8 @@ def _extract_match_metadata(soup: BeautifulSoup) -> Dict[str, Any]:
     text = soup.get_text()
 
     # Method 1: "Venue: XXX" pattern in page header (most common on AFL Tables)
-    venue_match = re.search(r"Venue:\s*(.+?)(?:\s{2,}|\n|$)", text[:3000])
+    # Real pages have: "Venue: S.C.G. Date: ..." (single space before Date:)
+    venue_match = re.search(r"Venue:\s*(.+?)(?:\s+Date:|\s{2,}|\n)", text[:3000])
     if venue_match:
         raw_venue = venue_match.group(1).strip().rstrip("\u2192").strip()
         result["venue"] = _normalize_venue(raw_venue)

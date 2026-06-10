@@ -100,7 +100,7 @@ MATCH_PAGE_VENUE_HEADER_HTML = """<!DOCTYPE html>
 </head>
 <body>
 <pre>
-Venue: S.C.G.  Date: Thu 5-Mar-2026  Attendance: 35,221  →
+Venue: S.C.G. Date: Thu 5-Mar-2026  Attendance: 35,221 →
 </pre>
 
 <table class="sortable">
