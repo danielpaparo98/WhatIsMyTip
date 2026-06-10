@@ -78,14 +78,61 @@ def read_csv(filepath: str) -> List[dict]:
 # ---------------------------------------------------------------------------
 
 
+# Mapping of abbreviated/alternate venue names → canonical names (WeatherClient keys)
+_VENUE_NORMALIZE_MAP: Dict[str, str] = {
+    # Dotted abbreviations used by AFL Tables (dots stripped before lookup)
+    "SCG": "SCG",
+    "MCG": "MCG",
+    # Canonical names (pass through)
+    "Marvel Stadium": "Marvel Stadium",
+    "Adelaide Oval": "Adelaide Oval",
+    "Optus Stadium": "Optus Stadium",
+    "Gabba": "Gabba",
+    "GMHBA Stadium": "GMHBA Stadium",
+    "People First Stadium": "People First Stadium",
+    "UTAS Stadium": "UTAS Stadium",
+    "Manuka Oval": "Manuka Oval",
+    # Historical / alternate names
+    "Docklands Stadium": "Marvel Stadium",
+    "Etihad Stadium": "Marvel Stadium",
+    "Perth Stadium": "Optus Stadium",
+    "Metricon Stadium": "People First Stadium",
+    "Carrara": "People First Stadium",
+    "Kardinia Park": "GMHBA Stadium",
+    "Skoda Stadium": "GMHBA Stadium",
+    "York Park": "UTAS Stadium",
+    "Aurora Stadium": "UTAS Stadium",
+    "Sydney Showground": "People First Stadium",
+    "Stadium Australia": "Accor Stadium",
+}
+
+
+def _normalize_venue(raw: str) -> str:
+    """Normalize an abbreviated AFL Tables venue name to canonical form.
+
+    AFL Tables uses dotted abbreviations like "S.C.G.", "M.C.G." and
+    historical names like "Etihad Stadium".  This function strips dots,
+    trims whitespace / arrow characters, and maps to the canonical names
+    used by WeatherClient.VENUE_COORDS.
+
+    Returns the original (stripped) string if no mapping is found.
+    """
+    # Strip trailing arrow character (→) used on AFL Tables pages
+    cleaned = raw.replace(".", "").replace(",", "").rstrip("\u2192").strip()
+    raw_stripped = raw.rstrip("\u2192").strip()
+    # Try dot-stripped version first, then original
+    return _VENUE_NORMALIZE_MAP.get(cleaned, _VENUE_NORMALIZE_MAP.get(raw_stripped, raw_stripped))
+
+
 def _extract_match_metadata(soup: BeautifulSoup) -> Dict[str, Any]:
-    """Extract teams and date from an AFL Tables match page.
+    """Extract teams, date, and venue from an AFL Tables match page.
 
     The page <title> contains: "AFL Tables - Sydney v Carlton - Thu, 5-Mar-2026 7:30 PM ..."
 
-    The sortable tables have a header row (row 0) like "Sydney Match Statistics" identifying the team.
-
-    Venue is extracted from page text if present.
+    Venue is extracted using three fallback methods:
+      1. "Venue: XXX" pattern in page header text (most reliable)
+      2. Venue link in HTML (e.g. <a href="../../venues/scg.html">S.C.G.</a>)
+      3. Legacy "at VENUE" pattern in page text
 
     Returns:
         Dict with home_team, away_team, match_date, venue.
@@ -117,17 +164,34 @@ def _extract_match_metadata(soup: BeautifulSoup) -> Dict[str, Any]:
             except ValueError:
                 pass
 
-    # Extract venue from page text
     text = soup.get_text()
-    venue_match = re.search(
-        r"at\s+(MCG|Marvel Stadium|Adelaide Oval|Optus Stadium|Gabba|SCG|"
-        r"GMHBA Stadium|People First Stadium|UTAS Stadium|Manuka Oval|"
-        r"Docklands Stadium|Etihad Stadium|Perth Stadium|Metricon Stadium|"
-        r"Kardinia Park|Carrara|York Park|Aurora Stadium|Skoda Stadium)",
-        text[:5000],
-    )
+
+    # Method 1: "Venue: XXX" pattern in page header (most common on AFL Tables)
+    venue_match = re.search(r"Venue:\s*(.+?)(?:\s{2,}|\n|$)", text[:3000])
     if venue_match:
-        result["venue"] = venue_match.group(1)
+        raw_venue = venue_match.group(1).strip().rstrip("\u2192").strip()
+        result["venue"] = _normalize_venue(raw_venue)
+
+    # Method 2: Try venue link in HTML (e.g. <a href="../../venues/scg.html">S.C.G.</a>)
+    if not result["venue"]:
+        for a in soup.find_all("a", href=True):
+            href = str(a["href"])
+            if "venues/" in href:
+                raw_venue = a.get_text(strip=True)
+                result["venue"] = _normalize_venue(raw_venue)
+                break
+
+    # Method 3: Legacy "at VENUE" pattern in page text
+    if not result["venue"]:
+        venue_match = re.search(
+            r"at\s+(MCG|Marvel Stadium|Adelaide Oval|Optus Stadium|Gabba|SCG|"
+            r"GMHBA Stadium|People First Stadium|UTAS Stadium|Manuka Oval|"
+            r"Docklands Stadium|Etihad Stadium|Perth Stadium|Metricon Stadium|"
+            r"Kardinia Park|Carrara|York Park|Aurora Stadium|Skoda Stadium)",
+            text[:5000],
+        )
+        if venue_match:
+            result["venue"] = _normalize_venue(venue_match.group(1))
 
     return result
 

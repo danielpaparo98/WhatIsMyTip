@@ -16,6 +16,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
 from scripts.scrape_to_csv import (
     _extract_match_metadata,
+    _normalize_venue,
     _parse_player_stats,
     read_csv,
     write_csv,
@@ -87,6 +88,80 @@ MATCH_PAGE_HTML = """<!DOCTYPE html>
 <table class="sortable">
 <thead><tr><th>Advanced Away</th></tr></thead>
 <tbody><tr><td>ignored</td></tr></tbody>
+</table>
+</body>
+</html>
+"""
+
+MATCH_PAGE_VENUE_HEADER_HTML = """<!DOCTYPE html>
+<html>
+<head>
+<title>AFL Tables - Sydney v Carlton - Thu, 5-Mar-2026 7:30 PM (6:30 PM) - Match Stats</title>
+</head>
+<body>
+<pre>
+Venue: S.C.G.  Date: Thu 5-Mar-2026  Attendance: 35,221  →
+</pre>
+
+<table class="sortable">
+<thead>
+<tr><th colspan="25">Sydney Match Statistics</th></tr>
+<tr>
+<th>#</th><th>Player</th><th>KI</th><th>MK</th><th>HB</th><th>DI</th>
+<th>GL</th><th>BH</th><th>TK</th><th>HO</th><th>FF</th><th>FA</th>
+<th>...</th>
+</tr>
+</thead>
+<tbody>
+<tr><td>1</td><td><a href="players/01A/Mills_Callum.html">Mills, Callum</a></td>
+<td>20</td><td>6</td><td>10</td><td>30</td><td>1</td><td>0</td><td>4</td><td>0</td><td>2</td><td>1</td>
+<td>0</td><td>0</td><td>0</td><td>0</td><td>0</td><td>0</td><td>0</td><td>0</td><td>0</td><td>0</td><td>0</td><td>0</td><td>0</td></tr>
+</tbody>
+</table>
+
+<table class="sortable">
+<thead>
+<tr><th colspan="25">Carlton Match Statistics</th></tr>
+<tr>
+<th>#</th><th>Player</th><th>KI</th><th>MK</th><th>HB</th><th>DI</th>
+<th>GL</th><th>BH</th><th>TK</th><th>HO</th><th>FF</th><th>FA</th>
+<th>...</th>
+</tr>
+</thead>
+<tbody>
+<tr><td>2</td><td><a href="players/02A/Cripps_Patrick.html">Cripps, Patrick</a></td>
+<td>18</td><td>5</td><td>12</td><td>30</td><td>0</td><td>1</td><td>6</td><td>0</td><td>3</td><td>2</td>
+<td>0</td><td>0</td><td>0</td><td>0</td><td>0</td><td>0</td><td>0</td><td>0</td><td>0</td><td>0</td><td>0</td><td>0</td><td>0</td></tr>
+</tbody>
+</table>
+</body>
+</html>
+"""
+
+MATCH_PAGE_VENUE_LINK_HTML = """<!DOCTYPE html>
+<html>
+<head>
+<title>AFL Tables - Geelong v Hawthorn - Sat, 8-Mar-2025 1:45 PM (12:45 PM) - Match Stats</title>
+</head>
+<body>
+<p>Round 2, 2025.</p>
+<p>Some info here with <a href="../../../venues/kp.html">Kardinia Park</a> as the ground.</p>
+
+<table class="sortable">
+<thead><tr><th>Geelong Match Statistics</th></tr></thead>
+<tbody>
+<tr><td>1</td><td><a>Player, Test</a></td>
+<td>5</td><td>3</td><td>2</td><td>7</td><td>1</td><td>0</td><td>1</td><td>0</td><td>0</td><td>1</td>
+<td>0</td><td>0</td><td>0</td><td>0</td><td>0</td><td>0</td><td>0</td><td>0</td><td>0</td><td>0</td><td>0</td><td>0</td><td>0</td></tr>
+</tbody>
+</table>
+<table class="sortable">
+<thead><tr><th>Hawthorn Match Statistics</th></tr></thead>
+<tbody>
+<tr><td>2</td><td><a>Other, Player</a></td>
+<td>8</td><td>4</td><td>6</td><td>14</td><td>2</td><td>1</td><td>2</td><td>3</td><td>1</td><td>0</td>
+<td>0</td><td>0</td><td>0</td><td>0</td><td>0</td><td>0</td><td>0</td><td>0</td><td>0</td><td>0</td><td>0</td><td>0</td><td>0</td></tr>
+</tbody>
 </table>
 </body>
 </html>
@@ -237,6 +312,68 @@ class TestExtractMatchMetadata:
             soup = BeautifulSoup(html, "lxml")
             result = _extract_match_metadata(soup)
             assert result["venue"] == venue, f"Expected {venue}, got {result['venue']}"
+
+    def test_extracts_venue_from_venue_header_pattern(self):
+        """Method 1: 'Venue: XXX' pattern from real AFL Tables pages."""
+        from bs4 import BeautifulSoup
+
+        soup = BeautifulSoup(MATCH_PAGE_VENUE_HEADER_HTML, "lxml")
+        result = _extract_match_metadata(soup)
+
+        assert result["venue"] == "SCG"  # S.C.G. → SCG via _normalize_venue
+        assert result["home_team"] == "Sydney"
+        assert result["away_team"] == "Carlton"
+        assert result["match_date"] == "2026-03-05"
+
+    def test_extracts_venue_from_venue_link(self):
+        """Method 2: venue link <a href='venues/...'>XXX</a>."""
+        from bs4 import BeautifulSoup
+
+        soup = BeautifulSoup(MATCH_PAGE_VENUE_LINK_HTML, "lxml")
+        result = _extract_match_metadata(soup)
+
+        assert result["venue"] == "GMHBA Stadium"  # Kardinia Park → GMHBA Stadium
+        assert result["home_team"] == "Geelong"
+        assert result["away_team"] == "Hawthorn"
+
+
+# ---------------------------------------------------------------------------
+# Tests for _normalize_venue
+# ---------------------------------------------------------------------------
+
+
+class TestNormalizeVenue:
+    """Tests for _normalize_venue()."""
+
+    def test_dotted_abbreviations(self):
+        assert _normalize_venue("S.C.G.") == "SCG"
+        assert _normalize_venue("M.C.G.") == "MCG"
+
+    def test_canonical_names_passthrough(self):
+        for name in ["MCG", "Marvel Stadium", "Adelaide Oval", "Optus Stadium",
+                      "Gabba", "SCG", "GMHBA Stadium", "People First Stadium",
+                      "UTAS Stadium", "Manuka Oval"]:
+            assert _normalize_venue(name) == name
+
+    def test_historical_aliases(self):
+        assert _normalize_venue("Etihad Stadium") == "Marvel Stadium"
+        assert _normalize_venue("Docklands Stadium") == "Marvel Stadium"
+        assert _normalize_venue("Perth Stadium") == "Optus Stadium"
+        assert _normalize_venue("Metricon Stadium") == "People First Stadium"
+        assert _normalize_venue("Carrara") == "People First Stadium"
+        assert _normalize_venue("Kardinia Park") == "GMHBA Stadium"
+        assert _normalize_venue("York Park") == "UTAS Stadium"
+        assert _normalize_venue("Aurora Stadium") == "UTAS Stadium"
+
+    def test_unknown_venue_returns_stripped_input(self):
+        assert _normalize_venue("Some Unknown Ground") == "Some Unknown Ground"
+
+    def test_strips_whitespace(self):
+        assert _normalize_venue("  MCG  ") == "MCG"
+
+    def test_strips_arrow_character(self):
+        """AFL Tables pages sometimes have → after the venue name."""
+        assert _normalize_venue("M.C.G.\u2192") == "MCG"
 
 
 # ---------------------------------------------------------------------------
