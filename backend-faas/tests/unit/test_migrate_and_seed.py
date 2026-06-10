@@ -230,15 +230,20 @@ class TestSeedTableOrdering:
         mp_idx = csv_names.index("model_predictions.csv")
         assert mp_idx > games_idx
 
-    def test_all_eight_tables_present(self):
+    def test_all_thirteen_tables_present(self):
         csv_names = {e["csv"] for e in _SEED_TABLES}
         expected = {
             "games.csv",
+            "players.csv",
             "model_predictions.csv",
             "tips.csv",
             "elo_cache.csv",
             "backtest_results.csv",
             "match_analyses.csv",
+            "match_weather.csv",
+            "player_match_stats.csv",
+            "player_advanced_stats.csv",
+            "injuries.csv",
             "generation_progress.csv",
             "job_executions.csv",
         }

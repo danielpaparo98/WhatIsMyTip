@@ -86,9 +86,14 @@ from packages.shared.models import (  # noqa: F401 – ensure models registered 
     EloCache,
     Game,
     GenerationProgress,
+    Injury,
     JobExecution,
     MatchAnalysis,
+    MatchWeather,
     ModelPrediction,
+    Player,
+    PlayerAdvancedStats,
+    PlayerMatchStats,
     Tip,
 )
 
@@ -99,18 +104,27 @@ from packages.shared.models import (  # noqa: F401 – ensure models registered 
 # CSV file → ORM class mapping, in foreign-key-safe insertion order.
 _SEED_TABLES: List[Dict[str, object]] = [
     {"csv": "games.csv", "model": Game},
+    {"csv": "players.csv", "model": Player},
     {"csv": "model_predictions.csv", "model": ModelPrediction},
     {"csv": "tips.csv", "model": Tip},
     {"csv": "elo_cache.csv", "model": EloCache},
     {"csv": "backtest_results.csv", "model": BacktestResult},
     {"csv": "match_analyses.csv", "model": MatchAnalysis},
+    {"csv": "match_weather.csv", "model": MatchWeather},
+    {"csv": "player_match_stats.csv", "model": PlayerMatchStats},
+    {"csv": "player_advanced_stats.csv", "model": PlayerAdvancedStats},
+    {"csv": "injuries.csv", "model": Injury},
     {"csv": "generation_progress.csv", "model": GenerationProgress},
     {"csv": "job_executions.csv", "model": JobExecution},
 ]
 
 # Tables to clear (reverse FK order).
 _CLEAR_TABLES: List[str] = [
+    "injuries",
+    "player_advanced_stats",
+    "player_match_stats",
     "match_analyses",
+    "match_weather",
     "tips",
     "model_predictions",
     "backtest_results",
@@ -118,6 +132,7 @@ _CLEAR_TABLES: List[str] = [
     "job_executions",
     "job_locks",
     "elo_cache",
+    "players",
     "games",
 ]
 
@@ -301,7 +316,8 @@ async def seed_from_csv(
                 # child rows (tips, model_predictions, match_analyses) still
                 # resolve correctly.
                 fk_target_tables = {
-                    "games",  # referenced by tips, model_predictions, match_analyses
+                    "games",  # referenced by tips, model_predictions, match_analyses, match_weather, player_match_stats, player_advanced_stats
+                    "players",  # referenced by player_match_stats, player_advanced_stats, injuries
                 }
                 pk_col = model_cls.__table__.primary_key.columns
                 if (

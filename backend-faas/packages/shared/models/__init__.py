@@ -1,4 +1,5 @@
-from sqlalchemy import Column, Integer, String, Float, DateTime, Text, Boolean, UniqueConstraint, ForeignKey
+from sqlalchemy import Column, Date, Integer, String, Float, DateTime, Text, Boolean, UniqueConstraint, ForeignKey
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from datetime import datetime, timezone
@@ -11,6 +12,7 @@ class Game(Base):
     id = Column(Integer, primary_key=True, index=True)
     slug = Column(String(12), unique=True, index=True, nullable=False)
     squiggle_id = Column(Integer, unique=True, index=True)
+    afltables_match_id = Column(Text, unique=True, index=True, nullable=True)
     round_id = Column(Integer, index=True)
     season = Column(Integer, index=True)
     home_team = Column(String(100))
@@ -152,3 +154,114 @@ class MatchAnalysis(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     game = relationship("Game", backref="match_analysis")
+
+
+class Player(Base):
+    __tablename__ = "players"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(Text, unique=True, nullable=False, index=True)
+    afltables_id = Column(Text, unique=True, nullable=True, index=True)
+    footywire_id = Column(Integer, nullable=True, index=True)
+    current_team = Column(Text, nullable=True, index=True)
+    position = Column(Text, nullable=True)
+    height = Column(Text, nullable=True)
+    weight = Column(Text, nullable=True)
+    date_of_birth = Column(Date, nullable=True)
+    draft_info = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+
+
+class MatchWeather(Base):
+    __tablename__ = "match_weather"
+
+    id = Column(Integer, primary_key=True, index=True)
+    game_id = Column(Integer, ForeignKey("games.id"), unique=True, nullable=False, index=True)
+    venue = Column(Text, nullable=True, index=True)
+    match_date = Column(Date, nullable=True)
+    temperature = Column(Float, nullable=True)
+    precipitation = Column(Float, nullable=True)
+    wind_speed = Column(Float, nullable=True)
+    wind_direction = Column(Integer, nullable=True)
+    wind_gusts = Column(Float, nullable=True)
+    humidity = Column(Integer, nullable=True)
+    weather_code = Column(Integer, nullable=True)
+    data_type = Column(Text, nullable=True, default="historical", index=True)
+    raw_hourly = Column(JSONB, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+
+    game = relationship("Game", backref="weather")
+
+
+class PlayerMatchStats(Base):
+    __tablename__ = "player_match_stats"
+
+    id = Column(Integer, primary_key=True, index=True)
+    game_id = Column(Integer, ForeignKey("games.id"), nullable=False, index=True)
+    player_id = Column(Integer, ForeignKey("players.id"), nullable=False, index=True)
+    team = Column(Text, nullable=True, index=True)
+    kicks = Column(Integer, default=0)
+    handballs = Column(Integer, default=0)
+    disposals = Column(Integer, default=0)
+    marks = Column(Integer, default=0)
+    goals = Column(Integer, default=0)
+    behinds = Column(Integer, default=0)
+    tackles = Column(Integer, default=0)
+    hitouts = Column(Integer, default=0)
+    frees_for = Column(Integer, default=0)
+    frees_against = Column(Integer, default=0)
+
+    __table_args__ = (
+        UniqueConstraint("game_id", "player_id", name="uq_pms_game_player"),
+    )
+
+    game = relationship("Game", backref="player_stats")
+    player = relationship("Player", backref="match_stats")
+
+
+class PlayerAdvancedStats(Base):
+    __tablename__ = "player_advanced_stats"
+
+    id = Column(Integer, primary_key=True, index=True)
+    game_id = Column(Integer, ForeignKey("games.id"), nullable=False, index=True)
+    player_id = Column(Integer, ForeignKey("players.id"), nullable=False, index=True)
+    round_label = Column(Text, nullable=True)
+    opponent = Column(Text, nullable=True)
+    tog_pct = Column(Float, nullable=True)
+    metres_gained = Column(Integer, nullable=True)
+    score_involvements = Column(Integer, nullable=True)
+    contested_possessions = Column(Integer, nullable=True)
+    pressure_acts = Column(Integer, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    __table_args__ = (
+        UniqueConstraint("game_id", "player_id", name="uq_pas_game_player"),
+    )
+
+    game = relationship("Game", backref="advanced_stats")
+    player = relationship("Player", backref="advanced_stats")
+
+
+class Injury(Base):
+    __tablename__ = "injuries"
+
+    id = Column(Integer, primary_key=True, index=True)
+    player_id = Column(Integer, ForeignKey("players.id"), nullable=True, index=True)
+    player_name = Column(Text, nullable=False)
+    team = Column(Text, nullable=True, index=True)
+    injury_type = Column(Text, nullable=True)
+    return_timeline = Column(Text, nullable=True)
+    source = Column(Text, default="footywire")
+    scraped_at = Column(DateTime(timezone=True), nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+
+    __table_args__ = (
+        UniqueConstraint(
+            "player_name", "injury_type", name="uq_injuries_player_injury"
+        ),
+    )
+
+    player = relationship("Player", backref="injuries")

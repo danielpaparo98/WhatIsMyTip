@@ -44,9 +44,14 @@ from packages.shared.models import (
     EloCache,
     Game,
     GenerationProgress,
+    Injury,
     JobExecution,
     MatchAnalysis,
+    MatchWeather,
     ModelPrediction,
+    Player,
+    PlayerAdvancedStats,
+    PlayerMatchStats,
     Tip,
 )
 from packages.shared.utils import generate_slug
@@ -363,7 +368,11 @@ def _generate_elo_rating(rng: random.Random, team: str) -> float:
 async def clear_all_data(session: AsyncSession) -> None:
     """Clear all data from all tables (in dependency order)."""
     tables = [
+        "injuries",
+        "player_advanced_stats",
+        "player_match_stats",
         "match_analyses",
+        "match_weather",
         "tips",
         "model_predictions",
         "backtest_results",
@@ -371,6 +380,7 @@ async def clear_all_data(session: AsyncSession) -> None:
         "job_executions",
         "job_locks",
         "elo_cache",
+        "players",
         "games",
     ]
     for table in tables:
