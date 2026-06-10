@@ -24,6 +24,14 @@ async def check():
         )
         print(f"games with afltables_match_id: {r.scalar()}")
 
+        # Season breakdown
+        print("\n--- Games by season ---")
+        r = await session.execute(
+            text("SELECT season, COUNT(*) as cnt FROM games GROUP BY season ORDER BY season")
+        )
+        for row in r.fetchall():
+            print(f"  {row[0]}: {row[1]} games")
+
 
 if __name__ == "__main__":
     asyncio.run(check())

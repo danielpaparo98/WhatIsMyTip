@@ -626,37 +626,53 @@ async def async_main(
         print(f"Tables: {tables}")
 
     counts: Dict[str, int] = {}
+    multi_season = len(seasons) > 1
+
+    # Injuries (no season dependency, scrape once to top-level dir)
+    if "injuries" in tables:
+        counts["injuries"] = await scrape_injuries(output_dir, verbose=verbose)
 
     for season in seasons:
-        # Injuries (no season dependency, same for all)
-        if "injuries" in tables:
-            counts["injuries"] = await scrape_injuries(output_dir, verbose=verbose)
+        # Use per-season subdirectory for multi-season runs
+        if multi_season:
+            season_dir = os.path.join(output_dir, str(season))
+        else:
+            season_dir = output_dir
+        os.makedirs(season_dir, exist_ok=True)
+
+        if verbose and multi_season:
+            print(f"\n{'='*60}")
+            print(f"Season {season} — output: {os.path.abspath(season_dir)}")
+            print(f"{'='*60}")
 
         # Season games listing
         if "season_games" in tables:
-            await scrape_season_games(season, output_dir, verbose=verbose)
+            await scrape_season_games(season, season_dir, verbose=verbose)
 
         # Players + match stats
         if "players" in tables or "player_match_stats" in tables:
             result = await scrape_players_and_stats(
-                season, output_dir, limit=limit, verbose=verbose
+                season, season_dir, limit=limit, verbose=verbose
             )
-            counts["players"] = result.get("players", 0)
-            counts["player_match_stats"] = result.get("player_match_stats", 0)
-            counts["match_details"] = result.get("match_details", 0)
+            counts["players"] = counts.get("players", 0) + result.get("players", 0)
+            counts["player_match_stats"] = counts.get("player_match_stats", 0) + result.get("player_match_stats", 0)
+            counts["match_details"] = counts.get("match_details", 0) + result.get("match_details", 0)
 
         # Weather (depends on match_details.csv from players step)
         if "match_weather" in tables:
             weather_count = await scrape_weather(
-                season, output_dir, limit=limit, verbose=verbose
+                season, season_dir, limit=limit, verbose=verbose
             )
-            counts["match_weather"] = weather_count
+            counts["match_weather"] = counts.get("match_weather", 0) + weather_count
 
     if verbose:
         print("\n--- Summary ---")
         for table, count in counts.items():
             print(f"   {table}: {count} records")
-        print(f"\nCSV files written to: {os.path.abspath(output_dir)}")
+        if multi_season:
+            print(f"\nCSV files written to per-season subdirectories under: {os.path.abspath(output_dir)}")
+        else:
+            print(f"\nCSV files written to: {os.path.abspath(output_dir)}")
 
 
 def main() -> None:
@@ -669,6 +685,12 @@ def main() -> None:
         nargs="*",
         default=None,
         help="Season(s) to scrape (default: current year)",
+    )
+    parser.add_argument(
+        "--season-range",
+        type=str,
+        default=None,
+        help="Season range inclusive, e.g. '2012:2026'",
     )
     parser.add_argument(
         "--table",
@@ -703,7 +725,14 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    seasons = args.season if args.season else [datetime.now().year]
+    if args.season_range:
+        parts = args.season_range.split(":")
+        seasons = list(range(int(parts[0]), int(parts[1]) + 1))
+    elif args.season:
+        seasons = args.season
+    else:
+        seasons = [datetime.now().year]
+
     tables = set(args.tables) if args.tables else {
         "injuries", "season_games", "players", "player_match_stats", "match_weather"
     }

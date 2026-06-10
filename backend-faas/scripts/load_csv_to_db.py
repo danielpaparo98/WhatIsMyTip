@@ -600,95 +600,147 @@ async def clear_player_tables(session: AsyncSession) -> None:
 # ---------------------------------------------------------------------------
 
 
+async def _load_season_data(
+    session: AsyncSession,
+    input_dir: str,
+    tables: Set[str],
+    verbose: bool = False,
+) -> Dict[str, int]:
+    """Load per-season CSV data (match, players, stats, weather) in a single session.
+
+    Commits after each step so progress is preserved on partial failure.
+    """
+    counts: Dict[str, int] = {}
+
+    # --- Match games first (sets afltables_match_id) ---
+    if verbose:
+        print("  Matching AFL Tables game IDs to DB games...")
+    match_count = await match_games(session, input_dir, verbose=verbose)
+    await session.commit()
+    if verbose and match_count == 0:
+        print("  WARNING: No games matched. Player stats and weather may not load.")
+        print("  Ensure the games table has season games synced from Squiggle.")
+    if verbose:
+        print(f"  Matched {match_count} games")
+
+    # --- Players (must be first for FK dependencies) ---
+    if "players" in tables:
+        if verbose:
+            print("  Loading players...")
+        count = await load_players(session, input_dir, verbose=verbose)
+        counts["players"] = count
+        await session.commit()
+
+    # --- Player Match Stats ---
+    if "player_match_stats" in tables:
+        if verbose:
+            print("  Loading player match stats...")
+        count = await load_player_match_stats(session, input_dir, verbose=verbose)
+        counts["player_match_stats"] = count
+        await session.commit()
+
+    # --- Match Weather ---
+    if "match_weather" in tables:
+        if verbose:
+            print("  Loading match weather...")
+        count = await load_match_weather(session, input_dir, verbose=verbose)
+        counts["match_weather"] = count
+        await session.commit()
+
+    return counts
+
+
 async def load_csv_data(
     input_dir: str,
     tables: Optional[Set[str]] = None,
     clear: bool = False,
     verbose: bool = False,
+    seasons: Optional[List[int]] = None,
 ) -> Dict[str, int]:
     """Load CSV data into the database.
 
+    When *seasons* is provided with more than one season, each season's CSV
+    files are expected in ``{input_dir}/{season}/`` sub-directories (as
+    produced by ``scrape_to_csv.py --season-range``).  Injuries are loaded
+    once from the top-level *input_dir*.
+
     Args:
-        input_dir: Directory containing CSV files.
+        input_dir: Directory containing CSV files (or parent of season dirs).
         tables: Set of table names to load. Defaults to all.
         clear: Whether to clear existing data first.
         verbose: Whether to print progress.
+        seasons: Optional list of seasons for multi-season loading.
 
     Returns:
-        Dict mapping table names to number of records created.
+        Dict mapping table names to total number of records created.
     """
     if tables is None:
         tables = {"players", "player_match_stats", "match_weather", "injuries"}
 
-    counts: Dict[str, int] = {}
+    all_counts: Dict[str, int] = {}
 
     engine = get_engine()
-    session_factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    session_factory = async_sessionmaker(
+        engine, class_=AsyncSession, expire_on_commit=False
+    )
 
-    async with session_factory() as session:
-        try:
-            if clear:
-                if verbose:
-                    print("Clearing player data tables...")
-                await clear_player_tables(session)
-                if verbose:
-                    print("Player data cleared.")
-
-            # --- Match games first (sets afltables_match_id) ---
+    # --- Clear tables once ---
+    if clear:
+        async with session_factory() as session:
             if verbose:
-                print("Matching AFL Tables game IDs to DB games...")
-            match_count = await match_games(session, input_dir, verbose=verbose)
+                print("Clearing player data tables...")
+            await clear_player_tables(session)
             await session.commit()
-            if verbose and match_count == 0:
-                print("  WARNING: No games matched. Player stats and weather may not load.")
-                print("  Ensure the games table has 2026 season games synced from Squiggle.")
-
-            # --- Players (must be first for FK dependencies) ---
-            if "players" in tables:
-                if verbose:
-                    print("Loading players...")
-                count = await load_players(session, input_dir, verbose=verbose)
-                counts["players"] = count
-                await session.commit()
-
-            # --- Player Match Stats ---
-            if "player_match_stats" in tables:
-                if verbose:
-                    print("Loading player match stats...")
-                count = await load_player_match_stats(session, input_dir, verbose=verbose)
-                counts["player_match_stats"] = count
-                await session.commit()
-
-            # --- Match Weather ---
-            if "match_weather" in tables:
-                if verbose:
-                    print("Loading match weather...")
-                count = await load_match_weather(session, input_dir, verbose=verbose)
-                counts["match_weather"] = count
-                await session.commit()
-
-            # --- Injuries ---
-            if "injuries" in tables:
-                if verbose:
-                    print("Loading injuries...")
-                count = await load_injuries(session, input_dir, verbose=verbose)
-                counts["injuries"] = count
-                await session.commit()
-
             if verbose:
-                print("\nCSV load complete! Summary:")
-                for table, count in counts.items():
-                    print(f"   {table}: {count} records")
+                print("Player data cleared.")
 
-            return counts
+    # --- Injuries (global, not per-season) ---
+    if "injuries" in tables:
+        async with session_factory() as session:
+            if verbose:
+                print("Loading injuries...")
+            count = await load_injuries(session, input_dir, verbose=verbose)
+            await session.commit()
+            all_counts["injuries"] = count
 
-        except Exception:
-            await session.rollback()
-            raise
-        finally:
-            await session.close()
+    # --- Determine season directories ---
+    if seasons and len(seasons) > 1:
+        season_dirs = [(s, os.path.join(input_dir, str(s))) for s in seasons]
+    elif seasons and len(seasons) == 1:
+        season_dirs = [(seasons[0], input_dir)]
+    else:
+        season_dirs = [(None, input_dir)]
+
+    # --- Load per-season data ---
+    for season, season_dir in season_dirs:
+        if not os.path.isdir(season_dir):
+            if verbose:
+                print(f"  Skipping {season or 'default'}: {season_dir} not found")
+            continue
+
+        if verbose and season:
+            print(f"\n{'='*60}")
+            print(f"Loading season {season} from {season_dir}")
+            print(f"{'='*60}")
+
+        async with session_factory() as session:
+            try:
+                counts = await _load_season_data(
+                    session, season_dir, tables, verbose=verbose
+                )
+                for k, v in counts.items():
+                    all_counts[k] = all_counts.get(k, 0) + v
+            except Exception:
+                await session.rollback()
+                raise
+
+    if verbose:
+        print("\nCSV load complete! Summary:")
+        for table, count in all_counts.items():
+            print(f"   {table}: {count} records")
 
     await engine.dispose()
+    return all_counts
 
 
 def main() -> None:
@@ -700,6 +752,19 @@ def main() -> None:
         type=str,
         default=DEFAULT_INPUT_DIR,
         help="Directory containing CSV files (default: backend-faas/data)",
+    )
+    parser.add_argument(
+        "--season",
+        type=int,
+        nargs="*",
+        default=None,
+        help="Season(s) to load from subdirectories (e.g. --season 2024 2025)",
+    )
+    parser.add_argument(
+        "--season-range",
+        type=str,
+        default=None,
+        help="Season range inclusive, e.g. '2012:2026'",
     )
     parser.add_argument(
         "--table",
@@ -721,6 +786,14 @@ def main() -> None:
     )
     args = parser.parse_args()
 
+    if args.season_range:
+        parts = args.season_range.split(":")
+        seasons = list(range(int(parts[0]), int(parts[1]) + 1))
+    elif args.season:
+        seasons = args.season
+    else:
+        seasons = None
+
     tables = set(args.tables) if args.tables else None
 
     asyncio.run(
@@ -729,6 +802,7 @@ def main() -> None:
             tables=tables,
             clear=args.clear,
             verbose=args.verbose,
+            seasons=seasons,
         )
     )
 
