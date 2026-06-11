@@ -336,6 +336,9 @@ async def _handle_metrics(session) -> dict:
 # Entry point
 # ---------------------------------------------------------------------------
 
+_ADMIN_METHODS = ["GET", "POST", "OPTIONS"]
+
+
 async def main(args: dict) -> dict:
     """DO Function entry point."""
     method, path, query, body, headers = parse_request(args)
@@ -343,7 +346,7 @@ async def main(args: dict) -> dict:
 
     # Handle CORS preflight
     if method == "OPTIONS":
-        return response(204, request_args=args)
+        return response(204, request_args=args, allowed_methods=_ADMIN_METHODS)
 
     # Security checks — request size then rate limit
     size_error = check_request_size(args)
@@ -363,11 +366,12 @@ async def main(args: dict) -> dict:
                 "timestamp": datetime.now(timezone.utc).isoformat(),
             },
             request_args=args,
+            allowed_methods=_ADMIN_METHODS,
         )
 
     # Authenticate all other admin endpoints
     if not verify_api_key(headers, query, body):
-        return response(401, error="Invalid or missing API key", request_args=args)
+        return response(401, error="Invalid or missing API key", request_args=args, allowed_methods=_ADMIN_METHODS)
 
     factory = _get_session_factory()
     async with factory() as session:
@@ -399,12 +403,12 @@ async def main(args: dict) -> dict:
             if method == "GET" and segs == ["metrics"]:
                 return await _handle_metrics(session)
 
-            return response(404, error="Not found", request_args=args)
+            return response(404, error="Not found", request_args=args, allowed_methods=_ADMIN_METHODS)
 
         except Exception as e:
             had_error = True
             logger.error(f"Error in admin function: {e}\n{traceback.format_exc()}")
-            return response(500, error=str(e), request_args=args)
+            return response(500, error=str(e), request_args=args, allowed_methods=_ADMIN_METHODS)
         finally:
             await close_redis_pool(force=had_error)
             await dispose_engine(force=had_error)

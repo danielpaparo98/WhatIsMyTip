@@ -186,6 +186,9 @@ async def _handle_by_heuristic(session, heuristic: str) -> dict:
 # Entry point
 # ---------------------------------------------------------------------------
 
+_PUBLIC_METHODS = ["GET", "OPTIONS"]
+
+
 async def main(args: dict) -> dict:
     """DO Function entry point."""
     method, path, query, body, headers = parse_request(args)
@@ -193,7 +196,7 @@ async def main(args: dict) -> dict:
 
     # Handle CORS preflight
     if method == "OPTIONS":
-        return response(204)
+        return response(204, allowed_methods=_PUBLIC_METHODS)
 
     # Security checks — request size then rate limit
     size_error = check_request_size(args)
@@ -211,7 +214,7 @@ async def main(args: dict) -> dict:
             # ---- Routing ----
 
             if method != "GET":
-                return response(405, error="Method not allowed")
+                return response(405, error="Method not allowed", allowed_methods=_PUBLIC_METHODS)
 
             # Named routes (must be checked before catch-all {heuristic})
             if len(segs) == 1:
@@ -235,12 +238,12 @@ async def main(args: dict) -> dict:
             if len(segs) == 1:
                 return await _handle_by_heuristic(session, segs[0])
 
-            return response(404, error="Not found")
+            return response(404, error="Not found", allowed_methods=_PUBLIC_METHODS)
 
         except Exception as e:
             had_error = True
             logger.error(f"Error in backtest function: {e}\n{traceback.format_exc()}")
-            return response(500, error=str(e))
+            return response(500, error=str(e), allowed_methods=_PUBLIC_METHODS)
         finally:
             await close_redis_pool(force=had_error)
             await dispose_engine(force=had_error)

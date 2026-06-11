@@ -13,14 +13,14 @@ import os
 import sys
 import time
 import traceback
-from datetime import datetime
+from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
 # Make shared package importable from the function's working directory
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
-from packages.shared.db import _get_session_factory, dispose_engine
-from packages.shared.cache import close_redis_pool
+from packages.shared.db import _get_session_factory, get_engine, dispose_engine
+from packages.shared.cache import close_redis_pool, _get_client
 from packages.shared.config import settings
 from packages.shared.logger import get_logger
 from packages.shared.crud import GameCRUD, TipCRUD, ModelPredictionCRUD, MatchAnalysisCRUD
@@ -35,7 +35,7 @@ from packages.shared.schemas.match_analysis import MatchAnalysisResponse
 from packages.shared.models import Game, MatchWeather
 from packages.shared.api_helpers import parse_request, response, segments, to_dict, int_query, bool_query, check_rate_limit, check_request_size
 
-from sqlalchemy import select, func, and_
+from sqlalchemy import select, func, and_, text
 
 logger = get_logger(__name__)
 
@@ -188,6 +188,55 @@ async def _handle_game_detail(session, slug: str) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Health check
+# ---------------------------------------------------------------------------
+
+async def _handle_health() -> dict:
+    """Health check — verifies PostgreSQL and Redis connectivity.
+
+    Returns 200 with ``status: healthy`` when both services are reachable,
+    or 503 with ``status: degraded`` when any check fails.
+    """
+    checks: dict[str, str] = {}
+    healthy = True
+
+    # --- DB check ---
+    try:
+        engine = get_engine()
+        async with engine.connect() as conn:
+            await conn.execute(text("SELECT 1"))
+        checks["db"] = "ok"
+    except Exception as exc:
+        checks["db"] = f"error: {exc}"
+        healthy = False
+
+    # --- Redis check ---
+    try:
+        client = _get_client()
+        await client.ping()
+        checks["redis"] = "ok"
+    except Exception as exc:
+        checks["redis"] = f"error: {exc}"
+        healthy = False
+
+    status_code = 200 if healthy else 503
+    status = "healthy" if healthy else "degraded"
+
+    return response(
+        status_code,
+        data={
+            "status": status,
+            "checks": checks,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        },
+        allowed_methods=["GET", "OPTIONS"],
+    )
+
+
+_PUBLIC_METHODS = ["GET", "OPTIONS"]
+
+
+# ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 
@@ -198,7 +247,16 @@ async def main(args: dict) -> dict:
 
     # Handle CORS preflight
     if method == "OPTIONS":
-        return response(204)
+        return response(204, allowed_methods=_PUBLIC_METHODS)
+
+    # Health check — lightweight, no rate limiting or DB session required
+    if method == "GET" and segs == ["health"]:
+        return await _handle_health()
+
+    # Also support {"action": "health"} via POST body for environments
+    # that cannot set the URL path (e.g. direct invocation).
+    if body.get("action") == "health":
+        return await _handle_health()
 
     # Security checks — request size then rate limit
     size_error = check_request_size(args)
@@ -225,12 +283,12 @@ async def main(args: dict) -> dict:
                 slug = segs[0]
                 return await _handle_game_detail(session, slug)
 
-            return response(404, error="Not found")
+            return response(404, error="Not found", allowed_methods=_PUBLIC_METHODS)
 
         except Exception as e:
             had_error = True
             logger.error(f"Error in games function: {e}\n{traceback.format_exc()}")
-            return response(500, error=str(e))
+            return response(500, error=str(e), allowed_methods=_PUBLIC_METHODS)
         finally:
             await close_redis_pool(force=had_error)
             await dispose_engine(force=had_error)

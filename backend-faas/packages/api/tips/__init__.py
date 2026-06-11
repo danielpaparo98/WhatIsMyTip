@@ -275,6 +275,9 @@ async def _handle_tips_by_heuristic(session, heuristic: str, query: dict) -> dic
 # Entry point
 # ---------------------------------------------------------------------------
 
+_PUBLIC_METHODS = ["GET", "OPTIONS"]
+
+
 async def main(args: dict) -> dict:
     """DO Function entry point."""
     method, path, query, body, headers = parse_request(args)
@@ -282,7 +285,7 @@ async def main(args: dict) -> dict:
 
     # Handle CORS preflight
     if method == "OPTIONS":
-        return response(204, request_args=args)
+        return response(204, request_args=args, allowed_methods=_PUBLIC_METHODS)
 
     # Security checks — request size then rate limit
     size_error = check_request_size(args)
@@ -306,6 +309,7 @@ async def main(args: dict) -> dict:
                         401,
                         error="Invalid or missing API key",
                         request_args=args,
+                        allowed_methods=_PUBLIC_METHODS,
                     )
                 return await _handle_generate_tips(session, query, body)
 
@@ -321,12 +325,12 @@ async def main(args: dict) -> dict:
             if method == "GET" and len(segs) == 0:
                 return await _handle_list_tips(session, query)
 
-            return response(404, error="Not found", request_args=args)
+            return response(404, error="Not found", request_args=args, allowed_methods=_PUBLIC_METHODS)
 
         except Exception as e:
             had_error = True
             logger.error(f"Error in tips function: {e}\n{traceback.format_exc()}")
-            return response(500, error=str(e), request_args=args)
+            return response(500, error=str(e), request_args=args, allowed_methods=_PUBLIC_METHODS)
         finally:
             await close_redis_pool(force=had_error)
             await dispose_engine(force=had_error)
