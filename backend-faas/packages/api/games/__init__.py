@@ -33,7 +33,7 @@ from packages.shared.schemas import (
 )
 from packages.shared.schemas.match_analysis import MatchAnalysisResponse
 from packages.shared.models import Game, MatchWeather
-from packages.shared.api_helpers import parse_request, response, segments, to_dict, int_query, bool_query
+from packages.shared.api_helpers import parse_request, response, segments, to_dict, int_query, bool_query, check_rate_limit, check_request_size
 
 from sqlalchemy import select, func, and_
 
@@ -199,6 +199,15 @@ async def main(args: dict) -> dict:
     # Handle CORS preflight
     if method == "OPTIONS":
         return response(204)
+
+    # Security checks — request size then rate limit
+    size_error = check_request_size(args)
+    if size_error:
+        return size_error
+
+    rate_limit_response = await check_rate_limit(args)
+    if rate_limit_response:
+        return rate_limit_response
 
     factory = _get_session_factory()
     async with factory() as session:

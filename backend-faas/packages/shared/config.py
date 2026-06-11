@@ -78,6 +78,11 @@ class Settings(BaseSettings):
     # Monitoring Configuration
     metrics_enabled: bool = True
     metrics_retention_days: int = 30
+    
+    # Security Configuration
+    rate_limit_max_requests: int = 60
+    rate_limit_window_seconds: int = 60
+    max_request_body_bytes: int = 5242880  # 5 MB
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
     

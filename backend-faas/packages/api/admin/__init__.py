@@ -27,7 +27,7 @@ from packages.shared.db import _get_session_factory, dispose_engine
 from packages.shared.cache import close_redis_pool
 from packages.shared.config import settings
 from packages.shared.logger import get_logger
-from packages.shared.api_helpers import parse_request, response, segments, verify_api_key
+from packages.shared.api_helpers import parse_request, response, segments, verify_api_key, check_rate_limit, check_request_size
 from packages.shared.squiggle import SquiggleClient
 from packages.shared.services.game_sync import GameSyncService
 from packages.shared.services.match_completion import MatchCompletionDetectorService
@@ -322,6 +322,15 @@ async def main(args: dict) -> dict:
     # Handle CORS preflight
     if method == "OPTIONS":
         return response(204, request_args=args)
+
+    # Security checks — request size then rate limit
+    size_error = check_request_size(args)
+    if size_error:
+        return size_error
+
+    rate_limit_response = await check_rate_limit(args)
+    if rate_limit_response:
+        return rate_limit_response
 
     # Health check — no auth required
     if method == "GET" and segs == ["health"]:
