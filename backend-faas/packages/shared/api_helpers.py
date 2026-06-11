@@ -6,7 +6,9 @@ import secrets
 import sys
 import os
 from urllib.parse import parse_qs
-from typing import Optional
+from typing import Optional, Tuple
+
+from pydantic import BaseModel, ValidationError
 
 from packages.shared.config import settings
 
@@ -276,3 +278,32 @@ def check_request_size(args: dict, max_bytes: int | None = None) -> dict | None:
         return response(413, error="Request body too large", request_args=args)
 
     return None
+
+
+def validate_request(
+    body: dict,
+    model_class: type[BaseModel],
+) -> Tuple[BaseModel | None, dict | None]:
+    """Validate request body against a Pydantic model.
+
+    Args:
+        body: Raw request body dictionary.
+        model_class: Pydantic BaseModel subclass to validate against.
+
+    Returns:
+        (validated_model, None) on success.
+        (None, error_response_dict) on validation failure (422 status).
+    """
+    try:
+        validated = model_class.model_validate(body)
+        return validated, None
+    except ValidationError as exc:
+        errors = []
+        for err in exc.errors():
+            loc = ".".join(str(l) for l in err.get("loc", []))
+            errors.append({
+                "field": loc,
+                "message": err.get("msg", "Validation error"),
+                "type": err.get("type", "value_error"),
+            })
+        return None, response(422, data={"error": "Validation failed", "errors": errors})

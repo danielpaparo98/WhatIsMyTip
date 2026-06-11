@@ -29,7 +29,8 @@ from packages.shared.schemas import (
 )
 from packages.shared.models import Game, Tip
 from packages.shared.services.tip_generation import TipGenerationService
-from packages.shared.api_helpers import parse_request, response, segments, to_dict, int_query, bool_query, verify_api_key, check_rate_limit, check_request_size
+from packages.shared.api_helpers import parse_request, response, segments, to_dict, int_query, bool_query, verify_api_key, check_rate_limit, check_request_size, validate_request
+from packages.shared.schemas.admin import TipGenerateRequest
 
 from sqlalchemy import select
 
@@ -177,10 +178,32 @@ async def _handle_list_tips(session, query: dict) -> dict:
 
 async def _handle_generate_tips(session, query: dict, body: dict) -> dict:
     """POST /generate — generate tips for a specific round."""
-    # Accept params from query or body
-    season = int_query(query, "season") or body.get("season")
-    round_id = int_query(query, "round") or body.get("round")
-    regenerate = bool_query(query, "regenerate") or body.get("regenerate", False)
+    # Merge query params into body for unified validation.
+    # Accept both "round" (legacy/external) and "round_id" (schema) keys.
+    merged = {**body}
+    if not merged.get("season"):
+        merged["season"] = int_query(query, "season")
+    if not merged.get("round_id"):
+        merged["round_id"] = merged.pop("round", None) or int_query(query, "round")
+    if not merged.get("regenerate"):
+        merged["regenerate"] = bool_query(query, "regenerate") or False
+
+    validated, err = validate_request(merged, TipGenerateRequest)
+    if err:
+        return err
+
+    season = validated.season
+    round_id = validated.round_id
+    regenerate = validated.regenerate
+
+    # Validate heuristics if provided
+    if validated.heuristics:
+        invalid = [h for h in validated.heuristics if h not in VALID_HEURISTICS]
+        if invalid:
+            return response(
+                400,
+                error=f"Invalid heuristic(s): {', '.join(invalid)}. Must be one of: {', '.join(VALID_HEURISTICS)}",
+            )
 
     if not season or not round_id:
         return response(400, error="Both 'season' and 'round' are required")

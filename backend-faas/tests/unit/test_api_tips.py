@@ -193,7 +193,7 @@ class TestTipsFunctionRouting:
 
     @pytest.mark.asyncio
     async def test_post_generate_missing_params(self):
-        """POST /generate without season/round returns 400."""
+        """POST /generate without season/round returns 422 (validation error)."""
         from packages.api.tips import main
 
         mock_session = AsyncMock()
@@ -212,7 +212,7 @@ class TestTipsFunctionRouting:
                 "__ow_headers": {"x-api-key": "test-api-key"},
             })
 
-        assert result["statusCode"] == 400
+        assert result["statusCode"] == 422
 
     @pytest.mark.asyncio
     async def test_post_generate_no_games_found(self):

@@ -27,7 +27,13 @@ from packages.shared.db import _get_session_factory, dispose_engine
 from packages.shared.cache import close_redis_pool
 from packages.shared.config import settings
 from packages.shared.logger import get_logger
-from packages.shared.api_helpers import parse_request, response, segments, verify_api_key, check_rate_limit, check_request_size
+from packages.shared.api_helpers import parse_request, response, segments, verify_api_key, check_rate_limit, check_request_size, validate_request
+from packages.shared.schemas.admin import (
+    DailySyncTriggerRequest,
+    MatchCompletionTriggerRequest,
+    TipGenerationTriggerRequest,
+    HistoricRefreshTriggerRequest,
+)
 from packages.shared.squiggle import SquiggleClient
 from packages.shared.services.game_sync import GameSyncService
 from packages.shared.services.match_completion import MatchCompletionDetectorService
@@ -45,7 +51,11 @@ logger = get_logger(__name__)
 
 async def _handle_daily_sync(session, body: dict) -> dict:
     """POST /daily-sync/trigger — trigger daily game sync."""
-    season = body.get("season") or settings.current_season
+    validated, err = validate_request(body, DailySyncTriggerRequest)
+    if err:
+        return err
+
+    season = validated.season or settings.current_season
 
     logger.info(f"Manual daily sync triggered for season {season}")
 
@@ -88,7 +98,11 @@ async def _handle_daily_sync(session, body: dict) -> dict:
 
 async def _handle_match_completion(session, body: dict) -> dict:
     """POST /match-completion/trigger — trigger match completion detection."""
-    buffer_minutes = body.get("buffer_minutes") or settings.match_completion_buffer_minutes
+    validated, err = validate_request(body, MatchCompletionTriggerRequest)
+    if err:
+        return err
+
+    buffer_minutes = validated.buffer_minutes or settings.match_completion_buffer_minutes
 
     logger.info(f"Manual match completion detection triggered with {buffer_minutes} minute buffer")
 
@@ -141,9 +155,13 @@ async def _handle_match_completion(session, body: dict) -> dict:
 
 async def _handle_tip_generation(session, body: dict) -> dict:
     """POST /tip-generation/trigger — trigger tip generation."""
-    season = body.get("season")
-    round_id = body.get("round_id")
-    regenerate = body.get("regenerate", False)
+    validated, err = validate_request(body, TipGenerationTriggerRequest)
+    if err:
+        return err
+
+    season = validated.season
+    round_id = validated.round_id
+    regenerate = validated.regenerate
 
     logger.info(
         f"Manual tip generation triggered for "
@@ -193,9 +211,13 @@ async def _handle_tip_generation(session, body: dict) -> dict:
 
 async def _handle_historic_refresh(session, body: dict) -> dict:
     """POST /historic-refresh/trigger — trigger historic data refresh."""
-    seasons_str = body.get("seasons") or settings.historic_refresh_seasons
-    round_id = body.get("round_id")
-    regenerate_tips = body.get("regenerate_tips", False)
+    validated, err = validate_request(body, HistoricRefreshTriggerRequest)
+    if err:
+        return err
+
+    seasons_str = validated.seasons or settings.historic_refresh_seasons
+    round_id = validated.round_id
+    regenerate_tips = validated.regenerate_tips
 
     logger.info(
         f"Manual historic refresh triggered for "

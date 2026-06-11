@@ -16,6 +16,13 @@ from .backtest import (
     CurrentSeasonResponse,
     PreGenerateResponse,
 )
+from .admin import (
+    DailySyncTriggerRequest,
+    MatchCompletionTriggerRequest,
+    TipGenerationTriggerRequest,
+    HistoricRefreshTriggerRequest,
+    TipGenerateRequest,
+)
 
 __all__ = [
     "GameResponse",
@@ -37,4 +44,9 @@ __all__ = [
     "CurrentSeasonHeuristicPerformance",
     "CurrentSeasonResponse",
     "PreGenerateResponse",
+    "DailySyncTriggerRequest",
+    "MatchCompletionTriggerRequest",
+    "TipGenerationTriggerRequest",
+    "HistoricRefreshTriggerRequest",
+    "TipGenerateRequest",
 ]
