@@ -1,4 +1,4 @@
-from .games import GameResponse, GameListResponse, GameDetailResponse, ModelPrediction
+from .games import GameResponse, GameListResponse, GameDetailResponse, ModelPrediction, WeatherResponse
 from .tips import TipResponse, TipCreate, TipListResponse
 from .match_analysis import MatchAnalysisResponse
 
@@ -22,6 +22,7 @@ __all__ = [
     "GameListResponse",
     "GameDetailResponse",
     "ModelPrediction",
+    "WeatherResponse",
     "TipResponse",
     "TipCreate",
     "TipListResponse",

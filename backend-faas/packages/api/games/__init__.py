@@ -29,9 +29,10 @@ from packages.shared.schemas import (
     GameListResponse,
     GameDetailResponse,
     ModelPrediction as ModelPredictionSchema,
+    WeatherResponse,
 )
 from packages.shared.schemas.match_analysis import MatchAnalysisResponse
-from packages.shared.models import Game
+from packages.shared.models import Game, MatchWeather
 from packages.shared.api_helpers import parse_request, response, segments, to_dict, int_query, bool_query
 
 from sqlalchemy import select, func, and_
@@ -166,6 +167,13 @@ async def _handle_game_detail(session, slug: str) -> dict:
         else None
     )
 
+    # Fetch weather data
+    weather_db = await session.execute(
+        select(MatchWeather).where(MatchWeather.game_id == game_id)
+    )
+    weather_row = weather_db.scalar_one_or_none()
+    weather = WeatherResponse.model_validate(weather_row) if weather_row else None
+
     total_time = time.time() - start_time
     logger.debug(f"get_game_detail: COMPLETED in {total_time:.4f}s")
 
@@ -174,6 +182,7 @@ async def _handle_game_detail(session, slug: str) -> dict:
         tips=[t for t in tips],
         model_predictions=model_predictions_list,
         match_analysis=match_analysis,
+        weather=weather,
     )
     return response(200, data=to_dict(resp))
 

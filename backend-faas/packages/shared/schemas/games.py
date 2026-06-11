@@ -1,10 +1,25 @@
 from pydantic import BaseModel, Field
-from datetime import datetime
+from datetime import datetime, date
 from typing import Optional, List, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from .tips import TipResponse
     from .match_analysis import MatchAnalysisResponse
+
+
+class WeatherResponse(BaseModel):
+    """Weather conditions for a match venue."""
+    temperature: Optional[float] = None
+    precipitation: Optional[float] = None
+    wind_speed: Optional[float] = None
+    wind_gusts: Optional[float] = None
+    wind_direction: Optional[int] = None
+    humidity: Optional[int] = None
+    weather_code: Optional[int] = None
+    data_type: Optional[str] = "historical"
+
+    class Config:
+        from_attributes = True
 
 
 class GameResponse(BaseModel):
@@ -37,6 +52,7 @@ class GameDetailResponse(BaseModel):
     tips: List['TipResponse']  # All tips for all heuristics
     model_predictions: List[ModelPrediction]  # On-demand predictions from all 4 models
     match_analysis: Optional['MatchAnalysisResponse'] = None  # AI-generated casual talking points
+    weather: Optional[WeatherResponse] = None  # Weather conditions at match venue
 
 
 class GameListResponse(BaseModel):
