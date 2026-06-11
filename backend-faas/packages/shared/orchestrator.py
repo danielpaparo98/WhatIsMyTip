@@ -5,6 +5,7 @@ import asyncio
 from sqlalchemy.ext.asyncio import AsyncSession
 from .models import Game
 from .models_ml import BaseModel, EloModel, FormModel, HomeAdvantageModel, ValueModel
+from .models_ml import WeatherImpactModel, InjuryImpactModel, MatchupModel, PlayerFormModel
 from .heuristics import BaseHeuristic, BestBetHeuristic, YOLOHeuristic, HighRiskHighRewardHeuristic
 from .logger import get_logger
 
@@ -21,6 +22,10 @@ class ModelOrchestrator:
             FormModel(),
             HomeAdvantageModel(),
             ValueModel(),
+            WeatherImpactModel(),
+            InjuryImpactModel(),
+            MatchupModel(),
+            PlayerFormModel(),
         ]
         
         # Initialize heuristics
