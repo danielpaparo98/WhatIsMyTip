@@ -7,6 +7,7 @@ Routes:
     GET  /                     Backtest results (deprecated)
     GET  /current-season       Current season performance
     GET  /compare              Compare heuristics
+    GET  /model-compare        Compare individual ML models
     GET  /table                Detailed round-by-round table
     GET  /seasons              Available seasons
     GET  /{heuristic}          Backtest by heuristic (deprecated)
@@ -79,6 +80,36 @@ async def _handle_compare(session, query: dict) -> dict:
         }
     else:
         best = {"heuristic": None, "accuracy": 0.0, "profit": 0.0}
+
+    return response(
+        200,
+        data={
+            "season": season,
+            "comparison": comparison,
+            "best_overall": best,
+        },
+    )
+
+
+async def _handle_model_compare(session, query: dict) -> dict:
+    """GET /model-compare — compare all individual ML models for a season."""
+    season = int_query(query, "season")
+    if not season:
+        return response(400, error="'season' query parameter is required")
+
+    service = BacktestService()
+    comparison = await service.compare_models(session, season)
+
+    # Find best performing model
+    if comparison:
+        best_model = comparison[0]  # Already sorted by accuracy desc
+        best = {
+            "model_name": best_model["model_name"],
+            "accuracy": best_model["overall_accuracy"],
+            "profit": best_model["total_profit"],
+        }
+    else:
+        best = {"model_name": None, "accuracy": 0.0, "profit": 0.0}
 
     return response(
         200,
@@ -180,6 +211,8 @@ async def main(args: dict) -> dict:
                     return await _handle_current_season(session)
                 if named == "compare":
                     return await _handle_compare(session, query)
+                if named == "model-compare":
+                    return await _handle_model_compare(session, query)
                 if named == "table":
                     return await _handle_table(session, query)
                 if named == "seasons":

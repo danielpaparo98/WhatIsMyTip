@@ -2,9 +2,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_, func, case
 from typing import Dict, List, Tuple, Optional
 from datetime import datetime
-from ..models import Game, Tip, BacktestResult
+from ..models import Game, Tip, BacktestResult, ModelPrediction
 from ..orchestrator import ModelOrchestrator
-from ..crud import BacktestCRUD, GameCRUD, TipCRUD, GenerationProgressCRUD
+from ..crud import BacktestCRUD, GameCRUD, TipCRUD, GenerationProgressCRUD, ModelPredictionCRUD
 from ..squiggle import SquiggleClient
 from ..schemas.backtest import HistoricalSyncResponse, CurrentSeasonResponse, CurrentSeasonHeuristicPerformance, PreGenerateResponse
 
@@ -322,3 +322,246 @@ class BacktestService:
             rounds_completed=rounds_completed,
             total_rounds=total_rounds,
         )
+    
+    # -----------------------------------------------------------------------
+    # Model-level backtest methods
+    # -----------------------------------------------------------------------
+    
+    async def calculate_backtest_from_model_predictions(
+        self,
+        db: AsyncSession,
+        season: int,
+        model_name: str,
+    ) -> Dict[str, float]:
+        """Calculate backtest metrics for a season/model from model predictions.
+        
+        Args:
+            db: Database session
+            season: Season year
+            model_name: Model name (e.g. "elo", "form")
+            
+        Returns:
+            Dict with backtest metrics
+        """
+        # Get predictions for this model in this season
+        result = await db.execute(
+            select(ModelPrediction, Game)
+            .join(Game, ModelPrediction.game_id == Game.id)
+            .where(
+                and_(
+                    Game.season == season,
+                    ModelPrediction.model_name == model_name,
+                    Game.completed == True,
+                    Game.home_score.isnot(None),
+                    Game.away_score.isnot(None),
+                )
+            )
+        )
+        prediction_rows = result.all()
+        
+        if not prediction_rows:
+            return {
+                "model_name": model_name,
+                "season": season,
+                "total_tips": 0,
+                "total_correct": 0,
+                "overall_accuracy": 0.0,
+                "total_profit": 0.0,
+                "avg_margin": 0.0,
+            }
+        
+        tips_made = 0
+        tips_correct = 0
+        profit = 0.0
+        total_margin = 0
+        
+        for prediction, game in prediction_rows:
+            tips_made += 1
+            total_margin += abs(prediction.margin or 0)
+            
+            # Determine actual winner from the game object
+            actual_winner_name = (
+                game.home_team if game.home_score > game.away_score else game.away_team
+            )
+            
+            # Check if prediction was correct
+            if prediction.winner == actual_winner_name:
+                tips_correct += 1
+                profit += STAKE_PER_GAME
+            else:
+                profit -= STAKE_PER_GAME
+        
+        # Calculate metrics
+        accuracy = tips_correct / tips_made if tips_made > 0 else 0.0
+        avg_margin = total_margin / tips_made if tips_made > 0 else 0.0
+        
+        return {
+            "model_name": model_name,
+            "season": season,
+            "total_tips": tips_made,
+            "total_correct": tips_correct,
+            "overall_accuracy": accuracy,
+            "total_profit": profit,
+            "avg_margin": avg_margin,
+        }
+    
+    async def compare_models(
+        self,
+        db: AsyncSession,
+        season: int,
+    ) -> List[Dict]:
+        """Compare all models for a season by calculating from model predictions.
+        
+        Args:
+            db: Database session
+            season: Season year
+            
+        Returns:
+            List of result dicts sorted by accuracy descending
+        """
+        # Get all distinct model names
+        result = await db.execute(
+            select(ModelPrediction.model_name).distinct()
+        )
+        model_names = [row[0] for row in result.all()]
+        
+        comparison = []
+        for model_name in model_names:
+            metrics = await self.calculate_backtest_from_model_predictions(db, season, model_name)
+            comparison.append(metrics)
+        
+        # Sort by accuracy descending
+        comparison.sort(key=lambda x: x["overall_accuracy"], reverse=True)
+        
+        return comparison
+    
+    async def get_model_round_by_round(
+        self,
+        db: AsyncSession,
+        season: int,
+        model_name: str,
+    ) -> List[Dict]:
+        """Get round-by-round backtest data for a season/model.
+        
+        Args:
+            db: Database session
+            season: Season year
+            model_name: Model name
+            
+        Returns:
+            List of round data with tips_made, tips_correct, accuracy, profit
+        """
+        result = await db.execute(
+            select(
+                Game.round_id,
+                func.count(ModelPrediction.id).label('tips_made'),
+                func.sum(
+                    case(
+                        (ModelPrediction.winner ==
+                         case(
+                             (Game.home_score > Game.away_score, Game.home_team),
+                             else_=Game.away_team
+                         ), 1),
+                        else_=0
+                    )
+                ).label('tips_correct'),
+                func.sum(
+                    case(
+                        (ModelPrediction.winner ==
+                         case(
+                             (Game.home_score > Game.away_score, Game.home_team),
+                             else_=Game.away_team
+                         ), STAKE_PER_GAME),
+                        else_=-STAKE_PER_GAME
+                    )
+                ).label('profit')
+            )
+            .join(ModelPrediction, ModelPrediction.game_id == Game.id)
+            .where(
+                and_(
+                    Game.season == season,
+                    ModelPrediction.model_name == model_name,
+                    Game.completed == True,
+                    Game.home_score.isnot(None),
+                    Game.away_score.isnot(None),
+                )
+            )
+            .group_by(Game.round_id)
+            .order_by(Game.round_id)
+        )
+        
+        round_data = []
+        for round_id, tips_made, tips_correct, profit in result.all():
+            accuracy = tips_correct / tips_made if tips_made > 0 else 0.0
+            round_data.append({
+                "round_id": round_id,
+                "tips_made": tips_made,
+                "tips_correct": tips_correct,
+                "accuracy": accuracy,
+                "profit": profit,
+            })
+        
+        return round_data
+    
+    async def run_model_backtest(
+        self,
+        db: AsyncSession,
+        season: int,
+    ) -> List[Dict]:
+        """Run full model backtest: generate missing predictions, then compare.
+        
+        For each completed game in the season that doesn't have predictions yet,
+        runs all models and stores the results. Then returns comparison data.
+        
+        Args:
+            db: Database session
+            season: Season year
+            
+        Returns:
+            List of model comparison dicts sorted by accuracy descending
+        """
+        # Get all completed games for this season with scores
+        games_result = await db.execute(
+            select(Game)
+            .where(
+                and_(
+                    Game.season == season,
+                    Game.completed == True,
+                    Game.home_score.isnot(None),
+                    Game.away_score.isnot(None),
+                )
+            )
+        )
+        games = list(games_result.scalars().all())
+        
+        # Get games that already have predictions
+        existing_result = await db.execute(
+            select(ModelPrediction.game_id).distinct()
+        )
+        games_with_predictions = {row[0] for row in existing_result.all()}
+        
+        # Generate predictions for games without them
+        games_without_predictions = [g for g in games if g.id not in games_with_predictions]
+        
+        if games_without_predictions:
+            # Get all models from orchestrator
+            models = self.orchestrator.models
+            
+            for game in games_without_predictions:
+                for model in models:
+                    try:
+                        winner, confidence, margin = await model.predict(game, db)
+                        await ModelPredictionCRUD.create(
+                            db=db,
+                            game_id=game.id,
+                            model_name=model.get_name(),
+                            winner=winner,
+                            confidence=confidence,
+                            margin=margin,
+                        )
+                    except Exception:
+                        # Skip failed predictions rather than aborting the whole backtest
+                        pass
+        
+        # Return comparison results
+        return await self.compare_models(db, season)
