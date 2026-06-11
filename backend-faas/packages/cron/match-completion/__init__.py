@@ -17,7 +17,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 from packages.shared.db import _get_session_factory, dispose_engine
 from packages.shared.cache import close_redis_pool
 from packages.shared.config import settings
-from packages.shared.logger import get_logger
+from packages.shared.logger import get_logger, generate_execution_id
 from packages.shared.crud.jobs import JobExecutionCRUD, JobLockCRUD
 from packages.shared.squiggle import SquiggleClient
 from packages.shared.services.match_completion import MatchCompletionDetectorService
@@ -40,6 +40,11 @@ async def main(args: dict) -> dict:
     Returns:
         dict with statusCode and body.
     """
+    execution_id = generate_execution_id()
+    log_extra = {"job_name": JOB_NAME, "execution_id": execution_id}
+
+    logger.info(f"{JOB_NAME}: Starting execution", extra=log_extra)
+
     factory = _get_session_factory()
     async with factory() as session:
         execution = None
@@ -123,7 +128,7 @@ async def main(args: dict) -> dict:
                     summary_parts.append(f"Failed: {error_count}")
 
                 summary = "; ".join(summary_parts)
-                logger.info(f"{JOB_NAME} completed: {summary}")
+                logger.info(f"{JOB_NAME} completed: {summary}", extra=log_extra)
 
                 # 4. Mark success
                 await execution_crud.update_execution(
@@ -147,12 +152,12 @@ async def main(args: dict) -> dict:
             if isinstance(classified, TransientJobError):
                 logger.warning(
                     f"Transient error in {JOB_NAME}: {classified.message}",
-                    extra={"error_type": "transient", "details": classified.details},
+                    extra={**log_extra, "error_type": "transient", "details": classified.details},
                 )
             else:
                 logger.error(
                     f"Permanent error in {JOB_NAME}: {classified.message}",
-                    extra={"error_type": "permanent", "details": classified.details},
+                    extra={**log_extra, "error_type": "permanent", "details": classified.details},
                 )
             logger.error(f"{JOB_NAME} error: {e}\n{traceback.format_exc()}")
             if execution:
