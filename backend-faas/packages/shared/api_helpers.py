@@ -102,6 +102,7 @@ def response(
     data=None,
     error: str | None = None,
     request_args: dict | None = None,
+    allowed_methods: list[str] | None = None,
 ) -> dict:
     """Build a DO Function response dict with proper CORS headers.
 
@@ -110,6 +111,8 @@ def response(
         data: Response body data (used when no error).
         error: Error message string.
         request_args: Original DO Function args (used for CORS origin matching).
+        allowed_methods: CORS Allow-Methods value. Defaults to
+            ``["GET", "POST", "OPTIONS"]`` for backward compatibility.
     """
     body = {}
     if error:
@@ -118,13 +121,14 @@ def response(
         body = data
 
     origin = _resolve_cors_origin(request_args)
+    methods = ", ".join(allowed_methods or ["GET", "POST", "OPTIONS"])
 
     return {
         "statusCode": status_code,
         "headers": {
             "Content-Type": "application/json",
             "Access-Control-Allow-Origin": origin,
-            "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+            "Access-Control-Allow-Methods": methods,
             "Access-Control-Allow-Headers": "Content-Type, X-API-Key",
             # Security headers (OWASP recommended)
             "X-Content-Type-Options": "nosniff",
