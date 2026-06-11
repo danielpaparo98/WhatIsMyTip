@@ -22,6 +22,7 @@ from packages.shared.crud.games import GameCRUD
 from packages.shared.services.tip_generation import TipGenerationService
 from packages.shared.services.explanation import ExplanationService
 from packages.shared.alerting import AlertingService
+from packages.shared.exceptions import classify_error, TransientJobError
 
 logger = get_logger(__name__)
 
@@ -175,6 +176,17 @@ async def main(args: dict) -> dict:
 
         except Exception as e:
             had_error = True
+            classified = classify_error(e)
+            if isinstance(classified, TransientJobError):
+                logger.warning(
+                    f"Transient error in {JOB_NAME}: {classified.message}",
+                    extra={"error_type": "transient", "details": classified.details},
+                )
+            else:
+                logger.error(
+                    f"Permanent error in {JOB_NAME}: {classified.message}",
+                    extra={"error_type": "permanent", "details": classified.details},
+                )
             logger.error(f"{JOB_NAME} error: {e}\n{traceback.format_exc()}")
             if execution:
                 try:
