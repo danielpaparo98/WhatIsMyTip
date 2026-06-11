@@ -36,6 +36,7 @@ except ImportError:
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from sqlalchemy import select, text
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from packages.shared.db import Base, get_engine
@@ -295,7 +296,7 @@ async def match_games(session: AsyncSession, input_dir: str, verbose: bool = Fal
 async def load_players(session: AsyncSession, input_dir: str, verbose: bool = False) -> int:
     """Load players from CSV into the database.
 
-    Uses INSERT ... ON CONFLICT (name) DO NOTHING to handle duplicates.
+    Uses batch INSERT ... ON CONFLICT (name) DO NOTHING for speed.
     """
     filepath = os.path.join(input_dir, "players.csv")
     rows = read_csv(filepath)
@@ -307,29 +308,39 @@ async def load_players(session: AsyncSession, input_dir: str, verbose: bool = Fa
     if verbose:
         print(f"  Loading {len(rows)} players from CSV...")
 
-    count = 0
+    batch_size = 500
+    total_inserted = 0
+    batch: List[dict] = []
+
     for row in rows:
         name = row.get("name", "").strip()
         if not name:
             continue
 
-        # Check if player already exists
-        existing = await session.execute(
-            select(Player).where(Player.name == name)
+        batch.append({"name": name})
+
+        if len(batch) >= batch_size:
+            result = await session.execute(
+                pg_insert(Player).values(batch).on_conflict_do_nothing(
+                    index_elements=["name"]
+                )
+            )
+            total_inserted += result.rowcount
+            batch = []
+
+    # Flush remaining
+    if batch:
+        result = await session.execute(
+            pg_insert(Player).values(batch).on_conflict_do_nothing(
+                index_elements=["name"]
+            )
         )
-        if existing.scalar_one_or_none():
-            continue
-
-        player = Player(name=name)
-        session.add(player)
-        count += 1
-
-    await session.flush()
+        total_inserted += result.rowcount
 
     if verbose:
-        print(f"  -> Created {count} new player records (skipped {len(rows) - count} existing)")
+        print(f"  -> Created {total_inserted} new player records (skipped {len(rows) - total_inserted} existing)")
 
-    return count
+    return total_inserted
 
 
 async def load_player_match_stats(
@@ -338,6 +349,9 @@ async def load_player_match_stats(
     verbose: bool = False,
 ) -> int:
     """Load player match stats from CSV into the database.
+
+    Uses batch INSERT ... ON CONFLICT DO NOTHING for speed.
+    ~150K rows load in ~30s instead of ~2.5h with per-row SELECT+INSERT.
 
     Requires players and games to already exist in the DB.
     Maps CSV game_id (AFL Tables format) → games.id via afltables_match_id.
@@ -355,79 +369,78 @@ async def load_player_match_stats(
         select(Game.id, Game.afltables_match_id).where(Game.afltables_match_id.isnot(None))
     )
     game_map: Dict[str, int] = {
-        str(row.afltables_match_id): row.id for row in result
+        str(r.afltables_match_id): r.id for r in result
     }
 
     # Build player name map: name → players.id
     result = await session.execute(select(Player.id, Player.name))
-    player_map: Dict[str, int] = {row.name: row.id for row in result}
+    player_map: Dict[str, int] = {r.name: r.id for r in result}
 
     if verbose:
         print(f"  Game map: {len(game_map)} games, Player map: {len(player_map)} players")
         print(f"  Loading {len(rows)} player match stats from CSV...")
 
-    count = 0
+    # Build batch of dicts for bulk insert
+    batch: List[dict] = []
     skipped_game = 0
     skipped_player = 0
-    skipped_duplicate = 0
+    batch_size = 500
+    total_inserted = 0
 
     for row in rows:
         afltables_id = row.get("game_id", "").strip()
         player_name = row.get("player_name", "").strip()
 
-        # Map AFL Tables game ID → games.id
         db_game_id = game_map.get(afltables_id)
         if not db_game_id:
             skipped_game += 1
             continue
 
-        # Map player name → players.id
         db_player_id = player_map.get(player_name)
         if not db_player_id:
             skipped_player += 1
             continue
 
-        # Check for duplicate
-        existing = await session.execute(
-            select(PlayerMatchStats.id).where(
-                PlayerMatchStats.game_id == db_game_id,
-                PlayerMatchStats.player_id == db_player_id,
+        batch.append({
+            "game_id": db_game_id,
+            "player_id": db_player_id,
+            "team": row.get("team"),
+            "kicks": int(row.get("kicks") or 0),
+            "handballs": int(row.get("handballs") or 0),
+            "disposals": int(row.get("disposals") or 0),
+            "marks": int(row.get("marks") or 0),
+            "goals": int(row.get("goals") or 0),
+            "behinds": int(row.get("behinds") or 0),
+            "tackles": int(row.get("tackles") or 0),
+            "hitouts": int(row.get("hitouts") or 0),
+            "frees_for": int(row.get("frees_for") or 0),
+            "frees_against": int(row.get("frees_against") or 0),
+        })
+
+        if len(batch) >= batch_size:
+            stmt = pg_insert(PlayerMatchStats).values(batch).on_conflict_do_nothing(
+                index_elements=["game_id", "player_id"]
             )
-        )
-        if existing.scalar_one_or_none():
-            skipped_duplicate += 1
-            continue
+            result = await session.execute(stmt)
+            total_inserted += result.rowcount  # type: ignore[union-attr]
+            batch = []
 
-        stat = PlayerMatchStats(
-            game_id=db_game_id,
-            player_id=db_player_id,
-            team=row.get("team"),
-            kicks=int(row.get("kicks") or 0),
-            handballs=int(row.get("handballs") or 0),
-            disposals=int(row.get("disposals") or 0),
-            marks=int(row.get("marks") or 0),
-            goals=int(row.get("goals") or 0),
-            behinds=int(row.get("behinds") or 0),
-            tackles=int(row.get("tackles") or 0),
-            hitouts=int(row.get("hitouts") or 0),
-            frees_for=int(row.get("frees_for") or 0),
-            frees_against=int(row.get("frees_against") or 0),
+    # Flush remaining
+    if batch:
+        stmt = pg_insert(PlayerMatchStats).values(batch).on_conflict_do_nothing(
+            index_elements=["game_id", "player_id"]
         )
-        session.add(stat)
-        count += 1
-
-    await session.flush()
+        result = await session.execute(stmt)
+        total_inserted += result.rowcount  # type: ignore[union-attr]
 
     if verbose:
-        print(f"  -> Created {count} stat records")
+        print(f"  -> Created {total_inserted} stat records")
         if skipped_game:
             print(f"     Skipped {skipped_game} (game not in DB)")
         if skipped_player:
             print(f"     Skipped {skipped_player} (player not in DB)")
-        if skipped_duplicate:
-            print(f"     Skipped {skipped_duplicate} (duplicate)")
 
-    return count
+    return total_inserted
 
 
 async def load_match_weather(
@@ -437,6 +450,7 @@ async def load_match_weather(
 ) -> int:
     """Load match weather from CSV into the database.
 
+    Uses batch INSERT ... ON CONFLICT (game_id) DO NOTHING for speed.
     Maps CSV game_id (AFL Tables format) → games.id via afltables_match_id.
     """
     filepath = os.path.join(input_dir, "match_weather.csv")
@@ -451,15 +465,16 @@ async def load_match_weather(
         select(Game.id, Game.afltables_match_id).where(Game.afltables_match_id.isnot(None))
     )
     game_map: Dict[str, int] = {
-        str(row.afltables_match_id): row.id for row in result
+        str(r.afltables_match_id): r.id for r in result
     }
 
     if verbose:
         print(f"  Loading {len(rows)} weather records from CSV...")
 
-    count = 0
+    batch: List[dict] = []
     skipped_game = 0
-    skipped_duplicate = 0
+    batch_size = 500
+    total_inserted = 0
 
     for row in rows:
         afltables_id = row.get("game_id", "").strip()
@@ -468,39 +483,41 @@ async def load_match_weather(
             skipped_game += 1
             continue
 
-        # Check for duplicate
-        existing = await session.execute(
-            select(MatchWeather.id).where(MatchWeather.game_id == db_game_id)
-        )
-        if existing.scalar_one_or_none():
-            skipped_duplicate += 1
-            continue
+        batch.append({
+            "game_id": db_game_id,
+            "venue": row.get("venue"),
+            "data_type": row.get("data_type", "historical"),
+            "temperature": float(row["temperature"]) if row.get("temperature") else None,
+            "precipitation": float(row["precipitation"]) if row.get("precipitation") else None,
+            "wind_speed": float(row["wind_speed"]) if row.get("wind_speed") else None,
+            "wind_direction": int(row["wind_direction"]) if row.get("wind_direction") else None,
+            "wind_gusts": float(row["wind_gusts"]) if row.get("wind_gusts") else None,
+            "humidity": int(row["humidity"]) if row.get("humidity") else None,
+            "weather_code": int(row["weather_code"]) if row.get("weather_code") else None,
+        })
 
-        weather = MatchWeather(
-            game_id=db_game_id,
-            venue=row.get("venue"),
-            data_type=row.get("data_type", "historical"),
-            temperature=float(row["temperature"]) if row.get("temperature") else None,
-            precipitation=float(row["precipitation"]) if row.get("precipitation") else None,
-            wind_speed=float(row["wind_speed"]) if row.get("wind_speed") else None,
-            wind_direction=int(row["wind_direction"]) if row.get("wind_direction") else None,
-            wind_gusts=float(row["wind_gusts"]) if row.get("wind_gusts") else None,
-            humidity=int(row["humidity"]) if row.get("humidity") else None,
-            weather_code=int(row["weather_code"]) if row.get("weather_code") else None,
-        )
-        session.add(weather)
-        count += 1
+        if len(batch) >= batch_size:
+            stmt = pg_insert(MatchWeather).values(batch).on_conflict_do_nothing(
+                index_elements=["game_id"]
+            )
+            result = await session.execute(stmt)
+            total_inserted += result.rowcount  # type: ignore[union-attr]
+            batch = []
 
-    await session.flush()
+    # Flush remaining
+    if batch:
+        stmt = pg_insert(MatchWeather).values(batch).on_conflict_do_nothing(
+            index_elements=["game_id"]
+        )
+        result = await session.execute(stmt)
+        total_inserted += result.rowcount  # type: ignore[union-attr]
 
     if verbose:
-        print(f"  -> Created {count} weather records")
+        print(f"  -> Created {total_inserted} weather records")
         if skipped_game:
             print(f"     Skipped {skipped_game} (game not in DB)")
-        if skipped_duplicate:
-            print(f"     Skipped {skipped_duplicate} (duplicate)")
 
-    return count
+    return total_inserted
 
 
 async def load_injuries(
@@ -656,6 +673,7 @@ async def load_csv_data(
     clear: bool = False,
     verbose: bool = False,
     seasons: Optional[List[int]] = None,
+    use_subdirs: bool = False,
 ) -> Dict[str, int]:
     """Load CSV data into the database.
 
@@ -670,6 +688,8 @@ async def load_csv_data(
         clear: Whether to clear existing data first.
         verbose: Whether to print progress.
         seasons: Optional list of seasons for multi-season loading.
+        use_subdirs: If True, always use ``{input_dir}/{season}/`` sub-dirs
+            even for a single season.  Set when ``--season-range`` is used.
 
     Returns:
         Dict mapping table names to total number of records created.
@@ -704,7 +724,7 @@ async def load_csv_data(
             all_counts["injuries"] = count
 
     # --- Determine season directories ---
-    if seasons and len(seasons) > 1:
+    if seasons and (len(seasons) > 1 or use_subdirs):
         season_dirs = [(s, os.path.join(input_dir, str(s))) for s in seasons]
     elif seasons and len(seasons) == 1:
         season_dirs = [(seasons[0], input_dir)]
@@ -786,9 +806,11 @@ def main() -> None:
     )
     args = parser.parse_args()
 
+    use_subdirs = False
     if args.season_range:
         parts = args.season_range.split(":")
         seasons = list(range(int(parts[0]), int(parts[1]) + 1))
+        use_subdirs = True  # --season-range always uses subdirectories
     elif args.season:
         seasons = args.season
     else:
@@ -803,6 +825,7 @@ def main() -> None:
             clear=args.clear,
             verbose=args.verbose,
             seasons=seasons,
+            use_subdirs=use_subdirs,
         )
     )
 
