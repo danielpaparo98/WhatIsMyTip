@@ -510,8 +510,9 @@ class BacktestService:
     ) -> List[Dict]:
         """Run full model backtest: generate missing predictions, then compare.
         
-        For each completed game in the season that doesn't have predictions yet,
-        runs all models and stores the results. Then returns comparison data.
+        For each completed game in the season, checks which models don't have
+        predictions yet and generates only those missing predictions.
+        Then returns comparison data.
         
         Args:
             db: Database session
@@ -534,21 +535,28 @@ class BacktestService:
         )
         games = list(games_result.scalars().all())
         
-        # Get games that already have predictions
-        existing_result = await db.execute(
-            select(ModelPrediction.game_id).distinct()
-        )
-        games_with_predictions = {row[0] for row in existing_result.all()}
-        
-        # Generate predictions for games without them
-        games_without_predictions = [g for g in games if g.id not in games_with_predictions]
-        
-        if games_without_predictions:
+        if games:
+            game_ids = [g.id for g in games]
+            
+            # Get existing (game_id, model_name) pairs so we know exactly
+            # which models already have predictions for each game
+            existing_result = await db.execute(
+                select(ModelPrediction.game_id, ModelPrediction.model_name)
+                .where(ModelPrediction.game_id.in_(game_ids))
+                .distinct()
+            )
+            existing_predictions = {
+                (row[0], row[1]) for row in existing_result.all()
+            }
+            
             # Get all models from orchestrator
             models = self.orchestrator.models
             
-            for game in games_without_predictions:
+            for game in games:
                 for model in models:
+                    # Skip if this specific game+model prediction already exists
+                    if (game.id, model.get_name()) in existing_predictions:
+                        continue
                     try:
                         winner, confidence, margin = await model.predict(game, db)
                         await ModelPredictionCRUD.create(

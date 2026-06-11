@@ -411,7 +411,7 @@ class TestRunModelBacktest:
         game1 = _FakeGame(1, 1, 2025, "Brisbane", "Collingwood", 100, 80)
         games_result.scalars.return_value.all.return_value = [game1]
 
-        # Second execute: existing predictions (empty)
+        # Second execute: existing predictions (empty — no (game_id, model_name) pairs)
         existing_result = MagicMock()
         existing_result.all.return_value = []
 
@@ -450,16 +450,17 @@ class TestRunModelBacktest:
         assert result[0]["overall_accuracy"] == 1.0
 
     @pytest.mark.asyncio
-    async def test_skip_games_with_existing_predictions(self, service):
-        """run_model_backtest skips games that already have predictions."""
+    async def test_skip_when_all_models_already_have_predictions(self, service):
+        """run_model_backtest skips prediction when game+model already exists."""
         mock_db = AsyncMock()
 
         games_result = MagicMock()
         game1 = _FakeGame(1, 1, 2025, "Brisbane", "Collingwood", 100, 80)
         games_result.scalars.return_value.all.return_value = [game1]
 
+        # Existing predictions now return (game_id, model_name) tuples
         existing_result = MagicMock()
-        existing_result.all.return_value = [(1,)]  # Game 1 already has predictions
+        existing_result.all.return_value = [(1, "elo")]  # Game 1 already has "elo" prediction
 
         call_count = 0
 
@@ -485,6 +486,47 @@ class TestRunModelBacktest:
         # ModelPredictionCRUD.create should NOT have been called
         mock_crud.create.assert_not_called()
         assert len(result) == 1
+
+    @pytest.mark.asyncio
+    async def test_generates_only_missing_models_for_partial_predictions(self, service):
+        """run_model_backtest generates predictions only for models missing from a game."""
+        mock_db = AsyncMock()
+
+        games_result = MagicMock()
+        game1 = _FakeGame(1, 1, 2025, "Brisbane", "Collingwood", 100, 80)
+        games_result.scalars.return_value.all.return_value = [game1]
+
+        # Game 1 already has "weather_impact" prediction but NOT "elo"
+        existing_result = MagicMock()
+        existing_result.all.return_value = [(1, "weather_impact")]
+
+        call_count = 0
+
+        def mock_execute(stmt):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return games_result
+            return existing_result
+
+        mock_db.execute = AsyncMock(side_effect=mock_execute)
+
+        expected_comparison = [
+            {"model_name": "elo", "season": 2025, "total_tips": 1,
+             "total_correct": 1, "overall_accuracy": 1.0,
+             "total_profit": 10.0, "avg_margin": 15.0},
+        ]
+        service.compare_models = AsyncMock(return_value=expected_comparison)
+
+        with patch("packages.shared.services.backtest.ModelPredictionCRUD") as mock_crud:
+            mock_crud.create = AsyncMock(
+                return_value=_FakePrediction(1, "elo", "Brisbane", 0.8, 15)
+            )
+            result = await service.run_model_backtest(mock_db, 2025)
+
+        # elo prediction should have been generated (it was missing)
+        mock_crud.create.assert_called_once()
+        assert result[0]["model_name"] == "elo"
 
     @pytest.mark.asyncio
     async def test_model_predict_error_does_not_abort(self, service):
