@@ -1,3 +1,4 @@
+import ssl as _ssl
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase
 from .config import settings
@@ -10,15 +11,45 @@ class Base(DeclarativeBase):
     pass
 
 
-def _normalize_async_url(url: str) -> str:
+def _normalize_async_url(url: str) -> tuple[str, dict]:
     """Normalize database URL for async drivers.
 
-    asyncpg does not support ``sslmode`` as a query parameter; it requires
-    ``ssl=require`` instead.  This helper converts the URL transparently.
+    asyncpg does not support ``sslmode`` or ``ssl`` as query parameters in the
+    DSN string in some versions.  This helper strips SSL params from the URL
+    and returns them as ``connect_args`` for ``create_async_engine`` instead.
+
+    Returns:
+        Tuple of (clean_url, connect_args) where connect_args includes ssl ctx
+        if SSL was specified in the URL.
     """
-    if "+asyncpg" in url and "sslmode=" in url:
-        url = url.replace("sslmode=require", "ssl=require")
-    return url
+    connect_args: dict = {}
+
+    if "+asyncpg" not in url:
+        return url, connect_args
+
+    # Detect if SSL is requested
+    needs_ssl = "sslmode=require" in url or "ssl=require" in url
+
+    if needs_ssl:
+        # Strip ssl/sslmode params from URL
+        clean_url = url
+        if "?" in clean_url:
+            base_url, query = clean_url.split("?", 1)
+            params = [
+                p for p in query.split("&")
+                if not p.startswith("sslmode=") and not p.startswith("ssl=")
+            ]
+            clean_url = base_url + ("?" + "&".join(params) if params else "")
+
+        # Create SSL context for managed database connections
+        ssl_ctx = _ssl.create_default_context()
+        ssl_ctx.check_hostname = False
+        ssl_ctx.verify_mode = _ssl.CERT_NONE
+        connect_args["ssl"] = ssl_ctx
+
+        return clean_url, connect_args
+
+    return url, connect_args
 
 
 def get_engine():
@@ -35,9 +66,10 @@ def get_engine():
     """
     global _engine
     if _engine is None:
-        db_url = _normalize_async_url(settings.database_url)
+        db_url, connect_args = _normalize_async_url(settings.database_url)
         _engine = create_async_engine(
             db_url,
+            connect_args=connect_args,
             echo=settings.environment == "development",
             pool_size=1,
             max_overflow=1,
