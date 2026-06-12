@@ -4,10 +4,9 @@ Tests the new model backtest methods by mocking DB queries and verifying
 accuracy, profit, and aggregation calculations.
 """
 
-import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
-from datetime import datetime, timezone
 
+import pytest
 
 # ---------------------------------------------------------------------------
 # Helpers – lightweight stand-ins for ORM rows
@@ -66,7 +65,6 @@ class TestCalculateFromModelPredictions:
         mock_result.all.return_value = []
         mock_db.execute.return_value = mock_result
 
-        from packages.shared.services.backtest import BacktestService
         result = await service.calculate_backtest_from_model_predictions(
             mock_db, 2025, "elo"
         )

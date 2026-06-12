@@ -1,8 +1,7 @@
 """Tests for the seed_player_data script."""
 
-import sys
 import os
-from datetime import datetime, timezone
+import sys
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -15,12 +14,8 @@ from scripts.seed_player_data import (
     _safe_float,
     _safe_int,
     seed_injuries,
-    seed_match_weather,
-    seed_player_advanced_stats,
-    seed_player_match_stats,
     seed_players,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -110,17 +105,45 @@ class TestSeedPlayers:
         mock_session.flush = AsyncMock()
 
         mock_client = AsyncMock()
-        mock_client.get_season_games = AsyncMock(return_value=[
-            {"game_id": "2025010101", "round": "R1", "url": "/afl/stats/games/2025010101.html"},
-        ])
-        mock_client.get_player_stats_for_match = AsyncMock(return_value={
-            "home_players": [
-                {"name": "Player One", "kicks": 10, "handballs": 5, "disposals": 15, "marks": 3, "goals": 1, "behinds": 0, "tackles": 4, "hitouts": 0, "frees_for": 1, "frees_against": 0},
-            ],
-            "away_players": [
-                {"name": "Player Two", "kicks": 8, "handballs": 7, "disposals": 15, "marks": 2, "goals": 0, "behinds": 1, "tackles": 6, "hitouts": 0, "frees_for": 0, "frees_against": 2},
-            ],
-        })
+        mock_client.get_season_games = AsyncMock(
+            return_value=[
+                {"game_id": "2025010101", "round": "R1", "url": "/afl/stats/games/2025010101.html"},
+            ]
+        )
+        mock_client.get_player_stats_for_match = AsyncMock(
+            return_value={
+                "home_players": [
+                    {
+                        "name": "Player One",
+                        "kicks": 10,
+                        "handballs": 5,
+                        "disposals": 15,
+                        "marks": 3,
+                        "goals": 1,
+                        "behinds": 0,
+                        "tackles": 4,
+                        "hitouts": 0,
+                        "frees_for": 1,
+                        "frees_against": 0,
+                    },
+                ],
+                "away_players": [
+                    {
+                        "name": "Player Two",
+                        "kicks": 8,
+                        "handballs": 7,
+                        "disposals": 15,
+                        "marks": 2,
+                        "goals": 0,
+                        "behinds": 1,
+                        "tackles": 6,
+                        "hitouts": 0,
+                        "frees_for": 0,
+                        "frees_against": 2,
+                    },
+                ],
+            }
+        )
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=None)
 
@@ -137,9 +160,11 @@ class TestSeedPlayers:
         mock_session.flush = AsyncMock()
 
         mock_client = AsyncMock()
-        mock_client.get_season_games = AsyncMock(return_value=[
-            {"game_id": "2025010101", "round": "R1", "url": "/afl/stats/games/2025010101.html"},
-        ])
+        mock_client.get_season_games = AsyncMock(
+            return_value=[
+                {"game_id": "2025010101", "round": "R1", "url": "/afl/stats/games/2025010101.html"},
+            ]
+        )
         mock_client.get_player_stats_for_match = AsyncMock(return_value={})
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=None)
@@ -168,10 +193,22 @@ class TestSeedInjuries:
         mock_session.flush = AsyncMock()
 
         mock_client = AsyncMock()
-        mock_client.get_injury_list = AsyncMock(return_value=[
-            {"team": "Brisbane", "player": "Lachie Neale", "injury": "Hamstring", "return_timeline": "2-3 weeks"},
-            {"team": "Carlton", "player": "Patrick Cripps", "injury": "Ankle", "return_timeline": "TBC"},
-        ])
+        mock_client.get_injury_list = AsyncMock(
+            return_value=[
+                {
+                    "team": "Brisbane",
+                    "player": "Lachie Neale",
+                    "injury": "Hamstring",
+                    "return_timeline": "2-3 weeks",
+                },
+                {
+                    "team": "Carlton",
+                    "player": "Patrick Cripps",
+                    "injury": "Ankle",
+                    "return_timeline": "TBC",
+                },
+            ]
+        )
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=None)
 
@@ -205,11 +242,28 @@ class TestSeedInjuries:
         mock_session.flush = AsyncMock()
 
         mock_client = AsyncMock()
-        mock_client.get_injury_list = AsyncMock(return_value=[
-            {"team": "Brisbane", "player": "", "injury": "Hamstring", "return_timeline": "1 week"},
-            {"team": "Carlton", "player": "Patrick Cripps", "injury": "", "return_timeline": "TBC"},
-            {"team": "Geelong", "player": "  ", "injury": "Knee", "return_timeline": "4-6 weeks"},
-        ])
+        mock_client.get_injury_list = AsyncMock(
+            return_value=[
+                {
+                    "team": "Brisbane",
+                    "player": "",
+                    "injury": "Hamstring",
+                    "return_timeline": "1 week",
+                },
+                {
+                    "team": "Carlton",
+                    "player": "Patrick Cripps",
+                    "injury": "",
+                    "return_timeline": "TBC",
+                },
+                {
+                    "team": "Geelong",
+                    "player": "  ",
+                    "injury": "Knee",
+                    "return_timeline": "4-6 weeks",
+                },
+            ]
+        )
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=None)
 

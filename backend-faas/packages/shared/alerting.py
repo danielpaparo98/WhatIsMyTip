@@ -1,6 +1,5 @@
 """Alerting service for sending webhook notifications on job failures."""
 
-import json
 from datetime import datetime, timezone
 
 import httpx
@@ -39,7 +38,9 @@ class AlertingService:
             True if alert was sent successfully, False otherwise
         """
         if not self._enabled or not self._webhook_url:
-            logger.debug(f"Alerting disabled or no webhook URL configured, skipping alert for {job_name}")
+            logger.debug(
+                f"Alerting disabled or no webhook URL configured, skipping alert for {job_name}"
+            )
             return False
 
         payload = {
@@ -63,7 +64,9 @@ class AlertingService:
                     logger.info(f"Alert sent for {job_name}: {status}")
                     return True
                 else:
-                    logger.warning(f"Alert webhook returned {response.status_code}: {response.text}")
+                    logger.warning(
+                        f"Alert webhook returned {response.status_code}: {response.text}"
+                    )
                     return False
         except Exception as e:
             logger.error(f"Failed to send alert webhook: {e}")

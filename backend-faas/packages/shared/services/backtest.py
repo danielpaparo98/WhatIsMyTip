@@ -1,13 +1,16 @@
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, and_, func, case
-from typing import Dict, List, Tuple, Optional
 from datetime import datetime
-from ..models import Game, Tip, BacktestResult, ModelPrediction
-from ..orchestrator import ModelOrchestrator
-from ..crud import BacktestCRUD, GameCRUD, TipCRUD, GenerationProgressCRUD, ModelPredictionCRUD
-from ..squiggle import SquiggleClient
-from ..schemas.backtest import HistoricalSyncResponse, CurrentSeasonResponse, CurrentSeasonHeuristicPerformance, PreGenerateResponse
+from typing import Dict, List
 
+from sqlalchemy import and_, case, func, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from ..crud import ModelPredictionCRUD
+from ..models import Game, ModelPrediction, Tip
+from ..orchestrator import ModelOrchestrator
+from ..schemas.backtest import (
+    CurrentSeasonHeuristicPerformance,
+    CurrentSeasonResponse,
+)
 
 # Stake amount per game for profit calculation
 STAKE_PER_GAME = 10.0
@@ -15,16 +18,16 @@ STAKE_PER_GAME = 10.0
 
 class BacktestService:
     """Service for backtesting heuristic performance."""
-    
+
     def __init__(self):
         self.orchestrator = ModelOrchestrator()
-    
+
     async def get_available_seasons(self, db: AsyncSession) -> List[int]:
         """Get list of seasons that have tips for completed games.
-        
+
         Args:
             db: Database session
-            
+
         Returns:
             List of season years (descending order)
         """
@@ -32,12 +35,12 @@ class BacktestService:
         result = await db.execute(
             select(Game.season)
             .join(Tip, Game.id == Tip.game_id)
-            .where(Game.completed == True)
+            .where(Game.completed)
             .distinct()
             .order_by(Game.season.desc())
         )
         return [row[0] for row in result.all()]
-    
+
     async def calculate_backtest_from_tips(
         self,
         db: AsyncSession,
@@ -45,12 +48,12 @@ class BacktestService:
         heuristic: str,
     ) -> Dict[str, float]:
         """Calculate backtest metrics for a season/heuristic from tips.
-        
+
         Args:
             db: Database session
             season: Season year
             heuristic: Heuristic name
-            
+
         Returns:
             Dict with backtest metrics
         """
@@ -62,14 +65,14 @@ class BacktestService:
                 and_(
                     Game.season == season,
                     Tip.heuristic == heuristic,
-                    Game.completed == True,
+                    Game.completed,
                     Game.home_score.isnot(None),
                     Game.away_score.isnot(None),
                 )
             )
         )
         tip_rows = result.all()
-        
+
         if not tip_rows:
             return {
                 "total_rounds": 0,
@@ -81,32 +84,32 @@ class BacktestService:
                 "best_round_accuracy": 0.0,
                 "worst_round_accuracy": 0.0,
             }
-        
+
         tips_made = 0
         tips_correct = 0
         profit = 0.0
-        
+
         for tip, game in tip_rows:
             tips_made += 1
-            
+
             # Determine actual winner from the game object
             actual_winner_name = (
                 game.home_team if game.home_score > game.away_score else game.away_team
             )
-            
+
             # Check if prediction was correct
             if tip.selected_team == actual_winner_name:
                 tips_correct += 1
                 profit += STAKE_PER_GAME
             else:
                 profit -= STAKE_PER_GAME
-        
+
         # Calculate metrics
         accuracy = tips_correct / tips_made if tips_made > 0 else 0.0
-        
+
         # Get round-level accuracy for best/worst rounds
         round_accuracies = await self._get_round_accuracies(db, season, heuristic)
-        
+
         return {
             "total_rounds": len(round_accuracies),
             "total_tips": tips_made,
@@ -117,7 +120,7 @@ class BacktestService:
             "best_round_accuracy": max(round_accuracies) if round_accuracies else 0.0,
             "worst_round_accuracy": min(round_accuracies) if round_accuracies else 0.0,
         }
-    
+
     async def _get_round_accuracies(
         self,
         db: AsyncSession,
@@ -125,12 +128,12 @@ class BacktestService:
         heuristic: str,
     ) -> List[float]:
         """Get accuracy for each round in a season.
-        
+
         Args:
             db: Database session
             season: Season year
             heuristic: Heuristic name
-            
+
         Returns:
             List of accuracy values per round
         """
@@ -141,7 +144,7 @@ class BacktestService:
                 func.count(Tip.id).label('total_tips'),
                 func.sum(
                     case(
-                        (Tip.selected_team == 
+                        (Tip.selected_team ==
                          case(
                              (Game.home_score > Game.away_score, Game.home_team),
                              else_=Game.away_team
@@ -155,7 +158,7 @@ class BacktestService:
                 and_(
                     Game.season == season,
                     Tip.heuristic == heuristic,
-                    Game.completed == True,
+                    Game.completed,
                     Game.home_score.isnot(None),
                     Game.away_score.isnot(None),
                 )
@@ -163,14 +166,14 @@ class BacktestService:
             .group_by(Game.round_id)
             .order_by(Game.round_id)
         )
-        
+
         accuracies = []
         for round_id, total_tips, correct_tips in result.all():
             if total_tips > 0:
                 accuracies.append(correct_tips / total_tips)
-        
+
         return accuracies
-    
+
     async def get_round_by_round_data(
         self,
         db: AsyncSession,
@@ -178,12 +181,12 @@ class BacktestService:
         heuristic: str,
     ) -> List[Dict]:
         """Get round-by-round backtest data for a season/heuristic.
-        
+
         Args:
             db: Database session
             season: Season year
             heuristic: Heuristic name
-            
+
         Returns:
             List of round data with tips_made, tips_correct, accuracy, profit
         """
@@ -193,7 +196,7 @@ class BacktestService:
                 func.count(Tip.id).label('tips_made'),
                 func.sum(
                     case(
-                        (Tip.selected_team == 
+                        (Tip.selected_team ==
                          case(
                              (Game.home_score > Game.away_score, Game.home_team),
                              else_=Game.away_team
@@ -203,7 +206,7 @@ class BacktestService:
                 ).label('tips_correct'),
                 func.sum(
                     case(
-                        (Tip.selected_team == 
+                        (Tip.selected_team ==
                          case(
                              (Game.home_score > Game.away_score, Game.home_team),
                              else_=Game.away_team
@@ -217,7 +220,7 @@ class BacktestService:
                 and_(
                     Game.season == season,
                     Tip.heuristic == heuristic,
-                    Game.completed == True,
+                    Game.completed,
                     Game.home_score.isnot(None),
                     Game.away_score.isnot(None),
                 )
@@ -225,7 +228,7 @@ class BacktestService:
             .group_by(Game.round_id)
             .order_by(Game.round_id)
         )
-        
+
         round_data = []
         for round_id, tips_made, tips_correct, profit in result.all():
             accuracy = tips_correct / tips_made if tips_made > 0 else 0.0
@@ -236,46 +239,46 @@ class BacktestService:
                 "accuracy": accuracy,
                 "profit": profit,
             })
-        
+
         return round_data
-    
+
     async def compare_heuristics(
         self,
         db: AsyncSession,
         season: int,
     ) -> Dict[str, Dict[str, float]]:
         """Compare all heuristics for a season by calculating from tips.
-        
+
         Args:
             db: Database session
             season: Season year
-            
+
         Returns:
             Dict of heuristic -> summary statistics
         """
         comparison = {}
-        
+
         for heuristic in self.orchestrator.get_available_heuristics():
             comparison[heuristic] = await self.calculate_backtest_from_tips(db, season, heuristic)
-        
+
         return comparison
-    
+
     async def get_current_season_performance(
         self,
         db: AsyncSession,
     ) -> CurrentSeasonResponse:
         """Get year-to-date performance for the current season with projections.
-        
+
         Args:
             db: Database session
-            
+
         Returns:
             CurrentSeasonResponse with YTD performance and projections
         """
         # Get current year and date
         current_year = datetime.now().year
         current_date = datetime.now()
-        
+
         # Get rounds completed for current season (games up to today, not just completed)
         result = await db.execute(
             select(func.count(func.distinct(Game.round_id)))
@@ -287,24 +290,24 @@ class BacktestService:
             )
         )
         rounds_completed = result.scalar() or 0
-        
+
         # AFL typically has 24 rounds per season
         total_rounds = 24
-        
+
         # Calculate performance for each heuristic
         heuristic_performances = []
         for heuristic in self.orchestrator.get_available_heuristics():
             stats = await self.calculate_backtest_from_tips(db, current_year, heuristic)
-            
+
             total_profit = stats["total_profit"]
             total_accuracy = stats["overall_accuracy"]
             rounds_played = int(stats["total_rounds"])
-            
+
             avg_profit_per_round = total_profit / rounds_played if rounds_played > 0 else 0.0
-            
+
             # Calculate projected annual profit
             projected_annual_profit = avg_profit_per_round * total_rounds
-            
+
             heuristic_performances.append(
                 CurrentSeasonHeuristicPerformance(
                     heuristic=heuristic,
@@ -315,18 +318,18 @@ class BacktestService:
                     projected_annual_profit=projected_annual_profit,
                 )
             )
-        
+
         return CurrentSeasonResponse(
             season=current_year,
             heuristics=heuristic_performances,
             rounds_completed=rounds_completed,
             total_rounds=total_rounds,
         )
-    
+
     # -----------------------------------------------------------------------
     # Model-level backtest methods
     # -----------------------------------------------------------------------
-    
+
     async def calculate_backtest_from_model_predictions(
         self,
         db: AsyncSession,
@@ -334,12 +337,12 @@ class BacktestService:
         model_name: str,
     ) -> Dict[str, float]:
         """Calculate backtest metrics for a season/model from model predictions.
-        
+
         Args:
             db: Database session
             season: Season year
             model_name: Model name (e.g. "elo", "form")
-            
+
         Returns:
             Dict with backtest metrics
         """
@@ -351,14 +354,14 @@ class BacktestService:
                 and_(
                     Game.season == season,
                     ModelPrediction.model_name == model_name,
-                    Game.completed == True,
+                    Game.completed,
                     Game.home_score.isnot(None),
                     Game.away_score.isnot(None),
                 )
             )
         )
         prediction_rows = result.all()
-        
+
         if not prediction_rows:
             return {
                 "model_name": model_name,
@@ -369,32 +372,32 @@ class BacktestService:
                 "total_profit": 0.0,
                 "avg_margin": 0.0,
             }
-        
+
         tips_made = 0
         tips_correct = 0
         profit = 0.0
         total_margin = 0
-        
+
         for prediction, game in prediction_rows:
             tips_made += 1
             total_margin += abs(prediction.margin or 0)
-            
+
             # Determine actual winner from the game object
             actual_winner_name = (
                 game.home_team if game.home_score > game.away_score else game.away_team
             )
-            
+
             # Check if prediction was correct
             if prediction.winner == actual_winner_name:
                 tips_correct += 1
                 profit += STAKE_PER_GAME
             else:
                 profit -= STAKE_PER_GAME
-        
+
         # Calculate metrics
         accuracy = tips_correct / tips_made if tips_made > 0 else 0.0
         avg_margin = total_margin / tips_made if tips_made > 0 else 0.0
-        
+
         return {
             "model_name": model_name,
             "season": season,
@@ -404,18 +407,18 @@ class BacktestService:
             "total_profit": profit,
             "avg_margin": avg_margin,
         }
-    
+
     async def compare_models(
         self,
         db: AsyncSession,
         season: int,
     ) -> List[Dict]:
         """Compare all models for a season by calculating from model predictions.
-        
+
         Args:
             db: Database session
             season: Season year
-            
+
         Returns:
             List of result dicts sorted by accuracy descending
         """
@@ -424,17 +427,17 @@ class BacktestService:
             select(ModelPrediction.model_name).distinct()
         )
         model_names = [row[0] for row in result.all()]
-        
+
         comparison = []
         for model_name in model_names:
             metrics = await self.calculate_backtest_from_model_predictions(db, season, model_name)
             comparison.append(metrics)
-        
+
         # Sort by accuracy descending
         comparison.sort(key=lambda x: x["overall_accuracy"], reverse=True)
-        
+
         return comparison
-    
+
     async def get_model_round_by_round(
         self,
         db: AsyncSession,
@@ -442,12 +445,12 @@ class BacktestService:
         model_name: str,
     ) -> List[Dict]:
         """Get round-by-round backtest data for a season/model.
-        
+
         Args:
             db: Database session
             season: Season year
             model_name: Model name
-            
+
         Returns:
             List of round data with tips_made, tips_correct, accuracy, profit
         """
@@ -481,7 +484,7 @@ class BacktestService:
                 and_(
                     Game.season == season,
                     ModelPrediction.model_name == model_name,
-                    Game.completed == True,
+                    Game.completed,
                     Game.home_score.isnot(None),
                     Game.away_score.isnot(None),
                 )
@@ -489,7 +492,7 @@ class BacktestService:
             .group_by(Game.round_id)
             .order_by(Game.round_id)
         )
-        
+
         round_data = []
         for round_id, tips_made, tips_correct, profit in result.all():
             accuracy = tips_correct / tips_made if tips_made > 0 else 0.0
@@ -500,24 +503,24 @@ class BacktestService:
                 "accuracy": accuracy,
                 "profit": profit,
             })
-        
+
         return round_data
-    
+
     async def run_model_backtest(
         self,
         db: AsyncSession,
         season: int,
     ) -> List[Dict]:
         """Run full model backtest: generate missing predictions, then compare.
-        
+
         For each completed game in the season, checks which models don't have
         predictions yet and generates only those missing predictions.
         Then returns comparison data.
-        
+
         Args:
             db: Database session
             season: Season year
-            
+
         Returns:
             List of model comparison dicts sorted by accuracy descending
         """
@@ -527,17 +530,17 @@ class BacktestService:
             .where(
                 and_(
                     Game.season == season,
-                    Game.completed == True,
+                    Game.completed,
                     Game.home_score.isnot(None),
                     Game.away_score.isnot(None),
                 )
             )
         )
         games = list(games_result.scalars().all())
-        
+
         if games:
             game_ids = [g.id for g in games]
-            
+
             # Get existing (game_id, model_name) pairs so we know exactly
             # which models already have predictions for each game
             existing_result = await db.execute(
@@ -548,10 +551,10 @@ class BacktestService:
             existing_predictions = {
                 (row[0], row[1]) for row in existing_result.all()
             }
-            
+
             # Get all models from orchestrator
             models = self.orchestrator.models
-            
+
             for game in games:
                 for model in models:
                     # Skip if this specific game+model prediction already exists
@@ -570,6 +573,6 @@ class BacktestService:
                     except Exception:
                         # Skip failed predictions rather than aborting the whole backtest
                         pass
-        
+
         # Return comparison results
         return await self.compare_models(db, season)

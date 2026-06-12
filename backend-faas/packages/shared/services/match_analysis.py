@@ -1,11 +1,12 @@
 """Service for generating AI match analysis talking points using OpenRouter."""
 
 from sqlalchemy.ext.asyncio import AsyncSession
-from ..openrouter.client import OpenRouterClient
+
 from ..crud.match_analysis import MatchAnalysisCRUD
-from ..orchestrator import ModelOrchestrator
-from ..models import Game
 from ..logger import get_logger
+from ..models import Game
+from ..openrouter.client import OpenRouterClient
+from ..orchestrator import ModelOrchestrator
 
 logger = get_logger(__name__)
 

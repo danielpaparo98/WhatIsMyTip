@@ -4,11 +4,11 @@ Tests mock HTTP responses and verify parsing of injury lists, team selections,
 advanced player stats, caching, and error handling. No real HTTP requests are made.
 """
 
-import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from packages.shared.afl_data.footywire_client import FootyWireClient
+import pytest
 
+from packages.shared.afl_data.footywire_client import FootyWireClient
 
 # ---------------------------------------------------------------------------
 # HTML fixtures
@@ -83,6 +83,7 @@ EMPTY_INJURY_HTML = """
 # TestGetInjuryList
 # ---------------------------------------------------------------------------
 
+
 class TestGetInjuryList:
     """Tests for fetching and parsing the current injury list."""
 
@@ -141,9 +142,7 @@ class TestGetInjuryList:
         mock_cache.get = AsyncMock(return_value=None)
         mock_cache.set = AsyncMock()
 
-        with patch(
-            "packages.shared.afl_data.footywire_client.medium_cache", mock_cache
-        ):
+        with patch("packages.shared.afl_data.footywire_client.medium_cache", mock_cache):
             client = FootyWireClient.__new__(FootyWireClient)
             client.client = mock_http_client
 
@@ -158,7 +157,12 @@ class TestGetInjuryList:
     async def test_returns_cached_data(self):
         """When cache has data, HTTP client should not be called."""
         cached_data = [
-            {"team": "Richmond", "player": "Dustin Martin", "injury": "Calf", "return_timeline": "1-2 weeks"},
+            {
+                "team": "Richmond",
+                "player": "Dustin Martin",
+                "injury": "Calf",
+                "return_timeline": "1-2 weeks",
+            },
         ]
 
         mock_cache = MagicMock()
@@ -168,9 +172,7 @@ class TestGetInjuryList:
         mock_http_client = AsyncMock()
         mock_http_client.get = AsyncMock()
 
-        with patch(
-            "packages.shared.afl_data.footywire_client.medium_cache", mock_cache
-        ):
+        with patch("packages.shared.afl_data.footywire_client.medium_cache", mock_cache):
             client = FootyWireClient.__new__(FootyWireClient)
             client.client = mock_http_client
 
@@ -183,9 +185,7 @@ class TestGetInjuryList:
     async def test_api_error_handling(self):
         """HTTP error should be caught and return empty list."""
         mock_response = MagicMock()
-        mock_response.raise_for_status = MagicMock(
-            side_effect=Exception("HTTP 500")
-        )
+        mock_response.raise_for_status = MagicMock(side_effect=Exception("HTTP 500"))
 
         mock_http_client = AsyncMock()
         mock_http_client.get = AsyncMock(return_value=mock_response)
@@ -206,6 +206,7 @@ class TestGetInjuryList:
 # ---------------------------------------------------------------------------
 # TestGetTeamSelections
 # ---------------------------------------------------------------------------
+
 
 class TestGetTeamSelections:
     """Tests for fetching and parsing team selections."""
@@ -246,9 +247,7 @@ class TestGetTeamSelections:
     async def test_api_error_handling(self):
         """HTTP error should be caught and return empty list."""
         mock_response = MagicMock()
-        mock_response.raise_for_status = MagicMock(
-            side_effect=Exception("HTTP 500")
-        )
+        mock_response.raise_for_status = MagicMock(side_effect=Exception("HTTP 500"))
 
         mock_http_client = AsyncMock()
         mock_http_client.get = AsyncMock(return_value=mock_response)
@@ -269,6 +268,7 @@ class TestGetTeamSelections:
 # ---------------------------------------------------------------------------
 # TestGetPlayerAdvancedStats
 # ---------------------------------------------------------------------------
+
 
 class TestGetPlayerAdvancedStats:
     """Tests for fetching and parsing player advanced stats."""
@@ -317,9 +317,7 @@ class TestGetPlayerAdvancedStats:
     async def test_api_error_handling(self):
         """HTTP error should be caught and return empty list."""
         mock_response = MagicMock()
-        mock_response.raise_for_status = MagicMock(
-            side_effect=Exception("HTTP 500")
-        )
+        mock_response.raise_for_status = MagicMock(side_effect=Exception("HTTP 500"))
 
         mock_http_client = AsyncMock()
         mock_http_client.get = AsyncMock(return_value=mock_response)
@@ -340,6 +338,7 @@ class TestGetPlayerAdvancedStats:
 # ---------------------------------------------------------------------------
 # TestParseInjuryTable
 # ---------------------------------------------------------------------------
+
 
 class TestParseInjuryTable:
     """Tests for internal _parse_injury_table method."""
@@ -404,6 +403,7 @@ class TestParseInjuryTable:
 # ---------------------------------------------------------------------------
 # TestContextManager
 # ---------------------------------------------------------------------------
+
 
 class TestContextManager:
     """Tests for async context manager protocol."""

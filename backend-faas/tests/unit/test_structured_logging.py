@@ -4,7 +4,6 @@ import json
 import logging
 import os
 import sys
-import pytest
 from unittest.mock import patch
 
 # Make shared package importable
@@ -92,8 +91,9 @@ class TestJsonFormatter:
 
     def test_timestamp_is_iso_format(self):
         """Timestamp field is in ISO 8601 format."""
-        from packages.shared.logger import JsonFormatter
         from datetime import datetime
+
+        from packages.shared.logger import JsonFormatter
 
         formatter = JsonFormatter()
         record = logging.LogRecord(
@@ -157,9 +157,9 @@ class TestGetLogger:
             if "LOG_FORMAT" in os.environ:
                 del os.environ["LOG_FORMAT"]
 
-            from packages.shared.logger import get_logger
-            import importlib
+
             import packages.shared.logger as logger_mod
+            from packages.shared.logger import get_logger
 
             # Clear handler cache by using a unique name
             logger_name = f"test_human_readable_{id(self)}"
@@ -178,6 +178,7 @@ class TestGetLogger:
         """When LOG_FORMAT=json, logger uses JsonFormatter."""
         with patch.dict(os.environ, {"LOG_FORMAT": "json"}):
             import importlib
+
             import packages.shared.logger as logger_mod
             importlib.reload(logger_mod)
 

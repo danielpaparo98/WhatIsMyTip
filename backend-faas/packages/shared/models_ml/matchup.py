@@ -8,14 +8,15 @@ Cold-start: returns (home_team, 0.55, 8) when insufficient historical data.
 """
 
 import json
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, and_
-from typing import Tuple, Optional
+from typing import Optional, Tuple
 
-from .base import BaseModel
-from ..models import Game
+from sqlalchemy import and_, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from ..cache import _get_client
 from ..logger import get_logger
+from ..models import Game
+from .base import BaseModel
 
 logger = get_logger(__name__)
 
@@ -85,7 +86,7 @@ class MatchupModel(BaseModel):
             select(Game)
             .where(
                 and_(
-                    Game.completed == True,
+                    Game.completed,
                     Game.date < before_date,
                     (
                         (Game.home_team == home_team) & (Game.away_team == away_team)
@@ -144,7 +145,7 @@ class MatchupModel(BaseModel):
             select(Game)
             .where(
                 and_(
-                    Game.completed == True,
+                    Game.completed,
                     Game.date < before_date,
                     Game.venue == venue,
                     (Game.home_team == team) | (Game.away_team == team),

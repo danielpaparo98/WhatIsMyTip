@@ -13,15 +13,14 @@ Covers:
 import pytest
 from pydantic import ValidationError
 
+from packages.shared.api_helpers import validate_request
 from packages.shared.schemas.admin import (
     DailySyncTriggerRequest,
-    MatchCompletionTriggerRequest,
-    TipGenerationTriggerRequest,
     HistoricRefreshTriggerRequest,
+    MatchCompletionTriggerRequest,
     TipGenerateRequest,
+    TipGenerationTriggerRequest,
 )
-from packages.shared.api_helpers import validate_request
-
 
 # ---------------------------------------------------------------------------
 # DailySyncTriggerRequest

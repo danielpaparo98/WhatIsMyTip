@@ -6,14 +6,12 @@ backend/tests/unit/test_models.py.  The FaaS codebase does not have
 constructors.
 """
 
-import pytest
 
-from packages.shared.utils import generate_slug
 from packages.shared.models_ml.elo import EloModel
 from packages.shared.models_ml.form import FormModel
 from packages.shared.models_ml.home_advantage import HomeAdvantageModel
 from packages.shared.models_ml.value import ValueModel
-
+from packages.shared.utils import generate_slug
 
 # ---------------------------------------------------------------------------
 # generate_slug

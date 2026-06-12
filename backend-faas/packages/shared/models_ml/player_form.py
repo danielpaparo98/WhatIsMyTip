@@ -8,14 +8,15 @@ Cold-start: returns (home_team, 0.55, 6) when insufficient data.
 """
 
 import json
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func, and_
-from typing import Dict, List, Tuple, Optional
+from typing import Dict, List, Optional, Tuple
 
-from .base import BaseModel
-from ..models import Game, PlayerAdvancedStats, PlayerMatchStats
+from sqlalchemy import and_, func, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from ..cache import _get_client
 from ..logger import get_logger
+from ..models import Game, PlayerAdvancedStats, PlayerMatchStats
+from .base import BaseModel
 
 logger = get_logger(__name__)
 
@@ -74,7 +75,7 @@ class PlayerFormModel(BaseModel):
             select(Game.id)
             .where(
                 and_(
-                    Game.completed == True,
+                    Game.completed,
                     Game.date < before_date,
                     (Game.home_team == team) | (Game.away_team == team),
                 )

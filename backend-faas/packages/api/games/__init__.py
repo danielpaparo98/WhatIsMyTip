@@ -19,23 +19,34 @@ from zoneinfo import ZoneInfo
 # Make shared package importable from the function's working directory
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
-from packages.shared.db import _get_session_factory, get_engine, dispose_engine
-from packages.shared.cache import close_redis_pool, _get_client
+from sqlalchemy import and_, func, select, text
+
+from packages.shared.api_helpers import (
+    bool_query,
+    check_rate_limit,
+    check_request_size,
+    int_query,
+    parse_request,
+    response,
+    segments,
+    to_dict,
+)
+from packages.shared.cache import _get_client, close_redis_pool
 from packages.shared.config import settings
+from packages.shared.crud import GameCRUD, MatchAnalysisCRUD, ModelPredictionCRUD, TipCRUD
+from packages.shared.db import _get_session_factory, dispose_engine, get_engine
 from packages.shared.logger import get_logger
-from packages.shared.crud import GameCRUD, TipCRUD, ModelPredictionCRUD, MatchAnalysisCRUD
+from packages.shared.models import Game, MatchWeather
 from packages.shared.schemas import (
-    GameResponse,
-    GameListResponse,
     GameDetailResponse,
-    ModelPrediction as ModelPredictionSchema,
+    GameListResponse,
+    GameResponse,
     WeatherResponse,
 )
+from packages.shared.schemas import (
+    ModelPrediction as ModelPredictionSchema,
+)
 from packages.shared.schemas.match_analysis import MatchAnalysisResponse
-from packages.shared.models import Game, MatchWeather
-from packages.shared.api_helpers import parse_request, response, segments, to_dict, int_query, bool_query, check_rate_limit, check_request_size
-
-from sqlalchemy import select, func, and_, text
 
 logger = get_logger(__name__)
 
@@ -58,7 +69,7 @@ async def _handle_list_games(session, query: dict) -> dict:
         # Find the nearest upcoming game
         future_game = await session.execute(
             select(Game.round_id, Game.season)
-            .where(and_(Game.date >= now, Game.completed == False))
+            .where(and_(Game.date >= now, not Game.completed))
             .order_by(Game.date.asc())
             .limit(1)
         )

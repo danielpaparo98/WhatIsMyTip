@@ -7,9 +7,6 @@ without making any real HTTP requests.
 import csv
 import os
 import sys
-import tempfile
-
-import pytest
 
 # Ensure backend-faas is on sys.path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
@@ -21,7 +18,6 @@ from scripts.scrape_to_csv import (
     read_csv,
     write_csv,
 )
-
 
 # ---------------------------------------------------------------------------
 # Fixtures — realistic AFL Tables HTML snippets
@@ -305,10 +301,24 @@ class TestExtractMatchMetadata:
     def test_extracts_various_venues(self):
         from bs4 import BeautifulSoup
 
-        for venue in ["MCG", "Marvel Stadium", "Adelaide Oval", "Optus Stadium",
-                       "Gabba", "SCG", "GMHBA Stadium", "People First Stadium",
-                       "UTAS Stadium", "Manuka Oval"]:
-            html = f'<html><head><title>AFL Tables - TeamA v TeamB - Sat, 1-Mar-2025 3:00 PM - Match Stats</title></head><body><p>at {venue}, Sat 1-Mar-2025</p></body></html>'
+        for venue in [
+            "MCG",
+            "Marvel Stadium",
+            "Adelaide Oval",
+            "Optus Stadium",
+            "Gabba",
+            "SCG",
+            "GMHBA Stadium",
+            "People First Stadium",
+            "UTAS Stadium",
+            "Manuka Oval",
+        ]:
+            html = (  # noqa: E501
+                f"<html><head><title>AFL Tables - TeamA v TeamB"
+                f" - Sat, 1-Mar-2025 3:00 PM - Match Stats</title>"
+                f"</head><body><p>at {venue}, Sat 1-Mar-2025"
+                f"</p></body></html>"
+            )
             soup = BeautifulSoup(html, "lxml")
             result = _extract_match_metadata(soup)
             assert result["venue"] == venue, f"Expected {venue}, got {result['venue']}"
@@ -350,9 +360,18 @@ class TestNormalizeVenue:
         assert _normalize_venue("M.C.G.") == "MCG"
 
     def test_canonical_names_passthrough(self):
-        for name in ["MCG", "Marvel Stadium", "Adelaide Oval", "Optus Stadium",
-                      "Gabba", "SCG", "GMHBA Stadium", "People First Stadium",
-                      "UTAS Stadium", "Manuka Oval"]:
+        for name in [
+            "MCG",
+            "Marvel Stadium",
+            "Adelaide Oval",
+            "Optus Stadium",
+            "Gabba",
+            "SCG",
+            "GMHBA Stadium",
+            "People First Stadium",
+            "UTAS Stadium",
+            "Manuka Oval",
+        ]:
             assert _normalize_venue(name) == name
 
     def test_historical_aliases(self):
@@ -487,18 +506,18 @@ class TestColumnMapping:
 
         # Build a minimal HTML with known values at each column
         cells = [
-            "99",           # 0: jumper #
-            "Test, Player", # 1: Player
-            "10",           # 2: KI (kicks)
-            "5",            # 3: MK (marks)
-            "8",            # 4: HB (handballs)
-            "18",           # 5: DI (disposals)
-            "3",            # 6: GL (goals)
-            "1",            # 7: BH (behinds)
-            "4",            # 8: TK (tackles)
-            "2",            # 9: HO (hitouts)
-            "1",            # 10: FF (frees for)
-            "2",            # 11: FA (frees against)
+            "99",  # 0: jumper #
+            "Test, Player",  # 1: Player
+            "10",  # 2: KI (kicks)
+            "5",  # 3: MK (marks)
+            "8",  # 4: HB (handballs)
+            "18",  # 5: DI (disposals)
+            "3",  # 6: GL (goals)
+            "1",  # 7: BH (behinds)
+            "4",  # 8: TK (tackles)
+            "2",  # 9: HO (hitouts)
+            "1",  # 10: FF (frees for)
+            "2",  # 11: FA (frees against)
         ]
         # Pad to 25 columns
         cells += ["0"] * 13

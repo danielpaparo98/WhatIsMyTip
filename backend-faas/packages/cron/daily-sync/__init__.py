@@ -17,16 +17,16 @@ from zoneinfo import ZoneInfo
 # Make shared package importable from the function's working directory
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
-from packages.shared.db import _get_session_factory, dispose_engine
+from packages.shared.alerting import AlertingService
 from packages.shared.cache import close_redis_pool
 from packages.shared.config import settings
-from packages.shared.logger import get_logger, generate_execution_id
 from packages.shared.crud.jobs import JobExecutionCRUD, JobLockCRUD
-from packages.shared.squiggle import SquiggleClient
-from packages.shared.services.game_sync import GameSyncService
+from packages.shared.db import _get_session_factory, dispose_engine
+from packages.shared.exceptions import TransientJobError, classify_error
+from packages.shared.logger import generate_execution_id, get_logger
 from packages.shared.models_ml.elo import EloModel
-from packages.shared.alerting import AlertingService
-from packages.shared.exceptions import classify_error, TransientJobError
+from packages.shared.services.game_sync import GameSyncService
+from packages.shared.squiggle import SquiggleClient
 
 logger = get_logger(__name__)
 

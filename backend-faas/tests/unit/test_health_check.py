@@ -1,15 +1,15 @@
 """Unit tests for the health check endpoint in the games API handler."""
 
 import json
-import sys
 import os
-import pytest
+import sys
 from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 
 # Make shared package importable
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
-from packages.shared.api_helpers import response
 
 
 # ---------------------------------------------------------------------------
@@ -42,6 +42,7 @@ def games_module():
 
         # Re-import to get a fresh module with the mocks applied
         import importlib
+
         import packages.api.games as games_mod
         importlib.reload(games_mod)
         yield games_mod

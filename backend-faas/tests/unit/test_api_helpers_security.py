@@ -10,8 +10,9 @@ Covers:
 """
 
 import json
+from unittest.mock import AsyncMock, patch
+
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
 
 # The Redis client factory is imported dynamically inside check_rate_limit(),
 # so we patch it at the source module.

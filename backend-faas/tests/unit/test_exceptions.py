@@ -4,11 +4,10 @@ import pytest
 
 from packages.shared.exceptions import (
     JobError,
-    TransientJobError,
     PermanentJobError,
+    TransientJobError,
     classify_error,
 )
-
 
 # ---------------------------------------------------------------------------
 # JobError base class

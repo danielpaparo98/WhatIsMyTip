@@ -8,14 +8,15 @@ Cold-start: returns (home_team, 0.55, 5) when no injury data is available.
 """
 
 import json
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func, and_
-from typing import Dict, List, Tuple, Optional
+from typing import Dict, List, Optional, Tuple
 
-from .base import BaseModel
-from ..models import Game, Injury, Player, PlayerMatchStats
+from sqlalchemy import and_, func, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from ..cache import _get_client
 from ..logger import get_logger
+from ..models import Game, Injury, Player, PlayerMatchStats
+from .base import BaseModel
 
 logger = get_logger(__name__)
 
@@ -112,7 +113,7 @@ class InjuryImpactModel(BaseModel):
             .where(
                 and_(
                     PlayerMatchStats.player_id.in_(player_ids),
-                    Game.completed == True,
+                    Game.completed,
                     Game.date < game.date,
                 )
             )
@@ -147,7 +148,7 @@ class InjuryImpactModel(BaseModel):
             .where(
                 and_(
                     PlayerMatchStats.team.in_([game.home_team, game.away_team]),
-                    Game.completed == True,
+                    Game.completed,
                     Game.date < game.date,
                 )
             )

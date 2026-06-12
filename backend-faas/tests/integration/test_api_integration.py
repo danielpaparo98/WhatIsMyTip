@@ -21,9 +21,8 @@ os.environ.setdefault("ADMIN_API_KEY", "test-api-key")
 
 import pytest
 
-from packages.shared.db import dispose_engine
 from packages.shared.cache import close_redis_pool
-
+from packages.shared.db import dispose_engine
 
 # Skip entire module if no DB available
 pytestmark = pytest.mark.skipif(

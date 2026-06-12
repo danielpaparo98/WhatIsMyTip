@@ -21,20 +21,26 @@ from datetime import datetime
 # Make shared package importable from the function's working directory
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
-from packages.shared.db import _get_session_factory, dispose_engine
+from packages.shared.api_helpers import (
+    check_rate_limit,
+    check_request_size,
+    int_query,
+    parse_request,
+    response,
+    segments,
+    to_dict,
+)
 from packages.shared.cache import close_redis_pool
-from packages.shared.config import settings
+from packages.shared.db import _get_session_factory, dispose_engine
 from packages.shared.logger import get_logger
 from packages.shared.schemas import (
-    BacktestListResponse,
     AvailableSeasonsResponse,
-    BacktestTableResponse,
+    BacktestListResponse,
     BacktestTableData,
+    BacktestTableResponse,
     BacktestTableRow,
-    CurrentSeasonResponse,
 )
 from packages.shared.services.backtest import BacktestService
-from packages.shared.api_helpers import parse_request, response, segments, to_dict, int_query, check_rate_limit, check_request_size
 
 logger = get_logger(__name__)
 

@@ -2,11 +2,11 @@
 
 import json
 import logging
+import os
 import secrets
 import sys
-import os
-from urllib.parse import parse_qs
 from typing import Optional, Tuple
+from urllib.parse import parse_qs
 
 from pydantic import BaseModel, ValidationError
 
@@ -227,7 +227,6 @@ async def check_rate_limit(
 
     try:
         from packages.shared.cache import _get_client
-        import redis.asyncio as redis
 
         client = _get_client()
         key = f"wimt:ratelimit:{identity}:{window_seconds}"
@@ -277,7 +276,11 @@ def check_request_size(args: dict, max_bytes: int | None = None) -> dict | None:
             pass
 
     # Estimate size from the raw body string
-    body_size = len(body_raw.encode("utf-8")) if isinstance(body_raw, str) else len(str(body_raw).encode("utf-8"))
+    body_size = (
+        len(body_raw.encode("utf-8"))
+        if isinstance(body_raw, str)
+        else len(str(body_raw).encode("utf-8"))
+    )
     if body_size > max_bytes:
         return response(413, error="Request body too large", request_args=args)
 
@@ -304,10 +307,12 @@ def validate_request(
     except ValidationError as exc:
         errors = []
         for err in exc.errors():
-            loc = ".".join(str(l) for l in err.get("loc", []))
-            errors.append({
-                "field": loc,
-                "message": err.get("msg", "Validation error"),
-                "type": err.get("type", "value_error"),
-            })
+            loc = ".".join(str(part) for part in err.get("loc", []))
+            errors.append(
+                {
+                    "field": loc,
+                    "message": err.get("msg", "Validation error"),
+                    "type": err.get("type", "value_error"),
+                }
+            )
         return None, response(422, data={"error": "Validation failed", "errors": errors})

@@ -4,17 +4,18 @@ Tests cover weather tier classification, historical performance lookups,
 cold-start behaviour, confidence/margin clamping, and backtest safety.
 """
 
-import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
 from datetime import datetime, timezone
+from unittest.mock import AsyncMock, MagicMock, patch
 
-from packages.shared.models_ml.weather_impact import WeatherImpactModel
+import pytest
+
 from packages.shared.models import Game, MatchWeather
-
+from packages.shared.models_ml.weather_impact import WeatherImpactModel
 
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture
 def model():
@@ -74,6 +75,7 @@ def _mock_result_all(return_value):
 # Constructor / get_name
 # ---------------------------------------------------------------------------
 
+
 class TestWeatherImpactModelBasics:
     def test_model_instantiation(self, model):
         assert isinstance(model, WeatherImpactModel)
@@ -85,6 +87,7 @@ class TestWeatherImpactModelBasics:
 # ---------------------------------------------------------------------------
 # _classify_weather
 # ---------------------------------------------------------------------------
+
 
 class TestClassifyWeather:
     def test_good_weather(self, model):
@@ -110,9 +113,9 @@ class TestClassifyWeather:
     def test_poor_heavy_rain_and_wind(self, model):
         """Heavy rain + strong gusts + extreme temp → 'poor'."""
         weather = _make_weather(
-            temperature=5.0,   # < 10 → +1
+            temperature=5.0,  # < 10 → +1
             precipitation=8.0,  # > 5 → +2
-            wind_gusts=55.0,    # > 50 → +2
+            wind_gusts=55.0,  # > 50 → +2
         )
         # total score = 1 + 2 + 2 = 5 → "poor"
         assert model._classify_weather(weather) == "poor"
@@ -122,7 +125,7 @@ class TestClassifyWeather:
         weather = _make_weather(
             temperature=38.0,  # > 35 → +1
             precipitation=0.0,
-            wind_gusts=55.0,   # > 50 → +2
+            wind_gusts=55.0,  # > 50 → +2
         )
         # total score = 1 + 2 = 3 → "poor"
         assert model._classify_weather(weather) == "poor"
@@ -130,9 +133,13 @@ class TestClassifyWeather:
     def test_null_fields_default_to_good(self, model):
         """All None fields → score stays 0 → 'good'."""
         weather = MatchWeather(
-            game_id=1, venue="Gabba",
-            temperature=None, precipitation=None,
-            wind_speed=None, wind_gusts=None, humidity=None,
+            game_id=1,
+            venue="Gabba",
+            temperature=None,
+            precipitation=None,
+            wind_speed=None,
+            wind_gusts=None,
+            humidity=None,
         )
         assert model._classify_weather(weather) == "good"
 
@@ -152,6 +159,7 @@ class TestClassifyWeather:
 # ---------------------------------------------------------------------------
 # _get_match_weather
 # ---------------------------------------------------------------------------
+
 
 class TestGetMatchWeather:
     @pytest.mark.asyncio
@@ -177,6 +185,7 @@ class TestGetMatchWeather:
 # _get_historical_performance
 # ---------------------------------------------------------------------------
 
+
 class TestGetHistoricalPerformance:
     @pytest.mark.asyncio
     async def test_returns_win_rate_for_similar_conditions(self, model, game):
@@ -195,12 +204,17 @@ class TestGetHistoricalPerformance:
         hist_weather = _make_weather(temperature=22, precipitation=0, wind_gusts=8)
 
         # db.execute returns list of (Game, MatchWeather) tuples
-        db.execute.return_value = _mock_result_all([
-            (hist_game, hist_weather),
-        ])
+        db.execute.return_value = _mock_result_all(
+            [
+                (hist_game, hist_weather),
+            ]
+        )
 
         wr = await model._get_historical_performance(
-            "Gabba", "good", "Brisbane", db,
+            "Gabba",
+            "good",
+            "Brisbane",
+            db,
             before_date=game.date,
         )
         assert wr == 1.0  # Brisbane won 1/1
@@ -212,7 +226,10 @@ class TestGetHistoricalPerformance:
         db.execute.return_value = _mock_result_all([])
 
         wr = await model._get_historical_performance(
-            "Gabba", "poor", "Brisbane", db,
+            "Gabba",
+            "poor",
+            "Brisbane",
+            db,
             before_date=game.date,
         )
         assert wr == 0.0
@@ -221,6 +238,7 @@ class TestGetHistoricalPerformance:
 # ---------------------------------------------------------------------------
 # predict() — cold-start / no data scenarios
 # ---------------------------------------------------------------------------
+
 
 class TestPredictColdStart:
     @pytest.mark.asyncio
@@ -243,8 +261,10 @@ class TestPredictColdStart:
         db = AsyncMock()
         weather = _make_weather()
 
-        with patch.object(model, "_get_match_weather", return_value=weather), \
-             patch.object(model, "_get_historical_performance", return_value=0.0):
+        with (
+            patch.object(model, "_get_match_weather", return_value=weather),
+            patch.object(model, "_get_historical_performance", return_value=0.0),
+        ):
             winner, confidence, margin = await model.predict(game, db)
 
         # Should return cold-start default
@@ -257,14 +277,17 @@ class TestPredictColdStart:
 # predict() — full scenario tests
 # ---------------------------------------------------------------------------
 
+
 class TestPredictScenarios:
     @pytest.mark.asyncio
     async def test_rain_forecast_home_advantage(self, model, game):
         """Rain forecast with home team historically better in wet → home wins."""
         weather = _make_weather(precipitation=8.0, wind_gusts=40.0)
 
-        with patch.object(model, "_get_match_weather", return_value=weather), \
-             patch.object(model, "_get_historical_performance") as mock_perf:
+        with (
+            patch.object(model, "_get_match_weather", return_value=weather),
+            patch.object(model, "_get_historical_performance") as mock_perf,
+        ):
             # Home team great in wet, away team poor
             mock_perf.side_effect = lambda venue, tier, team, db, before_date: (
                 0.75 if team == "Brisbane" else 0.35
@@ -280,8 +303,10 @@ class TestPredictScenarios:
         """Windy conditions where away team has better record → away wins."""
         weather = _make_weather(precipitation=0, wind_gusts=45.0)
 
-        with patch.object(model, "_get_match_weather", return_value=weather), \
-             patch.object(model, "_get_historical_performance") as mock_perf:
+        with (
+            patch.object(model, "_get_match_weather", return_value=weather),
+            patch.object(model, "_get_historical_performance") as mock_perf,
+        ):
             # Away team better in wind
             mock_perf.side_effect = lambda venue, tier, team, db, before_date: (
                 0.30 if team == "Brisbane" else 0.70
@@ -296,8 +321,10 @@ class TestPredictScenarios:
         """Normal conditions with similar records → close prediction."""
         weather = _make_weather(temperature=22, precipitation=0, wind_gusts=8)
 
-        with patch.object(model, "_get_match_weather", return_value=weather), \
-             patch.object(model, "_get_historical_performance") as mock_perf:
+        with (
+            patch.object(model, "_get_match_weather", return_value=weather),
+            patch.object(model, "_get_historical_performance") as mock_perf,
+        ):
             mock_perf.side_effect = lambda venue, tier, team, db, before_date: (
                 0.55 if team == "Brisbane" else 0.50
             )
@@ -311,13 +338,15 @@ class TestPredictScenarios:
         """Good weather tier gives no home weather bonus."""
         weather = _make_weather(temperature=22, precipitation=0, wind_gusts=8)
 
-        with patch.object(model, "_get_match_weather", return_value=weather), \
-             patch.object(model, "_get_historical_performance") as mock_perf:
+        with (
+            patch.object(model, "_get_match_weather", return_value=weather),
+            patch.object(model, "_get_historical_performance") as mock_perf,
+        ):
             # Exactly equal records
             mock_perf.side_effect = lambda venue, tier, team, db, before_date: 0.50
             winner, confidence, margin = await model.predict(game, AsyncMock())
 
-        # With equal records and good weather (no bonus), adjusted_diff = 0 → away wins by convention
+        # With equal records and good weather (no bonus), adjusted_diff = 0 → away wins  # noqa: E501
         assert winner == "Collingwood"  # away team when diff <= 0
 
 
@@ -325,13 +354,16 @@ class TestPredictScenarios:
 # Confidence and margin clamping
 # ---------------------------------------------------------------------------
 
+
 class TestClamping:
     @pytest.mark.asyncio
     async def test_confidence_lower_bound(self, model, game):
         """Confidence must be at least 0.50."""
         weather = _make_weather()
-        with patch.object(model, "_get_match_weather", return_value=weather), \
-             patch.object(model, "_get_historical_performance", return_value=0.5):
+        with (
+            patch.object(model, "_get_match_weather", return_value=weather),
+            patch.object(model, "_get_historical_performance", return_value=0.5),
+        ):
             winner, confidence, margin = await model.predict(game, AsyncMock())
 
         assert confidence >= 0.50
@@ -341,8 +373,10 @@ class TestClamping:
         """Confidence must not exceed 0.95."""
         weather = _make_weather(precipitation=10.0, wind_gusts=60.0)
 
-        with patch.object(model, "_get_match_weather", return_value=weather), \
-             patch.object(model, "_get_historical_performance") as mock_perf:
+        with (
+            patch.object(model, "_get_match_weather", return_value=weather),
+            patch.object(model, "_get_historical_performance") as mock_perf,
+        ):
             # Extreme difference
             mock_perf.side_effect = lambda venue, tier, team, db, before_date: (
                 1.0 if team == "Brisbane" else 0.0
@@ -355,8 +389,10 @@ class TestClamping:
     async def test_margin_lower_bound(self, model, game):
         """Margin must be at least 1."""
         weather = _make_weather()
-        with patch.object(model, "_get_match_weather", return_value=weather), \
-             patch.object(model, "_get_historical_performance", return_value=0.5):
+        with (
+            patch.object(model, "_get_match_weather", return_value=weather),
+            patch.object(model, "_get_historical_performance", return_value=0.5),
+        ):
             winner, confidence, margin = await model.predict(game, AsyncMock())
 
         assert margin >= 1
@@ -366,8 +402,10 @@ class TestClamping:
         """Margin must not exceed 100."""
         weather = _make_weather(precipitation=10.0, wind_gusts=60.0)
 
-        with patch.object(model, "_get_match_weather", return_value=weather), \
-             patch.object(model, "_get_historical_performance") as mock_perf:
+        with (
+            patch.object(model, "_get_match_weather", return_value=weather),
+            patch.object(model, "_get_historical_performance") as mock_perf,
+        ):
             mock_perf.side_effect = lambda venue, tier, team, db, before_date: (
                 1.0 if team == "Brisbane" else 0.0
             )
@@ -380,13 +418,16 @@ class TestClamping:
 # Edge cases
 # ---------------------------------------------------------------------------
 
+
 class TestEdgeCases:
     @pytest.mark.asyncio
     async def test_venue_not_found(self, model):
         """Game with unknown venue still produces a valid prediction."""
         game = Game(
-            id=2, slug="test-2",
-            home_team="Sydney", away_team="Melbourne",
+            id=2,
+            slug="test-2",
+            home_team="Sydney",
+            away_team="Melbourne",
             venue="Unknown Stadium",
             date=datetime(2025, 7, 1),
             completed=False,
@@ -417,8 +458,10 @@ class TestEdgeCases:
         """Fewer than 3 similar-condition games → cold-start fallback."""
         weather = _make_weather(precipitation=10.0)
 
-        with patch.object(model, "_get_match_weather", return_value=weather), \
-             patch.object(model, "_get_historical_performance", return_value=0.0):
+        with (
+            patch.object(model, "_get_match_weather", return_value=weather),
+            patch.object(model, "_get_historical_performance", return_value=0.0),
+        ):
             winner, confidence, margin = await model.predict(game, AsyncMock())
 
         # Should fall back to cold-start

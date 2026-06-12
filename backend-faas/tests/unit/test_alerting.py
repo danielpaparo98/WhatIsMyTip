@@ -1,7 +1,8 @@
 """Unit tests for the AlertingService."""
 
-import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 
 from packages.shared.alerting import AlertingService
 

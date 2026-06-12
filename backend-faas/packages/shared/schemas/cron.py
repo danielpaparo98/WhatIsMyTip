@@ -1,7 +1,8 @@
 """Schemas for cron job management."""
 
 from datetime import datetime
-from typing import Optional, Dict, Any, List
+from typing import List, Optional
+
 from pydantic import BaseModel, Field
 
 
@@ -24,7 +25,7 @@ class JobExecutionResponse(BaseModel):
     error_message: Optional[str] = None
     result_summary: Optional[str] = None
     created_at: datetime
-    
+
     class Config:
         from_attributes = True
 
@@ -74,7 +75,7 @@ class JobLockResponse(BaseModel):
     locked_at: datetime
     locked_by: Optional[str] = None
     expires_at: datetime
-    
+
     class Config:
         from_attributes = True
 

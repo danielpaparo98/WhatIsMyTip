@@ -1,13 +1,15 @@
+from typing import List
+
+from sqlalchemy import delete, func, insert, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, insert, delete, func
-from typing import List, Optional
-from ..models import ModelPrediction
+
 from ..cache import cached, short_cache
+from ..models import ModelPrediction
 
 
 class ModelPredictionCRUD:
     """CRUD operations for model predictions."""
-    
+
     @staticmethod
     async def get_by_game(db: AsyncSession, game_id: int) -> List[ModelPrediction]:
         """Get all model predictions for a game."""
@@ -17,16 +19,16 @@ class ModelPredictionCRUD:
             .order_by(ModelPrediction.model_name)
         )
         return list(result.scalars().all())
-    
+
     @staticmethod
     @cached(cache=short_cache, key_prefix="model_predictions_by_games:")
     async def get_by_games(db: AsyncSession, game_ids: List[int]) -> dict:
         """Get all model predictions for multiple games in a single batch query.
-        
+
         Args:
             db: Database session
             game_ids: List of game IDs to fetch predictions for
-            
+
         Returns:
             Dictionary mapping game_id to list of ModelPrediction objects
         """
@@ -36,16 +38,16 @@ class ModelPredictionCRUD:
             .order_by(ModelPrediction.game_id, ModelPrediction.model_name)
         )
         predictions = list(result.scalars().all())
-        
+
         # Group predictions by game_id
         predictions_by_game = {}
         for prediction in predictions:
             if prediction.game_id not in predictions_by_game:
                 predictions_by_game[prediction.game_id] = []
             predictions_by_game[prediction.game_id].append(prediction)
-        
+
         return predictions_by_game
-    
+
     @staticmethod
     async def create(
         db: AsyncSession,
@@ -57,7 +59,7 @@ class ModelPredictionCRUD:
     ) -> ModelPrediction:
         """Create a new model prediction with proper transaction management."""
         from ..cache import invalidate_cache_pattern
-        
+
         try:
             prediction = ModelPrediction(
                 game_id=game_id,
@@ -69,43 +71,43 @@ class ModelPredictionCRUD:
             db.add(prediction)
             await db.commit()
             await db.refresh(prediction)
-            
+
             # Invalidate cache for model prediction queries
             await invalidate_cache_pattern(short_cache, "model_predictions:")
             await invalidate_cache_pattern(short_cache, "model_predictions_by_games:")
-            
+
             return prediction
-        except Exception as e:
+        except Exception:
             await db.rollback()
             raise
-    
+
     @staticmethod
     async def create_batch(db: AsyncSession, predictions_data: List[dict]) -> List[ModelPrediction]:
         """Create multiple model predictions in a single bulk insert operation.
-        
+
         Args:
             db: Database session
             predictions_data: List of dictionaries containing prediction data
-            
+
         Returns:
             List of created ModelPrediction objects
         """
         from ..cache import invalidate_cache_pattern
-        
+
         try:
             stmt = insert(ModelPrediction).values(predictions_data).returning(ModelPrediction)
             result = await db.execute(stmt)
             await db.commit()
-            
+
             # Invalidate cache for model prediction queries
             await invalidate_cache_pattern(short_cache, "model_predictions:")
             await invalidate_cache_pattern(short_cache, "model_predictions_by_games:")
-            
+
             return list(result.scalars().all())
-        except Exception as e:
+        except Exception:
             await db.rollback()
             raise
-    
+
     @staticmethod
     async def create_or_update(
         db: AsyncSession,
@@ -124,7 +126,7 @@ class ModelPredictionCRUD:
             )
         )
         existing = result.scalar_one_or_none()
-        
+
         if existing:
             # Update existing prediction
             existing.winner = winner
@@ -143,31 +145,31 @@ class ModelPredictionCRUD:
                 confidence=confidence,
                 margin=margin,
             )
-    
+
     @staticmethod
     async def delete_for_game(db: AsyncSession, game_id: int) -> int:
         """Delete all model predictions for a game using a bulk DELETE."""
         from ..cache import invalidate_cache_pattern
-        
+
         try:
             # Count before deleting
             count_result = await db.execute(
                 select(func.count()).where(ModelPrediction.game_id == game_id)
             )
             count = count_result.scalar() or 0
-            
+
             await db.execute(delete(ModelPrediction).where(ModelPrediction.game_id == game_id))
             await db.commit()
-            
+
             # Invalidate cache
             await invalidate_cache_pattern(short_cache, "model_predictions:")
             await invalidate_cache_pattern(short_cache, "model_predictions_by_games:")
-            
+
             return count
-        except Exception as e:
+        except Exception:
             await db.rollback()
             raise
-    
+
     @staticmethod
     async def save_predictions(
         db: AsyncSession,
@@ -176,7 +178,7 @@ class ModelPredictionCRUD:
         update_existing: bool = True
     ) -> dict:
         """Save multiple model predictions for a game.
-        
+
         Args:
             db: Database session
             game_id: Database ID of game
@@ -186,7 +188,7 @@ class ModelPredictionCRUD:
                 - confidence: Prediction confidence
                 - margin: Predicted margin
             update_existing: Whether to update existing predictions (default: True)
-            
+
         Returns:
             Dictionary with statistics:
             - created: Number of predictions created
@@ -194,21 +196,21 @@ class ModelPredictionCRUD:
             - skipped: Number of predictions skipped (when update_existing=False)
         """
         from ..cache import invalidate_cache_pattern
-        
+
         try:
             stats = {
                 "created": 0,
                 "updated": 0,
                 "skipped": 0
             }
-            
+
             # Get existing predictions for this game
             existing_predictions = await ModelPredictionCRUD.get_by_game(db, game_id)
             existing_model_names = {p.model_name for p in existing_predictions}
-            
+
             for pred_data in predictions:
                 model_name = pred_data["model_name"]
-                
+
                 if model_name in existing_model_names:
                     if update_existing:
                         # Update existing prediction
@@ -235,15 +237,15 @@ class ModelPredictionCRUD:
                         margin=pred_data["margin"],
                     )
                     stats["created"] += 1
-            
+
             # Commit all changes
             await db.commit()
-            
+
             # Invalidate cache
             await invalidate_cache_pattern(short_cache, "model_predictions:")
             await invalidate_cache_pattern(short_cache, "model_predictions_by_games:")
-            
+
             return stats
-        except Exception as e:
+        except Exception:
             await db.rollback()
             raise

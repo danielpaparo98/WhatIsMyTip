@@ -5,7 +5,6 @@ Player, MatchWeather, PlayerMatchStats, PlayerAdvancedStats, and Injury
 models without requiring a database.
 """
 
-import pytest
 from datetime import date, datetime, timezone
 
 from packages.shared.models import (

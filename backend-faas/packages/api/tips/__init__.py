@@ -17,22 +17,34 @@ import traceback
 # Make shared package importable from the function's working directory
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
-from packages.shared.db import _get_session_factory, dispose_engine
+from sqlalchemy import select
+
+from packages.shared.api_helpers import (
+    bool_query,
+    check_rate_limit,
+    check_request_size,
+    int_query,
+    parse_request,
+    response,
+    segments,
+    to_dict,
+    validate_request,
+    verify_api_key,
+)
 from packages.shared.cache import close_redis_pool
-from packages.shared.config import settings
+from packages.shared.crud import GameCRUD, ModelPredictionCRUD, TipCRUD
+from packages.shared.db import _get_session_factory, dispose_engine
 from packages.shared.logger import get_logger
-from packages.shared.crud import TipCRUD, GameCRUD, ModelPredictionCRUD
+from packages.shared.models import Game, Tip
 from packages.shared.schemas import (
-    TipResponse,
-    TipListResponse,
     ModelPrediction as ModelPredictionSchema,
 )
-from packages.shared.models import Game, Tip
-from packages.shared.services.tip_generation import TipGenerationService
-from packages.shared.api_helpers import parse_request, response, segments, to_dict, int_query, bool_query, verify_api_key, check_rate_limit, check_request_size, validate_request
+from packages.shared.schemas import (
+    TipListResponse,
+    TipResponse,
+)
 from packages.shared.schemas.admin import TipGenerateRequest
-
-from sqlalchemy import select
+from packages.shared.services.tip_generation import TipGenerationService
 
 logger = get_logger(__name__)
 
@@ -42,6 +54,7 @@ VALID_HEURISTICS = ["best_bet", "high_risk_high_reward", "yolo"]
 # ---------------------------------------------------------------------------
 # Route handlers
 # ---------------------------------------------------------------------------
+
 
 async def _handle_games_with_tips(session, query: dict) -> dict:
     """GET /games-with-tips — games with tips for a round."""
@@ -61,10 +74,14 @@ async def _handle_games_with_tips(session, query: dict) -> dict:
     try:
         # Lock games for this round to prevent concurrent tip generation
         async with session.begin():
-            stmt = select(Game).where(
-                Game.season == season,
-                Game.round_id == round_id,
-            ).with_for_update()
+            stmt = (
+                select(Game)
+                .where(
+                    Game.season == season,
+                    Game.round_id == round_id,
+                )
+                .with_for_update()
+            )
 
             games_result = await session.execute(stmt)
             games = list(games_result.scalars().all())
@@ -82,9 +99,7 @@ async def _handle_games_with_tips(session, query: dict) -> dict:
                         )
                     )
                 else:
-                    result = await session.execute(
-                        select(Tip).where(Tip.game_id.in_(game_ids))
-                    )
+                    result = await session.execute(select(Tip).where(Tip.game_id.in_(game_ids)))
                 tips = list(result.scalars().all())
             else:
                 tips = []
@@ -139,7 +154,9 @@ async def _handle_games_with_tips(session, query: dict) -> dict:
                     "margin": tip.margin,
                     "confidence": tip.confidence,
                     "explanation": tip.explanation,
-                    "created_at": tip.created_at.isoformat() if tip.created_at is not None else None,
+                    "created_at": tip.created_at.isoformat()
+                    if tip.created_at is not None
+                    else None,
                 }
 
             games_with_tips.append(game_dict)
@@ -202,7 +219,10 @@ async def _handle_generate_tips(session, query: dict, body: dict) -> dict:
         if invalid:
             return response(
                 400,
-                error=f"Invalid heuristic(s): {', '.join(invalid)}. Must be one of: {', '.join(VALID_HEURISTICS)}",
+                error=(
+                    f"Invalid heuristic(s): {', '.join(invalid)}. "
+                    f"Must be one of: {', '.join(VALID_HEURISTICS)}"
+                ),
             )
 
     if not season or not round_id:
@@ -257,7 +277,10 @@ async def _handle_tips_by_heuristic(session, heuristic: str, query: dict) -> dic
     if heuristic not in VALID_HEURISTICS:
         return response(
             400,
-            error=f"Invalid heuristic '{heuristic}'. Must be one of: {', '.join(sorted(VALID_HEURISTICS))}",
+            error=(
+                f"Invalid heuristic '{heuristic}'. "
+                f"Must be one of: {', '.join(sorted(VALID_HEURISTICS))}"
+            ),
         )
 
     limit = int_query(query, "limit") or 100
@@ -325,7 +348,9 @@ async def main(args: dict) -> dict:
             if method == "GET" and len(segs) == 0:
                 return await _handle_list_tips(session, query)
 
-            return response(404, error="Not found", request_args=args, allowed_methods=_PUBLIC_METHODS)
+            return response(
+                404, error="Not found", request_args=args, allowed_methods=_PUBLIC_METHODS
+            )
 
         except Exception as e:
             had_error = True

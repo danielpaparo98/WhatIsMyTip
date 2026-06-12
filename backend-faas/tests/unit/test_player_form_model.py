@@ -5,13 +5,13 @@ aggregation, cold-start behaviour, confidence/margin clamping, and
 backtest safety.
 """
 
-import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
 from datetime import datetime, timezone
+from unittest.mock import AsyncMock, MagicMock, patch
 
-from packages.shared.models_ml.player_form import PlayerFormModel
+import pytest
+
 from packages.shared.models import Game
-
+from packages.shared.models_ml.player_form import PlayerFormModel
 
 # ---------------------------------------------------------------------------
 # Fixtures

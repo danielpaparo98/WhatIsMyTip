@@ -1,30 +1,29 @@
 """Tests for the database seed data script."""
 
-import sys
 import os
-from datetime import datetime, timezone
-from unittest.mock import AsyncMock, MagicMock, patch
+import sys
 
 import pytest
 
 # Ensure backend-faas is on sys.path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
+import random
+
 from scripts.seed_data import (
     AFL_TEAMS,
+    GAMES_PER_ROUND,
     HEURISTICS,
     MODEL_NAMES,
-    ROUNDS_PER_SEASON,
-    GAMES_PER_ROUND,
     TEAM_VENUES,
     _generate_confidence,
     _generate_deterministic_slug,
+    _generate_elo_rating,
     _generate_explanation,
     _generate_game_datetime,
     _generate_margin,
     _generate_model_confidence,
     _generate_model_margin,
-    _generate_elo_rating,
     _generate_realistic_score,
     _generate_round_fixtures,
     seed_backtest_results,
@@ -36,20 +35,6 @@ from scripts.seed_data import (
     seed_model_predictions,
     seed_tips,
 )
-from packages.shared.models import (
-    BacktestResult,
-    EloCache,
-    Game,
-    GenerationProgress,
-    JobExecution,
-    MatchAnalysis,
-    ModelPrediction,
-    Tip,
-)
-
-
-import random
-
 
 # ---------------------------------------------------------------------------
 # Fixture / helper

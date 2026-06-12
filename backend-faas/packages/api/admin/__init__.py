@@ -23,24 +23,32 @@ from datetime import datetime, timezone
 # Make shared package importable from the function's working directory
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
-from packages.shared.db import _get_session_factory, dispose_engine
+from packages.shared.api_helpers import (
+    check_rate_limit,
+    check_request_size,
+    parse_request,
+    response,
+    segments,
+    validate_request,
+    verify_api_key,
+)
 from packages.shared.cache import close_redis_pool
 from packages.shared.config import settings
+from packages.shared.crud.jobs import JobExecutionCRUD
+from packages.shared.db import _get_session_factory, dispose_engine
 from packages.shared.logger import get_logger
-from packages.shared.api_helpers import parse_request, response, segments, verify_api_key, check_rate_limit, check_request_size, validate_request
+from packages.shared.models_ml.elo import EloModel
 from packages.shared.schemas.admin import (
     DailySyncTriggerRequest,
+    HistoricRefreshTriggerRequest,
     MatchCompletionTriggerRequest,
     TipGenerationTriggerRequest,
-    HistoricRefreshTriggerRequest,
 )
-from packages.shared.squiggle import SquiggleClient
 from packages.shared.services.game_sync import GameSyncService
+from packages.shared.services.historic_data_refresh import HistoricDataRefreshService
 from packages.shared.services.match_completion import MatchCompletionDetectorService
 from packages.shared.services.tip_generation import TipGenerationService
-from packages.shared.services.historic_data_refresh import HistoricDataRefreshService
-from packages.shared.models_ml.elo import EloModel
-from packages.shared.crud.jobs import JobExecutionCRUD
+from packages.shared.squiggle import SquiggleClient
 
 logger = get_logger(__name__)
 
@@ -48,6 +56,7 @@ logger = get_logger(__name__)
 # ---------------------------------------------------------------------------
 # Route handlers
 # ---------------------------------------------------------------------------
+
 
 async def _handle_daily_sync(session, body: dict) -> dict:
     """POST /daily-sync/trigger — trigger daily game sync."""
@@ -76,7 +85,10 @@ async def _handle_daily_sync(session, body: dict) -> dict:
 
             resp = {
                 "success": True,
-                "message": f"Successfully synced {sync_stats['total_games']} games for season {season}",
+                "message": (
+                    f"Successfully synced {sync_stats['total_games']} "
+                    f"games for season {season}"
+                ),
                 "season": season,
                 "games_created": sync_stats.get("games_created", 0),
                 "games_updated": sync_stats.get("games_updated", 0),
@@ -325,11 +337,14 @@ async def _handle_metrics(session) -> dict:
         "platform": platform.system(),
     }
 
-    return response(200, data={
-        "metrics": metrics,
-        "system": system_info,
-        "alerting_enabled": settings.alert_enabled,
-    })
+    return response(
+        200,
+        data={
+            "metrics": metrics,
+            "system": system_info,
+            "alerting_enabled": settings.alert_enabled,
+        },
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -371,7 +386,12 @@ async def main(args: dict) -> dict:
 
     # Authenticate all other admin endpoints
     if not verify_api_key(headers, query, body):
-        return response(401, error="Invalid or missing API key", request_args=args, allowed_methods=_ADMIN_METHODS)
+        return response(
+            401,
+            error="Invalid or missing API key",
+            request_args=args,
+            allowed_methods=_ADMIN_METHODS,
+        )
 
     factory = _get_session_factory()
     async with factory() as session:
@@ -403,7 +423,9 @@ async def main(args: dict) -> dict:
             if method == "GET" and segs == ["metrics"]:
                 return await _handle_metrics(session)
 
-            return response(404, error="Not found", request_args=args, allowed_methods=_ADMIN_METHODS)
+            return response(
+                404, error="Not found", request_args=args, allowed_methods=_ADMIN_METHODS
+            )
 
         except Exception as e:
             had_error = True
