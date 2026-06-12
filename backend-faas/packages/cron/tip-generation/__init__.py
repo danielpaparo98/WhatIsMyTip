@@ -41,7 +41,7 @@ async def main(args: dict) -> dict:
     execution_id = generate_execution_id()
     log_extra = {"job_name": JOB_NAME, "execution_id": execution_id}
 
-    logger.info(f"{JOB_NAME}: Starting execution", extra=log_extra)
+    logger.info("%s: Starting execution", JOB_NAME, extra=log_extra)
 
     factory = _get_session_factory()
     async with factory() as session:
@@ -59,7 +59,7 @@ async def main(args: dict) -> dict:
                 expires_seconds=settings.tip_generation_timeout_seconds,
             )
             if not lock:
-                logger.info(f"{JOB_NAME}: Could not acquire lock, skipping")
+                logger.info("%s: Could not acquire lock, skipping", JOB_NAME)
                 return {"statusCode": 200, "body": {"message": "Job already running"}}
 
             locked = True
@@ -83,7 +83,7 @@ async def main(args: dict) -> dict:
                 return {"statusCode": 200, "body": {"message": msg}}
 
             season, round_id = next_round
-            logger.info(f"Found next upcoming round: season {season}, round {round_id}")
+            logger.info("Found next upcoming round: season %s, round %s", season, round_id)
 
             # 4. Execute job logic
             start_time = time.time()
@@ -96,8 +96,11 @@ async def main(args: dict) -> dict:
             )
 
             logger.info(
-                f"Generating tips for season {season}, round {round_id}, "
-                f"regenerate={regenerate}"
+                "Generating tips for season %s, round %s, "
+                "regenerate=%s",
+                season,
+                round_id,
+                regenerate,
             )
 
             generation_stats = await generation_service.generate_for_round(
@@ -148,22 +151,28 @@ async def main(args: dict) -> dict:
                         f"Generated {explanation_count} AI explanations"
                     )
                     logger.info(
-                        f"Generated {explanation_count} AI explanations for "
-                        f"season {season}, round {round_id}"
+                        "Generated %s AI explanations for "
+                        "season %s, round %s",
+                        explanation_count,
+                        season,
+                        round_id,
                     )
                 await explanation_service.close()
             except Exception as e:
                 # Explanation failure should not fail the job
                 logger.warning(
-                    f"Explanation generation failed for season {season}, "
-                    f"round {round_id}: {e}",
+                    "Explanation generation failed for season %s, "
+                    "round %s: %s",
+                    season,
+                    round_id,
+                    e,
                     exc_info=True,
                 )
                 summary_parts.append("Explanation generation failed (tips still saved)")
 
             duration = time.time() - start_time
             summary = "; ".join(summary_parts)
-            logger.info(f"{JOB_NAME} completed: {summary}", extra=log_extra)
+            logger.info("%s completed: %s", JOB_NAME, summary, extra=log_extra)
 
             # 5. Mark success
             await execution_crud.update_execution(
@@ -183,15 +192,19 @@ async def main(args: dict) -> dict:
             classified = classify_error(e)
             if isinstance(classified, TransientJobError):
                 logger.warning(
-                    f"Transient error in {JOB_NAME}: {classified.message}",
+                    "Transient error in %s: %s",
+                    JOB_NAME,
+                    classified.message,
                     extra={**log_extra, "error_type": "transient", "details": classified.details},
                 )
             else:
                 logger.error(
-                    f"Permanent error in {JOB_NAME}: {classified.message}",
+                    "Permanent error in %s: %s",
+                    JOB_NAME,
+                    classified.message,
                     extra={**log_extra, "error_type": "permanent", "details": classified.details},
                 )
-            logger.error(f"{JOB_NAME} error: {e}\n{traceback.format_exc()}")
+            logger.error("%s error: %s\n%s", JOB_NAME, e, traceback.format_exc())
             if execution:
                 try:
                     await execution_crud.update_execution(
@@ -201,7 +214,7 @@ async def main(args: dict) -> dict:
                     )
                     await session.commit()
                 except Exception:
-                    logger.error(f"Failed to update execution record: {traceback.format_exc()}")
+                    logger.error("Failed to update execution record: %s", traceback.format_exc())
             try:
                 alerting = AlertingService()
                 await alerting.send_failure_alert(
@@ -211,7 +224,7 @@ async def main(args: dict) -> dict:
                     duration_seconds=time.time() - start_time,
                 )
             except Exception:
-                logger.error(f"Failed to send alert: {traceback.format_exc()}")
+                logger.error("Failed to send alert: %s", traceback.format_exc())
             return {"statusCode": 500, "body": {"error": str(e)}}
 
         finally:
@@ -220,6 +233,6 @@ async def main(args: dict) -> dict:
                     await lock_crud.release_lock(JOB_NAME, LOCKED_BY)
                     await session.commit()
                 except Exception:
-                    logger.error(f"Failed to release lock: {traceback.format_exc()}")
+                    logger.error("Failed to release lock: %s", traceback.format_exc())
             await close_redis_pool(force=had_error)
             await dispose_engine(force=had_error)

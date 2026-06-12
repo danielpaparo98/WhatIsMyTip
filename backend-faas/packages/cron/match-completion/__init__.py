@@ -42,7 +42,7 @@ async def main(args: dict) -> dict:
     execution_id = generate_execution_id()
     log_extra = {"job_name": JOB_NAME, "execution_id": execution_id}
 
-    logger.info(f"{JOB_NAME}: Starting execution", extra=log_extra)
+    logger.info("%s: Starting execution", JOB_NAME, extra=log_extra)
 
     factory = _get_session_factory()
     async with factory() as session:
@@ -60,7 +60,7 @@ async def main(args: dict) -> dict:
                 expires_seconds=settings.completion_check_timeout_seconds,
             )
             if not lock:
-                logger.info(f"{JOB_NAME}: Could not acquire lock, skipping")
+                logger.info("%s: Could not acquire lock, skipping", JOB_NAME)
                 return {"statusCode": 200, "body": {"message": "Job already running"}}
 
             locked = True
@@ -82,7 +82,8 @@ async def main(args: dict) -> dict:
                 )
 
                 logger.info(
-                    f"Detecting completed matches with {buffer_minutes} minute buffer"
+                    "Detecting completed matches with %s minute buffer",
+                    buffer_minutes,
                 )
                 completion_stats = await detector_service.detect_and_process_completed_matches()
 
@@ -97,7 +98,8 @@ async def main(args: dict) -> dict:
                 # Update Elo ratings cache if games were completed
                 if games_completed > 0:
                     logger.info(
-                        f"Updating Elo ratings cache after {games_completed} completed games"
+                        "Updating Elo ratings cache after %s completed games",
+                        games_completed,
                     )
                     try:
                         await EloModel.update_cache(session)
@@ -105,7 +107,8 @@ async def main(args: dict) -> dict:
                         logger.info("Elo ratings cache updated successfully")
                     except Exception as elo_error:
                         logger.error(
-                            f"Failed to update Elo cache: {elo_error}",
+                            "Failed to update Elo cache: %s",
+                            elo_error,
                             exc_info=True,
                         )
                         # Don't fail the job if Elo cache update fails
@@ -127,7 +130,7 @@ async def main(args: dict) -> dict:
                     summary_parts.append(f"Failed: {error_count}")
 
                 summary = "; ".join(summary_parts)
-                logger.info(f"{JOB_NAME} completed: {summary}", extra=log_extra)
+                logger.info("%s completed: %s", JOB_NAME, summary, extra=log_extra)
 
                 # 4. Mark success
                 await execution_crud.update_execution(
@@ -150,15 +153,19 @@ async def main(args: dict) -> dict:
             classified = classify_error(e)
             if isinstance(classified, TransientJobError):
                 logger.warning(
-                    f"Transient error in {JOB_NAME}: {classified.message}",
+                    "Transient error in %s: %s",
+                    JOB_NAME,
+                    classified.message,
                     extra={**log_extra, "error_type": "transient", "details": classified.details},
                 )
             else:
                 logger.error(
-                    f"Permanent error in {JOB_NAME}: {classified.message}",
+                    "Permanent error in %s: %s",
+                    JOB_NAME,
+                    classified.message,
                     extra={**log_extra, "error_type": "permanent", "details": classified.details},
                 )
-            logger.error(f"{JOB_NAME} error: {e}\n{traceback.format_exc()}")
+            logger.error("%s error: %s\n%s", JOB_NAME, e, traceback.format_exc())
             if execution:
                 try:
                     await execution_crud.update_execution(
@@ -168,7 +175,7 @@ async def main(args: dict) -> dict:
                     )
                     await session.commit()
                 except Exception:
-                    logger.error(f"Failed to update execution record: {traceback.format_exc()}")
+                    logger.error("Failed to update execution record: %s", traceback.format_exc())
             try:
                 alerting = AlertingService()
                 await alerting.send_failure_alert(
@@ -178,7 +185,7 @@ async def main(args: dict) -> dict:
                     duration_seconds=time.time() - start_time,
                 )
             except Exception:
-                logger.error(f"Failed to send alert: {traceback.format_exc()}")
+                logger.error("Failed to send alert: %s", traceback.format_exc())
             return {"statusCode": 500, "body": {"error": str(e)}}
 
         finally:
@@ -187,6 +194,6 @@ async def main(args: dict) -> dict:
                     await lock_crud.release_lock(JOB_NAME, LOCKED_BY)
                     await session.commit()
                 except Exception:
-                    logger.error(f"Failed to release lock: {traceback.format_exc()}")
+                    logger.error("Failed to release lock: %s", traceback.format_exc())
             await close_redis_pool(force=had_error)
             await dispose_engine(force=had_error)
