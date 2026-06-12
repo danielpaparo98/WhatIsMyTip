@@ -4,10 +4,10 @@ Tests the ``main()`` entry point by mocking the database session factory,
 CRUD operations, and Redis pool. No external dependencies required.
 """
 
-import json
-import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
 from datetime import datetime, timezone
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 
 # The games function uses sys.path manipulation so we import the module
 # after patching the session factory.

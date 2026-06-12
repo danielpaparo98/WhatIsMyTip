@@ -4,13 +4,13 @@ Tests cover player importance scoring, injury impact calculation,
 cold-start behaviour, confidence/margin clamping, and backtest safety.
 """
 
-import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
 from datetime import datetime, timezone
+from unittest.mock import AsyncMock, MagicMock, patch
 
-from packages.shared.models_ml.injury_impact import InjuryImpactModel
+import pytest
+
 from packages.shared.models import Game, Injury, Player
-
+from packages.shared.models_ml.injury_impact import InjuryImpactModel
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -206,8 +206,8 @@ class TestPredictColdStart:
         """Injuries exist but all players 'Available' → filtered out → cold start."""
         db = AsyncMock()
         # These should be filtered out
-        injury = _make_injury(return_timeline="Available")
-        player = _make_player(player_id=10)
+        _make_injury(return_timeline="Available")
+        _make_player(player_id=10)
         with patch.object(model, "_get_active_injuries", return_value=[]):
             winner, confidence, margin = await model.predict(game, db)
 

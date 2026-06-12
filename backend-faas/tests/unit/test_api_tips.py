@@ -5,9 +5,10 @@ CRUD operations, and Redis pool. No external dependencies required.
 """
 
 import json
-import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
 from datetime import datetime, timezone
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 
 
 def _make_tip_mock(**overrides):
@@ -193,7 +194,7 @@ class TestTipsFunctionRouting:
 
     @pytest.mark.asyncio
     async def test_post_generate_missing_params(self):
-        """POST /generate without season/round returns 400."""
+        """POST /generate without season/round returns 422 (validation error)."""
         from packages.api.tips import main
 
         mock_session = AsyncMock()
@@ -212,7 +213,7 @@ class TestTipsFunctionRouting:
                 "__ow_headers": {"x-api-key": "test-api-key"},
             })
 
-        assert result["statusCode"] == 400
+        assert result["statusCode"] == 422
 
     @pytest.mark.asyncio
     async def test_post_generate_no_games_found(self):

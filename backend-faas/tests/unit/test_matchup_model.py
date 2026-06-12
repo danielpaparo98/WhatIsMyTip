@@ -4,13 +4,13 @@ Tests cover head-to-head analysis, venue record lookup, time decay,
 cold-start behaviour, confidence/margin clamping, and backtest safety.
 """
 
-import pytest
+from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
-from datetime import datetime, timezone, timedelta
 
-from packages.shared.models_ml.matchup import MatchupModel
+import pytest
+
 from packages.shared.models import Game
-
+from packages.shared.models_ml.matchup import MatchupModel
 
 # ---------------------------------------------------------------------------
 # Fixtures

@@ -5,8 +5,9 @@ All admin endpoints require a valid X-API-Key header.
 """
 
 import json
+from unittest.mock import AsyncMock, patch
+
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
 
 
 class TestAdminAuth:
@@ -17,11 +18,13 @@ class TestAdminAuth:
         """Request without X-API-Key header returns 401."""
         from packages.api.admin import main
 
-        result = await main({
-            "__ow_method": "POST",
-            "__ow_path": "/daily-sync/trigger",
-            "__ow_headers": {},
-        })
+        result = await main(
+            {
+                "__ow_method": "POST",
+                "__ow_path": "/daily-sync/trigger",
+                "__ow_headers": {},
+            }
+        )
         assert result["statusCode"] == 401
 
     @pytest.mark.asyncio
@@ -29,11 +32,13 @@ class TestAdminAuth:
         """Request with wrong API key returns 401."""
         from packages.api.admin import main
 
-        result = await main({
-            "__ow_method": "POST",
-            "__ow_path": "/daily-sync/trigger",
-            "__ow_headers": {"x-api-key": "wrong-key"},
-        })
+        result = await main(
+            {
+                "__ow_method": "POST",
+                "__ow_path": "/daily-sync/trigger",
+                "__ow_headers": {"x-api-key": "wrong-key"},
+            }
+        )
         assert result["statusCode"] == 401
 
     @pytest.mark.asyncio
@@ -41,11 +46,13 @@ class TestAdminAuth:
         """OPTIONS preflight request bypasses authentication."""
         from packages.api.admin import main
 
-        result = await main({
-            "__ow_method": "OPTIONS",
-            "__ow_path": "/daily-sync/trigger",
-            "__ow_headers": {},
-        })
+        result = await main(
+            {
+                "__ow_method": "OPTIONS",
+                "__ow_path": "/daily-sync/trigger",
+                "__ow_headers": {},
+            }
+        )
         assert result["statusCode"] == 204
 
 
@@ -67,21 +74,24 @@ class TestAdminDailySync:
             "duration_seconds": 1.5,
         }
 
-        with patch("packages.api.admin._get_session_factory") as mock_factory, \
-             patch("packages.api.admin.close_redis_pool", new_callable=AsyncMock), \
-             patch("packages.api.admin.verify_api_key", return_value=True), \
-             patch("packages.api.admin._handle_daily_sync", new_callable=AsyncMock) as mock_handler:
-
+        with (
+            patch("packages.api.admin._get_session_factory") as mock_factory,
+            patch("packages.api.admin.close_redis_pool", new_callable=AsyncMock),
+            patch("packages.api.admin.verify_api_key", return_value=True),
+            patch("packages.api.admin._handle_daily_sync", new_callable=AsyncMock) as mock_handler,
+        ):
             mock_factory.return_value.return_value.__aenter__ = AsyncMock(return_value=mock_session)
             mock_factory.return_value.return_value.__aexit__ = AsyncMock(return_value=None)
             mock_handler.return_value = {"statusCode": 200, "body": mock_stats}
 
-            result = await main({
-                "__ow_method": "POST",
-                "__ow_path": "/daily-sync/trigger",
-                "__ow_headers": {"x-api-key": "test-api-key"},
-                "__ow_body": "{}",
-            })
+            result = await main(
+                {
+                    "__ow_method": "POST",
+                    "__ow_path": "/daily-sync/trigger",
+                    "__ow_headers": {"x-api-key": "test-api-key"},
+                    "__ow_body": "{}",
+                }
+            )
 
         assert result["statusCode"] == 200
         assert result["body"]["total_games"] == 9
@@ -111,21 +121,26 @@ class TestAdminTipGeneration:
             "duration_seconds": 2.5,
         }
 
-        with patch("packages.api.admin._get_session_factory") as mock_factory, \
-             patch("packages.api.admin.close_redis_pool", new_callable=AsyncMock), \
-             patch("packages.api.admin.verify_api_key", return_value=True), \
-             patch("packages.api.admin._handle_tip_generation", new_callable=AsyncMock) as mock_handler:
-
+        with (
+            patch("packages.api.admin._get_session_factory") as mock_factory,
+            patch("packages.api.admin.close_redis_pool", new_callable=AsyncMock),
+            patch("packages.api.admin.verify_api_key", return_value=True),
+            patch(
+                "packages.api.admin._handle_tip_generation", new_callable=AsyncMock
+            ) as mock_handler,
+        ):
             mock_factory.return_value.return_value.__aenter__ = AsyncMock(return_value=mock_session)
             mock_factory.return_value.return_value.__aexit__ = AsyncMock(return_value=None)
             mock_handler.return_value = {"statusCode": 200, "body": mock_stats}
 
-            result = await main({
-                "__ow_method": "POST",
-                "__ow_path": "/tip-generation/trigger",
-                "__ow_headers": {"x-api-key": "test-api-key"},
-                "__ow_body": json.dumps({"season": 2025, "round_id": 1}),
-            })
+            result = await main(
+                {
+                    "__ow_method": "POST",
+                    "__ow_path": "/tip-generation/trigger",
+                    "__ow_headers": {"x-api-key": "test-api-key"},
+                    "__ow_body": json.dumps({"season": 2025, "round_id": 1}),
+                }
+            )
 
         assert result["statusCode"] == 200
         assert result["body"]["tips_created"] == 27
@@ -152,20 +167,25 @@ class TestAdminHistoricRefreshProgress:
             "progress_percentage": 75.0,
         }
 
-        with patch("packages.api.admin._get_session_factory") as mock_factory, \
-             patch("packages.api.admin.close_redis_pool", new_callable=AsyncMock), \
-             patch("packages.api.admin.verify_api_key", return_value=True), \
-             patch("packages.api.admin._handle_historic_refresh_progress", new_callable=AsyncMock) as mock_handler:
-
+        with (
+            patch("packages.api.admin._get_session_factory") as mock_factory,
+            patch("packages.api.admin.close_redis_pool", new_callable=AsyncMock),
+            patch("packages.api.admin.verify_api_key", return_value=True),
+            patch(
+                "packages.api.admin._handle_historic_refresh_progress", new_callable=AsyncMock
+            ) as mock_handler,
+        ):
             mock_factory.return_value.return_value.__aenter__ = AsyncMock(return_value=mock_session)
             mock_factory.return_value.return_value.__aexit__ = AsyncMock(return_value=None)
             mock_handler.return_value = {"statusCode": 200, "body": mock_progress}
 
-            result = await main({
-                "__ow_method": "GET",
-                "__ow_path": "/historic-refresh/progress",
-                "__ow_headers": {"x-api-key": "test-api-key"},
-            })
+            result = await main(
+                {
+                    "__ow_method": "GET",
+                    "__ow_path": "/historic-refresh/progress",
+                    "__ow_headers": {"x-api-key": "test-api-key"},
+                }
+            )
 
         assert result["statusCode"] == 200
         assert result["body"]["status"] == "in_progress"
@@ -181,18 +201,21 @@ class TestAdminRouting:
 
         mock_session = AsyncMock()
 
-        with patch("packages.api.admin._get_session_factory") as mock_factory, \
-             patch("packages.api.admin.close_redis_pool", new_callable=AsyncMock), \
-             patch("packages.api.admin.verify_api_key", return_value=True):
-
+        with (
+            patch("packages.api.admin._get_session_factory") as mock_factory,
+            patch("packages.api.admin.close_redis_pool", new_callable=AsyncMock),
+            patch("packages.api.admin.verify_api_key", return_value=True),
+        ):
             mock_factory.return_value.return_value.__aenter__ = AsyncMock(return_value=mock_session)
             mock_factory.return_value.return_value.__aexit__ = AsyncMock(return_value=None)
 
-            result = await main({
-                "__ow_method": "GET",
-                "__ow_path": "/unknown-route",
-                "__ow_headers": {"x-api-key": "test-api-key"},
-            })
+            result = await main(
+                {
+                    "__ow_method": "GET",
+                    "__ow_path": "/unknown-route",
+                    "__ow_headers": {"x-api-key": "test-api-key"},
+                }
+            )
 
         assert result["statusCode"] == 404
 
@@ -203,21 +226,26 @@ class TestAdminRouting:
 
         mock_session = AsyncMock()
 
-        with patch("packages.api.admin._get_session_factory") as mock_factory, \
-             patch("packages.api.admin.close_redis_pool", new_callable=AsyncMock), \
-             patch("packages.api.admin.verify_api_key", return_value=True), \
-             patch("packages.api.admin._handle_match_completion", new_callable=AsyncMock) as mock_handler:
-
+        with (
+            patch("packages.api.admin._get_session_factory") as mock_factory,
+            patch("packages.api.admin.close_redis_pool", new_callable=AsyncMock),
+            patch("packages.api.admin.verify_api_key", return_value=True),
+            patch(
+                "packages.api.admin._handle_match_completion", new_callable=AsyncMock
+            ) as mock_handler,
+        ):
             mock_factory.return_value.return_value.__aenter__ = AsyncMock(return_value=mock_session)
             mock_factory.return_value.return_value.__aexit__ = AsyncMock(return_value=None)
             mock_handler.return_value = {"statusCode": 200, "body": {"success": True}}
 
-            result = await main({
-                "__ow_method": "POST",
-                "__ow_path": "/match-completion/trigger",
-                "__ow_headers": {"x-api-key": "test-api-key"},
-                "__ow_body": "{}",
-            })
+            result = await main(
+                {
+                    "__ow_method": "POST",
+                    "__ow_path": "/match-completion/trigger",
+                    "__ow_headers": {"x-api-key": "test-api-key"},
+                    "__ow_body": "{}",
+                }
+            )
 
         assert result["statusCode"] == 200
 
@@ -228,21 +256,26 @@ class TestAdminRouting:
 
         mock_session = AsyncMock()
 
-        with patch("packages.api.admin._get_session_factory") as mock_factory, \
-             patch("packages.api.admin.close_redis_pool", new_callable=AsyncMock), \
-             patch("packages.api.admin.verify_api_key", return_value=True), \
-             patch("packages.api.admin._handle_historic_refresh", new_callable=AsyncMock) as mock_handler:
-
+        with (
+            patch("packages.api.admin._get_session_factory") as mock_factory,
+            patch("packages.api.admin.close_redis_pool", new_callable=AsyncMock),
+            patch("packages.api.admin.verify_api_key", return_value=True),
+            patch(
+                "packages.api.admin._handle_historic_refresh", new_callable=AsyncMock
+            ) as mock_handler,
+        ):
             mock_factory.return_value.return_value.__aenter__ = AsyncMock(return_value=mock_session)
             mock_factory.return_value.return_value.__aexit__ = AsyncMock(return_value=None)
             mock_handler.return_value = {"statusCode": 200, "body": {"success": True}}
 
-            result = await main({
-                "__ow_method": "POST",
-                "__ow_path": "/historic-refresh/trigger",
-                "__ow_headers": {"x-api-key": "test-api-key"},
-                "__ow_body": "{}",
-            })
+            result = await main(
+                {
+                    "__ow_method": "POST",
+                    "__ow_path": "/historic-refresh/trigger",
+                    "__ow_headers": {"x-api-key": "test-api-key"},
+                    "__ow_body": "{}",
+                }
+            )
 
         assert result["statusCode"] == 200
 
@@ -257,11 +290,12 @@ class TestAdminMetrics:
 
         mock_session = AsyncMock()
 
-        with patch("packages.api.admin._get_session_factory") as mock_factory, \
-             patch("packages.api.admin.close_redis_pool", new_callable=AsyncMock), \
-             patch("packages.api.admin.verify_api_key", return_value=True), \
-             patch("packages.api.admin._handle_metrics", new_callable=AsyncMock) as mock_handler:
-
+        with (
+            patch("packages.api.admin._get_session_factory") as mock_factory,
+            patch("packages.api.admin.close_redis_pool", new_callable=AsyncMock),
+            patch("packages.api.admin.verify_api_key", return_value=True),
+            patch("packages.api.admin._handle_metrics", new_callable=AsyncMock) as mock_handler,
+        ):
             mock_factory.return_value.return_value.__aenter__ = AsyncMock(return_value=mock_session)
             mock_factory.return_value.return_value.__aexit__ = AsyncMock(return_value=None)
             mock_handler.return_value = {
@@ -273,11 +307,13 @@ class TestAdminMetrics:
                 },
             }
 
-            result = await main({
-                "__ow_method": "GET",
-                "__ow_path": "/metrics",
-                "__ow_headers": {"x-api-key": "test-api-key"},
-            })
+            result = await main(
+                {
+                    "__ow_method": "GET",
+                    "__ow_path": "/metrics",
+                    "__ow_headers": {"x-api-key": "test-api-key"},
+                }
+            )
 
         assert result["statusCode"] == 200
         assert "metrics" in result["body"]

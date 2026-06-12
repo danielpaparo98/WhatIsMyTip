@@ -8,14 +8,15 @@ Cold-start: returns (home_team, 0.55, 12) when insufficient data.
 """
 
 import json
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, and_
-from typing import Dict, Tuple, Optional
+from typing import Optional, Tuple
 
-from .base import BaseModel
-from ..models import Game, MatchWeather
+from sqlalchemy import and_, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from ..cache import _get_client
 from ..logger import get_logger
+from ..models import Game, MatchWeather
+from .base import BaseModel
 
 logger = get_logger(__name__)
 
@@ -121,7 +122,7 @@ class WeatherImpactModel(BaseModel):
             .join(MatchWeather, MatchWeather.game_id == Game.id)
             .where(
                 and_(
-                    Game.completed == True,
+                    Game.completed,
                     Game.date < before_date,
                     (Game.home_team == team) | (Game.away_team == team),
                 )

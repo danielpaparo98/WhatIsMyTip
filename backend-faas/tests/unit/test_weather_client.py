@@ -4,12 +4,12 @@ Tests mock HTTP responses and verify parsing, caching, venue resolution,
 and match-window extraction. No real HTTP requests are made.
 """
 
-import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
 from datetime import date
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 
 from packages.shared.weather.client import WeatherClient
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -100,7 +100,7 @@ class TestVenueAliases:
 
     def test_venue_aliases_resolve_correctly(self):
         """Each alias should map to its canonical venue name."""
-        client = WeatherClient.__new__(WeatherClient)  # skip __init__
+        WeatherClient.__new__(WeatherClient)  # skip __init__
         for alias, expected in self.ALIAS_CASES.items():
             assert WeatherClient.VENUE_ALIASES.get(alias) == expected, (
                 f"Alias '{alias}' should resolve to '{expected}'"

@@ -17,15 +17,16 @@ from zoneinfo import ZoneInfo
 # Make shared package importable from the function's working directory
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
-from packages.shared.db import _get_session_factory, dispose_engine
+from packages.shared.alerting import AlertingService
 from packages.shared.cache import close_redis_pool
 from packages.shared.config import settings
-from packages.shared.logger import get_logger
 from packages.shared.crud.jobs import JobExecutionCRUD, JobLockCRUD
-from packages.shared.squiggle import SquiggleClient
-from packages.shared.services.game_sync import GameSyncService
+from packages.shared.db import _get_session_factory, dispose_engine
+from packages.shared.exceptions import TransientJobError, classify_error
+from packages.shared.logger import generate_execution_id, get_logger
 from packages.shared.models_ml.elo import EloModel
-from packages.shared.alerting import AlertingService
+from packages.shared.services.game_sync import GameSyncService
+from packages.shared.squiggle import SquiggleClient
 
 logger = get_logger(__name__)
 
@@ -42,6 +43,11 @@ async def main(args: dict) -> dict:
     Returns:
         dict with statusCode and body.
     """
+    execution_id = generate_execution_id()
+    log_extra = {"job_name": JOB_NAME, "execution_id": execution_id}
+
+    logger.info(f"{JOB_NAME}: Starting execution", extra=log_extra)
+
     factory = _get_session_factory()
     async with factory() as session:
         execution = None
@@ -130,7 +136,7 @@ async def main(args: dict) -> dict:
                     summary_parts.append(f"Failed: {error_count}")
 
                 summary = "; ".join(summary_parts)
-                logger.info(f"{JOB_NAME} completed: {summary}")
+                logger.info(f"{JOB_NAME} completed: {summary}", extra=log_extra)
 
                 # 5. Mark success
                 await execution_crud.update_execution(
@@ -150,6 +156,17 @@ async def main(args: dict) -> dict:
 
         except Exception as e:
             had_error = True
+            classified = classify_error(e)
+            if isinstance(classified, TransientJobError):
+                logger.warning(
+                    f"Transient error in {JOB_NAME}: {classified.message}",
+                    extra={**log_extra, "error_type": "transient", "details": classified.details},
+                )
+            else:
+                logger.error(
+                    f"Permanent error in {JOB_NAME}: {classified.message}",
+                    extra={**log_extra, "error_type": "permanent", "details": classified.details},
+                )
             logger.error(f"{JOB_NAME} error: {e}\n{traceback.format_exc()}")
             if execution:
                 try:

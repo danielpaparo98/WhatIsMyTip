@@ -4,8 +4,9 @@ Scrapes player stats, season game listings, and player profiles.
 Follows the same patterns as WeatherClient (httpx.AsyncClient + Redis cache).
 """
 
-import httpx
 from typing import Any, Dict, List
+
+import httpx
 from bs4 import BeautifulSoup
 
 from ..cache import medium_cache

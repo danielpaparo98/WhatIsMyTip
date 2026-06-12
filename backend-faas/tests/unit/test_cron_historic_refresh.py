@@ -11,9 +11,9 @@ from its file path.
 
 import importlib.util
 import os
-import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
 
 # Load the historic-refresh module from its file path (hyphen in directory name)
 _MODULE_PATH = os.path.join(

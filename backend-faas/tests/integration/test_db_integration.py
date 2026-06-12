@@ -16,8 +16,7 @@ os.environ.setdefault("ALERT_ENABLED", "false")
 import pytest
 from sqlalchemy import text
 
-from packages.shared.db import get_engine, dispose_engine, _get_session_factory
-
+from packages.shared.db import _get_session_factory, dispose_engine, get_engine
 
 # Skip entire module if no DB available
 pytestmark = pytest.mark.skipif(

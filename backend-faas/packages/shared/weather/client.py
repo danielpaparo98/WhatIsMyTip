@@ -4,9 +4,10 @@ Fetches historical and forecast weather data for AFL venues.
 Follows the same patterns as SquiggleClient (httpx.AsyncClient + Redis cache).
 """
 
-import httpx
-from typing import Dict, Any, Optional
 from datetime import date
+from typing import Any, Dict, Optional
+
+import httpx
 
 from ..cache import medium_cache
 from ..logger import get_logger

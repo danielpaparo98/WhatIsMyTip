@@ -1,10 +1,11 @@
-from pydantic import BaseModel, Field
-from datetime import datetime, date
-from typing import Optional, List, TYPE_CHECKING
+from datetime import datetime
+from typing import TYPE_CHECKING, List, Optional
+
+from pydantic import BaseModel
 
 if TYPE_CHECKING:
-    from .tips import TipResponse
     from .match_analysis import MatchAnalysisResponse
+    from .tips import TipResponse
 
 
 class WeatherResponse(BaseModel):
@@ -35,7 +36,7 @@ class GameResponse(BaseModel):
     venue: str
     date: datetime
     completed: bool
-    
+
     class Config:
         from_attributes = True
 

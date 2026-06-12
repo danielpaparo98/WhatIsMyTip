@@ -5,9 +5,7 @@ Focus: timezone-aware date conversion, team name matching, and date matching log
 
 import os
 import sys
-from datetime import date, datetime, timedelta, timezone
-
-import pytest
+from datetime import date, datetime, timezone
 
 # Ensure backend-faas is on sys.path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
@@ -20,9 +18,9 @@ from scripts.load_csv_to_db import (
 )
 
 try:
-    from zoneinfo import ZoneInfo
+    from zoneinfo import ZoneInfo  # noqa: F401
 except ImportError:
-    from backports.zoneinfo import ZoneInfo  # type: ignore[no-redef]
+    pass  # type: ignore[no-redef]
 
 
 # ---------------------------------------------------------------------------

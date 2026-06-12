@@ -1,13 +1,15 @@
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, and_, func
 from typing import List, Optional
-from ..models import BacktestResult, Tip, Game
-from ..cache import cached, short_cache, medium_cache, long_cache
+
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from ..cache import cached, long_cache, medium_cache, short_cache
+from ..models import BacktestResult
 
 
 class BacktestCRUD:
     """CRUD operations for backtest results."""
-    
+
     @staticmethod
     @cached(cache=medium_cache, key_prefix="backtest_by_heuristic:")
     async def get_by_heuristic(
@@ -21,7 +23,7 @@ class BacktestCRUD:
             .limit(limit)
         )
         return list(result.scalars().all())
-    
+
     @staticmethod
     @cached(cache=short_cache, key_prefix="backtest_latest:")
     async def get_latest(
@@ -34,10 +36,10 @@ class BacktestCRUD:
         )
         if heuristic:
             query = query.where(BacktestResult.heuristic == heuristic)
-        
+
         result = await db.execute(query)
         return list(result.scalars().all())
-    
+
     @staticmethod
     async def create(
         db: AsyncSession,
@@ -51,7 +53,7 @@ class BacktestCRUD:
     ) -> BacktestResult:
         """Create a backtest result."""
         from ..cache import invalidate_cache_pattern
-        
+
         result = BacktestResult(
             heuristic=heuristic,
             season=season,
@@ -64,15 +66,15 @@ class BacktestCRUD:
         db.add(result)
         await db.commit()
         await db.refresh(result)
-        
+
         # Invalidate cache for backtest-related queries
         await invalidate_cache_pattern(medium_cache, "backtest_by_heuristic:")
         await invalidate_cache_pattern(short_cache, "backtest_latest:")
         await invalidate_cache_pattern(long_cache, "backtest_seasons:")
         await invalidate_cache_pattern(medium_cache, "backtest_table:")
-        
+
         return result
-    
+
     @staticmethod
     @cached(cache=long_cache, key_prefix="backtest_seasons:")
     async def get_available_seasons(db: AsyncSession) -> List[int]:
@@ -82,7 +84,7 @@ class BacktestCRUD:
             select(BacktestResult.season).distinct().order_by(BacktestResult.season.desc())
         )
         return [row[0] for row in result]
-    
+
     @staticmethod
     @cached(cache=medium_cache, key_prefix="backtest_table:")
     async def get_table_data(db: AsyncSession, season: int) -> List[BacktestResult]:

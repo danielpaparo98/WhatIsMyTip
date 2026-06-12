@@ -16,8 +16,7 @@ import asyncio
 
 import pytest
 
-from packages.shared.cache import short_cache, medium_cache, long_cache, close_redis_pool
-
+from packages.shared.cache import close_redis_pool, long_cache, medium_cache, short_cache
 
 # Skip entire module if no Redis available
 pytestmark = pytest.mark.skipif(

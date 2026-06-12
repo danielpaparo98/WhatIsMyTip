@@ -5,16 +5,16 @@ is required.
 """
 
 import json
+from unittest.mock import AsyncMock, MagicMock, patch
+
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch, call
 
 from packages.shared.cache import (
     RedisCache,
     cached,
-    invalidate_cache_pattern,
     close_redis_pool,
+    invalidate_cache_pattern,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -191,7 +191,7 @@ class TestRedisCacheClear:
 
         async def _failing_scan(**kwargs):
             raise redis_lib.RedisError("scan broken")
-            yield  # make it an async generator  # noqa: unreachable
+            yield  # noqa: ARG005  make it an async generator
 
         mock_client = _mock_redis_client()
         mock_client.scan_iter = MagicMock(return_value=_failing_scan())
@@ -293,7 +293,7 @@ class TestInvalidateCachePattern:
 
         async def _empty_scan(**kwargs):
             return
-            yield  # noqa: unreachable — makes this an async generator
+            yield  # noqa: ARG005  makes this an async generator
 
         mock_client.scan_iter = MagicMock(return_value=_empty_scan())
         cache = RedisCache(default_ttl=300, prefix="wimt:m:")

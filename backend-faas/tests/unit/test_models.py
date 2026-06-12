@@ -3,18 +3,18 @@
 Tests model instantiation and default values without requiring a database.
 """
 
-import pytest
 from datetime import datetime, timezone
+
 from packages.shared.models import (
-    Game,
-    Tip,
-    ModelPrediction,
     BacktestResult,
+    EloCache,
+    Game,
     GenerationProgress,
     JobExecution,
     JobLock,
-    EloCache,
     MatchAnalysis,
+    ModelPrediction,
+    Tip,
 )
 
 

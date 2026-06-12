@@ -23,18 +23,32 @@ from datetime import datetime, timezone
 # Make shared package importable from the function's working directory
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
-from packages.shared.db import _get_session_factory, dispose_engine
+from packages.shared.api_helpers import (
+    check_rate_limit,
+    check_request_size,
+    parse_request,
+    response,
+    segments,
+    validate_request,
+    verify_api_key,
+)
 from packages.shared.cache import close_redis_pool
 from packages.shared.config import settings
+from packages.shared.crud.jobs import JobExecutionCRUD
+from packages.shared.db import _get_session_factory, dispose_engine
 from packages.shared.logger import get_logger
-from packages.shared.api_helpers import parse_request, response, segments, verify_api_key
-from packages.shared.squiggle import SquiggleClient
+from packages.shared.models_ml.elo import EloModel
+from packages.shared.schemas.admin import (
+    DailySyncTriggerRequest,
+    HistoricRefreshTriggerRequest,
+    MatchCompletionTriggerRequest,
+    TipGenerationTriggerRequest,
+)
 from packages.shared.services.game_sync import GameSyncService
+from packages.shared.services.historic_data_refresh import HistoricDataRefreshService
 from packages.shared.services.match_completion import MatchCompletionDetectorService
 from packages.shared.services.tip_generation import TipGenerationService
-from packages.shared.services.historic_data_refresh import HistoricDataRefreshService
-from packages.shared.models_ml.elo import EloModel
-from packages.shared.crud.jobs import JobExecutionCRUD
+from packages.shared.squiggle import SquiggleClient
 
 logger = get_logger(__name__)
 
@@ -43,9 +57,14 @@ logger = get_logger(__name__)
 # Route handlers
 # ---------------------------------------------------------------------------
 
+
 async def _handle_daily_sync(session, body: dict) -> dict:
     """POST /daily-sync/trigger — trigger daily game sync."""
-    season = body.get("season") or settings.current_season
+    validated, err = validate_request(body, DailySyncTriggerRequest)
+    if err:
+        return err
+
+    season = validated.season or settings.current_season
 
     logger.info(f"Manual daily sync triggered for season {season}")
 
@@ -66,7 +85,10 @@ async def _handle_daily_sync(session, body: dict) -> dict:
 
             resp = {
                 "success": True,
-                "message": f"Successfully synced {sync_stats['total_games']} games for season {season}",
+                "message": (
+                    f"Successfully synced {sync_stats['total_games']} "
+                    f"games for season {season}"
+                ),
                 "season": season,
                 "games_created": sync_stats.get("games_created", 0),
                 "games_updated": sync_stats.get("games_updated", 0),
@@ -88,7 +110,11 @@ async def _handle_daily_sync(session, body: dict) -> dict:
 
 async def _handle_match_completion(session, body: dict) -> dict:
     """POST /match-completion/trigger — trigger match completion detection."""
-    buffer_minutes = body.get("buffer_minutes") or settings.match_completion_buffer_minutes
+    validated, err = validate_request(body, MatchCompletionTriggerRequest)
+    if err:
+        return err
+
+    buffer_minutes = validated.buffer_minutes or settings.match_completion_buffer_minutes
 
     logger.info(f"Manual match completion detection triggered with {buffer_minutes} minute buffer")
 
@@ -141,9 +167,13 @@ async def _handle_match_completion(session, body: dict) -> dict:
 
 async def _handle_tip_generation(session, body: dict) -> dict:
     """POST /tip-generation/trigger — trigger tip generation."""
-    season = body.get("season")
-    round_id = body.get("round_id")
-    regenerate = body.get("regenerate", False)
+    validated, err = validate_request(body, TipGenerationTriggerRequest)
+    if err:
+        return err
+
+    season = validated.season
+    round_id = validated.round_id
+    regenerate = validated.regenerate
 
     logger.info(
         f"Manual tip generation triggered for "
@@ -193,9 +223,13 @@ async def _handle_tip_generation(session, body: dict) -> dict:
 
 async def _handle_historic_refresh(session, body: dict) -> dict:
     """POST /historic-refresh/trigger — trigger historic data refresh."""
-    seasons_str = body.get("seasons") or settings.historic_refresh_seasons
-    round_id = body.get("round_id")
-    regenerate_tips = body.get("regenerate_tips", False)
+    validated, err = validate_request(body, HistoricRefreshTriggerRequest)
+    if err:
+        return err
+
+    seasons_str = validated.seasons or settings.historic_refresh_seasons
+    round_id = validated.round_id
+    regenerate_tips = validated.regenerate_tips
 
     logger.info(
         f"Manual historic refresh triggered for "
@@ -303,16 +337,22 @@ async def _handle_metrics(session) -> dict:
         "platform": platform.system(),
     }
 
-    return response(200, data={
-        "metrics": metrics,
-        "system": system_info,
-        "alerting_enabled": settings.alert_enabled,
-    })
+    return response(
+        200,
+        data={
+            "metrics": metrics,
+            "system": system_info,
+            "alerting_enabled": settings.alert_enabled,
+        },
+    )
 
 
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
+
+_ADMIN_METHODS = ["GET", "POST", "OPTIONS"]
+
 
 async def main(args: dict) -> dict:
     """DO Function entry point."""
@@ -321,7 +361,16 @@ async def main(args: dict) -> dict:
 
     # Handle CORS preflight
     if method == "OPTIONS":
-        return response(204, request_args=args)
+        return response(204, request_args=args, allowed_methods=_ADMIN_METHODS)
+
+    # Security checks — request size then rate limit
+    size_error = check_request_size(args)
+    if size_error:
+        return size_error
+
+    rate_limit_response = await check_rate_limit(args)
+    if rate_limit_response:
+        return rate_limit_response
 
     # Health check — no auth required
     if method == "GET" and segs == ["health"]:
@@ -332,11 +381,17 @@ async def main(args: dict) -> dict:
                 "timestamp": datetime.now(timezone.utc).isoformat(),
             },
             request_args=args,
+            allowed_methods=_ADMIN_METHODS,
         )
 
     # Authenticate all other admin endpoints
     if not verify_api_key(headers, query, body):
-        return response(401, error="Invalid or missing API key", request_args=args)
+        return response(
+            401,
+            error="Invalid or missing API key",
+            request_args=args,
+            allowed_methods=_ADMIN_METHODS,
+        )
 
     factory = _get_session_factory()
     async with factory() as session:
@@ -368,12 +423,14 @@ async def main(args: dict) -> dict:
             if method == "GET" and segs == ["metrics"]:
                 return await _handle_metrics(session)
 
-            return response(404, error="Not found", request_args=args)
+            return response(
+                404, error="Not found", request_args=args, allowed_methods=_ADMIN_METHODS
+            )
 
         except Exception as e:
             had_error = True
             logger.error(f"Error in admin function: {e}\n{traceback.format_exc()}")
-            return response(500, error=str(e), request_args=args)
+            return response(500, error=str(e), request_args=args, allowed_methods=_ADMIN_METHODS)
         finally:
             await close_redis_pool(force=had_error)
             await dispose_engine(force=had_error)

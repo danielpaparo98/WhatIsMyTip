@@ -5,12 +5,13 @@ The heuristic ``apply()`` methods receive a mock game object and a dict of
 model predictions, then return (winner, confidence, margin).
 """
 
-import pytest
 from unittest.mock import MagicMock
 
+import pytest
+
 from packages.shared.heuristics.best_bet import BestBetHeuristic
-from packages.shared.heuristics.yolo import YOLOHeuristic
 from packages.shared.heuristics.high_risk_high_reward import HighRiskHighRewardHeuristic
+from packages.shared.heuristics.yolo import YOLOHeuristic
 
 
 def _make_game(home_team="Richmond", away_team="Carlton"):

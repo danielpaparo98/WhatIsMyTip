@@ -4,9 +4,9 @@ Tests the ``main()`` entry point by mocking the database session factory,
 BacktestService, and Redis pool. No external dependencies required.
 """
 
+from unittest.mock import AsyncMock, patch
+
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
-from datetime import datetime
 
 
 class TestBacktestFunctionRouting:

@@ -4,8 +4,9 @@ Scrapes injury lists, team selections, and advanced player statistics.
 Follows the same patterns as AFLTablesClient (httpx.AsyncClient + Redis cache).
 """
 
-import httpx
 from typing import Any, Dict, List
+
+import httpx
 from bs4 import BeautifulSoup
 
 from ..cache import medium_cache
@@ -24,8 +25,7 @@ class FootyWireClient:
             timeout=30.0,
             headers={
                 "User-Agent": (
-                    "WhatIsMyTip/1.0 (contact@whatismytip.com) "
-                    "- Non-commercial research"
+                    "WhatIsMyTip/1.0 (contact@whatismytip.com) - Non-commercial research"
                 ),
             },
         )
@@ -72,9 +72,7 @@ class FootyWireClient:
 
         return result
 
-    async def get_team_selections(
-        self, round_num: int, year: int
-    ) -> List[Dict[str, Any]]:
+    async def get_team_selections(self, round_num: int, year: int) -> List[Dict[str, Any]]:
         """Scrape team selections for a specific round.
 
         Args:
@@ -110,9 +108,7 @@ class FootyWireClient:
 
         return result
 
-    async def get_player_advanced_stats(
-        self, player_id: int, year: int
-    ) -> List[Dict[str, Any]]:
+    async def get_player_advanced_stats(self, player_id: int, year: int) -> List[Dict[str, Any]]:
         """Fetch advanced stats for a specific player.
 
         Args:
@@ -263,9 +259,7 @@ class FootyWireClient:
 
         return selections
 
-    def _parse_player_stats(
-        self, soup: BeautifulSoup, year: int
-    ) -> List[Dict[str, Any]]:
+    def _parse_player_stats(self, soup: BeautifulSoup, year: int) -> List[Dict[str, Any]]:
         """Parse player advanced stats table from FootyWire.
 
         Extracts per-round advanced metrics like TOG%, disposals, metres gained,
@@ -329,18 +323,20 @@ class FootyWireClient:
                     if "tog_pct" in col_map and col_map["tog_pct"] < len(cells):
                         entry["tog_pct"] = cells[col_map["tog_pct"]].get_text(strip=True)
                     if "disposals" in col_map and col_map["disposals"] < len(cells):
-                        entry["disposals"] = int(
-                            cells[col_map["disposals"]].get_text(strip=True)
-                        )
+                        entry["disposals"] = int(cells[col_map["disposals"]].get_text(strip=True))
                     if "metres_gained" in col_map and col_map["metres_gained"] < len(cells):
                         entry["metres_gained"] = int(
                             cells[col_map["metres_gained"]].get_text(strip=True)
                         )
-                    if "score_involvements" in col_map and col_map["score_involvements"] < len(cells):
+                    if "score_involvements" in col_map and col_map["score_involvements"] < len(
+                        cells
+                    ):
                         entry["score_involvements"] = int(
                             cells[col_map["score_involvements"]].get_text(strip=True)
                         )
-                    if "contested_possessions" in col_map and col_map["contested_possessions"] < len(cells):
+                    if "contested_possessions" in col_map and col_map[
+                        "contested_possessions"
+                    ] < len(cells):
                         entry["contested_possessions"] = int(
                             cells[col_map["contested_possessions"]].get_text(strip=True)
                         )

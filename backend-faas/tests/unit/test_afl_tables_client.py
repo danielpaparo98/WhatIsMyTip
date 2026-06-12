@@ -4,11 +4,11 @@ Tests mock HTTP responses and verify parsing of match stats, season games,
 player profiles, caching, and error handling. No real HTTP requests are made.
 """
 
-import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from packages.shared.afl_data.tables_client import AFLTablesClient
+import pytest
 
+from packages.shared.afl_data.tables_client import AFLTablesClient
 
 # ---------------------------------------------------------------------------
 # HTML fixtures
@@ -67,6 +67,7 @@ EMPTY_SEASON_HTML = """
 # ---------------------------------------------------------------------------
 # TestGetPlayerStatsForMatch
 # ---------------------------------------------------------------------------
+
 
 class TestGetPlayerStatsForMatch:
     """Tests for fetching and parsing player stats for a specific match."""
@@ -149,9 +150,7 @@ class TestGetPlayerStatsForMatch:
     async def test_api_error_handling(self):
         """HTTP error should be caught and return empty dict."""
         mock_response = MagicMock()
-        mock_response.raise_for_status = MagicMock(
-            side_effect=Exception("HTTP 500")
-        )
+        mock_response.raise_for_status = MagicMock(side_effect=Exception("HTTP 500"))
 
         mock_http_client = AsyncMock()
         mock_http_client.get = AsyncMock(return_value=mock_response)
@@ -172,6 +171,7 @@ class TestGetPlayerStatsForMatch:
 # ---------------------------------------------------------------------------
 # TestGetSeasonGames
 # ---------------------------------------------------------------------------
+
 
 class TestGetSeasonGames:
     """Tests for fetching season game listings."""
@@ -230,6 +230,7 @@ class TestGetSeasonGames:
 # ---------------------------------------------------------------------------
 # TestGetPlayerProfile
 # ---------------------------------------------------------------------------
+
 
 class TestGetPlayerProfile:
     """Tests for fetching and parsing player profiles."""
@@ -290,9 +291,7 @@ class TestGetPlayerProfile:
     async def test_api_error_handling(self):
         """HTTP error should be caught and return empty dict."""
         mock_response = MagicMock()
-        mock_response.raise_for_status = MagicMock(
-            side_effect=Exception("HTTP 500")
-        )
+        mock_response.raise_for_status = MagicMock(side_effect=Exception("HTTP 500"))
 
         mock_http_client = AsyncMock()
         mock_http_client.get = AsyncMock(return_value=mock_response)
@@ -313,6 +312,7 @@ class TestGetPlayerProfile:
 # ---------------------------------------------------------------------------
 # TestContextManager
 # ---------------------------------------------------------------------------
+
 
 class TestContextManager:
     """Tests for async context manager protocol."""
@@ -335,6 +335,7 @@ class TestContextManager:
 # ---------------------------------------------------------------------------
 # TestParseMatchPage
 # ---------------------------------------------------------------------------
+
 
 class TestParseMatchPage:
     """Tests for internal _parse_match_page method."""
@@ -375,6 +376,7 @@ class TestParseMatchPage:
 # ---------------------------------------------------------------------------
 # TestParsePlayerProfile
 # ---------------------------------------------------------------------------
+
 
 class TestParsePlayerProfile:
     """Tests for internal _parse_player_profile method."""

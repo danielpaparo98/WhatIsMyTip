@@ -6,15 +6,21 @@ import argparse
 import csv
 import os
 import sys
-import tempfile
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, call, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 # Ensure backend-faas is on sys.path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
+from sqlalchemy import Boolean, Float, Integer, String, Text
+
+from packages.shared.models import (
+    EloCache,
+    Game,
+    Tip,
+)
 from scripts.migrate_and_seed import (
     _CLEAR_TABLES,
     _SEED_TABLES,
@@ -28,19 +34,6 @@ from scripts.migrate_and_seed import (
     run_migrations,
     seed_from_csv,
 )
-from packages.shared.models import (
-    BacktestResult,
-    EloCache,
-    Game,
-    GenerationProgress,
-    JobExecution,
-    MatchAnalysis,
-    ModelPrediction,
-    Tip,
-)
-
-from sqlalchemy import Boolean, Float, Integer, String, Text
-
 
 # ---------------------------------------------------------------------------
 # URL helpers
