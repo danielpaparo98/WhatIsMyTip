@@ -15,6 +15,22 @@ from packages.shared.config import settings
 logger = logging.getLogger(__name__)
 
 
+def _ensure_shared_on_path() -> None:
+    """Ensure the packages root is on ``sys.path`` (idempotent).
+
+    DO Functions need the ``packages/`` root on ``sys.path`` to resolve
+    ``packages.shared.*`` imports.  Calling this multiple times is safe —
+    it skips insertion when the path is already present.
+    """
+    packages_root = os.path.join(os.path.dirname(__file__), "..", "..")
+    packages_root = os.path.normpath(packages_root)
+    if packages_root not in sys.path:
+        sys.path.insert(0, packages_root)
+
+
+_ensure_shared_on_path()
+
+
 def parse_request(args: dict) -> tuple:
     """Parse DO Function args into (method, path, query, body, headers)."""
     method = args.get("__ow_method", "GET").upper()
@@ -222,9 +238,6 @@ async def check_rate_limit(
 
     identity = _extract_client_identity(args)
 
-    # Make shared package importable for cache module
-    sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
-
     try:
         from packages.shared.cache import _get_client
 
@@ -241,7 +254,7 @@ async def check_rate_limit(
             )
     except Exception as exc:
         # Fall back gracefully — allow the request if Redis is unavailable
-        logger.warning(f"Rate limit check failed (allowing request): {exc}")
+        logger.warning("Rate limit check failed (allowing request): %s", exc)
 
     return None
 

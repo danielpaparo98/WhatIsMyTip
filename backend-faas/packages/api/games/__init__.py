@@ -147,7 +147,7 @@ async def _handle_get_game(session, slug: str) -> dict:
 async def _handle_game_detail(session, slug: str) -> dict:
     """GET /{slug}/detail — full game detail with tips, predictions, analysis."""
     start_time = time.time()
-    logger.debug(f"get_game_detail: STARTING for slug={slug}")
+    logger.debug("get_game_detail: STARTING for slug=%s", slug)
 
     game = await GameCRUD.get_by_slug(session, slug)
     if not game:
@@ -186,7 +186,7 @@ async def _handle_game_detail(session, slug: str) -> dict:
     weather = WeatherResponse.model_validate(weather_row) if weather_row else None
 
     total_time = time.time() - start_time
-    logger.debug(f"get_game_detail: COMPLETED in {total_time:.4f}s")
+    logger.debug("get_game_detail: COMPLETED in %.4fs", total_time)
 
     resp = GameDetailResponse(
         game=GameResponse.model_validate(game),
@@ -298,8 +298,8 @@ async def main(args: dict) -> dict:
 
         except Exception as e:
             had_error = True
-            logger.error(f"Error in games function: {e}\n{traceback.format_exc()}")
-            return response(500, error=str(e), allowed_methods=_PUBLIC_METHODS)
+            logger.error("Error in games function: %s\n%s", e, traceback.format_exc())
+            return response(500, error="Internal server error", allowed_methods=_PUBLIC_METHODS)
         finally:
             await close_redis_pool(force=had_error)
             await dispose_engine(force=had_error)

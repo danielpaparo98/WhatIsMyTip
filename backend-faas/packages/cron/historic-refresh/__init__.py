@@ -79,7 +79,7 @@ async def main(args: dict) -> dict:
     execution_id = generate_execution_id()
     log_extra = {"job_name": JOB_NAME, "execution_id": execution_id}
 
-    logger.info(f"{JOB_NAME}: Starting execution", extra=log_extra)
+    logger.info("%s: Starting execution", JOB_NAME, extra=log_extra)
 
     factory = _get_session_factory()
     cache = RedisCache()
@@ -99,7 +99,7 @@ async def main(args: dict) -> dict:
                 expires_seconds=settings.historical_refresh_timeout_seconds,
             )
             if not lock:
-                logger.info(f"{JOB_NAME}: Could not acquire lock, skipping")
+                logger.info("%s: Could not acquire lock, skipping", JOB_NAME)
                 return {"statusCode": 200, "body": {"message": "Job already running"}}
 
             locked = True
@@ -113,13 +113,15 @@ async def main(args: dict) -> dict:
             if remaining:
                 seasons_to_process = remaining
                 logger.info(
-                    f"Resuming from continuation marker: "
-                    f"{len(seasons_to_process)} seasons remaining"
+                    "Resuming from continuation marker: "
+                    "%s seasons remaining",
+                    len(seasons_to_process),
                 )
             else:
                 seasons_to_process = list(ALL_SEASONS)
                 logger.info(
-                    f"Starting fresh: processing all {len(seasons_to_process)} seasons"
+                    "Starting fresh: processing all %s seasons",
+                    len(seasons_to_process),
                 )
 
             batches = _build_batches(seasons_to_process)
@@ -146,9 +148,12 @@ async def main(args: dict) -> dict:
                         ttl=CONTINUATION_TTL,
                     )
                     logger.warning(
-                        f"Approaching timeout after {elapsed:.0f}s, "
-                        f"processed {batches_processed} batch(es). "
-                        f"Stored {len(remaining_seasons)} remaining seasons in Redis."
+                        "Approaching timeout after %.0fs, "
+                        "processed %s batch(es). "
+                        "Stored %s remaining seasons in Redis.",
+                        elapsed,
+                        batches_processed,
+                        len(remaining_seasons),
                     )
                     try:
                         alerting = AlertingService()
@@ -158,13 +163,16 @@ async def main(args: dict) -> dict:
                             remaining_work=f"{len(remaining_seasons)} seasons remaining",
                         )
                     except Exception:
-                        logger.error(f"Failed to send timeout alert: {traceback.format_exc()}")
+                        logger.error("Failed to send timeout alert: %s", traceback.format_exc())
                     break
 
                 seasons_str = ",".join(str(s) for s in seasons)
 
                 logger.info(
-                    f"Processing batch {batch_idx + 1}/{len(batches)}: {seasons_str}"
+                    "Processing batch %s/%s: %s",
+                    batch_idx + 1,
+                    len(batches),
+                    seasons_str,
                 )
 
                 batch_start = time.time()
@@ -190,10 +198,15 @@ async def main(args: dict) -> dict:
                 batches_processed += 1
 
                 logger.info(
-                    f"Batch {seasons_str} completed in {batch_duration:.1f}s: "
-                    f"{refresh_stats['seasons_processed']} seasons, "
-                    f"{refresh_stats['games_synced']} games, "
-                    f"{refresh_stats['tips_generated']} tips"
+                    "Batch %s completed in %.1fs: "
+                    "%s seasons, "
+                    "%s games, "
+                    "%s tips",
+                    seasons_str,
+                    batch_duration,
+                    refresh_stats["seasons_processed"],
+                    refresh_stats["games_synced"],
+                    refresh_stats["tips_generated"],
                 )
 
             # If all batches were processed, clear the continuation marker
@@ -213,7 +226,7 @@ async def main(args: dict) -> dict:
                 summary_parts.append(f"Failed: {total_errors} season(s)")
 
             summary = "; ".join(summary_parts)
-            logger.info(f"{JOB_NAME} completed: {summary}", extra=log_extra)
+            logger.info("%s completed: %s", JOB_NAME, summary, extra=log_extra)
 
             # 5. Mark success
             await execution_crud.update_execution(
@@ -233,15 +246,19 @@ async def main(args: dict) -> dict:
             classified = classify_error(e)
             if isinstance(classified, TransientJobError):
                 logger.warning(
-                    f"Transient error in {JOB_NAME}: {classified.message}",
+                    "Transient error in %s: %s",
+                    JOB_NAME,
+                    classified.message,
                     extra={**log_extra, "error_type": "transient", "details": classified.details},
                 )
             else:
                 logger.error(
-                    f"Permanent error in {JOB_NAME}: {classified.message}",
+                    "Permanent error in %s: %s",
+                    JOB_NAME,
+                    classified.message,
                     extra={**log_extra, "error_type": "permanent", "details": classified.details},
                 )
-            logger.error(f"{JOB_NAME} error: {e}\n{traceback.format_exc()}")
+            logger.error("%s error: %s\n%s", JOB_NAME, e, traceback.format_exc())
             if execution:
                 try:
                     await execution_crud.update_execution(
@@ -251,7 +268,7 @@ async def main(args: dict) -> dict:
                     )
                     await session.commit()
                 except Exception:
-                    logger.error(f"Failed to update execution record: {traceback.format_exc()}")
+                    logger.error("Failed to update execution record: %s", traceback.format_exc())
             try:
                 alerting = AlertingService()
                 await alerting.send_failure_alert(
@@ -260,7 +277,7 @@ async def main(args: dict) -> dict:
                     execution_id=str(execution.id) if execution else None,
                 )
             except Exception:
-                logger.error(f"Failed to send alert: {traceback.format_exc()}")
+                logger.error("Failed to send alert: %s", traceback.format_exc())
             return {"statusCode": 500, "body": {"error": str(e)}}
 
         finally:
@@ -269,6 +286,6 @@ async def main(args: dict) -> dict:
                     await lock_crud.release_lock(JOB_NAME, LOCKED_BY)
                     await session.commit()
                 except Exception:
-                    logger.error(f"Failed to release lock: {traceback.format_exc()}")
+                    logger.error("Failed to release lock: %s", traceback.format_exc())
             await close_redis_pool(force=had_error)
             await dispose_engine(force=had_error)

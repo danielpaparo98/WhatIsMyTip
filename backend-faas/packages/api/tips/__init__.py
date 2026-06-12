@@ -106,7 +106,9 @@ async def _handle_games_with_tips(session, query: dict) -> dict:
 
             if not tips:
                 logger.info(
-                    f"No tips found for round {round_id}, season {season}. Returning pending state."
+                    "No tips found for round %s, season %s. Returning pending state.",
+                    round_id,
+                    season,
                 )
 
         tips_by_game = {tip.game_id: tip for tip in tips}
@@ -164,7 +166,7 @@ async def _handle_games_with_tips(session, query: dict) -> dict:
         return response(200, data={"games": games_with_tips, "count": len(games_with_tips)})
 
     except Exception as e:
-        logger.error(f"Error in get_games_with_tips: {e}", exc_info=True)
+        logger.error("Error in get_games_with_tips: %s", e, exc_info=True)
         return response(500, error="An error occurred while fetching tips")
 
 
@@ -189,7 +191,7 @@ async def _handle_list_tips(session, query: dict) -> dict:
         return response(200, data=to_dict(resp))
 
     except Exception as e:
-        logger.error(f"Error in get_tips: {e}", exc_info=True)
+        logger.error("Error in get_tips: %s", e, exc_info=True)
         return response(500, error="An error occurred while fetching tips")
 
 
@@ -249,8 +251,11 @@ async def _handle_generate_tips(session, query: dict, body: dict) -> dict:
         )
 
         logger.info(
-            f"On-demand tip generation for season {season}, round {round_id}: "
-            f"{stats['tips_created']} created, {stats['tips_skipped']} skipped"
+            "On-demand tip generation for season %s, round %s: %s created, %s skipped",
+            season,
+            round_id,
+            stats["tips_created"],
+            stats["tips_skipped"],
         )
 
         return response(
@@ -268,7 +273,7 @@ async def _handle_generate_tips(session, query: dict, body: dict) -> dict:
         )
 
     except Exception as e:
-        logger.error(f"Error in generate_tips: {e}", exc_info=True)
+        logger.error("Error in generate_tips: %s", e, exc_info=True)
         return response(500, error="An error occurred while generating tips")
 
 
@@ -354,8 +359,13 @@ async def main(args: dict) -> dict:
 
         except Exception as e:
             had_error = True
-            logger.error(f"Error in tips function: {e}\n{traceback.format_exc()}")
-            return response(500, error=str(e), request_args=args, allowed_methods=_PUBLIC_METHODS)
+            logger.error("Error in tips function: %s\n%s", e, traceback.format_exc())
+            return response(
+                500,
+                error="Internal server error",
+                request_args=args,
+                allowed_methods=_PUBLIC_METHODS,
+            )
         finally:
             await close_redis_pool(force=had_error)
             await dispose_engine(force=had_error)

@@ -248,8 +248,8 @@ async def main(args: dict) -> dict:
 
         except Exception as e:
             had_error = True
-            logger.error(f"Error in backtest function: {e}\n{traceback.format_exc()}")
-            return response(500, error=str(e), allowed_methods=_PUBLIC_METHODS)
+            logger.error("Error in backtest function: %s\n%s", e, traceback.format_exc())
+            return response(500, error="Internal server error", allowed_methods=_PUBLIC_METHODS)
         finally:
             await close_redis_pool(force=had_error)
             await dispose_engine(force=had_error)

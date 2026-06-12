@@ -66,7 +66,7 @@ async def _handle_daily_sync(session, body: dict) -> dict:
 
     season = validated.season or settings.current_season
 
-    logger.info(f"Manual daily sync triggered for season {season}")
+    logger.info("Manual daily sync triggered for season %s", season)
 
     try:
         squiggle_client = SquiggleClient()
@@ -97,14 +97,14 @@ async def _handle_daily_sync(session, body: dict) -> dict:
                 "duration_seconds": sync_stats.get("duration_seconds", 0.0),
             }
 
-            logger.info(f"Manual daily sync completed: {resp['message']}")
+            logger.info("Manual daily sync completed: %s", resp["message"])
             return response(200, data=resp)
 
         finally:
             await squiggle_client.close()
 
     except Exception as e:
-        logger.error(f"Manual daily sync failed: {str(e)}", exc_info=True)
+        logger.error("Manual daily sync failed: %s", e, exc_info=True)
         return response(500, error="Internal server error. Please try again later.")
 
 
@@ -116,7 +116,7 @@ async def _handle_match_completion(session, body: dict) -> dict:
 
     buffer_minutes = validated.buffer_minutes or settings.match_completion_buffer_minutes
 
-    logger.info(f"Manual match completion detection triggered with {buffer_minutes} minute buffer")
+    logger.info("Manual match completion detection triggered with %s minute buffer", buffer_minutes)
 
     try:
         squiggle_client = SquiggleClient()
@@ -137,7 +137,7 @@ async def _handle_match_completion(session, body: dict) -> dict:
                     await EloModel.update_cache(session)
                     elo_cache_updated = True
                 except Exception as elo_error:
-                    logger.error(f"Failed to update Elo cache: {str(elo_error)}", exc_info=True)
+                    logger.error("Failed to update Elo cache: %s", elo_error, exc_info=True)
 
             resp = {
                 "success": True,
@@ -154,14 +154,14 @@ async def _handle_match_completion(session, body: dict) -> dict:
                 "elo_cache_updated": elo_cache_updated,
             }
 
-            logger.info(f"Manual match completion detection completed: {resp['message']}")
+            logger.info("Manual match completion detection completed: %s", resp["message"])
             return response(200, data=resp)
 
         finally:
             await squiggle_client.close()
 
     except Exception as e:
-        logger.error(f"Manual match completion detection failed: {str(e)}", exc_info=True)
+        logger.error("Manual match completion detection failed: %s", e, exc_info=True)
         return response(500, error="Internal server error. Please try again later.")
 
 
@@ -176,8 +176,11 @@ async def _handle_tip_generation(session, body: dict) -> dict:
     regenerate = validated.regenerate
 
     logger.info(
-        f"Manual tip generation triggered for "
-        f"season={season}, round_id={round_id}, regenerate={regenerate}"
+        "Manual tip generation triggered for "
+        "season=%s, round_id=%s, regenerate=%s",
+        season,
+        round_id,
+        regenerate,
     )
 
     try:
@@ -213,11 +216,11 @@ async def _handle_tip_generation(session, body: dict) -> dict:
             "duration_seconds": generation_stats.get("duration_seconds", 0.0),
         }
 
-        logger.info(f"Manual tip generation completed: {resp['message']}")
+        logger.info("Manual tip generation completed: %s", resp["message"])
         return response(200, data=resp)
 
     except Exception as e:
-        logger.error(f"Manual tip generation failed: {str(e)}", exc_info=True)
+        logger.error("Manual tip generation failed: %s", e, exc_info=True)
         return response(500, error="Internal server error. Please try again later.")
 
 
@@ -232,8 +235,11 @@ async def _handle_historic_refresh(session, body: dict) -> dict:
     regenerate_tips = validated.regenerate_tips
 
     logger.info(
-        f"Manual historic refresh triggered for "
-        f"seasons={seasons_str}, round_id={round_id}, regenerate_tips={regenerate_tips}"
+        "Manual historic refresh triggered for "
+        "seasons=%s, round_id=%s, regenerate_tips=%s",
+        seasons_str,
+        round_id,
+        regenerate_tips,
     )
 
     try:
@@ -261,11 +267,11 @@ async def _handle_historic_refresh(session, body: dict) -> dict:
             "season_stats": refresh_stats.get("season_stats", {}),
         }
 
-        logger.info(f"Manual historic refresh completed: {resp['message']}")
+        logger.info("Manual historic refresh completed: %s", resp["message"])
         return response(200, data=resp)
 
     except Exception as e:
-        logger.error(f"Manual historic refresh failed: {str(e)}", exc_info=True)
+        logger.error("Manual historic refresh failed: %s", e, exc_info=True)
         return response(500, error="Internal server error. Please try again later.")
 
 
@@ -295,7 +301,7 @@ async def _handle_historic_refresh_progress(session) -> dict:
                 "error_message": progress.get("error_message"),
                 "progress_percentage": progress.get("progress_percentage"),
             }
-            logger.info(f"Historic refresh progress: {progress.get('status')}")
+            logger.info("Historic refresh progress: %s", progress.get("status"))
         else:
             resp = {
                 "progress_id": None,
@@ -314,7 +320,7 @@ async def _handle_historic_refresh_progress(session) -> dict:
         return response(200, data=resp)
 
     except Exception as e:
-        logger.error(f"Failed to fetch historic refresh progress: {str(e)}", exc_info=True)
+        logger.error("Failed to fetch historic refresh progress: %s", e, exc_info=True)
         return response(500, error="Internal server error. Please try again later.")
 
 
@@ -429,8 +435,13 @@ async def main(args: dict) -> dict:
 
         except Exception as e:
             had_error = True
-            logger.error(f"Error in admin function: {e}\n{traceback.format_exc()}")
-            return response(500, error=str(e), request_args=args, allowed_methods=_ADMIN_METHODS)
+            logger.error("Error in admin function: %s\n%s", e, traceback.format_exc())
+            return response(
+                500,
+                error="Internal server error",
+                request_args=args,
+                allowed_methods=_ADMIN_METHODS,
+            )
         finally:
             await close_redis_pool(force=had_error)
             await dispose_engine(force=had_error)
