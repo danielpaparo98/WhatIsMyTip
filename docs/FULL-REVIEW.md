@@ -1,5 +1,18 @@
 # WhatIsMyTip — Comprehensive Application Review
 
+> ⚠️ **HISTORICAL DOCUMENT — ARCHIVED**
+>
+> This review was conducted against the **legacy FastAPI + SQLite monolith** architecture (April 2026).
+> The backend has since been **fully migrated** to a serverless architecture on **DigitalOcean Functions
+> with PostgreSQL and Redis**. Many findings below (security, performance, architecture) have been
+> addressed or are no longer applicable in the current FaaS architecture.
+>
+> **This document is retained for historical reference only.** For current architecture details, see
+> [docs/backend.md](backend.md). For a current code review, see
+> [docs/BACKEND-FAAS-CODE-REVIEW.md](BACKEND-FAAS-CODE-REVIEW.md).
+
+---
+
 **Date**: 2026-04-12
 **Scope**: Full-stack architecture, security, code quality, and frontend review
 **Overall Risk Rating**: 🔴 HIGH — Multiple critical security and correctness issues require immediate attention

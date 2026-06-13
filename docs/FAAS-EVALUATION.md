@@ -8,7 +8,7 @@
 
 ## 1. Executive Summary
 
-The `backend-faas` implementation migrates the WhatIsMyTip backend from a monolithic FastAPI application to 8 DigitalOcean Functions — 4 HTTP API endpoints and 4 scheduled cron triggers. The architecture demonstrates strong fundamentals: clean separation of concerns, shared package design, Redis-backed caching, database-level job locking, and CI/CD deployment scripts.
+The `backend` implementation migrates the WhatIsMyTip backend from a monolithic FastAPI application to 8 DigitalOcean Functions — 4 HTTP API endpoints and 4 scheduled cron triggers. The architecture demonstrates strong fundamentals: clean separation of concerns, shared package design, Redis-backed caching, database-level job locking, and CI/CD deployment scripts.
 
 However, several **platform-level constraints** create risks that range from data integrity issues to hard timeout kills. The most critical is a mismatch between the `historic-refresh` function's runtime budget (50 minutes) and the platform's maximum timeout, which could result in silent data corruption during weekly historical refreshes.
 
@@ -47,28 +47,28 @@ This represents a significant cost reduction compared to running a container-bas
 | Area | Assessment | Detail |
 |------|-----------|--------|
 | **Shared package** | ✅ Good | `packages/shared/` provides clean code reuse across all 8 functions with a well-structured module layout |
-| **Redis caching** | ✅ Good | 3-tier TTL strategy (60s, 300s, 3600s) via [`cache.py`](../backend-faas/packages/shared/cache.py) prevents redundant DB queries |
-| **Job locking** | ✅ Good | Database-level advisory locks via [`JobLockCRUD`](../backend-faas/packages/shared/crud/jobs.py) prevent concurrent cron execution |
-| **Execution tracking** | ✅ Good | [`JobExecutionCRUD`](../backend-faas/packages/shared/crud/jobs.py) records run status, duration, and results for each cron job |
-| **ML pipeline** | ✅ Good | Pure-Python models (no NumPy/scipy) keep deployment size small; [`ModelOrchestrator`](../backend-faas/packages/shared/orchestrator.py) runs all 4 models in parallel |
-| **API routing** | ✅ Adequate | [`parse_request()`](../backend-faas/packages/shared/api_helpers.py:11) cleanly extracts method/path/query/body from DO's `args` dict |
-| **Admin auth** | ✅ Good | [`verify_api_key()`](../backend-faas/packages/shared/api_helpers.py:39) uses `secrets.compare_digest()` for timing-attack resistance |
+| **Redis caching** | ✅ Good | 3-tier TTL strategy (60s, 300s, 3600s) via [`cache.py`](../backend/packages/shared/cache.py) prevents redundant DB queries |
+| **Job locking** | ✅ Good | Database-level advisory locks via [`JobLockCRUD`](../backend/packages/shared/crud/jobs.py) prevent concurrent cron execution |
+| **Execution tracking** | ✅ Good | [`JobExecutionCRUD`](../backend/packages/shared/crud/jobs.py) records run status, duration, and results for each cron job |
+| **ML pipeline** | ✅ Good | Pure-Python models (no NumPy/scipy) keep deployment size small; [`ModelOrchestrator`](../backend/packages/shared/orchestrator.py) runs all 4 models in parallel |
+| **API routing** | ✅ Adequate | [`parse_request()`](../backend/packages/shared/api_helpers.py:11) cleanly extracts method/path/query/body from DO's `args` dict |
+| **Admin auth** | ✅ Good | [`verify_api_key()`](../backend/packages/shared/api_helpers.py:39) uses `secrets.compare_digest()` for timing-attack resistance |
 | **CORS handling** | ✅ Good | Origin-aware CORS resolution prevents wildcard `*` responses in production |
-| **Deployment** | ✅ Good | [`deploy.sh`](../backend-faas/scripts/deploy.sh) script with `doctl serverless deploy` is simple and repeatable |
-| **Configuration** | ✅ Good | Pydantic Settings in [`config.py`](../backend-faas/packages/shared/config.py) with environment variable injection |
+| **Deployment** | ✅ Good | [`deploy.sh`](../backend/scripts/deploy.sh) script with `doctl serverless deploy` is simple and repeatable |
+| **Configuration** | ✅ Good | Pydantic Settings in [`config.py`](../backend/packages/shared/config.py) with environment variable injection |
 
 ### 2.3 Function Inventory
 
 | Function | Type | Trigger | Purpose |
 |----------|------|---------|---------|
-| [`api/games`](../backend-faas/packages/api/games/__init__.py) | HTTP | Web request | Game listings, scores, slugs |
-| [`api/tips`](../backend-faas/packages/api/tips/__init__.py) | HTTP | Web request | ML predictions, tip explanations |
-| [`api/backtest`](../backend-faas/packages/api/backtest/__init__.py) | HTTP | Web request | Historical model accuracy data |
-| [`api/admin`](../backend-faas/packages/api/admin/__init__.py) | HTTP | Web request | Admin operations, job management |
-| [`cron/daily-sync`](../backend-faas/packages/cron/daily-sync/__init__.py) | Scheduled | `*/15 * * * *` | Sync games from Squiggle API |
-| [`cron/match-completion`](../backend-faas/packages/cron/match-completion/__init__.py) | Scheduled | `5,20,35,50 * * * *` | Detect completed matches, trigger analysis |
-| [`cron/tip-generation`](../backend-faas/packages/cron/tip-generation/__init__.py) | Scheduled | `0 3 * * *` | Daily ML predictions + AI explanations |
-| [`cron/historic-refresh`](../backend-faas/packages/cron/historic-refresh/__init__.py) | Scheduled | `0 4 * * 0` | Weekly full historical data refresh |
+| [`api/games`](../backend/packages/api/games/__init__.py) | HTTP | Web request | Game listings, scores, slugs |
+| [`api/tips`](../backend/packages/api/tips/__init__.py) | HTTP | Web request | ML predictions, tip explanations |
+| [`api/backtest`](../backend/packages/api/backtest/__init__.py) | HTTP | Web request | Historical model accuracy data |
+| [`api/admin`](../backend/packages/api/admin/__init__.py) | HTTP | Web request | Admin operations, job management |
+| [`cron/daily-sync`](../backend/packages/cron/daily-sync/__init__.py) | Scheduled | `*/15 * * * *` | Sync games from Squiggle API |
+| [`cron/match-completion`](../backend/packages/cron/match-completion/__init__.py) | Scheduled | `5,20,35,50 * * * *` | Detect completed matches, trigger analysis |
+| [`cron/tip-generation`](../backend/packages/cron/tip-generation/__init__.py) | Scheduled | `0 3 * * *` | Daily ML predictions + AI explanations |
+| [`cron/historic-refresh`](../backend/packages/cron/historic-refresh/__init__.py) | Scheduled | `0 4 * * 0` | Weekly full historical data refresh |
 
 ---
 
@@ -76,7 +76,7 @@ This represents a significant cost reduction compared to running a container-bas
 
 ### 3.1 🔴 Historic Refresh Timeout Risk
 
-**Files**: [`historic-refresh/__init__.py`](../backend-faas/packages/cron/historic-refresh/__init__.py:88), [`project.yml`](../backend-faas/project.yml:83)
+**Files**: [`historic-refresh/__init__.py`](../backend/packages/cron/historic-refresh/__init__.py:88), [`project.yml`](../backend/project.yml:83)
 
 **Problem**: The `historic-refresh` function sets `MAX_RUNTIME_SECONDS = 3000` (50 minutes) and processes seasons in batches of 4 across 4 batches (2010–2025). The code's own docstring claims a "60-minute max timeout for scheduled functions", but DigitalOcean Functions has a documented maximum execution time of **15 minutes** (900,000 ms) for all function types. This is the default and maximum — it cannot be overridden.
 
@@ -88,7 +88,7 @@ Even if the 60-minute assumption were correct, the 50-minute budget with 4 batch
 - Subsequent invocations blocked by unexpired lock
 - No continuation mechanism — each week starts from the first batch again
 
-**Evidence from code** ([`historic-refresh/__init__.py:86-88`](../backend-faas/packages/cron/historic-refresh/__init__.py:88)):
+**Evidence from code** ([`historic-refresh/__init__.py:86-88`](../backend/packages/cron/historic-refresh/__init__.py:88)):
 ```python
 # Maximum runtime before yielding to avoid exceeding DO Functions timeout.
 # 50 minutes leaves a 10-minute buffer under the 60-minute scheduled limit.
@@ -105,7 +105,7 @@ MAX_RUNTIME_SECONDS = 3000
 
 ### 3.2 🔴 Cron Timezone Bug
 
-**Files**: [`project.yml`](../backend-faas/project.yml:80-82), [`config.py`](../backend-faas/packages/shared/config.py:53)
+**Files**: [`project.yml`](../backend/project.yml:80-82), [`config.py`](../backend/packages/shared/config.py:53)
 
 **Problem**: DigitalOcean Functions cron triggers fire in **UTC only**. The `config.py` defines `cron_timezone: str = "Australia/Perth"` (AWST, UTC+8), but this setting is **never used by the platform** — it's purely informational. The cron expressions in `project.yml` are interpreted as UTC:
 
@@ -121,7 +121,7 @@ MAX_RUNTIME_SECONDS = 3000
 - Historic refresh runs at noon AWST on Sundays — competing with user traffic
 - No data loss, but degraded user experience and potential API rate-limit contention
 
-**Evidence from code** ([`config.py:53`](../backend-faas/packages/shared/config.py:53)):
+**Evidence from code** ([`config.py:53`](../backend/packages/shared/config.py:53)):
 ```python
 cron_tip_generation: str = "0 3 * * *"  # 3:00 AM daily
 ```
@@ -138,7 +138,7 @@ Comment says "3:00 AM" but this fires at 3:00 AM UTC = 11:00 AM AWST.
 
 ### 3.3 🟠 Missing `limits:` Overrides in project.yml
 
-**File**: [`project.yml`](../backend-faas/project.yml)
+**File**: [`project.yml`](../backend/project.yml)
 
 **Problem**: No function in `project.yml` specifies `limits:` for timeout or memory. All functions use DigitalOcean's defaults:
 
@@ -176,7 +176,7 @@ tip-generation:
 
 ### 4.1 🟡 Deployment Size Pressure
 
-**File**: [`pyproject.toml`](../backend-faas/pyproject.toml:6)
+**File**: [`pyproject.toml`](../backend/pyproject.toml:6)
 
 **Problem**: DigitalOcean Functions has a **48 MB built function size limit**. Current dependencies are estimated at ~42 MB, leaving only ~6 MB of headroom. Adding any new dependency (e.g., `numpy`, `pandas`, `scikit-learn`) would breach this limit.
 
@@ -201,11 +201,11 @@ tip-generation:
 
 ### 4.2 🟡 Connection Pool Disposal Pattern
 
-**File**: [`db.py`](../backend-faas/packages/shared/db.py:48)
+**File**: [`db.py`](../backend/packages/shared/db.py:48)
 
-**Problem**: Every cron function calls `await dispose_engine()` in its `finally` block (see [`historic-refresh/__init__.py:245`](../backend-faas/packages/cron/historic-refresh/__init__.py:245)). This destroys the SQLAlchemy engine and its connection pool after every invocation. On the next invocation, a new engine must be created, new TCP connections established, and the pool warmed up again.
+**Problem**: Every cron function calls `await dispose_engine()` in its `finally` block (see [`historic-refresh/__init__.py:245`](../backend/packages/cron/historic-refresh/__init__.py:245)). This destroys the SQLAlchemy engine and its connection pool after every invocation. On the next invocation, a new engine must be created, new TCP connections established, and the pool warmed up again.
 
-The [`get_engine()`](../backend-faas/packages/shared/db.py:13) function uses a singleton pattern designed for cold starts, but `dispose_engine()` nullifies this optimization by forcing a cold start on every invocation.
+The [`get_engine()`](../backend/packages/shared/db.py:13) function uses a singleton pattern designed for cold starts, but `dispose_engine()` nullifies this optimization by forcing a cold start on every invocation.
 
 **Impact**:
 - ~100–300ms overhead per invocation for engine creation
@@ -255,9 +255,9 @@ The [`get_engine()`](../backend-faas/packages/shared/db.py:13) function uses a s
 
 ### 4.5 🟡 Alembic as Runtime Dependency
 
-**File**: [`pyproject.toml`](../backend-faas/pyproject.toml:14)
+**File**: [`pyproject.toml`](../backend/pyproject.toml:14)
 
-**Problem**: `alembic>=1.14.0` is listed in the runtime `dependencies` array but is only needed for database migrations, which are run separately via [`scripts/run-migrations.sh`](../backend-faas/scripts/run-migrations.sh). Including it in every function's deployment bundle wastes ~3 MB.
+**Problem**: `alembic>=1.14.0` is listed in the runtime `dependencies` array but is only needed for database migrations, which are run separately via [`scripts/run-migrations.sh`](../backend/scripts/run-migrations.sh). Including it in every function's deployment bundle wastes ~3 MB.
 
 **Recommended Fix**:
 ```toml
@@ -275,7 +275,7 @@ dev = [
 
 ### 5.1 Integration Tests
 
-**Current state**: Tests in [`backend-faas/tests/`](../backend-faas/tests/) are unit tests only. There are no integration tests that exercise functions end-to-end against a real database.
+**Current state**: Tests in [`backend/tests/`](../backend/tests/) are unit tests only. There are no integration tests that exercise functions end-to-end against a real database.
 
 **Recommendation**: Add integration tests using `testcontainers` (already a dev dependency) to verify:
 - API functions return correct HTTP responses
@@ -305,7 +305,7 @@ This works but is fragile — any directory restructuring breaks all imports sil
 
 ### 5.3 Historic Refresh Continuation Mechanism
 
-**Current state**: The [`historic-refresh`](../backend-faas/packages/cron/historic-refresh/__init__.py:52) function has a batch selection mechanism (`_resolve_batch()`) that can accept `start_season` from args, but there's no automation to trigger the next batch.
+**Current state**: The [`historic-refresh`](../backend/packages/cron/historic-refresh/__init__.py:52) function has a batch selection mechanism (`_resolve_batch()`) that can accept `start_season` from args, but there's no automation to trigger the next batch.
 
 **Recommendation**: Implement a continuation mechanism:
 1. After each batch completes, use the DO Functions API to self-trigger with `start_season` for the next batch
@@ -317,7 +317,7 @@ This works but is fragile — any directory restructuring breaks all imports sil
 
 ### 5.4 Request Validation
 
-**Current state**: API functions use manual request parsing via [`parse_request()`](../backend-faas/packages/shared/api_helpers.py:11) but lack schema validation for query parameters and request bodies.
+**Current state**: API functions use manual request parsing via [`parse_request()`](../backend/packages/shared/api_helpers.py:11) but lack schema validation for query parameters and request bodies.
 
 **Recommendation**: Add Pydantic model validation at the API boundary to catch malformed requests early and return proper 422 responses.
 
@@ -419,11 +419,11 @@ This preserves the FaaS cost advantage for API traffic while eliminating the tim
 
 | File | Purpose | Lines |
 |------|---------|-------|
-| [`project.yml`](../backend-faas/project.yml) | DO Functions project configuration | 109 |
-| [`config.py`](../backend-faas/packages/shared/config.py) | Pydantic settings with cron configuration | 97 |
-| [`db.py`](../backend-faas/packages/shared/db.py) | Database engine + session factory | 58 |
-| [`cache.py`](../backend-faas/packages/shared/cache.py) | Redis-backed 3-tier caching | 244 |
-| [`api_helpers.py`](../backend-faas/packages/shared/api_helpers.py) | HTTP request parsing, CORS, auth | 160 |
-| [`orchestrator.py`](../backend-faas/packages/shared/orchestrator.py) | ML model orchestration | 156 |
-| [`historic-refresh/__init__.py`](../backend-faas/packages/cron/historic-refresh/__init__.py) | Weekly historical data refresh cron | 246 |
-| [`pyproject.toml`](../backend-faas/pyproject.toml) | Dependencies and build config | 43 |
+| [`project.yml`](../backend/project.yml) | DO Functions project configuration | 109 |
+| [`config.py`](../backend/packages/shared/config.py) | Pydantic settings with cron configuration | 97 |
+| [`db.py`](../backend/packages/shared/db.py) | Database engine + session factory | 58 |
+| [`cache.py`](../backend/packages/shared/cache.py) | Redis-backed 3-tier caching | 244 |
+| [`api_helpers.py`](../backend/packages/shared/api_helpers.py) | HTTP request parsing, CORS, auth | 160 |
+| [`orchestrator.py`](../backend/packages/shared/orchestrator.py) | ML model orchestration | 156 |
+| [`historic-refresh/__init__.py`](../backend/packages/cron/historic-refresh/__init__.py) | Weekly historical data refresh cron | 246 |
+| [`pyproject.toml`](../backend/pyproject.toml) | Dependencies and build config | 43 |

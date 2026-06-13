@@ -2,120 +2,406 @@
 
 ## Overview
 
-This guide covers deploying WhatIsMyTip.com to Digital Ocean. The deployment consists of:
-- **Backend**: FastAPI application with cron-based data collection on Digital Ocean App Platform
-- **Frontend**: Static Nuxt 4 site on Digital Ocean App Platform (static site hosting)
+This guide covers deploying WhatIsMyTip.com to DigitalOcean. The deployment consists of:
+
+- **Backend**: 8 serverless functions on DigitalOcean Functions (4 HTTP + 4 scheduled)
+- **Database**: Managed PostgreSQL 16
+- **Cache**: Managed Redis 7
+- **Frontend**: Static Nuxt 4 site on DigitalOcean App Platform (static site hosting)
 
 ## Prerequisites
 
-- Digital Ocean account
+- DigitalOcean account
+- `doctl` CLI installed and authenticated (`doctl auth init`)
 - Domain name (e.g., whatismytip.com)
 - OpenRouter API key
-- Squiggle API (free tier available)
-- Git repository (GitHub/GitLab)
+- Squiggle API access (free tier available)
+- Git repository (GitHub)
+- `uv` (Python package manager) for running migrations
+- Docker (for running migrations locally, or use a management droplet)
 
 ## Architecture
 
 ```
-┌─────────────────┐
-│   User Browser   │
-└────────┬────────┘
-         │
-         ▼
-┌─────────────────┐
-│  Digital Ocean  │
-│  App Platform   │
-│                 │
-│  ┌───────────┐  │
-│  │ Backend   │  │
-│  │ FastAPI   │  │
-│  │ SQLite DB │  │
-│  └───────────┘  │
-│                 │
-│  ┌───────────┐  │
-│  │ Frontend  │  │
-│  │ Nuxt 4    │  │
-│  │ Static    │  │
-│  └───────────┘  │
-└─────────────────┘
+┌─────────────────────────────────────────────────────────────────┐
+│                      DigitalOcean Cloud                          │
+│                                                                  │
+│   ┌──────────────────────┐    ┌──────────────────────┐         │
+│   │   DO Functions        │    │   App Platform        │         │
+│   │   (Apache OpenWhisk)  │    │                       │         │
+│   │                        │    │   ┌──────────────┐   │         │
+│   │   ┌─HTTP Functions─┐  │    │   │  Frontend     │   │         │
+│   │   │  • games        │  │    │   │  Nuxt 4 SSG   │   │         │
+│   │   │  • tips         │  │    │   └──────────────┘   │         │
+│   │   │  • backtest     │  │    └──────────────────────┘         │
+│   │   │  • admin        │  │                                      │
+│   │   └────────────────┘  │                                      │
+│   │                        │                                      │
+│   │   ┌─Cron Functions──┐  │                                      │
+│   │   │  • daily-sync   │  │                                      │
+│   │   │  • match-compl. │  │                                      │
+│   │   │  • tip-gen      │  │                                      │
+│   │   │  • historic-ref │  │                                      │
+│   │   └────────────────┘  │                                      │
+│   └───────┬───────┬───────┘                                      │
+│           │       │                                                │
+│           ▼       ▼                                                │
+│   ┌──────────┐  ┌──────────┐                                     │
+│   │PostgreSQL│  │  Redis   │                                     │
+│   │ Managed  │  │ Managed  │                                     │
+│   └──────────┘  └──────────┘                                     │
+└─────────────────────────────────────────────────────────────────┘
 ```
 
-## Backend Deployment (Digital Ocean App Platform)
+---
 
-### Step 1: Create Digital Ocean App
+## Step 1: Provision Managed PostgreSQL
 
-1. Log in to [Digital Ocean App Platform](https://cloud.digitalocean.com/apps)
+1. Go to [DigitalOcean → Databases](https://cloud.digitalocean.com/databases)
+2. Click **Create Database Cluster**
+3. Select **PostgreSQL 16**
+4. Choose a plan (e.g., 1 GB / 1 vCPU for development, scale as needed)
+5. Select a region close to your Functions namespace (e.g., `syd1` for Sydney)
+6. Wait for provisioning to complete (2-5 minutes)
+
+### Connection Details
+
+After provisioning, note the following from the **Connection Details** tab:
+
+- **Host**: `db-postgresql-xxx-xxx.db.ondigitalocean.com`
+- **Port**: `25060`
+- **Database**: `defaultdb`
+- **Username**: `doadmin`
+- **Password**: *(generated)*
+
+### Build Connection String
+
+```
+postgresql+asyncpg://doadmin:<password>@db-postgresql-xxx-xxx.db.ondigitalocean.com:25060/defaultdb?ssl=require
+```
+
+> **Important**: The `?ssl=require` parameter is required for managed PostgreSQL.
+
+### Configure Trusted Sources
+
+In the database settings, add your Functions namespace IP or set **Trusted Sources** to allow connections from DO Functions.
+
+---
+
+## Step 2: Provision Managed Redis
+
+1. Go to [DigitalOcean → Databases](https://cloud.digitalocean.com/databases)
+2. Click **Create Database Cluster**
+3. Select **Redis 7**
+4. Choose a plan (e.g., 1 GB for development)
+5. Select the same region as your PostgreSQL instance
+6. Wait for provisioning to complete
+
+### Connection Details
+
+Note the Redis connection string:
+
+```
+rediss://default:<password>@db-redis-xxx-xxx.db.ondigitalocean.com:25061
+```
+
+> **Note**: Managed Redis uses TLS (`rediss://` protocol).
+
+---
+
+## Step 3: Create a Functions Namespace
+
+1. Install `doctl` if not already installed:
+   ```bash
+   # macOS
+   brew install doctl
+   # Linux/Windows — see https://docs.digitalocean.com/reference/doctl/how-to/install/
+   ```
+
+2. Authenticate:
+   ```bash
+   doctl auth init
+   ```
+
+3. Create a Functions namespace:
+   ```bash
+   doctl serverless install --hosting-region syd1
+   doctl serverless connect
+   ```
+
+4. Note the namespace and gateway URL:
+   ```bash
+   doctl serverless status
+   ```
+
+   Output includes:
+   ```
+   API host:    https://faas.syd1.digitaloceanspaces.com
+   Namespace:   <your-namespace>
+   ```
+
+---
+
+## Step 4: Configure Environment Variables
+
+### Create `.env` File
+
+Copy the template and fill in your managed database credentials:
+
+```bash
+cd backend
+cp .env.example .env
+```
+
+Edit `.env`:
+
+```bash
+# Database (Managed PostgreSQL via asyncpg — ssl=require for managed)
+DATABASE_URL=postgresql+asyncpg://doadmin:<password>@db-postgresql-xxx.db.ondigitalocean.com:25060/defaultdb?ssl=require
+
+# Cache (Managed Redis via TLS)
+REDIS_URL=rediss://default:<password>@db-redis-xxx-xxx.db.ondigitalocean.com:25061
+
+# Squiggle API
+SQUIGGLE_API_BASE=https://api.squiggle.com.au
+SQUIGGLE_CONTACT_EMAIL=contact@whatismytip.com
+
+# OpenRouter (AI explanations)
+OPENROUTER_API_KEY=your_openrouter_api_key
+OPENROUTER_MODEL=google/gemma-4-26b-a4b-it:free
+OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
+
+# Admin
+ADMIN_API_KEY=your_secure_admin_api_key
+
+# Environment
+ENVIRONMENT=production
+CORS_ORIGINS=https://whatismytip.com,https://www.whatismytip.com
+RATE_LIMIT_PER_MINUTE=60
+```
+
+### Environment Variables in project.yml
+
+The function-specific configuration (memory, timeout, schedules) is defined in [`project.yml`](../backend/project.yml:1). Sensitive values (API keys, passwords) are passed via the `.env` file during deployment.
+
+---
+
+## Step 5: Run Database Migrations
+
+Run Alembic migrations against the managed PostgreSQL database **before** deploying functions:
+
+```bash
+cd backend
+
+# Set the DATABASE_URL for the migration (or use .env)
+export DATABASE_URL="postgresql+asyncpg://doadmin:<password>@...?ssl=require"
+
+# Run migrations
+uv run alembic upgrade head
+```
+
+Verify the schema was applied:
+
+```bash
+uv run alembic current
+# Should show: 0002_weather_players_injuries (head)
+```
+
+See [docs/migrations.md](migrations.md) for the full migration workflow.
+
+---
+
+## Step 6: Deploy Functions
+
+### Using the Deploy Script
+
+The [`scripts/deploy.sh`](../backend/scripts/deploy.sh:1) script handles the full deployment:
+
+```bash
+cd backend
+./scripts/deploy.sh
+```
+
+This script:
+1. Runs unit tests (`uv run pytest tests/unit/ -v`)
+2. Runs database migrations (`uv run alembic upgrade head`)
+3. Deploys all functions (`doctl serverless deploy . --env .env`)
+4. Verifies health endpoints
+
+### Manual Deployment
+
+To deploy manually:
+
+```bash
+cd backend
+doctl serverless deploy . --env .env
+```
+
+### Verify Deployment
+
+After deployment, check the function URLs:
+
+```bash
+doctl serverless functions list
+```
+
+Test the health endpoint:
+
+```bash
+curl https://faas.syd1.digitaloceanspaces.com/<namespace>/api/games/health
+# Expected: {"status": "healthy"}
+```
+
+---
+
+## Step 7: Configure Cron Function Schedules
+
+Scheduled functions are configured in [`project.yml`](../backend/project.yml:1) and deployed with the functions. No separate scheduling step is needed.
+
+| Function | Schedule (UTC) | AWST Equivalent |
+|----------|----------------|-----------------|
+| `daily-sync` | `*/15 * * * *` | Every 15 minutes |
+| `match-completion` | `5,20,35,50 * * * *` | 4× per hour |
+| `tip-generation` | `0 19 * * *` | 3:00 AM daily |
+| `historic-refresh` | `0 20 * * 6` | 4:00 AM Saturday |
+
+Schedules can be overridden via environment variables (see [`config.py`](../backend/packages/shared/config.py:1)).
+
+---
+
+## Frontend Deployment (DigitalOcean App Platform)
+
+### Step 1: Create App for Frontend
+
+1. Go to [DigitalOcean App Platform](https://cloud.digitalocean.com/apps)
 2. Click **Create App**
-3. Select **Deploy from Git**
-4. Connect your Git repository
+3. Select **Deploy from Git** → connect your repository
+4. Set source directory to `frontend/`
 
 ### Step 2: Configure Build Settings
 
-**Build Command**:
-```bash
-cd backend && uv sync
-```
-
-**Deploy Context**:
-```bash
-/home/dotnet/app
-```
+| Setting | Value |
+|---------|-------|
+| **Build Command** | `bun install && bun run build` |
+| **Output Directory** | `.output/public` |
+| **Environment** | Static site |
 
 ### Step 3: Configure Environment Variables
 
-Add the following environment variables in the App Platform dashboard:
-
 | Variable | Value |
 |----------|-------|
-| `DATABASE_URL` | `sqlite+aiosqlite:///./whatismytip.db` |
-| `API_HOST` | `0.0.0.0` |
-| `API_PORT` | `8000` |
-| `CORS_ORIGINS` | `https://whatismytip.com` |
-| `RATE_LIMIT_PER_MINUTE` | `60` |
-| `SQUIGGLE_API_BASE` | `https://api.squiggle.com.au` |
-| `OPENROUTER_API_KEY` | `your_openrouter_api_key` |
-| `OPENROUTER_MODEL` | `gptoss-120b` |
-| `OPENROUTER_BASE_URL` | `https://openrouter.ai/api/v1` |
-| `ENVIRONMENT` | `production` |
+| `API_BASE_URL` | `https://faas.syd1.digitaloceanspaces.com/<namespace>` |
 
-**Cron Job Configuration:**
-
-| Variable | Value |
-|----------|-------|
-| `CRON_ENABLED` | `true` |
-| `CRON_TIMEZONE` | `Australia/Perth` |
-| `DAILY_SYNC_ENABLED` | `true` |
-| `MATCH_COMPLETION_CHECK_ENABLED` | `true` |
-| `MATCH_COMPLETION_BUFFER_MINUTES` | `60` |
-| `TIP_GENERATION_ENABLED` | `true` |
-| `TIP_GENERATION_REGENERATE_EXISTING` | `false` |
-| `HISTORIC_REFRESH_ENABLED` | `true` |
-| `HISTORIC_REFRESH_SEASONS` | `2010,2011,2012,2013,2014,2015,2016,2017,2018,2019,2020,2021,2022,2023,2024` |
-| `HISTORIC_REFRESH_REGENERATE_TIPS` | `true` |
-| `JOB_TIMEOUT_SECONDS` | `3600` |
-| `JOB_LOCK_EXPIRE_SECONDS` | `3600` |
-| `JOB_MAX_RETRIES` | `3` |
-| `JOB_RETRY_DELAY_SECONDS` | `1` |
-
-### Step 4: Configure Scale
-
-**Scale Settings**:
-- **Minimum Scale**: 1 instance
-- **Maximum Scale**: 2 instances (for high availability)
-- **Scale Down**: 1 instance (saves costs during low traffic)
-
-### Step 5: Deploy
+### Step 4: Deploy
 
 1. Click **Deploy**
-2. Wait for the build to complete (5-10 minutes)
-3. Monitor the deployment status in the dashboard
+2. Wait for the build to complete (3-5 minutes)
+3. Verify the frontend is accessible
 
-### Step 6: Verify Backend
+---
 
-After deployment, verify the backend is running:
+## Domain Configuration
+
+### Frontend Domain
+
+1. In App Platform, go to **Settings** → **Domains**
+2. Add `whatismytip.com` and `www.whatismytip.com`
+3. Configure DNS records (A record for `@`, CNAME for `www`)
+4. SSL is automatic
+
+### CORS Configuration
+
+Update `CORS_ORIGINS` in your `.env` and redeploy:
 
 ```bash
-curl https://whatismytip.com/api/health
+CORS_ORIGINS=https://whatismytip.com,https://www.whatismytip.com
+```
+
+---
+
+## OpenRouter API Setup
+
+### Step 1: Get API Key
+
+1. Sign up at [OpenRouter](https://openrouter.ai/)
+2. Navigate to **API Keys**
+3. Generate a new API key
+
+### Step 2: Configure
+
+Add to `.env`:
+```bash
+OPENROUTER_API_KEY=your_key
+OPENROUTER_MODEL=google/gemma-4-26b-a4b-it:free
+```
+
+### Step 3: Cost Management
+
+| Metric | Value |
+|--------|-------|
+| Cost per 1M tokens | ~$0.15 |
+| Estimated monthly cost | $5-20 (depending on usage) |
+
+**Optimisation tips:**
+- Explanations are cached in PostgreSQL — only generated once per tip
+- The `tip-generation` cron runs nightly, batching all games
+- Monitor usage in the OpenRouter dashboard
+
+---
+
+## Monitoring and Logging
+
+### Functions Monitoring
+
+DigitalOcean Functions provides:
+- **Invocation logs** — per-function execution logs accessible via `doctl` or the dashboard
+- **Metrics** — invocation count, duration, errors
+- **Alerts** — the `AlertingService` sends webhook notifications on job failures
+
+```bash
+# View function activation logs
+doctl serverless activations list
+doctl serverless activations get <activation_id>
+```
+
+### Cron Job Monitoring
+
+Monitor scheduled functions through:
+
+1. **Admin API** — query job status:
+   ```bash
+   curl -H "X-Admin-API-Key: $ADMIN_API_KEY" \
+     https://faas.syd1.digitaloceanspaces.com/<namespace>/api/admin/jobs/status
+   ```
+
+2. **Database queries** — check `job_executions` table:
+   ```sql
+   SELECT job_name, status, started_at, completed_at, error_message
+   FROM job_executions
+   ORDER BY started_at DESC
+   LIMIT 20;
+   ```
+
+3. **Alerting webhooks** — configure `ALERT_WEBHOOK_URL` to receive failure notifications
+
+### Database Monitoring
+
+Use the DigitalOcean database dashboard for:
+- Connection count
+- Query performance
+- Storage usage
+- Backup status
+
+---
+
+## Health Checks
+
+### Backend (Functions)
+
+Health check endpoints are available on each HTTP function:
+
+```bash
+curl https://faas.syd1.digitaloceanspaces.com/<namespace>/api/games/health
 ```
 
 Expected response:
@@ -123,471 +409,188 @@ Expected response:
 {"status": "healthy"}
 ```
 
-### Step 7: Access API Documentation
-
-Visit `https://whatismytip.com/docs` for interactive API documentation.
-
-## Frontend Deployment (Digital Ocean App Platform)
-
-### Step 1: Create Separate App for Frontend
-
-1. In Digital Ocean App Platform, create a new app
-2. Select **Deploy from Git**
-3. Use the same repository
-
-### Step 2: Configure Build Settings
-
-**Build Command**:
-```bash
-bun install && bun run build
-```
-
-**Deploy Context**:
-```bash
-/home/dotnet/app
-```
-
-**Output Directory**:
-```bash
-.output/public
-```
-
-### Step 3: Configure Environment Variables
-
-Add the following environment variables:
-
-| Variable | Value |
-|----------|-------|
-| `API_BASE_URL` | `https://whatismytip.com` |
-
-### Step 4: Configure Scale
-
-**Scale Settings**:
-- **Minimum Scale**: 1 instance
-- **Maximum Scale**: 1 instance (static site, no scaling needed)
-- **Scale Down**: 1 instance
-
-### Step 5: Deploy
-
-1. Click **Deploy**
-2. Wait for the build to complete (3-5 minutes)
-3. Monitor the deployment status
-
-### Step 6: Verify Frontend
-
-Visit `https://whatismytip.com` to verify the frontend is accessible.
-
-## Domain Configuration
-
-### Step 1: Add Custom Domain
-
-1. In the App Platform dashboard, go to **Settings** → **Domains**
-2. Add your domain: `whatismytip.com`
-3. Configure DNS records:
-
-**A Record**:
-- Type: `A`
-- Name: `@`
-- Value: Digital Ocean provides this automatically
-
-**CNAME Record** (if using App Platform subdomain):
-- Type: `CNAME`
-- Name: `www`
-- Value: `app-name.app_platform_domain`
-
-### Step 2: SSL Certificate
-
-Digital Ocean App Platform provides automatic SSL certificates for custom domains.
-
-### Step 3: DNS Propagation
-
-DNS changes may take 5-30 minutes to propagate.
-
-## Database Setup
-
-### SQLite (Recommended for Production)
-
-The backend uses SQLite by default. For production:
-
-1. **Enable Read-Only Replicas** (if needed):
-   - Digital Ocean App Platform supports read replicas
-   - Configure for read-heavy workloads
-
-2. **Database Backups**:
-   - Enable automatic backups in App Platform
-   - Schedule daily backups
-   - Keep backups for 30 days
-
-3. **Performance**:
-   - SQLite performs well for read-heavy workloads
-   - For write-heavy workloads, consider PostgreSQL
-
-### PostgreSQL Alternative
-
-If you need PostgreSQL:
-
-1. Create a Digital Ocean Managed Database
-2. Update `DATABASE_URL`:
-   ```bash
-   DATABASE_URL=postgresql+asyncpg://user:password@host:port/database
-   ```
-3. Update `pyproject.toml` dependencies:
-   ```bash
-   uv add asyncpg
-   ```
-
-## Squiggle API Rate Limits
-
-The Squiggle API has rate limits. The backend implements its own rate limiting:
-
-- **60 requests per minute** per IP address
-
-**Cost Optimization**:
-- Cache Squiggle API responses in SQLite
-- Implement background data synchronization
-- Use API rate limiting to avoid exceeding limits
-
-## OpenRouter API Setup
-
-### Step 1: Get OpenRouter API Key
-
-1. Sign up at [OpenRouter](https://openrouter.ai/)
-2. Navigate to API Keys section
-3. Generate a new API key
-
-### Step 2: Configure in App Platform
-
-Add the API key as an environment variable:
-- `OPENROUTER_API_KEY`
-
-### Step 3: Cost Management
-
-**Estimated Costs**:
-- Model: `gptoss-120b`
-- Cost per 1M tokens: ~$0.15
-- Estimated monthly cost: $5-20 (depending on usage)
-
-**Cost Optimization Tips**:
-1. **Cache Explanations**: Store generated explanations in database
-2. **Rate Limit**: Only generate explanations when needed
-3. **Batch Requests**: Generate explanations in batches
-4. **Monitor Usage**: Set up alerts for unusual usage
-
-### Step 4: Monitor Usage
-
-Check OpenRouter dashboard for usage statistics and costs.
-
-## Monitoring and Logging
-
-### App Platform Monitoring
-
-Digital Ocean App Platform provides:
-
-- **Resource Usage**: CPU, memory, disk usage
-- **Logs**: Access logs and application logs
-- **Metrics**: Request count, response time, error rate
-
-### Application Logs
-
-View logs in the App Platform dashboard:
-- **Application Logs**: Application output
-- **Access Logs**: HTTP request logs
-
-### Log Retention
-
-Logs are retained for 7 days by default.
-
-### Cron Job Deployment
-
-#### Cron Job Scheduling
-
-Cron jobs run automatically based on their configured schedules:
-
-- **Daily Game Sync**: 2:00 AM daily
-- **Match Completion Detector**: Every 15 minutes
-- **Tip Generation**: 3:00 AM daily
-- **Historical Data Refresh**: 4:00 AM Sundays
-
-These schedules are configured in the environment variables and use the system timezone (`Australia/Perth`).
-
-#### Monitoring Cron Job Execution
-
-Monitor cron job execution through:
-
-1. **Health Check Endpoint**:
-   ```bash
-   curl https://whatismytip.com/api/health/cron
-   ```
-
-2. **Application Logs**: Check for job execution logs in App Platform logs
-3. **Job Execution History**: Query the `job_executions` table in the database
-
-Example query to check recent job executions:
-```bash
-sqlite3 whatismytip.db "SELECT * FROM job_executions ORDER BY created_at DESC LIMIT 10;"
-```
-
-#### Troubleshooting Cron Job Issues
-
-**Issue**: Cron job not running
-- Verify `CRON_ENABLED=true` in environment variables
-- Check application logs for startup errors
-- Verify cron schedules are valid
-
-**Issue**: Job stuck in "running" status
-- Check for stale locks in the `job_locks` table
-- Review job timeout configuration
-- Check application logs for errors
-
-**Issue**: High API error rate
-- Verify Squiggle API is accessible
-- Check rate limit settings
-- Review retry configuration
-
-**Issue**: Tips not generating
-- Verify tip generation job is enabled
-- Check if games exist for upcoming rounds
-- Verify ModelOrchestrator is working
-- Check job execution logs for errors
-
-## Health Checks
-
-### Backend Health Check
-
-Configure health check in App Platform:
-- **Path**: `/health`
-- **Interval**: 30 seconds
-- **Timeout**: 5 seconds
-- **Unhealthy Threshold**: 3 consecutive failures
-
-### Frontend Health Check
+### Frontend
 
 Configure health check in App Platform:
 - **Path**: `/`
 - **Interval**: 30 seconds
-- **Timeout**: 5 seconds
-- **Unhealthy Threshold**: 3 consecutive failures
 
-## Scaling Strategy
-
-### Auto Scaling
-
-Enable auto scaling based on CPU usage:
-- **Scale Up**: When CPU > 70% for 5 minutes
-- **Scale Down**: When CPU < 30% for 10 minutes
-
-### Best Practices
-
-1. **Backend**: Scale to 2 instances for high availability
-2. **Frontend**: Keep at 1 instance (static site)
-3. **Database**: Use read replicas if needed
+---
 
 ## Security Considerations
 
 ### Environment Variables
 
 - Never commit `.env` files to Git
-- Use App Platform environment variables for sensitive data
+- Use the `.env` file passed to `doctl serverless deploy`
 - Rotate API keys regularly
+- Use strong, unique values for `ADMIN_API_KEY`
+
+### Database Security
+
+- Managed PostgreSQL requires TLS (`?ssl=require`)
+- Configure **Trusted Sources** to restrict connections
+- Enable automatic daily backups
 
 ### CORS Configuration
 
-Update `CORS_ORIGINS` to include all domains:
 ```bash
 CORS_ORIGINS=https://whatismytip.com,https://www.whatismytip.com
 ```
 
 ### Rate Limiting
 
-The backend implements rate limiting:
-- 60 requests per minute per IP
-- Adjust based on expected traffic
+- HTTP functions enforce 60 requests per minute per IP
+- Configurable via `RATE_LIMIT_PER_MINUTE`
 
-### HTTPS
-
-Digital Ocean App Platform provides automatic HTTPS:
-- SSL certificates are managed automatically
-- Redirect HTTP to HTTPS
+---
 
 ## Backup Strategy
 
 ### Database Backups
 
-1. **Automatic Backups**: Enable daily backups in App Platform
-2. **Retention**: Keep backups for 30 days
-3. **Manual Backups**: Create manual backups before updates
+Managed PostgreSQL includes:
+- **Automatic daily backups** (7-day retention on basic plans)
+- **Point-in-time recovery** (up to 7 days on basic, longer on higher tiers)
+- **Manual backups** via `pg_dump` if needed
 
 ### Code Backups
 
-1. **Git Repository**: Push to GitHub/GitLab regularly
-2. **Branches**: Use feature branches for testing
-3. **Tag Releases**: Tag production releases
+- Git repository is the source of truth
+- Use feature branches for testing
+- Tag production releases
+
+---
 
 ## Deployment Process
 
 ### Pre-Deployment Checklist
 
-- [ ] Update environment variables
-- [ ] Test in development
-- [ ] Create Git commit
-- [ ] Push to repository
-- [ ] Create GitHub/GitLab release
-- [ ] Review deployment logs
+- [ ] Local tests pass (`uv run pytest tests/unit/ -v`)
+- [ ] `.env` updated with production credentials
+- [ ] Database migrations tested
+- [ ] Git commit pushed
+- [ ] Frontend `.env` updated with new API URLs
 
 ### Deployment Steps
 
-1. **Push Changes**:
-   ```bash
-   git add .
-   git commit -m "feat: update feature"
-   git push origin feature/backend-squiggle-api-integration
-   ```
+```bash
+# 1. Deploy backend functions
+cd backend
+./scripts/deploy.sh
 
-2. **Create Release** (if using releases):
-   ```bash
-   git tag v0.1.0
-   git push origin v0.1.0
-   ```
+# 2. Deploy frontend (via App Platform dashboard or CLI)
+cd ../frontend
+bun run build
+# Deploy .output/public to hosting provider
+```
 
-3. **Monitor Deployment**:
-   - Check App Platform dashboard
-   - Review deployment logs
-   - Verify health checks pass
+### Post-Deployment Testing
 
-4. **Post-Deployment Testing**:
-   - Test API endpoints
-   - Test frontend pages
-   - Verify database operations
-   - Check error logs
+```bash
+# Test health endpoint
+curl https://faas.syd1.digitaloceanspaces.com/<namespace>/api/games/health
+
+# Test games endpoint
+curl https://faas.syd1.digitaloceanspaces.com/<namespace>/api/games
+
+# Test frontend
+curl -I https://whatismytip.com
+```
 
 ### Rollback Procedure
 
-If deployment fails:
+For functions, redeploy the previous version:
 
-1. Go to App Platform dashboard
-2. Select the app
-3. Click **Rollback**
-4. Choose previous version
-5. Confirm rollback
+```bash
+cd backend
+git checkout <previous-commit>
+doctl serverless deploy . --env .env
+```
+
+For database rollbacks:
+
+```bash
+uv run alembic downgrade -1
+```
+
+---
 
 ## Troubleshooting
 
-### Backend Issues
+### Function Issues
 
-**Problem**: Backend not starting
-- **Solution**: Check logs for errors, verify environment variables
+**Problem**: Function returns 502/503
+- **Solution**: Check activation logs via `doctl serverless activations list`
+- **Solution**: Verify `DATABASE_URL` and `REDIS_URL` are correct and reachable
 
-**Problem**: Database errors
-- **Solution**: Check database URL, verify SQLite file permissions
+**Problem**: Function times out
+- **Solution**: Check timeout settings in [`project.yml`](../backend/project.yml:1)
+- **Solution**: Optimise slow database queries
 
-**Problem**: API calls failing
-- **Solution**: Check Squiggle API status, verify rate limits
+**Problem**: Cron job not running
+- **Solution**: Verify schedule in [`project.yml`](../backend/project.yml:1)
+- **Solution**: Check for stale advisory locks in `job_locks` table
+- **Solution**: Review activation logs
+
+### Database Issues
+
+**Problem**: Connection refused
+- **Solution**: Verify Trusted Sources includes Functions namespace
+- **Solution**: Check `?ssl=require` in connection string
+
+**Problem**: Migration failures
+- **Solution**: Check current revision: `uv run alembic current`
+- **Solution**: Review migration scripts in `alembic/versions/`
 
 ### Frontend Issues
 
-**Problem**: Frontend not loading
-- **Solution**: Check build logs, verify static files
-
 **Problem**: API calls failing
-- **Solution**: Verify `API_BASE_URL` environment variable
+- **Solution**: Verify `API_BASE_URL` points to correct Functions gateway
+- **Solution**: Check CORS configuration in backend `.env`
 
-### Common Issues
+---
 
-**Issue**: 502 Bad Gateway
-- **Solution**: Backend not running or unhealthy
+## Cost Estimation
 
-**Issue**: 503 Service Unavailable
-- **Solution**: Backend is scaling or restarting
+| Component | Estimated Monthly Cost |
+|-----------|----------------------|
+| DO Functions (8 functions, low traffic) | $1-5 (pay-per-invocation) |
+| Managed PostgreSQL (1 GB plan) | $15 |
+| Managed Redis (1 GB plan) | $15 |
+| App Platform (frontend static site) | $3 |
+| OpenRouter API | $5-20 |
+| **Total** | **~$39-58/month** |
 
-**Issue**: Database locked
-- **Solution**: SQLite file locked, check for concurrent access
+Costs scale with usage. Functions billing is based on invocations and execution time.
 
-## Performance Optimization
+---
 
-### Backend Optimization
+## CI/CD
 
-1. **Database Indexing**: Add indexes to frequently queried columns
-2. **Connection Pooling**: Configure SQLAlchemy connection pool
-3. **Caching**: Implement Redis caching for API responses
-4. **Background Tasks**: Use background workers for heavy operations
+The repository includes a GitHub Actions workflow at [`.github/workflows/deploy.yml`](../.github/workflows/deploy.yml:1) that automates deployment on push to `main`.
 
-### Frontend Optimization
+Required GitHub secrets:
 
-1. **Code Splitting**: Already enabled by Nuxt
-2. **Image Optimization**: Use Nuxt's image optimization
-3. **CDN**: Enable CDN for static assets
-4. **Lazy Loading**: Implement lazy loading for images
+| Secret | Description |
+|--------|-------------|
+| `DIGITALOCEAN_ACCESS_TOKEN` | DO API token for `doctl` |
+| `DATABASE_URL` | Production PostgreSQL connection string |
+| `REDIS_URL` | Production Redis connection string |
+| `OPENROUTER_API_KEY` | OpenRouter API key |
+| `ADMIN_API_KEY` | Admin API key |
+| Other env vars | As needed (see `.env.example`) |
 
-## Cost Optimization
-
-### Backend Costs
-
-- **App Platform**: ~$6/month (1 instance)
-- **Database**: Free (SQLite)
-- **OpenRouter**: ~$5-20/month (depending on usage)
-
-### Frontend Costs
-
-- **App Platform**: ~$3/month (static site)
-- **Total Estimated**: ~$14-29/month
-
-### Cost Saving Tips
-
-1. **Scale Down**: Reduce instances during low traffic
-2. **Use SQLite**: Avoid PostgreSQL costs
-3. **Monitor Usage**: Track OpenRouter API usage
-4. **Cache Responses**: Reduce API calls
-
-## Maintenance
-
-### Regular Maintenance Tasks
-
-1. **Daily**:
-   - Monitor application health
-   - Check error logs
-   - Review usage metrics
-
-2. **Weekly**:
-   - Review database performance
-   - Check backup status
-   - Update dependencies
-
-3. **Monthly**:
-   - Rotate API keys
-   - Review security settings
-   - Optimize performance
-
-### Dependency Updates
-
-Update dependencies regularly:
-```bash
-cd backend
-uv sync --upgrade
-
-cd frontend
-bun update
-```
+---
 
 ## Support and Resources
 
-### Documentation
-
-- [Digital Ocean App Platform Docs](https://docs.digitalocean.com/products/app-platform/)
-- [FastAPI Deployment Guide](https://fastapi.tiangolo.com/deployment/)
+- [DigitalOcean Functions Docs](https://docs.digitalocean.com/products/functions/)
+- [DigitalOcean Managed Databases](https://docs.digitalocean.com/products/databases/)
 - [Nuxt Deployment Guide](https://nuxt.com/docs/getting-started/deployment)
+- [doctl CLI Reference](https://docs.digitalocean.com/reference/doctl/)
 
-### Community
-
-- [Digital Ocean Community](https://www.digitalocean.com/community)
-- [FastAPI Discord](https://discord.gg/fastapi)
-- [Nuxt Discord](https://discord.com/invite/nuxt)
-
-## Next Steps
-
-After deployment:
-
-1. **Setup Monitoring**: Configure alerts and monitoring
-2. **Setup Analytics**: Add Google Analytics or similar
-3. **Setup Error Tracking**: Use Sentry or similar
-4. **Create Documentation**: Document deployment process
-5. **Set up CI/CD**: Automate deployments
+See also:
+- [docs/backend.md](backend.md) — Backend architecture
+- [docs/development.md](development.md) — Local development setup
+- [docs/migrations.md](migrations.md) — Database migration guide
