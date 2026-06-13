@@ -32,7 +32,7 @@ try:
 except ImportError:
     from backports.zoneinfo import ZoneInfo  # type: ignore[no-redef]
 
-# Ensure backend-faas is on sys.path
+# Ensure backend is on sys.path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from sqlalchemy import select, text
@@ -771,7 +771,7 @@ def main() -> None:
         "--input-dir",
         type=str,
         default=DEFAULT_INPUT_DIR,
-        help="Directory containing CSV files (default: backend-faas/data)",
+        help="Directory containing CSV files (default: backend/data)",
     )
     parser.add_argument(
         "--season",

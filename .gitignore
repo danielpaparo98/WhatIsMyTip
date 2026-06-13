@@ -66,4 +66,4 @@ seed_data/
 frontend/debug-*.png
 frontend/frontend/
 frontend/test-screenshots/
-backend-faas/data/ 
+backend/data/

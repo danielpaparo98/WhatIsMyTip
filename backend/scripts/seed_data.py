@@ -34,7 +34,7 @@ import sys
 from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional, Tuple
 
-# Ensure the backend-faas directory is on sys.path so that
+# Ensure the backend directory is on sys.path so that
 # `packages.shared` is importable when running from repo root.
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 

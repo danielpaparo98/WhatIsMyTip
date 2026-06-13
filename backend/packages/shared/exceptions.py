@@ -1,4 +1,4 @@
-"""Custom exception classes for backend-faas.
+"""Custom exception classes for backend.
 
 Provides error classification for cron jobs and API handlers,
 enabling intelligent retry behavior and structured error responses.

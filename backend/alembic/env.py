@@ -6,7 +6,7 @@ from sqlalchemy import pool
 from alembic import context
 
 # Import models and settings from the shared package.
-# Run alembic from the `backend-faas/` directory so that `packages` is on sys.path.
+# Run alembic from the `backend/` directory so that `packages` is on sys.path.
 from packages.shared.config import settings
 from packages.shared.db import Base
 from packages.shared.models import (  # noqa: F401

@@ -12,7 +12,7 @@ Serverless backend for WhatIsMyTip AFL tipping application, running on Digital O
 ## Project Structure
 
 ```
-backend-faas/
+backend/
 ├── packages/
 │   ├── shared/          # Shared code (models, CRUD, services, etc.)
 │   ├── api/             # HTTP-triggered functions
@@ -42,7 +42,7 @@ backend-faas/
 ### Setup
 
 ```bash
-cd backend-faas
+cd backend
 cp .env.example .env
 # Edit .env with your configuration
 uv sync

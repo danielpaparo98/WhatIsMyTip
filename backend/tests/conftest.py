@@ -1,4 +1,4 @@
-"""Shared test fixtures for backend-faas tests."""
+"""Shared test fixtures for backend tests."""
 
 import os
 

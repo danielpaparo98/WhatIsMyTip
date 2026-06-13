@@ -7,7 +7,7 @@ import os
 import sys
 from datetime import date, datetime, timezone
 
-# Ensure backend-faas is on sys.path
+# Ensure backend is on sys.path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
 from scripts.load_csv_to_db import (

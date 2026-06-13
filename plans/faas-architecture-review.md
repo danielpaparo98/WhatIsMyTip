@@ -1,6 +1,9 @@
 # Architecture Review: Digital Ocean Functions (FaaS) Migration
 
-**Project:** WhatIsMyTip  
+> **⚠️ HISTORICAL DOCUMENT** — This plan was written during the `backend-faas` era.
+> The directory has since been renamed to `backend/`. Paths like `backend-faas/...` should be read as `backend/...` today.
+
+**Project:** WhatIsMyTip
 **Reviewer:** Architecture Review  
 **Date:** 2026-05-29  
 **Branch:** `feature/faas-migration`

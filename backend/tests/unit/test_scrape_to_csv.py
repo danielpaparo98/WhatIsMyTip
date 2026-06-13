@@ -8,7 +8,7 @@ import csv
 import os
 import sys
 
-# Ensure backend-faas is on sys.path
+# Ensure backend is on sys.path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
 from scripts.scrape_to_csv import (

@@ -13,7 +13,7 @@ import json
 import sys
 import os
 
-# Setup path for imports — scripts/ is inside backend-faas/
+# Setup path for imports — scripts/ is inside backend/
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from packages.shared.db import _get_session_factory, dispose_engine

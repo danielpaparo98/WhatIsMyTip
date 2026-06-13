@@ -1,5 +1,8 @@
 # DB Schema Design: Weather, Player Stats, and Injury Data
 
+> **⚠️ HISTORICAL DOCUMENT** — This plan was written during the `backend-faas` era.
+> The directory has since been renamed to `backend/`. Paths like `backend-faas/...` should be read as `backend/...` today.
+
 **Branch:** `feature/data-scraping-clients`
 **Date:** 2026-06-10
 **Status:** Draft — pending approval

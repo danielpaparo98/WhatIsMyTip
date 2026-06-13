@@ -1,4 +1,4 @@
-"""Integration tests for backend-faas.
+"""Integration tests for backend.
 
 These tests require running PostgreSQL and Redis instances.
 Start them with: scripts/dev.sh

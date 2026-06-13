@@ -3,7 +3,7 @@
 Export seed data to CSV files.
 
 Generates seed data using the same seed functions and writes each table
-to a CSV file in backend-faas/seed_data/.
+to a CSV file in backend/seed_data/.
 
 Usage:
     uv run python scripts/export_seed_csv.py
@@ -21,7 +21,7 @@ from dataclasses import fields as dataclass_fields
 from datetime import datetime, timezone
 from typing import List
 
-# Ensure backend-faas is on sys.path
+# Ensure backend is on sys.path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from scripts.seed_data import (
@@ -88,7 +88,7 @@ def main() -> None:
     parser.add_argument(
         "--output-dir",
         default=None,
-        help="Output directory (default: backend-faas/seed_data/)",
+        help="Output directory (default: backend/seed_data/)",
     )
     args = parser.parse_args()
 

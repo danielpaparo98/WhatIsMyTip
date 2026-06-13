@@ -30,7 +30,7 @@ import sys
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Set
 
-# Ensure backend-faas is on sys.path
+# Ensure backend is on sys.path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from bs4 import BeautifulSoup

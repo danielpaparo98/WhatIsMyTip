@@ -4,7 +4,7 @@ Run database migrations and optionally seed data from CSV files.
 
 Uses a connection string provided via CLI argument or DATABASE_URL env var.
 Migrations are run via Alembic's Python API; seed data is loaded from the
-``backend-faas/seed_data/`` directory.
+``backend/seed_data/`` directory.
 
 Usage:
     # Run migrations only
@@ -38,7 +38,7 @@ from typing import Dict, List, Optional, Sequence
 
 # ---------------------------------------------------------------------------
 # Ensure ``packages.shared`` is importable when running from repo root or
-# from the ``backend-faas/`` directory.
+# from the ``backend/`` directory.
 # ---------------------------------------------------------------------------
 _BACKEND_FAAS_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_BACKEND_FAAS_DIR))
