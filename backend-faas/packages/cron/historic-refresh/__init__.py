@@ -18,8 +18,9 @@ import traceback
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
 from packages.shared.alerting import AlertingService
-from packages.shared.cache import RedisCache, close_redis_pool
+from packages.shared.cache import RedisCache, close_redis_pool, invalidate_cache_pattern, medium_cache
 from packages.shared.config import settings
+from packages.shared.crud.generation_progress import GenerationProgressCRUD
 from packages.shared.crud.jobs import JobExecutionCRUD, JobLockCRUD
 from packages.shared.db import _get_session_factory, dispose_engine
 from packages.shared.exceptions import TransientJobError, classify_error
@@ -108,21 +109,41 @@ async def main(args: dict) -> dict:
             execution = await execution_crud.create_execution(JOB_NAME, status="running")
             await session.commit()
 
-            # 3. Determine seasons to process — check Redis continuation marker first
+            # 3. Determine seasons to process.
+            #    Priority:  (1) Redis fast-path continuation marker,
+            #               (2) DB `generation_progress` table fallback,
+            #               (3) Fresh start with all seasons.
             remaining = await cache.get(CONTINUATION_KEY)
             if remaining:
                 seasons_to_process = remaining
                 logger.info(
-                    "Resuming from continuation marker: "
-                    "%s seasons remaining",
+                    "Resuming from Redis continuation marker: %s seasons remaining",
                     len(seasons_to_process),
                 )
             else:
-                seasons_to_process = list(ALL_SEASONS)
-                logger.info(
-                    "Starting fresh: processing all %s seasons",
-                    len(seasons_to_process),
+                # Check the DB for an in-progress record from a previous
+                # invocation that was killed before finishing.
+                active_ops = await GenerationProgressCRUD.get_in_progress_operations(
+                    session, operation_type="historic_refresh"
                 )
+                db_progress = active_ops[0] if active_ops else None
+                if db_progress and db_progress.completed_items:
+                    already_done = db_progress.completed_items
+                    remaining_indices = list(range(already_done, len(ALL_SEASONS)))
+                    seasons_to_process = [ALL_SEASONS[i] for i in remaining_indices]
+                    logger.info(
+                        "Resuming from DB progress (record %s): "
+                        "%s seasons already done, %s remaining",
+                        db_progress.id,
+                        already_done,
+                        len(seasons_to_process),
+                    )
+                else:
+                    seasons_to_process = list(ALL_SEASONS)
+                    logger.info(
+                        "Starting fresh: processing all %s seasons",
+                        len(seasons_to_process),
+                    )
 
             batches = _build_batches(seasons_to_process)
 
@@ -197,6 +218,21 @@ async def main(args: dict) -> dict:
                 total_errors += len(refresh_stats.get("errors", []))
                 batches_processed += 1
 
+                # Persist completed count to generation_progress so the next
+                # invocation can resume even if Redis is wiped.
+                try:
+                    await GenerationProgressCRUD.upsert_active(
+                        session,
+                        operation_type="historic_refresh",
+                        total_items=len(ALL_SEASONS),
+                        completed_items=total_seasons_processed,
+                    )
+                    await session.commit()
+                except Exception:
+                    logger.warning(
+                        "Failed to persist DB continuation marker", exc_info=True
+                    )
+
                 logger.info(
                     "Batch %s completed in %.1fs: "
                     "%s seasons, "
@@ -209,10 +245,26 @@ async def main(args: dict) -> dict:
                     refresh_stats["tips_generated"],
                 )
 
-            # If all batches were processed, clear the continuation marker
+            # If all batches were processed, clear both continuation markers
             if batches_processed == len(batches):
                 await cache.delete(CONTINUATION_KEY)
-                logger.info("All seasons processed, continuation marker cleared")
+                # Mark the DB progress record as completed
+                try:
+                    active_ops = await GenerationProgressCRUD.get_in_progress_operations(
+                        session, operation_type="historic_refresh"
+                    )
+                    for op in active_ops:
+                        await GenerationProgressCRUD.mark_completed(
+                            session, op.id, completed_items=len(ALL_SEASONS)
+                        )
+                    await session.commit()
+                    if active_ops:
+                        logger.info("DB continuation marker(s) marked completed")
+                except Exception:
+                    logger.warning(
+                        "Failed to clear DB continuation marker", exc_info=True
+                    )
+                logger.info("All seasons processed, continuation markers cleared")
 
             # Build summary
             overall_duration = time.time() - overall_start
@@ -227,6 +279,16 @@ async def main(args: dict) -> dict:
 
             summary = "; ".join(summary_parts)
             logger.info("%s completed: %s", JOB_NAME, summary, extra=log_extra)
+
+            # 4a. Full cache invalidation after historic data refresh
+            try:
+                deleted = await invalidate_cache_pattern(medium_cache, "games")
+                await invalidate_cache_pattern(medium_cache, "tips")
+                await invalidate_cache_pattern(medium_cache, "backtest")
+                if deleted > 0:
+                    logger.info("Cache invalidated: %s entries across all patterns", deleted)
+            except Exception:
+                pass  # cache invalidation is best-effort
 
             # 5. Mark success
             await execution_crud.update_execution(

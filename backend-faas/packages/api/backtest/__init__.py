@@ -30,10 +30,12 @@ from packages.shared.api_helpers import (
     response,
     segments,
     to_dict,
+    validate_request,
 )
 from packages.shared.cache import close_redis_pool
 from packages.shared.db import _get_session_factory, dispose_engine
 from packages.shared.logger import get_logger
+from packages.shared.schemas.query import BacktestCompareQuery, BacktestModelCompareQuery, BacktestTableQuery
 from packages.shared.schemas import (
     AvailableSeasonsResponse,
     BacktestListResponse,
@@ -237,10 +239,19 @@ async def main(args: dict) -> dict:
                 if named == "current-season":
                     return await _handle_current_season(session)
                 if named == "compare":
+                    validated, err = validate_request(query, BacktestCompareQuery)
+                    if err:
+                        return err
                     return await _handle_compare(session, query)
                 if named == "model-compare":
+                    validated, err = validate_request(query, BacktestModelCompareQuery)
+                    if err:
+                        return err
                     return await _handle_model_compare(session, query)
                 if named == "table":
+                    validated, err = validate_request(query, BacktestTableQuery)
+                    if err:
+                        return err
                     return await _handle_table(session, query)
                 if named == "seasons":
                     return await _handle_seasons(session)

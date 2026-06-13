@@ -222,6 +222,55 @@ class GenerationProgressCRUD:
         return progress
 
     @staticmethod
+    async def upsert_active(
+        db: AsyncSession,
+        operation_type: str,
+        total_items: int = 0,
+        completed_items: int = 0,
+    ) -> GenerationProgress:
+        """Create or update an in-progress record for a given operation.
+
+        Finds the latest ``in_progress`` record for *operation_type* (if any),
+        updates its counters, or creates a fresh one.  Returns the record.
+
+        Args:
+            db: Database session.
+            operation_type: Operation type (e.g. ``"historic_refresh"``).
+            total_items: Total items to process.
+            completed_items: Items completed so far.
+        """
+        now = datetime.now(timezone.utc)
+
+        # Try to find an existing in-progress record
+        result = await db.execute(
+            select(GenerationProgress)
+            .where(GenerationProgress.operation_type == operation_type)
+            .where(GenerationProgress.status == "in_progress")
+            .order_by(GenerationProgress.started_at.desc())
+            .limit(1)
+        )
+        existing = result.scalar_one_or_none()
+
+        if existing:
+            existing.completed_items = completed_items
+            existing.total_items = total_items
+            existing.updated_at = now
+        else:
+            existing = GenerationProgress(
+                operation_type=operation_type,
+                total_items=total_items,
+                completed_items=completed_items,
+                status="in_progress",
+                started_at=now,
+                updated_at=now,
+            )
+            db.add(existing)
+
+        await db.commit()
+        await db.refresh(existing)
+        return existing
+
+    @staticmethod
     async def mark_failed(
         db: AsyncSession,
         progress_id: int,

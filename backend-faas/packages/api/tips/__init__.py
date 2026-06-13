@@ -45,6 +45,7 @@ from packages.shared.schemas import (
     TipResponse,
 )
 from packages.shared.schemas.admin import TipGenerateRequest
+from packages.shared.schemas.query import TipsQuery, TipsGameWithTipsQuery
 from packages.shared.services.tip_generation import TipGenerationService
 
 logger = get_logger(__name__)
@@ -352,6 +353,9 @@ async def main(args: dict) -> dict:
 
             # GET /games-with-tips
             if method == "GET" and len(segs) == 1 and segs[0] == "games-with-tips":
+                validated, err = validate_request(query, TipsGameWithTipsQuery)
+                if err:
+                    return err
                 return await _handle_games_with_tips(session, query)
 
             # GET /{heuristic}
@@ -360,6 +364,9 @@ async def main(args: dict) -> dict:
 
             # GET / — list tips
             if method == "GET" and len(segs) == 0:
+                validated, err = validate_request(query, TipsQuery)
+                if err:
+                    return err
                 return await _handle_list_tips(session, query)
 
             return response(

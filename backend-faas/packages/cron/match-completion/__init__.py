@@ -14,7 +14,7 @@ import traceback
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
 from packages.shared.alerting import AlertingService
-from packages.shared.cache import close_redis_pool
+from packages.shared.cache import close_redis_pool, invalidate_cache_pattern, medium_cache
 from packages.shared.config import settings
 from packages.shared.crud.jobs import JobExecutionCRUD, JobLockCRUD
 from packages.shared.db import _get_session_factory, dispose_engine
@@ -131,6 +131,15 @@ async def main(args: dict) -> dict:
 
                 summary = "; ".join(summary_parts)
                 logger.info("%s completed: %s", JOB_NAME, summary, extra=log_extra)
+
+                # 3a. Invalidate stale cache entries after scores change
+                try:
+                    deleted = await invalidate_cache_pattern(medium_cache, "games")
+                    await invalidate_cache_pattern(medium_cache, "tips")
+                    if deleted > 0:
+                        logger.info("Cache invalidated: %s entries", deleted)
+                except Exception:
+                    pass  # cache invalidation is best-effort
 
                 # 4. Mark success
                 await execution_crud.update_execution(

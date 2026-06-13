@@ -13,7 +13,7 @@ import traceback
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
 from packages.shared.alerting import AlertingService
-from packages.shared.cache import close_redis_pool
+from packages.shared.cache import close_redis_pool, invalidate_cache_pattern, medium_cache
 from packages.shared.config import settings
 from packages.shared.crud.games import GameCRUD
 from packages.shared.crud.jobs import JobExecutionCRUD, JobLockCRUD
@@ -173,6 +173,14 @@ async def main(args: dict) -> dict:
             duration = time.time() - start_time
             summary = "; ".join(summary_parts)
             logger.info("%s completed: %s", JOB_NAME, summary, extra=log_extra)
+
+            # 4a. Invalidate stale cache entries after new tips generated
+            try:
+                await invalidate_cache_pattern(medium_cache, "tips")
+                await invalidate_cache_pattern(medium_cache, "backtest")
+                logger.info("Cache invalidated: tips and backtest entries cleared")
+            except Exception:
+                pass  # cache invalidation is best-effort
 
             # 5. Mark success
             await execution_crud.update_execution(

@@ -31,6 +31,7 @@ from packages.shared.api_helpers import (
     response,
     segments,
     to_dict,
+    validate_request,
 )
 from packages.shared.cache import close_redis_pool
 from packages.shared.config import settings
@@ -48,6 +49,7 @@ from packages.shared.schemas import (
     ModelPrediction as ModelPredictionSchema,
 )
 from packages.shared.schemas.match_analysis import MatchAnalysisResponse
+from packages.shared.schemas.query import GamesQuery
 
 logger = get_logger(__name__)
 
@@ -242,6 +244,10 @@ async def main(args: dict) -> dict:
         try:
             # ---- Routing ----
             if method == "GET" and len(segs) == 0:
+                # Validate query parameters
+                validated, err = validate_request(query, GamesQuery)
+                if err:
+                    return err
                 return await _handle_list_games(session, query)
 
             if method == "GET" and len(segs) == 1:
