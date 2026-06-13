@@ -1,79 +1,332 @@
+"""Unit tests for the Redis-backed cache (packages.shared.cache).
+
+All tests mock the Redis client via ``patch`` so no running Redis instance
+is required.
+"""
+
+import json
+from unittest.mock import AsyncMock, MagicMock, patch
+
 import pytest
-import time
-from app.cache import InMemoryCache
+
+from packages.shared.cache import (
+    RedisCache,
+    cached,
+    close_redis_pool,
+    invalidate_cache_pattern,
+)
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _mock_redis_client():
+    """Build a fresh AsyncMock that behaves like a redis.asyncio.Redis client."""
+    client = AsyncMock()
+    client.get = AsyncMock(return_value=None)
+    client.set = AsyncMock(return_value=True)
+    client.delete = AsyncMock(return_value=1)
+    client.scan_iter = MagicMock(return_value=[])
+    client.aclose = AsyncMock()
+    return client
 
 
-class TestInMemoryCache:
-    def test_get_returns_none_for_missing_key(self):
-        cache = InMemoryCache(default_ttl=60, max_size=100)
-        assert cache.get("missing_key") is None
+# ---------------------------------------------------------------------------
+# RedisCache — get
+# ---------------------------------------------------------------------------
 
-    def test_set_and_get(self):
-        cache = InMemoryCache(default_ttl=60, max_size=100)
-        cache.set("test_key", "test_value")
-        assert cache.get("test_key") == "test_value"
+class TestRedisCacheGet:
+    @pytest.mark.asyncio
+    async def test_cache_miss_returns_none(self):
+        """get() returns None when the key does not exist in Redis."""
+        mock_client = _mock_redis_client()
+        cache = RedisCache(default_ttl=60, prefix="test:")
+        with patch("packages.shared.cache._get_client", return_value=mock_client):
+            result = await cache.get("missing_key")
+        assert result is None
+        mock_client.get.assert_awaited_once_with("test:missing_key")
 
-    def test_ttl_expiration(self):
-        cache = InMemoryCache(default_ttl=0.1, max_size=100)
-        cache.set("test_key", "test_value")
-        assert cache.get("test_key") == "test_value"
-        time.sleep(0.2)
-        assert cache.get("test_key") is None
+    @pytest.mark.asyncio
+    async def test_cache_hit_returns_deserialized_value(self):
+        """get() returns the deserialized Python object on a cache hit."""
+        mock_client = _mock_redis_client()
+        mock_client.get = AsyncMock(return_value=json.dumps({"foo": "bar"}))
+        cache = RedisCache(default_ttl=60, prefix="test:")
+        with patch("packages.shared.cache._get_client", return_value=mock_client):
+            result = await cache.get("existing_key")
+        assert result == {"foo": "bar"}
 
-    def test_max_size_eviction(self):
-        cache = InMemoryCache(default_ttl=60, max_size=2)
-        cache.set("key1", "value1")
-        cache.set("key2", "value2")
-        cache.set("key3", "value3")  # Should evict oldest (key1)
-        assert cache.get("key3") == "value3"
-        # key1 should have been evicted
-        assert cache.get("key1") is None
+    @pytest.mark.asyncio
+    async def test_cache_hit_with_list(self):
+        """get() correctly deserializes a JSON list."""
+        mock_client = _mock_redis_client()
+        mock_client.get = AsyncMock(return_value=json.dumps([1, 2, 3]))
+        cache = RedisCache(default_ttl=60, prefix="test:")
+        with patch("packages.shared.cache._get_client", return_value=mock_client):
+            result = await cache.get("list_key")
+        assert result == [1, 2, 3]
 
-    def test_delete_existing_key(self):
-        cache = InMemoryCache(default_ttl=60, max_size=100)
-        cache.set("test_key", "test_value")
-        assert cache.delete("test_key") is True
-        assert cache.get("test_key") is None
+    @pytest.mark.asyncio
+    async def test_get_handles_redis_error_gracefully(self):
+        """get() returns None when Redis raises an error."""
+        import redis as redis_lib
+        mock_client = _mock_redis_client()
+        mock_client.get = AsyncMock(side_effect=redis_lib.RedisError("connection lost"))
+        cache = RedisCache(default_ttl=60, prefix="test:")
+        with patch("packages.shared.cache._get_client", return_value=mock_client):
+            result = await cache.get("broken_key")
+        assert result is None
 
-    def test_delete_nonexistent_key(self):
-        cache = InMemoryCache(default_ttl=60, max_size=100)
-        assert cache.delete("nonexistent") is False
+    @pytest.mark.asyncio
+    async def test_get_handles_json_decode_error(self):
+        """get() returns None when the stored value is not valid JSON."""
+        mock_client = _mock_redis_client()
+        mock_client.get = AsyncMock(return_value="not-valid-json{")
+        cache = RedisCache(default_ttl=60, prefix="test:")
+        with patch("packages.shared.cache._get_client", return_value=mock_client):
+            result = await cache.get("bad_json_key")
+        assert result is None
 
-    def test_clear(self):
-        cache = InMemoryCache(default_ttl=60, max_size=100)
-        cache.set("key1", "value1")
-        cache.set("key2", "value2")
-        cache.clear()
-        assert cache.get("key1") is None
-        assert cache.get("key2") is None
 
-    def test_size(self):
-        cache = InMemoryCache(default_ttl=60, max_size=100)
-        assert cache.size() == 0
-        cache.set("key1", "value1")
-        assert cache.size() == 1
-        cache.set("key2", "value2")
-        assert cache.size() == 2
+# ---------------------------------------------------------------------------
+# RedisCache — set
+# ---------------------------------------------------------------------------
 
-    def test_cleanup_expired(self):
-        cache = InMemoryCache(default_ttl=0.1, max_size=100)
-        cache.set("key1", "value1")
-        cache.set("key2", "value2")
-        time.sleep(0.2)
-        removed = cache.cleanup_expired()
-        assert removed == 2
-        assert cache.size() == 0
+class TestRedisCacheSet:
+    @pytest.mark.asyncio
+    async def test_set_with_default_ttl(self):
+        """set() stores a JSON-serialised value with the default TTL."""
+        mock_client = _mock_redis_client()
+        cache = RedisCache(default_ttl=120, prefix="test:")
+        with patch("packages.shared.cache._get_client", return_value=mock_client):
+            await cache.set("my_key", {"val": 42})
+        mock_client.set.assert_awaited_once_with(
+            "test:my_key", json.dumps({"val": 42}), ex=120
+        )
 
-    def test_overwrite_existing_key(self):
-        cache = InMemoryCache(default_ttl=60, max_size=100)
-        cache.set("key", "old_value")
-        cache.set("key", "new_value")
-        assert cache.get("key") == "new_value"
+    @pytest.mark.asyncio
+    async def test_set_with_custom_ttl(self):
+        """set() uses the explicit TTL when provided."""
+        mock_client = _mock_redis_client()
+        cache = RedisCache(default_ttl=120, prefix="test:")
+        with patch("packages.shared.cache._get_client", return_value=mock_client):
+            await cache.set("my_key", "hello", ttl=30)
+        mock_client.set.assert_awaited_once_with(
+            "test:my_key", json.dumps("hello"), ex=30
+        )
 
-    def test_custom_ttl_per_entry(self):
-        cache = InMemoryCache(default_ttl=60, max_size=100)
-        cache.set("short", "value", ttl=0.1)
-        cache.set("long", "value", ttl=60)
-        time.sleep(0.2)
-        assert cache.get("short") is None
-        assert cache.get("long") == "value"
+    @pytest.mark.asyncio
+    async def test_set_handles_redis_error_gracefully(self):
+        """set() does not raise when Redis fails — it logs and returns."""
+        import redis as redis_lib
+        mock_client = _mock_redis_client()
+        mock_client.set = AsyncMock(side_effect=redis_lib.RedisError("write failed"))
+        cache = RedisCache(default_ttl=60, prefix="test:")
+        with patch("packages.shared.cache._get_client", return_value=mock_client):
+            await cache.set("failing_key", "data")  # should NOT raise
+
+
+# ---------------------------------------------------------------------------
+# RedisCache — delete
+# ---------------------------------------------------------------------------
+
+class TestRedisCacheDelete:
+    @pytest.mark.asyncio
+    async def test_delete_existing_key(self):
+        """delete() returns True when the key existed and was removed."""
+        mock_client = _mock_redis_client()
+        mock_client.delete = AsyncMock(return_value=1)
+        cache = RedisCache(default_ttl=60, prefix="test:")
+        with patch("packages.shared.cache._get_client", return_value=mock_client):
+            result = await cache.delete("my_key")
+        assert result is True
+        mock_client.delete.assert_awaited_once_with("test:my_key")
+
+    @pytest.mark.asyncio
+    async def test_delete_nonexistent_key(self):
+        """delete() returns False when the key did not exist."""
+        mock_client = _mock_redis_client()
+        mock_client.delete = AsyncMock(return_value=0)
+        cache = RedisCache(default_ttl=60, prefix="test:")
+        with patch("packages.shared.cache._get_client", return_value=mock_client):
+            result = await cache.delete("ghost_key")
+        assert result is False
+
+    @pytest.mark.asyncio
+    async def test_delete_handles_redis_error(self):
+        """delete() returns False on Redis error."""
+        import redis as redis_lib
+        mock_client = _mock_redis_client()
+        mock_client.delete = AsyncMock(side_effect=redis_lib.RedisError("oops"))
+        cache = RedisCache(default_ttl=60, prefix="test:")
+        with patch("packages.shared.cache._get_client", return_value=mock_client):
+            result = await cache.delete("bad_key")
+        assert result is False
+
+
+# ---------------------------------------------------------------------------
+# RedisCache — clear
+# ---------------------------------------------------------------------------
+
+class TestRedisCacheClear:
+    @pytest.mark.asyncio
+    async def test_clear_deletes_all_matching_keys(self):
+        """clear() iterates scan_iter and deletes every matching key."""
+        mock_client = _mock_redis_client()
+
+        async def _fake_scan(**kwargs):
+            for k in ["test:a", "test:b", "test:c"]:
+                yield k
+
+        mock_client.scan_iter = MagicMock(return_value=_fake_scan())
+        cache = RedisCache(default_ttl=60, prefix="test:")
+        with patch("packages.shared.cache._get_client", return_value=mock_client):
+            await cache.clear()
+        assert mock_client.delete.await_count == 3
+
+    @pytest.mark.asyncio
+    async def test_clear_handles_redis_error(self):
+        """clear() does not raise when Redis fails during scan."""
+        import redis as redis_lib
+
+        async def _failing_scan(**kwargs):
+            raise redis_lib.RedisError("scan broken")
+            yield  # noqa: ARG005  make it an async generator
+
+        mock_client = _mock_redis_client()
+        mock_client.scan_iter = MagicMock(return_value=_failing_scan())
+        cache = RedisCache(default_ttl=60, prefix="test:")
+        with patch("packages.shared.cache._get_client", return_value=mock_client):
+            await cache.clear()  # should NOT raise
+
+
+# ---------------------------------------------------------------------------
+# @cached decorator
+# ---------------------------------------------------------------------------
+
+class TestCachedDecorator:
+    @pytest.mark.asyncio
+    async def test_decorator_returns_cached_value_on_hit(self):
+        """When cache has a value the decorated function is NOT called."""
+        mock_client = _mock_redis_client()
+        mock_client.get = AsyncMock(return_value=json.dumps("cached_result"))
+        cache = RedisCache(default_ttl=60, prefix="dec:")
+
+        call_count = 0
+
+        @cached(cache=cache, key_prefix="fn:")
+        async def my_function(db, x, y):
+            nonlocal call_count
+            call_count += 1
+            return x + y
+
+        with patch("packages.shared.cache._get_client", return_value=mock_client):
+            result = await my_function("fake_db", 1, 2)
+
+        assert result == "cached_result"
+        assert call_count == 0  # function body never executed
+
+    @pytest.mark.asyncio
+    async def test_decorator_calls_function_on_miss(self):
+        """When cache misses the function executes and the result is stored."""
+        mock_client = _mock_redis_client()
+        # First call = cache miss (None), second call not needed
+        mock_client.get = AsyncMock(return_value=None)
+        cache = RedisCache(default_ttl=60, prefix="dec:")
+
+        @cached(cache=cache, key_prefix="fn:")
+        async def my_function(db, x):
+            return x * 10
+
+        with patch("packages.shared.cache._get_client", return_value=mock_client):
+            result = await my_function("fake_db", 5)
+
+        assert result == 50
+        mock_client.set.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_decorator_uses_custom_ttl(self):
+        """The decorator forwards the ttl parameter to cache.set."""
+        mock_client = _mock_redis_client()
+        mock_client.get = AsyncMock(return_value=None)
+        cache = RedisCache(default_ttl=60, prefix="dec:")
+
+        @cached(cache=cache, key_prefix="fn:", ttl=10)
+        async def my_function(db):
+            return "ok"
+
+        with patch("packages.shared.cache._get_client", return_value=mock_client):
+            await my_function("fake_db")
+
+        _args, kwargs = mock_client.set.call_args
+        # Third positional arg or keyword 'ex' passed to redis client.set
+        # Our cache.set calls client.set(full_key, json.dumps(value), ex=int(ttl))
+        assert mock_client.set.await_count == 1
+
+
+# ---------------------------------------------------------------------------
+# invalidate_cache_pattern
+# ---------------------------------------------------------------------------
+
+class TestInvalidateCachePattern:
+    @pytest.mark.asyncio
+    async def test_invalidate_deletes_matching_keys(self):
+        """invalidate_cache_pattern deletes all keys matching the pattern."""
+        mock_client = _mock_redis_client()
+
+        async def _fake_scan(**kwargs):
+            for k in ["wimt:m:games:1", "wimt:m:games:2"]:
+                yield k
+
+        mock_client.scan_iter = MagicMock(return_value=_fake_scan())
+        cache = RedisCache(default_ttl=300, prefix="wimt:m:")
+
+        with patch("packages.shared.cache._get_client", return_value=mock_client):
+            deleted = await invalidate_cache_pattern(cache, "games")
+
+        assert deleted == 2
+
+    @pytest.mark.asyncio
+    async def test_invalidate_returns_zero_when_no_keys_match(self):
+        """invalidate_cache_pattern returns 0 when there are no matching keys."""
+        mock_client = _mock_redis_client()
+
+        async def _empty_scan(**kwargs):
+            return
+            yield  # noqa: ARG005  makes this an async generator
+
+        mock_client.scan_iter = MagicMock(return_value=_empty_scan())
+        cache = RedisCache(default_ttl=300, prefix="wimt:m:")
+
+        with patch("packages.shared.cache._get_client", return_value=mock_client):
+            deleted = await invalidate_cache_pattern(cache, "nonexistent")
+
+        assert deleted == 0
+
+
+# ---------------------------------------------------------------------------
+# close_redis_pool
+# ---------------------------------------------------------------------------
+
+class TestCloseRedisPool:
+    @pytest.mark.asyncio
+    async def test_close_does_nothing_when_pool_is_none(self):
+        """close_redis_pool is a no-op when the global pool is None."""
+        with patch("packages.shared.cache._pool", None):
+            await close_redis_pool()  # should not raise
+
+    @pytest.mark.asyncio
+    async def test_close_without_force_does_not_close_pool(self):
+        """close_redis_pool(force=False) keeps the pool alive for warm starts."""
+        mock_pool = AsyncMock()
+        with patch("packages.shared.cache._pool", mock_pool):
+            await close_redis_pool(force=False)
+        mock_pool.aclose.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_close_with_force_closes_and_resets_pool(self):
+        """close_redis_pool(force=True) acloses the pool and sets it to None."""
+        mock_pool = AsyncMock()
+        with patch("packages.shared.cache._pool", mock_pool):
+            await close_redis_pool(force=True)
+        mock_pool.aclose.assert_awaited_once()

@@ -5,18 +5,30 @@ from sqlalchemy import pool
 
 from alembic import context
 
-# Import your models and settings
-from app.config import settings
-from app.db import Base
-from app.models import Game, Tip, BacktestResult  # noqa: F401
+# Import models and settings from the shared package.
+# Run alembic from the `backend-faas/` directory so that `packages` is on sys.path.
+from packages.shared.config import settings
+from packages.shared.db import Base
+from packages.shared.models import (  # noqa: F401
+    Game,
+    Tip,
+    ModelPrediction,
+    BacktestResult,
+    GenerationProgress,
+    JobExecution,
+    JobLock,
+    EloCache,
+    MatchAnalysis,
+)
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
 config = context.config
 
-# Set the database URL from settings
-# Convert async URL to sync URL for migrations
-database_url = settings.database_url.replace("+aiosqlite", "")
+# Set the database URL from settings.
+# Convert async URL to sync URL for migrations:
+#   postgresql+asyncpg://... → postgresql://...
+database_url = settings.database_url.replace("+asyncpg", "")
 config.set_main_option("sqlalchemy.url", database_url)
 
 # Interpret the config file for Python logging.
