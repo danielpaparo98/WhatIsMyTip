@@ -13,28 +13,29 @@ import os
 import sys
 import time
 import traceback
-from datetime import datetime, timezone
+from datetime import datetime
 from zoneinfo import ZoneInfo
 
 # Make shared package importable from the function's working directory
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
-from sqlalchemy import and_, func, select, text
+from sqlalchemy import and_, func, select
 
 from packages.shared.api_helpers import (
     bool_query,
     check_rate_limit,
     check_request_size,
+    handle_health,
     int_query,
     parse_request,
     response,
     segments,
     to_dict,
 )
-from packages.shared.cache import _get_client, close_redis_pool
+from packages.shared.cache import close_redis_pool
 from packages.shared.config import settings
 from packages.shared.crud import GameCRUD, MatchAnalysisCRUD, ModelPredictionCRUD, TipCRUD
-from packages.shared.db import _get_session_factory, dispose_engine, get_engine
+from packages.shared.db import _get_session_factory, dispose_engine
 from packages.shared.logger import get_logger
 from packages.shared.models import Game, MatchWeather
 from packages.shared.schemas import (
@@ -198,52 +199,6 @@ async def _handle_game_detail(session, slug: str) -> dict:
     return response(200, data=to_dict(resp))
 
 
-# ---------------------------------------------------------------------------
-# Health check
-# ---------------------------------------------------------------------------
-
-async def _handle_health() -> dict:
-    """Health check — verifies PostgreSQL and Redis connectivity.
-
-    Returns 200 with ``status: healthy`` when both services are reachable,
-    or 503 with ``status: degraded`` when any check fails.
-    """
-    checks: dict[str, str] = {}
-    healthy = True
-
-    # --- DB check ---
-    try:
-        engine = get_engine()
-        async with engine.connect() as conn:
-            await conn.execute(text("SELECT 1"))
-        checks["db"] = "ok"
-    except Exception as exc:
-        checks["db"] = f"error: {exc}"
-        healthy = False
-
-    # --- Redis check ---
-    try:
-        client = _get_client()
-        await client.ping()
-        checks["redis"] = "ok"
-    except Exception as exc:
-        checks["redis"] = f"error: {exc}"
-        healthy = False
-
-    status_code = 200 if healthy else 503
-    status = "healthy" if healthy else "degraded"
-
-    return response(
-        status_code,
-        data={
-            "status": status,
-            "checks": checks,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-        },
-        allowed_methods=["GET", "OPTIONS"],
-    )
-
-
 _PUBLIC_METHODS = ["GET", "OPTIONS"]
 
 
@@ -260,14 +215,17 @@ async def main(args: dict) -> dict:
     if method == "OPTIONS":
         return response(204, allowed_methods=_PUBLIC_METHODS)
 
-    # Health check — lightweight, no rate limiting or DB session required
+    # Health check — uses shared helper (no rate limiting or DB session required)
     if method == "GET" and segs == ["health"]:
-        return await _handle_health()
+        return await handle_health(request_args=args)
 
-    # Also support {"action": "health"} via POST body for environments
-    # that cannot set the URL path (e.g. direct invocation).
+    # Support {"action": "health"} via POST for environments without path routing
     if body.get("action") == "health":
-        return await _handle_health()
+        return await handle_health(request_args=args)
+
+    # Reject malformed JSON bodies early
+    if query.get("_body_parse_error"):
+        return response(400, error=query["_body_parse_error"], request_args=args, allowed_methods=_PUBLIC_METHODS)
 
     # Security checks — request size then rate limit
     size_error = check_request_size(args)

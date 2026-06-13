@@ -1,7 +1,19 @@
 # DigitalOcean Functions Project Configuration
-# NOTE: Cron expressions use UTC. AWST (Australia/Perth) = UTC+8, no DST.
-# To convert: UTC_time = AWST_time - 8 (mod 24)
-# e.g., 3 AM AWST = 19:00 UTC previous day
+#
+# ── Cron Timezone Notice ────────────────────────────────────────────────
+# DO Functions cron triggers fire in UTC ONLY.  All cron expressions below
+# are already converted from Australia/Perth (AWST, UTC+8) to UTC:
+#
+#   Function              AWST           UTC           Expression
+#   ═══════════════      ───────        ───────        ──────────────
+#   daily-sync             N/A            N/A           */15 * * * *
+#   match-completion       N/A            N/A           5,20,35,50 * * * *
+#   tip-generation         03:00 daily    19:00 daily    0 19 * * *
+#   historic-refresh       04:00 Sunday   20:00 Sat      0 20 * * 6
+#
+# Australia/Perth does not observe DST, so this mapping is fixed year-round.
+# To convert AWST to UTC:  UTC_time = AWST_time - 8 (mod 24).
+# ───────────────────────────────────────────────────────────────────────
 
 packages:
   - name: api

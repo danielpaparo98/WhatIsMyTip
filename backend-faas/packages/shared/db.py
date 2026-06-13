@@ -58,13 +58,13 @@ def get_engine():
     """Get or create the async engine (singleton pattern for FaaS cold starts).
 
     Uses conservative pool settings suitable for serverless/FaaS environments:
-    - pool_size=1: Each invocation only needs 1 connection
-    - max_overflow=1: Allow 1 extra during brief spikes
+    - pool_size=2: Each invocation can use 2 concurrent connections
+    - max_overflow=3: Allow up to 3 extra connections during brief spikes
     - pool_pre_ping=True: Verify connections before use
     - pool_recycle=300: Recycle connections every 5 minutes
 
-    With 8 functions × (pool_size=1 + max_overflow=1) = 16 max connections,
-    well within the ~25 connection limit of a dev database.
+    With 8 functions × (pool_size=2 + max_overflow=3) = 40 max possible
+    connections, ensure the managed database is sized accordingly.
     """
     global _engine
     if _engine is None:
@@ -73,8 +73,8 @@ def get_engine():
             db_url,
             connect_args=connect_args,
             echo=settings.environment == "development",
-            pool_size=1,
-            max_overflow=1,
+            pool_size=2,
+            max_overflow=3,
             pool_pre_ping=True,
             pool_recycle=300,
         )

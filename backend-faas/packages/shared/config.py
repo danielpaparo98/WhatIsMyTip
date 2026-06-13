@@ -50,13 +50,18 @@ class Settings(BaseSettings):
     completion_check_timeout_seconds: int = 300  # 5 minutes
 
     # Tip Generation
-    cron_tip_generation: str = "0 3 * * *"  # 3:00 AM daily
+    # NOTE: cron expressions here are for documentation only — the actual trigger
+    # schedule is configured in project.yml:
+    #   tip-generation:  "0 19 * * *"  (= 3:00 AM AWST, UTC+8)
+    cron_tip_generation: str = "0 3 * * *"  # 3:00 AM AWST (= 19:00 UTC)
     tip_generation_timeout_seconds: int = 1800  # 30 minutes
     tip_generation_enabled: bool = True
     tip_generation_regenerate_existing: bool = False
 
     # Historical Data Refresh
-    cron_historical_refresh: str = "0 4 * * 0"  # Sunday 4:00 AM
+    # NOTE: actual trigger schedule in project.yml:
+    #   historic-refresh:  "0 20 * * 6"  (= 4:00 AM AWST Sunday, UTC+8)
+    cron_historical_refresh: str = "0 4 * * 0"  # 4:00 AM AWST Sunday (= 20:00 UTC Saturday)
     historic_refresh_enabled: bool = True
     historic_refresh_seasons: str = "2010-2025"
     historic_refresh_regenerate_tips: bool = False
@@ -65,7 +70,9 @@ class Settings(BaseSettings):
 
     # Retry Configuration
     job_timeout_seconds: int = 3600
-    job_lock_expire_seconds: int = 7200
+    # Lock expiry should match the platform timeout (900s), not the runtime budget.
+    # DO Functions enforces a hard 15-minute ceiling; set locks to 900s max.
+    job_lock_expire_seconds: int = 900
     job_max_retries: int = 3
     job_retry_delay_seconds: int = 60
 

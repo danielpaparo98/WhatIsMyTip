@@ -33,10 +33,15 @@ class JsonFormatter(logging.Formatter):
             "message": record.getMessage(),
         }
 
-        # Merge structured extra fields (skip internal LogRecord attributes)
-        standard_attrs = set(logging.LogRecord(
-            "", 0, "", 0, "", (), None
-        ).__dict__.keys()) | {"message", "asctime"}
+        # Merge structured extra fields (skip known LogRecord internal attributes).
+        # Use a hard-coded whitelist for stability across Python versions.
+        standard_attrs = {
+            "args", "created", "exc_info", "exc_text", "filename",
+            "funcName", "levelname", "levelno", "lineno", "module",
+            "msecs", "msg", "name", "pathname", "process",
+            "processName", "relativeCreated", "stack_info", "thread",
+            "threadName", "taskName",
+        }
         for key, value in record.__dict__.items():
             if key not in standard_attrs and not key.startswith("_"):
                 log_entry[key] = value

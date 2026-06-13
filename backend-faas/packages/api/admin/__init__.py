@@ -26,6 +26,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 from packages.shared.api_helpers import (
     check_rate_limit,
     check_request_size,
+    handle_health,
     parse_request,
     response,
     segments,
@@ -369,6 +370,14 @@ async def main(args: dict) -> dict:
     if method == "OPTIONS":
         return response(204, request_args=args, allowed_methods=_ADMIN_METHODS)
 
+    # Health check — uses shared helper (no auth, DB, or rate limiting required)
+    if method == "GET" and segs == ["health"]:
+        return await handle_health(request_args=args)
+
+    # Reject malformed JSON bodies early
+    if query.get("_body_parse_error"):
+        return response(400, error=query["_body_parse_error"], request_args=args, allowed_methods=_ADMIN_METHODS)
+
     # Security checks — request size then rate limit
     size_error = check_request_size(args)
     if size_error:
@@ -377,18 +386,6 @@ async def main(args: dict) -> dict:
     rate_limit_response = await check_rate_limit(args)
     if rate_limit_response:
         return rate_limit_response
-
-    # Health check — no auth required
-    if method == "GET" and segs == ["health"]:
-        return response(
-            200,
-            data={
-                "status": "healthy",
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-            },
-            request_args=args,
-            allowed_methods=_ADMIN_METHODS,
-        )
 
     # Authenticate all other admin endpoints
     if not verify_api_key(headers, query, body):

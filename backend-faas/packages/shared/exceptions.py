@@ -88,3 +88,67 @@ def classify_error(error: Exception) -> JobError:
 
     # Default to transient (safer to retry unknown errors)
     return TransientJobError(message, details={"original_type": type(error).__name__})
+
+
+# ---------------------------------------------------------------------------
+# Retry helper — portable from the original FastAPI BaseJob.retry_with_backoff
+# ---------------------------------------------------------------------------
+
+import asyncio  # noqa: E402
+import random  # noqa: E402
+from typing import Awaitable, Callable, TypeVar  # noqa: E402
+
+_T = TypeVar("_T")
+
+
+async def retry_with_backoff(
+    func: Callable[[], Awaitable[_T]],
+    max_retries: int = 3,
+    initial_delay: float = 1.0,
+    backoff_multiplier: float = 2.0,
+    max_delay: float = 300.0,
+    jitter: float = 0.1,
+) -> _T:
+    """Retry an async callable with exponential backoff and jitter.
+
+    Only retries on ``TransientJobError``.  ``PermanentJobError`` is
+    re-raised immediately, and all other exceptions are assumed transient.
+
+    Args:
+        func: An async callable that takes no arguments.
+        max_retries: Maximum number of retries (default 3).
+        initial_delay: Initial delay in seconds (default 1.0).
+        backoff_multiplier: Multiplier for exponential backoff (default 2.0).
+        max_delay: Maximum delay between retries in seconds (default 300.0).
+        jitter: Random jitter factor, 0–1 (default 0.1).
+
+    Returns:
+        The return value of ``func()``.
+
+    Raises:
+        PermanentJobError: If ``func()`` raises a permanent error.
+        Exception: If all retries are exhausted, the last transient
+            exception is re-raised.
+    """
+    last_exception: Exception | None = None
+    delay = initial_delay
+
+    for attempt in range(max_retries + 1):
+        try:
+            return await func()
+        except PermanentJobError:
+            raise
+        except TransientJobError:
+            last_exception = TransientJobError(str(last_exception)) if last_exception else None  # type: ignore[arg-type]
+            last_exception = TransientJobError(str(last_exception))  # noqa
+        except Exception as e:
+            last_exception = e
+
+        if attempt == max_retries:
+            break
+
+        actual_delay = min(delay * (1 + random.uniform(-jitter, jitter)), max_delay)
+        delay *= backoff_multiplier
+        await asyncio.sleep(actual_delay)
+
+    raise last_exception  # type: ignore[misc]

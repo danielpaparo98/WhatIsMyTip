@@ -39,8 +39,21 @@ def _get_pool() -> ConnectionPool:
 
 
 def _get_client() -> redis.Redis:
-    """Get a Redis client from the shared connection pool."""
-    return redis.Redis(connection_pool=_get_pool())
+    """Get a Redis client from the shared connection pool.
+
+    On first connection failure, resets the pool so the next call recreates it.
+    This prevents stale pool objects from blocking all subsequent requests.
+    """
+    global _pool
+    client = redis.Redis(connection_pool=_get_pool())
+    # Warm the connection to detect stale pools early
+    try:
+        client.connection_pool  # noqa: B018 — test that the pool exists
+    except Exception:
+        if _pool is not None:
+            _pool = None
+        client = redis.Redis(connection_pool=_get_pool())
+    return client
 
 
 class RedisCache:

@@ -5,6 +5,7 @@ import logging
 import os
 import secrets
 import sys
+from datetime import datetime, timezone
 from typing import Optional, Tuple
 from urllib.parse import parse_qs
 
@@ -13,6 +14,9 @@ from pydantic import BaseModel, ValidationError
 from packages.shared.config import settings
 
 logger = logging.getLogger(__name__)
+
+# Maximum path segment length to cap response sizes (prevents abuse of 404 paths)
+_MAX_PATH_SEGMENT_LENGTH = 128
 
 
 def _ensure_shared_on_path() -> None:
@@ -32,7 +36,13 @@ _ensure_shared_on_path()
 
 
 def parse_request(args: dict) -> tuple:
-    """Parse DO Function args into (method, path, query, body, headers)."""
+    """Parse DO Function args into (method, path, query, body, headers).
+
+    The returned tuple also indicates whether the body was malformed JSON
+    via ``_body_parse_error: str`` in the query dict (a sentinel key).
+    Callers should check for ``query.get("_body_parse_error")`` and
+    return 400 if present.
+    """
     method = args.get("__ow_method", "GET").upper()
     path = args.get("__ow_path", "/").strip("/")
     raw_query = args.get("__ow_query", "")
@@ -52,7 +62,9 @@ def parse_request(args: dict) -> tuple:
             try:
                 body = json.loads(body_raw)
             except json.JSONDecodeError:
+                # Signal to callers that the body was malformed JSON
                 body = {}
+                query["_body_parse_error"] = "Invalid JSON body"
         elif isinstance(body_raw, dict):
             body = body_raw
 
@@ -139,29 +151,40 @@ def response(
     origin = _resolve_cors_origin(request_args)
     methods = ", ".join(allowed_methods or ["GET", "POST", "OPTIONS"])
 
+    headers = {
+        "Content-Type": "application/json",
+        "Access-Control-Allow-Origin": origin,
+        "Access-Control-Allow-Methods": methods,
+        "Access-Control-Allow-Headers": "Content-Type, X-API-Key",
+        "Access-Control-Max-Age": "600",
+        # Security headers (OWASP recommended)
+        "X-Content-Type-Options": "nosniff",
+        "X-Frame-Options": "DENY",
+        "Strict-Transport-Security": "max-age=63072000; includeSubDomains; preload",
+        "Content-Security-Policy": "default-src 'none'; frame-ancestors 'none'",
+        "Referrer-Policy": "strict-origin-when-cross-origin",
+        "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
+        "Cross-Origin-Opener-Policy": "same-origin",
+    }
+
+    # Add Retry-After header for rate-limited responses
+    if status_code == 429:
+        headers["Retry-After"] = str(settings.rate_limit_window_seconds)
+
     return {
         "statusCode": status_code,
-        "headers": {
-            "Content-Type": "application/json",
-            "Access-Control-Allow-Origin": origin,
-            "Access-Control-Allow-Methods": methods,
-            "Access-Control-Allow-Headers": "Content-Type, X-API-Key",
-            # Security headers (OWASP recommended)
-            "X-Content-Type-Options": "nosniff",
-            "X-Frame-Options": "DENY",
-            "Strict-Transport-Security": "max-age=63072000; includeSubDomains; preload",
-            "Content-Security-Policy": "default-src 'none'; frame-ancestors 'none'",
-            "Referrer-Policy": "strict-origin-when-cross-origin",
-            "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
-            "Cross-Origin-Opener-Policy": "same-origin",
-        },
+        "headers": headers,
         "body": body,
     }
 
 
 def segments(path: str) -> list[str]:
-    """Split path into non-empty segments."""
-    return [s for s in path.split("/") if s]
+    """Split path into non-empty segments, capping per-segment length.
+
+    Each segment is truncated to ``_MAX_PATH_SEGMENT_LENGTH`` characters
+    to prevent abuse via excessively long paths in error responses.
+    """
+    return [s[:_MAX_PATH_SEGMENT_LENGTH] for s in path.split("/") if s]
 
 
 def to_dict(obj):
@@ -178,19 +201,19 @@ def to_dict(obj):
 
 
 def int_query(query: dict, key: str) -> int | None:
-    """Extract int from query params."""
+    """Extract int from query params. Strips whitespace before parsing."""
     val = query.get(key)
     if val is None:
         return None
     try:
-        return int(val)
+        return int(str(val).strip())
     except (ValueError, TypeError):
         return None
 
 
 def bool_query(query: dict, key: str) -> bool:
-    """Extract bool from query params."""
-    val = query.get(key, "").lower()
+    """Extract bool from query params. Strips whitespace before parsing."""
+    val = str(query.get(key, "")).strip().lower()
     return val in ("true", "1", "yes")
 
 
@@ -329,3 +352,59 @@ def validate_request(
                 }
             )
         return None, response(422, data={"error": "Validation failed", "errors": errors})
+
+
+# ---------------------------------------------------------------------------
+# Health check (shared across all API functions)
+# ---------------------------------------------------------------------------
+
+
+async def handle_health(request_args: dict | None = None) -> dict:
+    """Check PostgreSQL and Redis connectivity.
+
+    Returns 200 with ``status: healthy`` when both services are reachable,
+    or 503 with ``status: degraded`` when any check fails.
+
+    This helper can be used in every API function's ``main()`` entry point
+    via a ``GET /health`` route.
+    """
+    from sqlalchemy import text
+
+    from packages.shared.cache import _get_client
+    from packages.shared.db import get_engine
+
+    checks: dict[str, str] = {}
+    healthy = True
+
+    # --- DB check ---
+    try:
+        engine = get_engine()
+        async with engine.connect() as conn:
+            await conn.execute(text("SELECT 1"))
+        checks["db"] = "ok"
+    except Exception as exc:
+        checks["db"] = f"error: {exc}"
+        healthy = False
+
+    # --- Redis check ---
+    try:
+        client = _get_client()
+        await client.ping()  # type: ignore[reportReturnType]
+        checks["redis"] = "ok"
+    except Exception as exc:
+        checks["redis"] = f"error: {exc}"
+        healthy = False
+
+    status_code = 200 if healthy else 503
+    status = "healthy" if healthy else "degraded"
+
+    return response(
+        status_code,
+        data={
+            "status": status,
+            "checks": checks,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        },
+        request_args=request_args,
+        allowed_methods=["GET", "OPTIONS"],
+    )

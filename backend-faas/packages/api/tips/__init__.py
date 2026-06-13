@@ -23,6 +23,7 @@ from packages.shared.api_helpers import (
     bool_query,
     check_rate_limit,
     check_request_size,
+    handle_health,
     int_query,
     parse_request,
     response,
@@ -314,6 +315,14 @@ async def main(args: dict) -> dict:
     # Handle CORS preflight
     if method == "OPTIONS":
         return response(204, request_args=args, allowed_methods=_PUBLIC_METHODS)
+
+    # Health check — uses shared helper (no rate limiting or DB session required)
+    if method == "GET" and segs == ["health"]:
+        return await handle_health(request_args=args)
+
+    # Reject malformed JSON bodies early
+    if query.get("_body_parse_error"):
+        return response(400, error=query["_body_parse_error"], request_args=args, allowed_methods=_PUBLIC_METHODS)
 
     # Security checks — request size then rate limit
     size_error = check_request_size(args)
