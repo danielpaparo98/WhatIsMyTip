@@ -82,10 +82,6 @@ packages:
           REDIS_URL: ${REDIS_URL}
           SQUIGGLE_API_BASE: ${SQUIGGLE_API_BASE}
           SQUIGGLE_CONTACT_EMAIL: ${SQUIGGLE_CONTACT_EMAIL}
-        triggers:
-          - name: daily-sync-trigger
-            type: schedule
-            cron: "*/15 * * * *"
       - name: match-completion
         main: packages/cron/match-completion/__init__.py
         runtime: python:3.12
@@ -98,10 +94,6 @@ packages:
           REDIS_URL: ${REDIS_URL}
           SQUIGGLE_API_BASE: ${SQUIGGLE_API_BASE}
           SQUIGGLE_CONTACT_EMAIL: ${SQUIGGLE_CONTACT_EMAIL}
-        triggers:
-          - name: match-completion-trigger
-            type: schedule
-            cron: "5,20,35,50 * * * *"
       - name: tip-generation
         main: packages/cron/tip-generation/__init__.py
         runtime: python:3.12
@@ -114,10 +106,6 @@ packages:
           REDIS_URL: ${REDIS_URL}
           OPENROUTER_API_KEY: ${OPENROUTER_API_KEY}
           OPENROUTER_MODEL: ${OPENROUTER_MODEL}
-        triggers:
-          - name: tip-generation-trigger
-            type: schedule
-            cron: "0 19 * * *"    # 19:00 UTC = 03:00 AWST
       - name: historic-refresh
         main: packages/cron/historic-refresh/__init__.py
         runtime: python:3.12
@@ -132,10 +120,6 @@ packages:
           SQUIGGLE_CONTACT_EMAIL: ${SQUIGGLE_CONTACT_EMAIL}
           OPENROUTER_API_KEY: ${OPENROUTER_API_KEY}
           OPENROUTER_MODEL: ${OPENROUTER_MODEL}
-        triggers:
-          - name: historic-refresh-trigger
-            type: schedule
-            cron: "0 20 * * 6"    # 20:00 UTC Saturday = 04:00 AWST Sunday
 
 environment:
   DATABASE_URL: ${DATABASE_URL}
