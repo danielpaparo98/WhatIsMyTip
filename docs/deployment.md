@@ -180,11 +180,9 @@ CORS_ORIGINS=https://whatismytip.com,https://www.whatismytip.com
 RATE_LIMIT_PER_MINUTE=60
 ```
 
-### Environment Variables in functions.yml
+### Environment Variables in project.yml
 
-The function-specific configuration (memory, timeout, schedules) is defined in [`functions.yml`](../backend/functions.yml:1). Sensitive values (API keys, passwords) are passed via the `.env` file during deployment.
-
-> **Note:** The config file is named `functions.yml` (not the doctl default `project.yml`) to prevent DigitalOcean App Platform from auto-parsing it as an app spec when the `backend/` directory is the source root. The deploy script passes `--functions-config functions.yml` explicitly.
+The function-specific configuration (memory, timeout, schedules) is defined in [`project.yml`](../backend/project.yml:1). Sensitive values (API keys, passwords) are passed via the `.env` file during deployment.
 
 ---
 
@@ -258,7 +256,7 @@ curl https://faas.syd1.digitaloceanspaces.com/<namespace>/api/games/health
 
 ## Step 7: Configure Cron Function Schedules
 
-Scheduled functions are configured in [`functions.yml`](../backend/functions.yml:1) and deployed with the functions. No separate scheduling step is needed.
+Scheduled functions are configured in [`project.yml`](../backend/project.yml:1) and deployed with the functions. No separate scheduling step is needed.
 
 | Function | Schedule (UTC) | AWST Equivalent |
 |----------|----------------|-----------------|
@@ -527,11 +525,11 @@ uv run alembic downgrade -1
 - **Solution**: Verify `DATABASE_URL` and `REDIS_URL` are correct and reachable
 
 **Problem**: Function times out
-- **Solution**: Check timeout settings in [`functions.yml`](../backend/functions.yml:1)
+- **Solution**: Check timeout settings in [`project.yml`](../backend/project.yml:1)
 - **Solution**: Optimise slow database queries
 
 **Problem**: Cron job not running
-- **Solution**: Verify schedule in [`functions.yml`](../backend/functions.yml:1)
+- **Solution**: Verify schedule in [`project.yml`](../backend/project.yml:1)
 - **Solution**: Check for stale advisory locks in `job_locks` table
 - **Solution**: Review activation logs
 

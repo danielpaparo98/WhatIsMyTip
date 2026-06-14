@@ -187,7 +187,7 @@ curl https://faas.syd1.digitaloceanspaces.com/<namespace>/api/games
 
 ## Scheduled Functions (Cron Jobs)
 
-Scheduled functions are deployed as DO Functions with cron triggers — they are **not** run locally via a daemon. Schedules are defined in [`functions.yml`](../backend/functions.yml:1) and managed by the DigitalOcean Functions platform.
+Scheduled functions are deployed as DO Functions with cron triggers — they are **not** run locally via a daemon. Schedules are defined in [`project.yml`](../backend/project.yml:1) and managed by the DigitalOcean Functions platform.
 
 ### Function Schedules
 
@@ -257,7 +257,7 @@ whatismytip/
 │   ├── composables/        # Vue composables
 │   └── pages/              # Page routes
 ├── backend/                # FaaS backend (DigitalOcean Functions)
-│   ├── functions.yml       # DO Functions project configuration
+│   ├── project.yml         # DO Functions project configuration
 │   ├── pyproject.toml      # Python dependencies and tool config
 │   ├── packages/
 │   │   ├── api/            # HTTP-triggered functions
@@ -385,7 +385,7 @@ async def main(args: dict) -> dict:
     return {"statusCode": 200, "body": '{"status": "ok"}'}
 ```
 
-3. **Register in** [`functions.yml`](../backend/functions.yml:1) with a `schedule` trigger:
+3. **Register in** [`project.yml`](../backend/project.yml:1) with a `schedule` trigger:
 
 ```yaml
 packages:
@@ -440,7 +440,7 @@ async def main(args: dict) -> dict:
             await close_redis_pool(force=had_error)
 ```
 
-3. **Register in** [`functions.yml`](../backend/functions.yml:1) with an `http` trigger (`web: true`).
+3. **Register in** [`project.yml`](../backend/project.yml:1) with an `http` trigger (`web: true`).
 
 4. **Write tests** in `backend/tests/unit/test_api_my_feature.py`.
 

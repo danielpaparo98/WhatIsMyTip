@@ -51,7 +51,7 @@ class Settings(BaseSettings):
 
     # Tip Generation
     # NOTE: cron expressions here are for documentation only — the actual trigger
-    # schedule is configured in functions.yml:
+    # schedule is configured in project.yml:
     #   tip-generation:  "0 19 * * *"  (= 3:00 AM AWST, UTC+8)
     cron_tip_generation: str = "0 3 * * *"  # 3:00 AM AWST (= 19:00 UTC)
     tip_generation_timeout_seconds: int = 1800  # 30 minutes
@@ -59,7 +59,7 @@ class Settings(BaseSettings):
     tip_generation_regenerate_existing: bool = False
 
     # Historical Data Refresh
-    # NOTE: actual trigger schedule in functions.yml:
+    # NOTE: actual trigger schedule in project.yml:
     #   historic-refresh:  "0 20 * * 6"  (= 4:00 AM AWST Sunday, UTC+8)
     cron_historical_refresh: str = "0 4 * * 0"  # 4:00 AM AWST Sunday (= 20:00 UTC Saturday)
     historic_refresh_enabled: bool = True

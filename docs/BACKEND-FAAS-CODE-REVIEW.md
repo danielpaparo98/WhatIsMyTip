@@ -239,11 +239,11 @@ Even with the continuation marker (see §3.10), there are failure modes:
 
 ### 4.2 🔴 Tip-generation runs at 11 AM AWST, not 3 AM
 
-The README claims "Tip generation runs at 3 AM AWST" ([`README.md:136`](../backend/README.md:136)). The actual cron in [`functions.yml`](../backend/functions.yml) is `"0 19 * * *"` (19:00 UTC = 03:00 AWST). The config field [`config.py:53`](../backend/packages/shared/config.py:53) `cron_tip_generation: str = "0 3 * * *"` is **commented** as "3:00 AM daily" but is *never used* by the platform — the platform only reads `functions.yml`.
+The README claims "Tip generation runs at 3 AM AWST" ([`README.md:136`](../backend/README.md:136)). The actual cron in [`project.yml`](../backend/project.yml) is `"0 19 * * *"` (19:00 UTC = 03:00 AWST). The config field [`config.py:53`](../backend/packages/shared/config.py:53) `cron_tip_generation: str = "0 3 * * *"` is **commented** as "3:00 AM daily" but is *never used* by the platform — the platform only reads `project.yml`.
 
-**Wait — verify this**: the actual schedule in `functions.yml` says `"0 19 * * *"` which is correct (3 AM AWST = 19:00 UTC). The config field is a legacy comment. But this is confusing; the **read me** is correct, the **config** is misleading, and the **FAAS-EVALUATION** calls this out as a critical issue. Need to either remove the `cron_tip_generation` field from config (since it's not used) or update its comment to "for documentation only; actual schedule is in functions.yml".
+**Wait — verify this**: the actual schedule in `project.yml:108` says `"0 19 * * *"` which is correct (3 AM AWST = 19:00 UTC). The config field is a legacy comment. But this is confusing; the **read me** is correct, the **config** is misleading, and the **FAAS-EVALUATION** calls this out as a critical issue. Need to either remove the `cron_tip_generation` field from config (since it's not used) or update its comment to "for documentation only; actual schedule is in project.yml".
 
-**Same issue** for `cron_historical_refresh: str = "0 4 * * 0"` in [`config.py:59`](../backend/packages/shared/config.py:59) — the `functions.yml` says `"0 20 * * 6"` (20:00 UTC Saturday = 04:00 AWST Sunday), which *is* correct, but the config field misleads. Document the UTC↔AWST mapping in one place (probably the top of `functions.yml`).
+**Same issue** for `cron_historical_refresh: str = "0 4 * * 0"` in [`config.py:59`](../backend/packages/shared/config.py:59) — the `project.yml:126` says `"0 20 * * 6"` (20:00 UTC Saturday = 04:00 AWST Sunday), which *is* correct, but the config field misleads. Document the UTC↔AWST mapping in one place (probably the top of `project.yml`).
 
 ### 4.3 🟠 OpenRouter rate limit will silently kill tip generation
 
@@ -318,7 +318,7 @@ If anyone adds a `pytest.fixture` that creates an event loop, the warning will b
 1. **Move health check to one place.** Add `/health` to all four `main()` handlers, or factor out to a shared helper in `api_helpers.py`.
 2. **Add `Retry-After` header** to 429 responses.
 3. **Add `Access-Control-Max-Age`** to all CORS preflight responses.
-4. **Document the UTC↔AWST mapping** in `functions.yml` and `config.py`. Remove the misleading comments in `config.py` that say "3:00 AM" without the "(= 19:00 UTC)" suffix.
+4. **Document the UTC↔AWST mapping** in `project.yml` and `config.py`. Remove the misleading comments in `config.py` that say "3:00 AM" without the "(= 19:00 UTC)" suffix.
 5. **Wrap OpenRouter calls in `retry_with_backoff`** (port from original `BaseJob.retry_with_backoff`).
 6. **Fix `parse_request` to return 400 on malformed JSON** instead of silently `{}`.
 7. **Persist `historic-refresh` continuation in `generation_progress` table** in addition to Redis.

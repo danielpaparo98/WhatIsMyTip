@@ -67,7 +67,7 @@ The system uses 8 ML models, 3 heuristic strategies, and AI-powered explanations
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
-All functions share a common code base under `packages/shared/`. Each function is independently deployable with its own memory and timeout configuration defined in [`functions.yml`](../backend/functions.yml:1).
+All functions share a common code base under `packages/shared/`. Each function is independently deployable with its own memory and timeout configuration defined in [`project.yml`](../backend/project.yml:1).
 
 ---
 
@@ -75,7 +75,7 @@ All functions share a common code base under `packages/shared/`. Each function i
 
 ```
 backend/
-├── functions.yml                    # DO Functions project + function configuration
+├── project.yml                      # DO Functions project + function configuration
 ├── pyproject.toml                   # Python project config, dependencies, tool settings
 ├── uv.lock                          # Locked dependencies
 ├── .env.example                     # Environment variables template
