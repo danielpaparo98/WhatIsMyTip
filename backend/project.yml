@@ -18,7 +18,7 @@
 packages:
   - name: api
     functions:
-      games:
+      - name: games
         handler: packages/api/games/__init__.py
         runtime: python:3
         web: true
@@ -30,7 +30,7 @@ packages:
           REDIS_URL: ${REDIS_URL}
         annotations:
           require-whisk-auth: false
-      tips:
+      - name: tips
         handler: packages/api/tips/__init__.py
         runtime: python:3
         web: true
@@ -42,7 +42,7 @@ packages:
           REDIS_URL: ${REDIS_URL}
         annotations:
           require-whisk-auth: false
-      backtest:
+      - name: backtest
         handler: packages/api/backtest/__init__.py
         runtime: python:3
         web: true
@@ -54,7 +54,7 @@ packages:
           REDIS_URL: ${REDIS_URL}
         annotations:
           require-whisk-auth: false
-      admin:
+      - name: admin
         handler: packages/api/admin/__init__.py
         runtime: python:3
         web: true
@@ -70,7 +70,7 @@ packages:
 
   - name: cron
     functions:
-      daily-sync:
+      - name: daily-sync
         handler: packages/cron/daily-sync/__init__.py
         runtime: python:3
         web: false
@@ -83,10 +83,10 @@ packages:
           SQUIGGLE_API_BASE: ${SQUIGGLE_API_BASE}
           SQUIGGLE_CONTACT_EMAIL: ${SQUIGGLE_CONTACT_EMAIL}
         triggers:
-          daily-sync-trigger:
+          - name: daily-sync-trigger
             type: schedule
             cron: "*/15 * * * *"
-      match-completion:
+      - name: match-completion
         handler: packages/cron/match-completion/__init__.py
         runtime: python:3
         web: false
@@ -99,10 +99,10 @@ packages:
           SQUIGGLE_API_BASE: ${SQUIGGLE_API_BASE}
           SQUIGGLE_CONTACT_EMAIL: ${SQUIGGLE_CONTACT_EMAIL}
         triggers:
-          match-completion-trigger:
+          - name: match-completion-trigger
             type: schedule
             cron: "5,20,35,50 * * * *"
-      tip-generation:
+      - name: tip-generation
         handler: packages/cron/tip-generation/__init__.py
         runtime: python:3
         web: false
@@ -115,10 +115,10 @@ packages:
           OPENROUTER_API_KEY: ${OPENROUTER_API_KEY}
           OPENROUTER_MODEL: ${OPENROUTER_MODEL}
         triggers:
-          tip-generation-trigger:
+          - name: tip-generation-trigger
             type: schedule
             cron: "0 19 * * *"    # 19:00 UTC = 03:00 AWST
-      historic-refresh:
+      - name: historic-refresh
         handler: packages/cron/historic-refresh/__init__.py
         runtime: python:3
         web: false
@@ -133,7 +133,7 @@ packages:
           OPENROUTER_API_KEY: ${OPENROUTER_API_KEY}
           OPENROUTER_MODEL: ${OPENROUTER_MODEL}
         triggers:
-          historic-refresh-trigger:
+          - name: historic-refresh-trigger
             type: schedule
             cron: "0 20 * * 6"    # 20:00 UTC Saturday = 04:00 AWST Sunday
 
