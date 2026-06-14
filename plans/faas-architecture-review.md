@@ -218,7 +218,7 @@ Three cache tiers in [`cache.py`](backend-faas/packages/shared/cache.py:111):
 - No dynamic origin validation (checking the request's `Origin` header against the allowed list).
 
 **Network Security:**
-- `require-whisk-auth: false` on all functions in [`project.yml`](backend-faas/project.yml:12) — DO Functions' built-in authentication is disabled. Security relies entirely on application-level checks.
+- `require-whisk-auth: false` on all functions in [`functions.yml`](backend/functions.yml:12) — DO Functions' built-in authentication is disabled. Security relies entirely on application-level checks.
 - No rate limiting on API functions (the original FastAPI app used `slowapi`). The `rate_limit_per_minute` config field exists but isn't enforced.
 
 **Data Security:**

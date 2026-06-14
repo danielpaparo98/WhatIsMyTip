@@ -223,7 +223,7 @@ whatismytip/
 │   ├── composables/       # Vue composables
 │   └── pages/             # Page routes
 ├── backend/               # FaaS backend (DigitalOcean Functions)
-│   ├── project.yml        # DO Functions project + function configuration
+│   ├── functions.yml      # DO Functions project + function configuration
 │   ├── pyproject.toml     # Python project configuration and dependencies
 │   ├── packages/
 │   │   ├── api/           # HTTP-triggered functions (games, tips, backtest, admin)
