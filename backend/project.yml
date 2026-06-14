@@ -19,7 +19,7 @@ packages:
   - name: api
     functions:
       - name: games
-        handler: packages/api/games/__init__.py
+        main: packages/api/games/__init__.py
         runtime: python:3.12
         web: true
         limits:
@@ -31,7 +31,7 @@ packages:
         annotations:
           require-whisk-auth: false
       - name: tips
-        handler: packages/api/tips/__init__.py
+        main: packages/api/tips/__init__.py
         runtime: python:3.12
         web: true
         limits:
@@ -43,7 +43,7 @@ packages:
         annotations:
           require-whisk-auth: false
       - name: backtest
-        handler: packages/api/backtest/__init__.py
+        main: packages/api/backtest/__init__.py
         runtime: python:3.12
         web: true
         limits:
@@ -55,7 +55,7 @@ packages:
         annotations:
           require-whisk-auth: false
       - name: admin
-        handler: packages/api/admin/__init__.py
+        main: packages/api/admin/__init__.py
         runtime: python:3.12
         web: true
         limits:
@@ -71,7 +71,7 @@ packages:
   - name: cron
     functions:
       - name: daily-sync
-        handler: packages/cron/daily-sync/__init__.py
+        main: packages/cron/daily-sync/__init__.py
         runtime: python:3.12
         web: false
         limits:
@@ -87,7 +87,7 @@ packages:
             type: schedule
             cron: "*/15 * * * *"
       - name: match-completion
-        handler: packages/cron/match-completion/__init__.py
+        main: packages/cron/match-completion/__init__.py
         runtime: python:3.12
         web: false
         limits:
@@ -103,7 +103,7 @@ packages:
             type: schedule
             cron: "5,20,35,50 * * * *"
       - name: tip-generation
-        handler: packages/cron/tip-generation/__init__.py
+        main: packages/cron/tip-generation/__init__.py
         runtime: python:3.12
         web: false
         limits:
@@ -119,7 +119,7 @@ packages:
             type: schedule
             cron: "0 19 * * *"    # 19:00 UTC = 03:00 AWST
       - name: historic-refresh
-        handler: packages/cron/historic-refresh/__init__.py
+        main: packages/cron/historic-refresh/__init__.py
         runtime: python:3.12
         web: false
         limits:
