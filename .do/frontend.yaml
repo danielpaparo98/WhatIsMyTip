@@ -1,3 +1,16 @@
+# DigitalOcean App Platform — Frontend only (legacy single-app spec)
+#
+# ⚠️ DEPRECATED: use `.do/app.yaml` instead, which is the single source of
+# truth for the app. This file is kept for backward compatibility with any
+# existing App Platform deployments that were created from it. New deploys
+# should use `.do/app.yaml`.
+#
+# Architecture: the backend is a DigitalOcean Functions app (defined in
+# `backend/functions.yml`), not an App Platform service. The frontend talks
+# to it via per-function URLs (see the `*_FN_URL` env vars below). When
+# any of these is set, the frontend's `useApi()` composable enters FaaS
+# mode and routes `/api/<name>/...` to the matching function URL.
+
 name: whatismytip-frontend
 region: sfo3
 static_sites:
@@ -10,8 +23,22 @@ static_sites:
     build_command: bun install && bun run generate
     output_dir: .output/public
     envs:
+      # Legacy single-backend fallback (used only when no `*_FN_URL` is set).
       - key: API_BASE_URL
         value: https://api.whatismytip.com
+
+      # DO Functions gateway URLs — replace `<namespace>` with the value
+      # from `doctl serverless status`. Setting any one of these activates
+      # FaaS mode in the frontend.
+      - key: NUXT_PUBLIC_GAMES_FN_URL
+        value: https://faas-sfo3.digitaloceanspaces.com/<namespace>/api/games
+      - key: NUXT_PUBLIC_TIPS_FN_URL
+        value: https://faas-sfo3.digitaloceanspaces.com/<namespace>/api/tips
+      - key: NUXT_PUBLIC_BACKTEST_FN_URL
+        value: https://faas-sfo3.digitaloceanspaces.com/<namespace>/api/backtest
+      - key: NUXT_PUBLIC_ADMIN_FN_URL
+        value: https://faas-sfo3.digitaloceanspaces.com/<namespace>/api/admin
+
       - key: UMAMI_WEBSITE_ID
         value: ${umami.UMAMI_WEBSITE_ID}
       - key: UMAMI_HOST
