@@ -1,5 +1,9 @@
-import pytest
-from app.squiggle.utils import parse_squiggle_complete
+"""Unit tests for Squiggle API utility functions.
+
+Pure function tests — no mocking required.
+"""
+
+from packages.shared.squiggle.utils import parse_squiggle_complete
 
 
 class TestParseSquiggleComplete:
@@ -35,3 +39,11 @@ class TestParseSquiggleComplete:
 
     def test_incomplete_integer_50(self):
         assert parse_squiggle_complete(50) is False
+
+    def test_string_true_case_insensitive(self):
+        assert parse_squiggle_complete("True") is True
+        assert parse_squiggle_complete("TRUE") is True
+
+    def test_string_yes_case_insensitive(self):
+        assert parse_squiggle_complete("Yes") is True
+        assert parse_squiggle_complete("YES") is True

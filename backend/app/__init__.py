@@ -1,1 +1,0 @@
-# WhatIsMyTip Backend Application

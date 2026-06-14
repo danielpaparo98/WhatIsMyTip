@@ -2,18 +2,40 @@
 
 ## Overview
 
-WhatIsMyTip provides a RESTful API for AFL tipping predictions, backtesting, and game data. The API is built with FastAPI and includes ML models, heuristic layers, and AI-powered explanations. The system also includes a comprehensive cron-based data collection infrastructure.
+WhatIsMyTip provides a RESTful API for AFL tipping predictions, backtesting, and game data. The API runs as **serverless functions on DigitalOcean Functions** and includes 8 ML models, 3 heuristic strategies, and AI-powered explanations. The backend also includes 4 scheduled functions for automated data collection.
 
-## Base URL
+## API Access
+
+The API is served by DigitalOcean Functions (Apache OpenWhisk). Each HTTP function is accessible via the DO Functions gateway:
 
 ```
-https://whatismytip.com/api
+https://faas.syd1.digitaloceanspaces.com/<namespace>/api/<function>
 ```
 
-For local development:
+### Base URL
+
+**Production:**
 ```
-http://localhost:8000/api
+https://faas.syd1.digitaloceanspaces.com/<namespace>/api
 ```
+
+**Local development** (when deploying to a connected namespace):
+```
+https://faas.syd1.digitaloceanspaces.com/<dev-namespace>/api
+```
+
+> **Note:** There is no automatic Swagger/OpenAPI UI. This document serves as the complete API reference. All examples below use `<BASE_URL>` as a placeholder for your Functions gateway URL.
+
+### Functions
+
+The API is split across 4 HTTP-triggered functions:
+
+| Function | URL Path | Description |
+|----------|----------|-------------|
+| `games` | `<BASE_URL>/games` | Games data and game detail |
+| `tips` | `<BASE_URL>/tips` | Tip retrieval and generation |
+| `backtest` | `<BASE_URL>/backtest` | Backtesting endpoints |
+| `admin` | `<BASE_URL>/admin` | Admin operations (requires API key) |
 
 ## Authentication
 
@@ -27,7 +49,7 @@ The API is currently public with rate limiting. No authentication is required fo
 - **Run Backtest**: 5 requests per minute per IP address
 - **Compare Heuristics**: 30 requests per minute per IP address
 
-Rate limits are enforced using the `slowapi` library.
+Rate limits are enforced within each HTTP function via middleware.
 
 ## Error Codes
 
@@ -964,7 +986,7 @@ The backend uses OpenRouter with the `gptoss-120b` model for AI-powered explanat
 
 For API support:
 1. Check this documentation
-2. Review API documentation at `/docs`
+2. Review [docs/backend.md](backend.md) for backend architecture details
 3. Open an issue on GitHub
 4. Contact the development team
 

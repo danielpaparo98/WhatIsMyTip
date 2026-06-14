@@ -1,6 +1,9 @@
 # WhatIsMyTip: FaaS + PostgreSQL Migration Plan
 
-> **Status:** Draft — Pending Review  
+> **⚠️ HISTORICAL DOCUMENT** — This plan was written during the `backend-faas` era.
+> The directory has since been renamed to `backend/`. Paths like `backend-faas/...` should be read as `backend/...` today.
+
+> **Status:** Draft — Pending Review
 > **Date:** 2026-05-28  
 > **Author:** Architecture Team  
 > **Target:** Migrate from FastAPI + SQLite (DO App Platform) → Digital Ocean Functions + Managed PostgreSQL + Managed Redis

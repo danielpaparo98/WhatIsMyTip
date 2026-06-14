@@ -1,5 +1,8 @@
 # New Prediction Models — Architecture Document
 
+> **⚠️ HISTORICAL DOCUMENT** — This plan was written during the `backend-faas` era.
+> The directory has since been renamed to `backend/`. Paths like `backend-faas/...` should be read as `backend/...` today.
+
 ## Overview
 
 This document describes the design of 4 new prediction models for the AFL tipping system. Each model extends [`BaseModel`](backend-faas/packages/shared/models_ml/base.py:7) and integrates with the existing [`ModelOrchestrator`](backend-faas/packages/shared/orchestrator.py:14).

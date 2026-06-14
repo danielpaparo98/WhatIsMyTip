@@ -75,8 +75,14 @@ The Nuxt configuration includes:
 The frontend uses environment variables for configuration:
 
 ```bash
-API_BASE_URL=http://localhost:8000  # Backend API URL
+# Local development
+API_BASE_URL=http://localhost:8000
+
+# Production (DigitalOcean Functions gateway)
+API_BASE_URL=https://faas.syd1.digitaloceanspaces.com/<namespace>
 ```
+
+The backend API is served by DigitalOcean Functions. In production, `API_BASE_URL` should point to the DO Functions gateway URL (e.g., `https://faas.syd1.digitaloceanspaces.com/<namespace>`).
 
 ## Design System
 
@@ -205,9 +211,9 @@ The frontend communicates with the backend API using the `useApi` composable.
 
 ### Base URL
 
-Default: `http://localhost:8000`
+Default: `http://localhost:8000` (development) or `https://faas.syd1.digitaloceanspaces.com/<namespace>` (production)
 
-Can be configured via environment variable `API_BASE_URL`.
+Configured via the `API_BASE_URL` environment variable. In production, this points to the DO Functions gateway URL.
 
 ### API Calls
 
