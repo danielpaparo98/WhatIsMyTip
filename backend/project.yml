@@ -20,7 +20,7 @@ packages:
     functions:
       - name: games
         handler: packages/api/games/__init__.py
-        runtime: python:3
+        runtime: python:3.12
         web: true
         limits:
           timeout: 300000   # 5 minutes — generous for API requests
@@ -32,7 +32,7 @@ packages:
           require-whisk-auth: false
       - name: tips
         handler: packages/api/tips/__init__.py
-        runtime: python:3
+        runtime: python:3.12
         web: true
         limits:
           timeout: 300000   # 5 minutes — generous for API requests
@@ -44,7 +44,7 @@ packages:
           require-whisk-auth: false
       - name: backtest
         handler: packages/api/backtest/__init__.py
-        runtime: python:3
+        runtime: python:3.12
         web: true
         limits:
           timeout: 300000   # 5 minutes — generous for API requests
@@ -56,7 +56,7 @@ packages:
           require-whisk-auth: false
       - name: admin
         handler: packages/api/admin/__init__.py
-        runtime: python:3
+        runtime: python:3.12
         web: true
         limits:
           timeout: 300000   # 5 minutes — generous for API requests
@@ -72,7 +72,7 @@ packages:
     functions:
       - name: daily-sync
         handler: packages/cron/daily-sync/__init__.py
-        runtime: python:3
+        runtime: python:3.12
         web: false
         limits:
           timeout: 600000   # 10 minutes — sync can take a while during season
@@ -88,7 +88,7 @@ packages:
             cron: "*/15 * * * *"
       - name: match-completion
         handler: packages/cron/match-completion/__init__.py
-        runtime: python:3
+        runtime: python:3.12
         web: false
         limits:
           timeout: 600000   # 10 minutes
@@ -104,7 +104,7 @@ packages:
             cron: "5,20,35,50 * * * *"
       - name: tip-generation
         handler: packages/cron/tip-generation/__init__.py
-        runtime: python:3
+        runtime: python:3.12
         web: false
         limits:
           timeout: 900000   # 15 minutes — max allowed, tip gen includes AI calls
@@ -120,7 +120,7 @@ packages:
             cron: "0 19 * * *"    # 19:00 UTC = 03:00 AWST
       - name: historic-refresh
         handler: packages/cron/historic-refresh/__init__.py
-        runtime: python:3
+        runtime: python:3.12
         web: false
         limits:
           timeout: 900000   # 15 minutes — max allowed, will be restructured to fit
