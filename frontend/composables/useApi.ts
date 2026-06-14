@@ -39,11 +39,23 @@ export interface MatchAnalysis {
   created_at: string
 }
 
+export interface Weather {
+  temperature: number
+  precipitation: number
+  wind_speed: number
+  wind_gusts: number
+  wind_direction: number
+  humidity: number
+  weather_code: number
+  data_type: 'historical' | 'forecast'
+}
+
 export interface GameDetailResponse {
   game: Game
   tips: Tip[]
   model_predictions: ModelPrediction[]
   match_analysis: MatchAnalysis | null
+  weather: Weather | null
 }
 
 export interface GameWithTip {

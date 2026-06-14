@@ -59,6 +59,12 @@
         </div>
       </section>
 
+      <!-- Weather Section -->
+      <section v-if="gameDetail.weather" class="weather-section">
+        <h2 class="section-title">Weather Conditions</h2>
+        <WeatherCard :weather="gameDetail.weather" />
+      </section>
+
       <!-- Heuristic Tips Section -->
       <section class="tips-section">
         <h2 class="section-title">Heuristic Tips</h2>
@@ -357,7 +363,8 @@ useHead({
 
 .tips-section,
 .models-section,
-.match-analysis-section {
+.match-analysis-section,
+.weather-section {
   margin-bottom: 2rem;
 }
 

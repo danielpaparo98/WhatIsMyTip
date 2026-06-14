@@ -26,7 +26,7 @@ This project adheres to a code of conduct that all contributors are expected to 
 ```markdown
 ## Bug Report
 **Title**: [Bug title]
-**Environment**: Windows 11, Chrome, Python 3.11
+**Environment**: Windows 11, Chrome, Python 3.12+
 
 **Description**:
 [Detailed description of the bug]
@@ -208,8 +208,8 @@ bun run dev
 
 # Backend
 cd backend
-uv run pytest
-uv run uvicorn main:app --reload
+./scripts/dev.sh          # Start local PostgreSQL + Redis via Docker
+uv run pytest tests/unit/ -v
 ```
 
 ### 5. Commit Changes
@@ -245,13 +245,20 @@ git push origin feature/your-feature-name
 
 ### Backend (`backend/`)
 
-- **API**: API route handlers
-- **CRUD**: Database operations
-- **Models**: Database models
-- **ML Models**: Machine learning models
-- **Heuristics**: Prediction strategies
-- **Services**: Business logic
-- **Schemas**: Pydantic validation schemas
+- **packages/api/**: HTTP-triggered functions (`games`, `tips`, `backtest`, `admin`)
+- **packages/cron/**: Scheduled functions (`daily-sync`, `match-completion`, `tip-generation`, `historic-refresh`)
+- **packages/shared/**: Shared code used across all functions
+  - `crud/` — Database operations
+  - `services/` — Business logic
+  - `models/` — Database models
+  - `models_ml/` — Machine learning models (8 models)
+  - `heuristics/` — Prediction strategies (BestBet, YOLO, HighRiskHighReward)
+  - `schemas/` — Pydantic validation schemas
+  - `squiggle/`, `afl_data/`, `weather/`, `openrouter/` — External data clients
+  - `cache.py`, `config.py`, `db.py`, `alerting.py` — Infrastructure modules
+- **alembic/**: Database migrations
+- **tests/**: Unit (`tests/unit/`) and integration (`tests/integration/`) tests
+- **scripts/**: Deployment and utility scripts (`deploy.sh`, `dev.sh`)
 
 ### Documentation (`docs/`)
 
@@ -278,7 +285,9 @@ git push origin feature/your-feature-name
 - Follow PEP 8 style guide
 - Use type hints for all functions
 - Follow ruff rules
-- Use dependency injection
+- Import from `packages.shared.*` (not `app.*`)
+- Use the FaaS entry-point contract: `main(args) -> {"statusCode", "headers", "body"}`
+- Always close Redis pools and dispose SQLAlchemy engines in finally blocks
 - Implement proper error handling
 
 ### Documentation
@@ -303,9 +312,9 @@ bun run dev           # Run development server
 
 ```bash
 cd backend
-uv run pytest         # Run all tests
-uv run pytest -v      # Run with verbose output
-uv run pytest --cov   # Run with coverage
+./scripts/dev.sh                # Ensure local PostgreSQL + Redis are running
+uv run pytest tests/unit/ -v    # Run unit tests (verbose)
+uv run pytest tests/unit/ --cov # Run with coverage
 ```
 
 ### Manual Testing
@@ -334,16 +343,99 @@ describe('Example Test', () => {
 
 ### Backend Tests
 
-Create test files in `backend/tests/`:
+Create test files in `backend/tests/unit/`:
 
 ```python
-# backend/tests/test_example.py
+# backend/tests/unit/test_example.py
 import pytest
 
 @pytest.mark.asyncio
 async def test_example():
     assert True
 ```
+
+## Adding New Backend Components
+
+### Adding a New Cron Job
+
+Create a new function under `backend/packages/cron/`:
+
+1. **Create the function directory**: `backend/packages/cron/my-new-job/`
+
+2. **Implement the entry point** in `backend/packages/cron/my-new-job/__init__.py`:
+
+```python
+"""DigitalOcean Scheduled Function: My New Job."""
+from packages.shared.config import settings
+from packages.shared.db import factory
+from packages.shared.crud.jobs import JobLockCRUD, JobExecutionCRUD
+
+
+async def main(args: dict) -> dict:
+    """Scheduled function entry point."""
+    async with factory() as session:
+        # Your job logic here
+        ...
+    return {"statusCode": 200, "body": '{"status": "ok"}'}
+```
+
+3. **Register the function** in `backend/project.yml` under the `packages` section with the appropriate `schedule` (cron) trigger.
+
+4. **Add config** (schedule, timeout, lock expiry) in [`backend/packages/shared/config.py`](backend/packages/shared/config.py:1).
+
+5. **Write tests** in `backend/tests/unit/test_cron_my_new_job.py`.
+
+### Adding a New API Endpoint
+
+Create a new HTTP function under `backend/packages/api/`:
+
+1. **Create the function directory**: `backend/packages/api/my-feature/`
+
+2. **Implement the entry point** in `backend/packages/api/my-feature/__init__.py`:
+
+```python
+"""DigitalOcean Function: My Feature API."""
+from packages.shared.api_helpers import parse_request, segments, response
+from packages.shared.db import factory
+
+
+async def main(args: dict) -> dict:
+    """DO Function entry point."""
+    method, path, query, body = parse_request(args)
+    segs = segments(path)
+    had_error = False
+
+    async with factory() as session:
+        try:
+            # Route by method + path segments
+            if method == "GET" and segs == []:
+                return await _handle_list(session, query)
+            # Add more routes...
+        except Exception:
+            had_error = True
+            raise
+        finally:
+            from packages.shared.cache import close_redis_pool
+            await close_redis_pool(force=had_error)
+
+    return response(404, {"error": "Not found"})
+```
+
+3. **Register the function** in `backend/project.yml` under the `packages` section with an `http` trigger (web: true).
+
+4. **Write tests** in `backend/tests/unit/test_api_my_feature.py`.
+
+### Database Changes
+
+Database models live in [`backend/packages/shared/models/`](backend/packages/shared/models/__init__.py). To make schema changes:
+
+1. Update or add the model in `backend/packages/shared/models/`
+2. Generate a migration: `cd backend && uv run alembic revision --autogenerate -m "description"`
+3. Apply the migration: `uv run alembic upgrade head`
+4. Update corresponding CRUD operations in [`backend/packages/shared/crud/`](backend/packages/shared/crud/__init__.py)
+5. Write tests for the new model and CRUD operations
+
+See [docs/migrations.md](docs/migrations.md) for the full migration workflow.
 
 ## Documentation
 

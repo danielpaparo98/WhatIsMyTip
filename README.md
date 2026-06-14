@@ -3,14 +3,14 @@
 AI-powered AFL tipping with smart heuristics and data-driven predictions.
 
 ![License](https://img.shields.io/badge/license-MIT-blue.svg)
-![Python](https://img.shields.io/badge/python-3.11+-green.svg)
+![Python](https://img.shields.io/badge/python-3.12+-green.svg)
 ![Node.js](https://img.shields.io/badge/node.js-18+-brightgreen.svg)
 ![Nuxt](https://img.shields.io/badge/nuxt-4.0.0-00DC82.svg)
-![FastAPI](https://img.shields.io/badge/fastapi-0.115.0-009688.svg)
+![DO Functions](https://img.shields.io/badge/DO_Functions-Serverless-0080FF.svg)
 
 ## Overview
 
-WhatIsMyTip is a comprehensive AFL tipping application that combines machine learning models, heuristic strategies, and AI-powered explanations to provide accurate footy predictions. Built with modern technologies, it offers a robust backend with FastAPI and a sleek frontend with Nuxt 4.
+WhatIsMyTip is a comprehensive AFL tipping application that combines machine learning models, heuristic strategies, and AI-powered explanations to provide accurate footy predictions. Built with modern technologies, it offers a serverless backend on DigitalOcean Functions and a sleek frontend with Nuxt 4.
 
 ## Features
 
@@ -23,7 +23,7 @@ WhatIsMyTip is a comprehensive AFL tipping application that combines machine lea
 
 - **Margin Calculations**: Predicted winning margins for each game
 
-- **AI-Powered Explanations**: Get insights on why certain picks were made using OpenRouter with gptoss-120b
+- **AI-Powered Explanations**: Get insights on why certain picks were made using OpenRouter (model configurable via `OPENROUTER_MODEL`)
 
 - **Backtesting**: Analyze historical performance of different heuristics
 
@@ -35,12 +35,18 @@ WhatIsMyTip is a comprehensive AFL tipping application that combines machine lea
 - **Form Model**: Predict based on recent team performance
 - **Home Advantage Model**: Account for venue-specific advantages
 - **Value Model**: Identify value bets based on odds
+- **Weather Impact Model**: Adjust predictions based on match-day weather conditions
+- **Injury Impact Model**: Factor in team injury lists and player availability
+- **Matchup Model**: Leverage head-to-head historical performance between teams
+- **Player Form Model**: Incorporate individual player form metrics
 
 ### Technical Features
 
 - **Monochrome Bold Typographic Design**: Clean, modern UI with high contrast
 - **Static Site Generation**: Fast, SEO-friendly frontend
-- **Async Database Operations**: Efficient SQLite database with SQLAlchemy
+- **Async Database Operations**: PostgreSQL with SQLAlchemy (asyncpg driver)
+- **Redis Caching**: 3-tier TTL cache (60s / 300s / 3600s) shared across all functions
+- **Serverless**: Pay-per-invocation backend on DigitalOcean Functions
 - **Rate Limiting**: 60 requests per minute per IP
 - **CORS Support**: Configurable cross-origin requests
 - **No GPU Required**: Cost-efficient AI explanations using CPU
@@ -54,16 +60,20 @@ WhatIsMyTip is a comprehensive AFL tipping application that combines machine lea
 - **Bun**: JavaScript runtime and package manager
 
 ### Backend
-- **FastAPI**: High-performance Python web framework
-- **SQLite**: Lightweight database for local development
+- **DigitalOcean Functions**: Serverless runtime (Apache OpenWhisk) — 4 HTTP + 4 scheduled functions
+- **PostgreSQL**: Managed relational database (asyncpg driver)
+- **Redis**: Managed cache with 3-tier TTL strategy
+- **Pydantic Settings**: Configuration and environment management
+- **Pydantic**: Data validation
+- **Alembic**: Database migrations
 - **SQLAlchemy**: Async ORM for database operations
-- **Pydantic**: Data validation and settings management
 - **uv**: Python package manager
-- **Bun**: JavaScript runtime and package manager
 
 ### AI & Data
-- **OpenRouter**: AI-powered explanation generation with gptoss-120b
+- **OpenRouter**: AI-powered explanation generation
 - **Squiggle API**: AFL data source
+- **AFLTables / FootyWire**: Historical AFL data (injury, player, matchup data)
+- **Open-Meteo**: Match-day weather data
 
 ## Installation
 
@@ -71,8 +81,10 @@ WhatIsMyTip is a comprehensive AFL tipping application that combines machine lea
 
 - **Bun** (JavaScript runtime and package manager)
 - **uv** (Python package manager)
-- **Python 3.11+**
+- **Python 3.12+**
 - **Node.js 18+** (for Nuxt 4)
+- **Docker** (for local PostgreSQL + Redis)
+- **PostgreSQL 16** and **Redis 7** (or use the `scripts/dev.sh` Docker setup)
 
 ### Clone Repository
 
@@ -94,9 +106,15 @@ cp .env.example .env
 
 ```bash
 cd backend
-uv sync
 cp .env.example .env
-# Edit .env with your configuration
+# Edit .env with your configuration (DATABASE_URL, REDIS_URL, etc.)
+uv sync
+
+# Start local PostgreSQL + Redis via Docker
+./scripts/dev.sh
+
+# Apply database migrations
+uv run alembic upgrade head
 ```
 
 ## Development
@@ -112,14 +130,25 @@ The frontend will be available at `http://localhost:3000`
 
 ### Backend Development
 
+The FaaS backend runs on DigitalOcean Functions. For local development, use Docker for
+PostgreSQL + Redis, then run unit tests:
+
 ```bash
 cd backend
-uv run uvicorn main:app --reload
+./scripts/dev.sh          # Starts local PostgreSQL + Redis via Docker
+uv run alembic upgrade head
+uv run pytest tests/unit/ -v
 ```
 
-The backend API will be available at `http://localhost:8000`
+To test individual functions locally against a connected DO Functions namespace:
 
-API documentation: `http://localhost:8000/docs`
+```bash
+doctl serverless deploy .
+# Then use the function URLs from the deploy output
+```
+
+> **Note:** The FaaS backend does not expose an automatic Swagger UI. See
+> [`docs/backend.md`](docs/backend.md) for the function inventory and endpoint reference.
 
 ### Running Both
 
@@ -129,8 +158,8 @@ Use terminal multiplexer or run in separate terminals:
 # Terminal 1 - Frontend
 cd frontend && bun run dev
 
-# Terminal 2 - Backend
-cd backend && uv run uvicorn main:app --reload
+# Terminal 2 - Backend (local services + tests)
+cd backend && ./scripts/dev.sh && uv run pytest tests/unit/ -v
 ```
 
 ## Configuration
@@ -140,23 +169,23 @@ cd backend && uv run uvicorn main:app --reload
 **Backend ([`.env`](backend/.env.example:1))**:
 
 ```bash
-# Database
-DATABASE_URL=sqlite+aiosqlite:///./whatismytip.db
+# Database (PostgreSQL via asyncpg)
+DATABASE_URL=postgresql+asyncpg://user:password@localhost:5432/whatismytip
 
-# API Configuration
-API_HOST=0.0.0.0
-API_PORT=8000
-CORS_ORIGINS=http://localhost:3000,https://whatismytip.com
-
-# Rate Limiting
-RATE_LIMIT_PER_MINUTE=60
+# Redis
+REDIS_URL=redis://localhost:6379/0
 
 # Squiggle API
 SQUIGGLE_API_BASE=https://api.squiggle.com.au
+SQUIGGLE_CONTACT_EMAIL=contact@whatismytip.com
 
 # OpenRouter (for explanation generation)
 OPENROUTER_API_KEY=your_openrouter_api_key_here
-OPENROUTER_MODEL=gptoss-120b
+OPENROUTER_MODEL=google/gemma-4-26b-a4b-it:free
+OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
+
+# Admin
+ADMIN_API_KEY=your_admin_api_key_here
 
 # Environment
 ENVIRONMENT=development
@@ -165,6 +194,8 @@ ENVIRONMENT=development
 **Frontend**:
 
 ```bash
+# Point to the DO Functions gateway URL in production, e.g.:
+# API_BASE_URL=https://faas.syd1.digitaloceanspaces.com/<namespace>
 API_BASE_URL=http://localhost:8000
 ```
 
@@ -191,23 +222,21 @@ whatismytip/
 │   ├── components/        # Vue components
 │   ├── composables/       # Vue composables
 │   └── pages/             # Page routes
-├── backend/               # FastAPI backend
-│   ├── main.py
-│   ├── pyproject.toml
-│   ├── uv.lock
-│   ├── .env.example
-│   └── app/
-│       ├── api/           # API endpoints
-│       ├── crud/          # Database operations
-│       ├── db/            # Database sessions
-│       ├── models/        # Database models
-│       ├── models_ml/     # ML models
-│       ├── heuristics/    # Heuristic layers
-│       ├── openrouter/    # AI client
-│       ├── schemas/       # Pydantic schemas
-│       └── services/      # Business logic
+├── backend/               # FaaS backend (DigitalOcean Functions)
+│   ├── project.yml        # DO Functions project + function configuration
+│   ├── pyproject.toml     # Python project configuration and dependencies
+│   ├── packages/
+│   │   ├── api/           # HTTP-triggered functions (games, tips, backtest, admin)
+│   │   ├── cron/          # Scheduled functions (daily-sync, match-completion,
+│   │   │                  #   tip-generation, historic-refresh)
+│   │   └── shared/        # Shared code (crud, services, models, models_ml,
+│   │                      #   heuristics, schemas, afl_data, squiggle, weather,
+│   │                      #   openrouter, cache, config, db, alerting, etc.)
+│   ├── alembic/           # Database migrations (env.py + versions/)
+│   ├── tests/             # Unit + integration tests
+│   └── scripts/           # Deployment and utility scripts (deploy.sh, dev.sh)
 ├── docs/                  # Documentation
-│   ├── backend.md         # Backend documentation
+│   ├── backend.md         # Backend architecture (FaaS)
 │   ├── frontend.md        # Frontend documentation
 │   ├── deployment.md      # Deployment guide
 │   ├── development.md     # Development guide
@@ -221,7 +250,7 @@ whatismytip/
 
 Comprehensive documentation is available in the [`docs/`](docs/) directory:
 
-- [`docs/backend.md`](docs/backend.md) - Backend architecture, models, and API
+- [`docs/backend.md`](docs/backend.md) - Backend architecture (FaaS)
 - [`docs/frontend.md`](docs/frontend.md) - Frontend structure and design system
 - [`docs/deployment.md`](docs/deployment.md) - Deployment to Digital Ocean
 - [`docs/development.md`](docs/development.md) - Local development setup
@@ -229,14 +258,14 @@ Comprehensive documentation is available in the [`docs/`](docs/) directory:
 
 ## Deployment
 
-See [docs/deployment.md](docs/deployment.md) for detailed deployment instructions to Digital Ocean App Platform.
+See [docs/deployment.md](docs/deployment.md) for detailed deployment instructions to DigitalOcean Functions + Managed PostgreSQL + Managed Redis.
 
 ### Quick Deployment
 
-**Backend**:
+**Backend** (deploys all functions via `doctl serverless deploy`):
 ```bash
 cd backend
-uv run uvicorn main:app --host 0.0.0.0 --port 8000
+./scripts/deploy.sh
 ```
 
 **Frontend**:
@@ -252,7 +281,7 @@ This project uses the [Squiggle API](https://api.squiggle.com.au/) for AFL data 
 
 ## AI Explanations
 
-The backend uses OpenRouter with the `gptoss-120b` model to generate AI-powered explanations for tips.
+The backend uses OpenRouter to generate AI-powered explanations for tips (default model configured via `OPENROUTER_MODEL`).
 
 **Cost**: ~$0.15 per 1M tokens
 **Estimated Monthly Cost**: $5-20 depending on usage
@@ -274,15 +303,13 @@ Contributions are welcome! Please read [CONTRIBUTING.md](CONTRIBUTING.md) for de
 ## Roadmap
 
 - [ ] User authentication and accounts
-- [ ] Database migrations (Alembic)
-- [ ] Redis caching layer
 - [ ] Email notifications
 - [ ] User favorites/bookmarks
 - [ ] Mobile app (React Native)
-- [ ] More ML models
 - [ ] Betting odds integration
 - [ ] Real-time notifications
 - [ ] Advanced analytics dashboard
+- [ ] OpenAPI spec generation for the FaaS functions
 
 ## Support
 
@@ -295,7 +322,7 @@ Contributions are welcome! Please read [CONTRIBUTING.md](CONTRIBUTING.md) for de
 - [Squiggle API](https://api.squiggle.com.au/) for AFL data
 - [OpenRouter](https://openrouter.ai/) for AI model access
 - [Nuxt](https://nuxt.com/) for the frontend framework
-- [FastAPI](https://fastapi.tiangolo.com/) for the backend framework
+- [DigitalOcean Functions](https://docs.digitalocean.com/products/functions/) for the serverless backend runtime
 
 ## Authors
 
