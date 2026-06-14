@@ -28,8 +28,6 @@ packages:
         environment:
           DATABASE_URL: ${DATABASE_URL}
           REDIS_URL: ${REDIS_URL}
-        annotations:
-          require-whisk-auth: false
       - name: tips
         main: packages/api/tips/__init__.py
         runtime: python:3.12
@@ -40,8 +38,6 @@ packages:
         environment:
           DATABASE_URL: ${DATABASE_URL}
           REDIS_URL: ${REDIS_URL}
-        annotations:
-          require-whisk-auth: false
       - name: backtest
         main: packages/api/backtest/__init__.py
         runtime: python:3.12
@@ -52,8 +48,6 @@ packages:
         environment:
           DATABASE_URL: ${DATABASE_URL}
           REDIS_URL: ${REDIS_URL}
-        annotations:
-          require-whisk-auth: false
       - name: admin
         main: packages/api/admin/__init__.py
         runtime: python:3.12
@@ -65,8 +59,6 @@ packages:
           DATABASE_URL: ${DATABASE_URL}
           REDIS_URL: ${REDIS_URL}
           ADMIN_API_KEY: ${ADMIN_API_KEY}
-        annotations:
-          require-whisk-auth: false
 
   - name: cron
     functions:
