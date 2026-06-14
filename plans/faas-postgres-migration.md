@@ -278,7 +278,7 @@ backend-faas/
 │           ├── __init__.py
 │           └── main.py
 │
-├── functions.yml                  # DO Functions project config
+├── project.yml                    # DO Functions project config
 ├── pyproject.toml                 # Dependencies
 └── README.md
 ```
@@ -322,7 +322,7 @@ async def main(args):
         return {"statusCode": 404, "body": json.dumps({"error": "Not found"})}
 ```
 
-### 3.5 `functions.yml` Configuration
+### 3.5 `project.yml` Configuration
 
 ```yaml
 packages:
@@ -922,7 +922,7 @@ The API contract should remain identical. All endpoints return the same JSON str
 Move from FastAPI middleware to DO Functions configuration:
 
 ```yaml
-# In functions.yml
+# In project.yml
 parameters:
   __ow_cors:
     allowed_origins: ["https://whatismytip.com", "https://www.whatismytip.com"]

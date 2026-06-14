@@ -379,7 +379,7 @@ async def main(args: dict) -> dict:
     return {"statusCode": 200, "body": '{"status": "ok"}'}
 ```
 
-3. **Register the function** in `backend/functions.yml` under the `packages` section with the appropriate `schedule` (cron) trigger.
+3. **Register the function** in `backend/project.yml` under the `packages` section with the appropriate `schedule` (cron) trigger.
 
 4. **Add config** (schedule, timeout, lock expiry) in [`backend/packages/shared/config.py`](backend/packages/shared/config.py:1).
 
@@ -421,7 +421,7 @@ async def main(args: dict) -> dict:
     return response(404, {"error": "Not found"})
 ```
 
-3. **Register the function** in `backend/functions.yml` under the `packages` section with an `http` trigger (web: true).
+3. **Register the function** in `backend/project.yml` under the `packages` section with an `http` trigger (web: true).
 
 4. **Write tests** in `backend/tests/unit/test_api_my_feature.py`.
 

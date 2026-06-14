@@ -13,7 +13,7 @@ Serverless backend for WhatIsMyTip AFL tipping application, running on Digital O
 
 ```
 backend/
-├── functions.yml        # DO Functions project + function configuration
+├── project.yml          # DO Functions project + function configuration
 ├── packages/
 │   ├── shared/          # Shared code (models, CRUD, services, etc.)
 │   ├── api/             # HTTP-triggered functions

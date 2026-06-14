@@ -18,7 +18,7 @@ However, several **platform-level constraints** create risks that range from dat
 |---|----------|-------|--------|
 | 1 | 🔴 CRITICAL | `historic-refresh` timeout exceeds platform limits | Hard kill mid-batch → partial data, dangling locks |
 | 2 | 🔴 CRITICAL | Cron triggers fire in UTC, not `Australia/Perth` | Tip generation runs at 11 AM AWST instead of 3 AM AWST |
-| 3 | 🟠 HIGH | Missing `limits:` overrides in `functions.yml` | All functions default to 60s timeout, 256 MB memory |
+| 3 | 🟠 HIGH | Missing `limits:` overrides in `project.yml` | All functions default to 60s timeout, 256 MB memory |
 | 4 | 🟡 MEDIUM | Deployment artifact ~42 MB against 48 MB limit | Any dependency addition could breach the limit |
 | 5 | 🟡 MEDIUM | `dispose_engine()` on every invocation | Negates connection pooling, adds latency per cold start |
 | 6 | 🟡 MEDIUM | 3-day log retention | Insufficient for production incident investigation |
@@ -76,7 +76,7 @@ This represents a significant cost reduction compared to running a container-bas
 
 ### 3.1 🔴 Historic Refresh Timeout Risk
 
-**Files**: [`historic-refresh/__init__.py`](../backend/packages/cron/historic-refresh/__init__.py:88), [`functions.yml`](../backend/functions.yml:83)
+**Files**: [`historic-refresh/__init__.py`](../backend/packages/cron/historic-refresh/__init__.py:88), [`project.yml`](../backend/project.yml:83)
 
 **Problem**: The `historic-refresh` function sets `MAX_RUNTIME_SECONDS = 3000` (50 minutes) and processes seasons in batches of 4 across 4 batches (2010–2025). The code's own docstring claims a "60-minute max timeout for scheduled functions", but DigitalOcean Functions has a documented maximum execution time of **15 minutes** (900,000 ms) for all function types. This is the default and maximum — it cannot be overridden.
 
@@ -105,9 +105,9 @@ MAX_RUNTIME_SECONDS = 3000
 
 ### 3.2 🔴 Cron Timezone Bug
 
-**Files**: [`functions.yml`](../backend/functions.yml:80-82), [`config.py`](../backend/packages/shared/config.py:53)
+**Files**: [`project.yml`](../backend/project.yml:80-82), [`config.py`](../backend/packages/shared/config.py:53)
 
-**Problem**: DigitalOcean Functions cron triggers fire in **UTC only**. The `config.py` defines `cron_timezone: str = "Australia/Perth"` (AWST, UTC+8), but this setting is **never used by the platform** — it's purely informational. The cron expressions in `functions.yml` are interpreted as UTC:
+**Problem**: DigitalOcean Functions cron triggers fire in **UTC only**. The `config.py` defines `cron_timezone: str = "Australia/Perth"` (AWST, UTC+8), but this setting is **never used by the platform** — it's purely informational. The cron expressions in `project.yml` are interpreted as UTC:
 
 | Function | Cron Expression | Intended Time (AWST) | Actual Time (AWST) | Offset |
 |----------|----------------|----------------------|---------------------|--------|
@@ -131,16 +131,16 @@ Comment says "3:00 AM" but this fires at 3:00 AM UTC = 11:00 AM AWST.
 1. **Correct cron expressions** to UTC equivalents:
    - Tip generation (3 AM AWST): `"0 19 * * *"` (19:00 UTC previous day = 3:00 AWST)
    - Historic refresh (4 AM AWST Sunday): `"0 20 * * 6"` (20:00 UTC Saturday = 4:00 AWST Sunday)
-2. **Add a comment** in `functions.yml` documenting the UTC→AWST conversion
+2. **Add a comment** in `project.yml` documenting the UTC→AWST conversion
 3. **Consider removing** `cron_timezone` from config since it's misleading — or implement runtime timezone validation
 
 ---
 
-### 3.3 🟠 Missing `limits:` Overrides in functions.yml
+### 3.3 🟠 Missing `limits:` Overrides in project.yml
 
-**File**: [`functions.yml`](../backend/functions.yml)
+**File**: [`project.yml`](../backend/project.yml)
 
-**Problem**: No function in `functions.yml` specifies `limits:` for timeout or memory. All functions use DigitalOcean's defaults:
+**Problem**: No function in `project.yml` specifies `limits:` for timeout or memory. All functions use DigitalOcean's defaults:
 
 | Function | Default Timeout | Actual Need | Risk |
 |----------|----------------|-------------|------|
@@ -155,7 +155,7 @@ Comment says "3:00 AM" but this fires at 3:00 AM UTC = 11:00 AM AWST.
 
 **Impact**: All cron functions will likely hit the default 60-second timeout and be killed before completing.
 
-**Recommended Fix**: Add `limits:` to each function in `functions.yml`:
+**Recommended Fix**: Add `limits:` to each function in `project.yml`:
 
 ```yaml
 # Example for tip-generation
@@ -370,7 +370,7 @@ Priority-ordered action items to make the current FaaS deployment production-saf
 
 | # | Action | Issue | Effort | Impact |
 |---|--------|-------|--------|--------|
-| 1 | Add `limits:` overrides to all functions in `functions.yml` | §3.3 | 30 min | Prevents default 60s timeout kills |
+| 1 | Add `limits:` overrides to all functions in `project.yml` | §3.3 | 30 min | Prevents default 60s timeout kills |
 | 2 | Fix cron expressions to UTC equivalents | §3.2 | 15 min | Correct scheduling for AWST |
 | 3 | Reduce `historic-refresh` batch size to 2 seasons | §3.1 | 1 hr | Fits within platform timeout |
 | 4 | Reduce lock expiry to match platform timeout | §3.1 | 15 min | Prevents dangling locks |
@@ -419,7 +419,7 @@ This preserves the FaaS cost advantage for API traffic while eliminating the tim
 
 | File | Purpose | Lines |
 |------|---------|-------|
-| [`functions.yml`](../backend/functions.yml) | DO Functions project configuration | 150 |
+| [`project.yml`](../backend/project.yml) | DO Functions project configuration | 109 |
 | [`config.py`](../backend/packages/shared/config.py) | Pydantic settings with cron configuration | 97 |
 | [`db.py`](../backend/packages/shared/db.py) | Database engine + session factory | 58 |
 | [`cache.py`](../backend/packages/shared/cache.py) | Redis-backed 3-tier caching | 244 |

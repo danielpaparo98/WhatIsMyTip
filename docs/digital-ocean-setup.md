@@ -212,7 +212,7 @@ curl -X POST -H "X-Admin-API-Key: $ADMIN_API_KEY" \
 
 ## Scheduled Functions
 
-Scheduled functions (cron jobs) are configured in [`functions.yml`](../backend/functions.yml:1) and deployed automatically. No separate setup is needed.
+Scheduled functions (cron jobs) are configured in [`project.yml`](../backend/project.yml:1) and deployed automatically. No separate setup is needed.
 
 | Function | Schedule (UTC) | Description |
 |----------|----------------|-------------|
@@ -266,7 +266,7 @@ Use the DigitalOcean database dashboards for:
 - Confirm port (25060 for managed PostgreSQL)
 
 ### Cron jobs not running
-- Verify schedules in [`functions.yml`](../backend/functions.yml:1)
+- Verify schedules in [`project.yml`](../backend/project.yml:1)
 - Check for stale advisory locks in `job_locks` table
 - Review activation logs
 

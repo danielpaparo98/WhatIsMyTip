@@ -62,12 +62,8 @@ uv run alembic upgrade head
 echo -e "${GREEN}Migrations complete!${NC}"
 
 # Deploy functions
-# NOTE: We explicitly pass `-f functions.yml` because the file is intentionally
-# NOT named `project.yml` (which is the doctl default). The renamed filename
-# prevents DigitalOcean App Platform from auto-detecting it as an app spec
-# when the `backend/` directory is the source root for the App Platform service.
 echo -e "${YELLOW}Deploying functions to Digital Ocean...${NC}"
-doctl serverless deploy . --functions-config functions.yml --env .env
+doctl serverless deploy . --env .env
 echo -e "${GREEN}Functions deployed!${NC}"
 
 # Get function URLs
