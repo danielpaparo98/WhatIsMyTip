@@ -70,4 +70,7 @@ jobs:
           uv run alembic upgrade head
 
       - name: Deploy functions
-        run: doctl serverless deploy .
+        # NOTE: --functions-config points at functions.yml (not the doctl default
+        # `project.yml`). The renamed file prevents DigitalOcean App Platform
+        # from auto-parsing it as an app spec when `backend/` is the source root.
+        run: doctl serverless deploy . --functions-config functions.yml
