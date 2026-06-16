@@ -1,15 +1,18 @@
 # WhatIsMyTip Backend Documentation
 
-> **Architecture**: Serverless (DigitalOcean Functions — Apache OpenWhisk)
-> **Runtime**: Python 3.12+
+> **Architecture**: FastAPI monolith + in-process APScheduler (Phase 4)
+> **Runtime**: Python 3.12+ (uvicorn / gunicorn-uvicorn-worker)
+> **Container**: multi-stage Docker image (see `backend/Dockerfile`)
 > **Database**: PostgreSQL 16 (asyncpg driver)
 > **Cache**: Redis 7 (3-tier TTL strategy)
 
 ## Overview
 
-The WhatIsMyTip backend is a **serverless FaaS application** running on DigitalOcean Functions. It provides AI-powered AFL tipping predictions through **4 HTTP-triggered functions** and **4 scheduled (cron) functions**, backed by managed PostgreSQL and Redis.
+The WhatIsMyTip backend is a **single FastAPI application** (Phase 4) that provides AI-powered AFL tipping predictions through one process. HTTP traffic is served by FastAPI routers mounted at `/api/...`; the 4 cron jobs run in the same process via an in-process APScheduler. The whole thing is deployed as a single container image (see `backend/Dockerfile`).
 
 The system uses 8 ML models, 3 heuristic strategies, and AI-powered explanations via OpenRouter to generate accurate footy tips. Data is collected automatically through scheduled jobs that sync fixtures, detect match completion, generate tips, and refresh historical data.
+
+Multi-instance deploys coordinate cron-job execution via Postgres advisory locks (see [`app/core/scheduler.py`](../backend/app/core/scheduler.py:1)) so only one instance runs each job at a time.
 
 ---
 
@@ -17,11 +20,11 @@ The system uses 8 ML models, 3 heuristic strategies, and AI-powered explanations
 
 1. [Architecture Overview](#architecture-overview)
 2. [Project Structure](#project-structure)
-3. [Technology Stack](#technology-stack)
-4. [Configuration & Environment Variables](#configuration--environment-variables)
-5. [DigitalOcean Functions Runtime](#digitalocean-functions-runtime)
-6. [HTTP Functions](#http-functions)
-7. [Scheduled Functions](#scheduled-functions)
+3. [Running Locally](#running-locally)
+4. [Technology Stack](#technology-stack)
+5. [Configuration & Environment Variables](#configuration--environment-variables)
+6. [HTTP Routers](#http-routers)
+7. [Scheduled Jobs](#scheduled-jobs)
 8. [Database Layer](#database-layer)
 9. [Caching Layer](#caching-layer)
 10. [ML Models & Orchestrator](#ml-models--orchestrator)
@@ -36,38 +39,51 @@ The system uses 8 ML models, 3 heuristic strategies, and AI-powered explanations
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
-│                        DigitalOcean Functions                        │
-│                                                                      │
-│   ┌─────────────────────┐    ┌─────────────────────────────────┐   │
-│   │   HTTP Functions     │    │      Scheduled (Cron) Functions  │   │
-│   │                      │    │                                  │   │
-│   │  • games             │    │  • daily-sync      (*/15 min)    │   │
-│   │  • tips              │    │  • match-completion (5,20,35,50) │   │
-│   │  • backtest          │    │  • tip-generation  (0 19 * * *)  │   │
-│   │  • admin             │    │  • historic-refresh(0 20 * * 6)  │   │
-│   └──────────┬───────────┘    └───────────────┬─────────────────┘   │
-│              │                                │                      │
-│              └────────────┬───────────────────┘                      │
-│                           ▼                                          │
-│              ┌──────────────────────────┐                           │
-│              │   packages/shared/        │                           │
-│              │  (config, db, cache,      │                           │
-│              │   crud, services,         │                           │
-│              │   models_ml, heuristics,  │                           │
-│              │   schemas, squiggle,      │                           │
-│              │   weather, openrouter)    │                           │
-│              └─────────┬──────┬──────────┘                           │
-│                        │      │                                       │
-│           ┌────────────┘      └──────────────┐                       │
-│           ▼                                  ▼                       │
-│   ┌─────────────────┐              ┌──────────────────┐             │
-│   │  PostgreSQL 16   │              │     Redis 7      │             │
-│   │  (managed, async)│              │  (3-tier TTL)    │             │
-│   └─────────────────┘              └──────────────────┘             │
+│                  FastAPI App (one container)                          │
+│                                                                       │
+│   ┌───────────────────────────┐  ┌──────────────────────────────┐   │
+│   │   HTTP routers (FastAPI)    │  │   APScheduler (in-process)    │   │
+│   │                             │  │                               │   │
+│   │  • /api/games    (games)    │  │  • daily-sync      */15 min    │   │
+│   │  • /api/tips     (tips)     │  │  • match-completion /15 min    │   │
+│   │  • /api/backtest (backtest) │  │  • tip-generation  3 AM daily  │   │
+│   │  • /api/admin    (admin)    │  │  • historic-refresh 4 AM Sun   │   │
+│   │  • /health       (health)   │  │                               │   │
+│   └────────────┬────────────────┘  └──────────────┬────────────────┘   │
+│                │                                  │                    │
+│                └─────────────────┬─────────────────┘                    │
+│                                  ▼                                      │
+│                 ┌────────────────────────────┐                         │
+│                 │   packages/shared/            │                         │
+│                 │  (config, db, cache,          │                         │
+│                 │   crud, services,             │                         │
+│                 │   models_ml, heuristics,      │                         │
+│                 │   schemas, squiggle,          │                         │
+│                 │   weather, openrouter)        │                         │
+│                 └─────────┬──────────┬──────────┘                         │
+│                           │          │                                   │
+│              ┌────────────┘          └───────────────┐                  │
+│              ▼                                       ▼                  │
+│      ┌─────────────────┐                  ┌──────────────────┐          │
+│      │  PostgreSQL 16    │                  │     Redis 7        │          │
+│      │  (managed, async) │                  │  (3-tier TTL)      │          │
+│      └─────────────────┘                  └──────────────────┘          │
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
-All functions share a common code base under `packages/shared/`. Each function is independently deployable with its own memory and timeout configuration defined in [`project.yml`](../backend/project.yml:1).
+All HTTP endpoints and cron jobs share a common code base under `packages/shared/`. The FastAPI app is one process; multi-instance deploys coordinate cron execution via Postgres advisory locks.
+
+### Component split
+
+| Concern | File(s) |
+|---------|---------|
+| HTTP routers | `backend/app/api/*.py` |
+| Middleware, lifespan, security, rate limiting | `backend/app/core/*.py` |
+| Cron job objects (bound to the scheduler) | `backend/app/cron/*.py` |
+| Scheduler wiring | `backend/app/core/scheduler.py` |
+| Shared business logic, DB, cache, ML, services | `backend/packages/shared/` |
+| Container image | `backend/Dockerfile` |
+| Reverse proxy (in front of the FastAPI container) | `backend/proxy/` |
 
 ---
 
@@ -75,92 +91,149 @@ All functions share a common code base under `packages/shared/`. Each function i
 
 ```
 backend/
-├── project.yml                      # DO Functions project + function configuration
-├── pyproject.toml                   # Python project config, dependencies, tool settings
-├── uv.lock                          # Locked dependencies
-├── .env.example                     # Environment variables template
-├── alembic.ini                      # Alembic configuration
-├── packages/
-│   ├── api/                         # HTTP-triggered functions
-│   │   ├── games/__init__.py        # Games data + detail endpoints
-│   │   ├── tips/__init__.py         # Tip generation and retrieval
-│   │   ├── backtest/__init__.py     # Backtesting endpoints
-│   │   └── admin/__init__.py        # Admin endpoints (job status, manual triggers)
-│   ├── cron/                        # Scheduled functions
-│   │   ├── daily-sync/__init__.py
-│   │   ├── match-completion/__init__.py
-│   │   ├── tip-generation/__init__.py
-│   │   └── historic-refresh/__init__.py
-│   └── shared/                      # Shared code across all functions
-│       ├── __init__.py
-│       ├── config.py                # Pydantic Settings (all env vars + cron config)
-│       ├── db.py                    # Async SQLAlchemy engine + session factory
-│       ├── cache.py                 # Redis connection pool + cached() decorator
-│       ├── alerting.py              # AlertingService for webhook notifications
-│       ├── exceptions.py            # Custom exceptions + classify_error()
-│       ├── logger.py                # Structured logging
-│       ├── utils.py                 # Shared utilities
-│       ├── api_helpers.py           # parse_request, segments, response helpers
-│       ├── orchestrator.py          # ModelOrchestrator (8 models, 3 heuristics)
-│       ├── crud/                    # Database CRUD operations
-│       │   ├── games.py
-│       │   ├── tips.py
-│       │   ├── jobs.py              # JobExecutionCRUD + JobLockCRUD
-│       │   ├── elo_cache.py
-│       │   ├── backtest.py
-│       │   ├── generation_progress.py
-│       │   ├── model_predictions.py
-│       │   └── match_analysis.py
-│       ├── models/                  # SQLAlchemy database models
-│       │   └── __init__.py
-│       ├── models_ml/               # ML prediction models (8 models)
-│       │   ├── base.py              # Abstract base class
-│       │   ├── elo.py
-│       │   ├── form.py
-│       │   ├── home_advantage.py
-│       │   ├── value.py
-│       │   ├── weather_impact.py
-│       │   ├── injury_impact.py
-│       │   ├── matchup.py
-│       │   └── player_form.py
-│       ├── heuristics/              # Prediction strategy layers
-│       │   ├── base.py              # BaseHeuristic abstract class
-│       │   ├── best_bet.py
-│       │   ├── yolo.py
-│       │   └── high_risk_high_reward.py
-│       ├── schemas/                 # Pydantic validation schemas
-│       │   ├── games.py
-│       │   ├── tips.py
-│       │   ├── cron.py
-│       │   ├── backtest.py
-│       │   ├── admin.py
-│       │   ├── match_analysis.py
-│       │   └── query.py
-│       ├── services/                # Business logic services
-│       │   ├── game_sync.py         # Squiggle API sync
-│       │   ├── tip_generation.py    # Tip generation pipeline
-│       │   ├── match_completion.py  # Match completion detection
-│       │   ├── historic_data_refresh.py
-│       │   ├── explanation.py       # OpenRouter AI explanations
-│       │   ├── backtest.py
-│       │   └── match_analysis.py
-│       ├── squiggle/                # Squiggle API client
-│       ├── afl_data/                # AFLTables + FootyWire clients
-│       ├── weather/                 # Open-Meteo weather client
-│       └── openrouter/              # OpenRouter AI client
-├── alembic/                         # Database migrations
+├── main.py                            # FastAPI app entry point
+├── Dockerfile                         # Multi-stage container image
+├── pyproject.toml                     # Python project config, dependencies, tool settings
+├── uv.lock                            # Locked dependencies
+├── .env.example                       # Environment variables template
+├── alembic.ini                        # Alembic configuration
+├── app/                               # FastAPI app — routers, middleware, scheduler
+│   ├── __init__.py
+│   ├── api/                           # HTTP routers
+│   │   ├── health.py                  # /health liveness probe
+│   │   ├── games.py                   # mounted at /api/games
+│   │   ├── tips.py                    # mounted at /api/tips
+│   │   ├── backtest.py                # mounted at /api/backtest
+│   │   └── admin.py                   # mounted at /api/admin (X-API-Key required)
+│   ├── core/                          # App-level concerns
+│   │   ├── lifespan.py                # Startup/shutdown: DB pool, scheduler, …
+│   │   ├── scheduler.py               # APScheduler wiring for the 4 cron jobs
+│   │   ├── middleware.py              # SecurityHeaders, RequestSize, RequestID
+│   │   ├── security.py                # require_admin_key, etc.
+│   │   ├── rate_limit.py              # slowapi limiter
+│   │   ├── db_deps.py                 # FastAPI dependency: get_db()
+│   │   └── exceptions.py              # BackendServiceError + http_error helper
+│   └── cron/                          # Job function objects bound to the scheduler
+│       ├── base.py                    # BaseJob (retry, lock, alerting, execution)
+│       ├── daily_sync.py
+│       ├── match_completion.py
+│       ├── tip_generation.py
+│       └── historic_refresh.py
+├── packages/                          # Shared business logic
+│   ├── shared/                        # Imported as `packages.shared.*`
+│   │   ├── config.py                  # Pydantic Settings (env vars + cron expressions)
+│   │   ├── db.py                      # Async SQLAlchemy engine + session factory
+│   │   ├── cache.py                   # Redis connection pool + cached() decorator
+│   │   ├── alerting.py                # AlertingService for webhook notifications
+│   │   ├── exceptions.py              # TransientJobError / PermanentJobError / …
+│   │   ├── utils.py                   # Shared utilities
+│   │   ├── orchestrator.py            # ModelOrchestrator (8 models, 3 heuristics)
+│   │   ├── crud/                      # Database CRUD operations
+│   │   │   ├── games.py
+│   │   │   ├── tips.py
+│   │   │   ├── jobs.py                # JobExecutionCRUD + JobLockCRUD
+│   │   │   ├── elo_cache.py
+│   │   │   ├── backtest.py
+│   │   │   ├── generation_progress.py
+│   │   │   ├── model_predictions.py
+│   │   │   └── match_analysis.py
+│   │   ├── models/                    # SQLAlchemy database models
+│   │   │   └── __init__.py
+│   │   ├── models_ml/                 # 8 ML prediction models
+│   │   │   ├── base.py                # Abstract base class
+│   │   │   ├── elo.py
+│   │   │   ├── form.py
+│   │   │   ├── home_advantage.py
+│   │   │   ├── value.py
+│   │   │   ├── weather_impact.py
+│   │   │   ├── injury_impact.py
+│   │   │   ├── matchup.py
+│   │   │   └── player_form.py
+│   │   ├── heuristics/                # 3 heuristic strategies
+│   │   │   ├── base.py                # BaseHeuristic abstract class
+│   │   │   ├── best_bet.py
+│   │   │   ├── yolo.py
+│   │   │   └── high_risk_high_reward.py
+│   │   ├── schemas/                   # Pydantic validation schemas
+│   │   ├── services/                  # Business logic services
+│   │   ├── squiggle/                  # Squiggle API client
+│   │   ├── afl_data/                  # AFLTables + FootyWire clients
+│   │   ├── weather/                   # Open-Meteo weather client
+│   │   └── openrouter/                # OpenRouter AI client
+│       ├── historic-refresh/__init__.py
+│       ├── match-completion/__init__.py
+│       └── tip-generation/__init__.py
+├── alembic/                           # Database migrations
 │   ├── env.py
 │   └── versions/
 │       ├── 0001_consolidated_postgresql_schema.py
 │       └── 0002_weather_players_injuries.py
+├── proxy/                             # nginx reverse proxy (App Platform ingress)
+│   ├── nginx.conf                     # Forwards /api/... to the FastAPI container
+│   └── Dockerfile
 ├── tests/
-│   ├── unit/                        # Unit tests (pytest)
-│   └── integration/                 # Integration tests
-└── scripts/
-    ├── deploy.sh                    # Full deployment script
-    ├── dev.sh                       # Local dev environment (Docker)
-    ├── run-migrations.sh            # Alembic migration runner
-    └── ...                          # Utility scripts
+│   ├── conftest.py                    # Shared fixtures
+│   ├── unit/                          # Unit tests (fast, no external deps)
+│   └── integration/                   # Integration tests (PostgreSQL + Redis)
+└── scripts/                           # deploy.sh, dev.sh, test_dockerfile.sh, …
+```
+
+---
+
+## Running Locally
+
+### Prerequisites
+
+- Python 3.12+
+- [uv](https://docs.astral.sh/uv/) (Python package manager)
+- Docker (for local PostgreSQL + Redis — see `scripts/dev.sh`)
+
+### Quick start
+
+```bash
+# 1. Clone & install
+cd backend
+uv sync
+
+# 2. Configure env
+cp .env.example .env
+# (edit .env if you need non-default DB/Redis URLs)
+
+# 3. Start local PostgreSQL + Redis via Docker
+./scripts/dev.sh
+
+# 4. Apply migrations
+uv run alembic upgrade head
+
+# 5. Run the FastAPI app locally (hot-reload)
+uv run uvicorn main:app --reload
+
+# 6. Verify
+curl http://localhost:8000/health
+# Expected: {"status":"healthy","db":"ok","redis":"ok",...}
+
+# 7. Interactive API docs
+#    Open http://localhost:8000/docs  (Swagger UI)
+#    or    http://localhost:8000/redoc (ReDoc)
+```
+
+### Production (gunicorn)
+
+```bash
+uv run gunicorn main:app -k uvicorn.workers.UvicornWorker --workers 2
+```
+
+### In Docker
+
+```bash
+# Build the image
+docker build -t whatismytip-api -f Dockerfile .
+
+# Run it (pass env vars from your .env)
+docker run --rm -p 8000:8000 --env-file .env whatismytip-api
+
+# Smoke test the build
+./scripts/test_dockerfile.sh
 ```
 
 ---
@@ -169,9 +242,11 @@ backend/
 
 | Component | Technology | Details |
 |-----------|-----------|---------|
-| **Runtime** | DigitalOcean Functions | Apache OpenWhisk serverless platform |
+| **Runtime** | FastAPI + uvicorn | Single ASGI process; runs under gunicorn in production |
 | **Language** | Python 3.12+ | Full async/await support |
 | **Package Manager** | uv | Fast Python package management |
+| **Container** | Docker (multi-stage) | python:3.12-slim + uv venv (see `backend/Dockerfile`) |
+| **Scheduler** | APScheduler | In-process; cron expressions in `packages/shared/config.py` |
 | **Database** | PostgreSQL 16 | Managed, via asyncpg driver |
 | **ORM** | SQLAlchemy 2.0 | Async sessions (`AsyncSession`) |
 | **Migrations** | Alembic | Consolated baseline + incremental |
@@ -199,7 +274,9 @@ All configuration is managed through [`packages/shared/config.py`](../backend/pa
 | `CORS_ORIGINS` | `*` | Comma-separated allowed origins |
 | `RATE_LIMIT_PER_MINUTE` | `60` | Requests per minute per IP |
 | `ENVIRONMENT` | `development` | `development` or `production` |
-| `SEASON` | *(current year)* | AFL season year |
+| `CURRENT_SEASON` | *(current year)* | AFL season year |
+| `CRON_ENABLED` | `true` | Master switch for the in-process scheduler |
+| `CRON_TIMEZONE` | `Australia/Perth` | Timezone for the scheduler (cron expressions are interpreted in this tz) |
 
 ### External API Configuration
 
@@ -215,197 +292,101 @@ All configuration is managed through [`packages/shared/config.py`](../backend/pa
 
 | Variable | Description |
 |----------|-------------|
-| `ADMIN_API_KEY` | API key for admin endpoints (manual triggers, status checks) |
+| `ADMIN_API_KEY` | API key for admin endpoints (sent as `X-API-Key` header) |
 
 ### Cron Job Configuration
 
-All cron schedules, timeouts, and lock expiry values are defined in [`config.py`](../backend/packages/shared/config.py:1) and can be overridden via environment variables. See the [Scheduled Functions](#scheduled-functions) section for details.
+All cron schedules, timeouts, and lock expiry values are defined in [`config.py`](../backend/packages/shared/config.py:1) and can be overridden via environment variables. Schedules are interpreted in `CRON_TIMEZONE` (default `Australia/Perth`). See the [Scheduled Jobs](#scheduled-jobs) section for details.
 
 ---
 
-## DigitalOcean Functions Runtime
+## HTTP Routers
 
-### Entry-Point Contract
+The FastAPI app exposes **4 HTTP routers**, each mounted at `/api/...`.  The 5th router (`/health`) is at the root.  All paths and response field names are preserved 1:1 from the FaaS era (see [docs/api.md](api.md)) so the frontend and any existing clients keep working without changes.
 
-Every function (HTTP or cron) follows the DigitalOcean Functions entry-point contract:
+| Router | Mount | File | Description |
+|--------|-------|------|-------------|
+| `health` | `/health` | [`app/api/health.py`](../backend/app/api/health.py:1) | Liveness probe (DB + Redis status) |
+| `games` | `/api/games` | [`app/api/games.py`](../backend/app/api/games.py:1) | Game listings, scores, slugs, detail |
+| `tips` | `/api/tips` | [`app/api/tips.py`](../backend/app/api/tips.py:1) | Tip retrieval, generation, games-with-tips |
+| `backtest` | `/api/backtest` | [`app/api/backtest.py`](../backend/app/api/backtest.py:1) | Backtest results, performance, compare |
+| `admin` | `/api/admin` | [`app/api/admin.py`](../backend/app/api/admin.py:1) | Manual job triggers, job status, metrics (X-API-Key required) |
 
-```python
-async def main(args: dict) -> dict:
-    """DO Function entry point.
-
-    Args:
-        args: Dictionary containing HTTP method, path, query, body, and headers.
-
-    Returns:
-        dict with keys: statusCode, headers, body.
-    """
-```
-
-### HTTP Function Entry Point
-
-HTTP functions receive the request via `args` and return a standard HTTP response:
-
-```python
-from packages.shared.api_helpers import parse_request, segments, response
-from packages.shared.db import factory
-
-async def main(args: dict) -> dict:
-    method, path, query, body = parse_request(args)
-    segs = segments(path)
-    had_error = False
-
-    async with factory() as session:
-        try:
-            # Route by method + path segments
-            if method == "GET" and segs == []:
-                return await _handle_list(session, query)
-            if method == "GET" and len(segs) == 1:
-                return await _handle_get(session, segs[0])
-            return response(404, {"error": "Not found"})
-        except Exception:
-            had_error = True
-            raise
-        finally:
-            await close_redis_pool(force=had_error)
-            await dispose_engine(force=had_error)
-```
-
-### Cron Function Entry Point
-
-Scheduled functions use advisory locking and execution tracking:
-
-```python
-from packages.shared.db import factory
-from packages.shared.crud.jobs import JobLockCRUD, JobExecutionCRUD
-from packages.shared.exceptions import classify_error, TransientJobError
-from packages.shared.alerting import AlertingService
-from packages.shared.cache import invalidate_cache_pattern, close_redis_pool
-
-async def main(args: dict) -> dict:
-    async with factory() as session:
-        execution = None
-        try:
-            # Track execution start
-            execution = await JobExecutionCRUD.create_execution(session, job_name="my-job")
-
-            # Acquire advisory lock (prevents concurrent runs)
-            lock = await JobLockCRUD.acquire_lock(session, job_name="my-job")
-            if not lock:
-                return {"statusCode": 200, "body": '{"status": "skipped", "reason": "locked"}'}
-
-            # ... business logic ...
-
-            # Release lock + mark success
-            await JobLockCRUD.release_lock(session, job_name="my-job")
-            await JobExecutionCRUD.update_execution(session, execution.id, status="success")
-            await session.commit()
-
-        except TransientJobError as e:
-            # Retryable — leave lock to expire, mark for retry
-            await AlertingService.send_failure_alert(session, job_name="my-job", error=str(e))
-            ...
-        except Exception as e:
-            await AlertingService.send_failure_alert(session, job_name="my-job", error=str(e))
-            ...
-        finally:
-            await close_redis_pool(force=True)
-    return {"statusCode": 200, "body": '{"status": "ok"}'}
-```
-
-### Helper Functions
-
-From [`packages/shared/api_helpers.py`](../backend/packages/shared/api_helpers.py:1):
-
-| Helper | Description |
-|--------|-------------|
-| [`parse_request(args)`](../backend/packages/shared/api_helpers.py:1) | Extracts `method`, `path`, `query`, `body` from the function args |
-| [`segments(path)`](../backend/packages/shared/api_helpers.py:1) | Splits URL path into a list of path segments |
-| [`response(status_code, body)`](../backend/packages/shared/api_helpers.py:1) | Constructs the return dict with `statusCode`, `headers` (CORS), and JSON `body` |
-
-### Resource Cleanup
-
-Functions **must** clean up connections in `finally` blocks:
-
-- **Redis**: `await close_redis_pool(force=had_error)` — closes the shared Redis connection pool
-- **Database**: `await dispose_engine(force=had_error)` — disposes the SQLAlchemy engine
-
-The `force` parameter ensures cleanup even when a global pool/engine may be reused across warm invocations.
-
----
-
-## HTTP Functions
-
-The backend exposes **4 HTTP-triggered functions**, each deployed as an independent DO Functions package:
-
-| Function | Path | Memory | Timeout |
-|----------|------|--------|---------|
-| [`games`](../backend/packages/api/games/__init__.py:1) | `api/games` | 256 MB | 5 min |
-| [`tips`](../backend/packages/api/tips/__init__.py:1) | `api/tips` | 256 MB | 5 min |
-| [`backtest`](../backend/packages/api/backtest/__init__.py:1) | `api/backtest` | 256 MB | 5 min |
-| [`admin`](../backend/packages/api/admin/__init__.py:1) | `api/admin` | 256 MB | 5 min |
-
-### Games Function
-
-Source: [`packages/api/games/__init__.py`](../backend/packages/api/games/__init__.py:1)
+### Games Router
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET` | `/` | List games (with filtering by round, team, status) |
+| `GET` | `/` | List games (with filtering by season, round, upcoming, latest) |
 | `GET` | `/{slug}` | Get a single game by slug |
 | `GET` | `/{slug}/detail` | Full game detail with tips, predictions, and analysis |
-| `GET` | `/health` | Health check endpoint |
+| `GET` | `/health` | Games router health |
 
-### Tips Function
-
-Source: [`packages/api/tips/__init__.py`](../backend/packages/api/tips/__init__.py:1)
+### Tips Router
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET` | `/{game_slug}` | Get tips for a specific game |
-| `POST` | `/generate` | Generate tips (requires `ADMIN_API_KEY`) |
+| `GET` | `/` | List tips (with filtering) |
+| `GET` | `/games-with-tips` | Games with their best-bet tips for a round |
+| `GET` | `/{heuristic}` | Tips for a specific heuristic |
+| `POST` | `/generate` | Generate tips (requires `X-API-Key`) |
+| `POST` | `/explanations/generate` | Generate AI explanations for a round |
 
-### Backtest Function
-
-Source: [`packages/api/backtest/__init__.py`](../backend/packages/api/backtest/__init__.py:1)
-
-| Method | Path | Description |
-|--------|------|-------------|
-| `GET` | `/results` | List backtest results |
-| `GET` | `/{heuristic}/performance` | Get performance metrics for a specific heuristic |
-| `POST` | `/run` | Trigger a new backtest (requires `ADMIN_API_KEY`) |
-
-### Admin Function
-
-Source: [`packages/api/admin/__init__.py`](../backend/packages/api/admin/__init__.py:1)
+### Backtest Router
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET` | `/jobs/status` | Get status of all cron jobs (requires `ADMIN_API_KEY`) |
-| `GET` | `/jobs/{job_name}/executions` | Get execution history for a job (requires `ADMIN_API_KEY`) |
-| `POST` | `/jobs/{job_name}/trigger` | Manually trigger a cron job (requires `ADMIN_API_KEY`) |
+| `GET` | `/` | List backtest results |
+| `GET` | `/seasons` | List seasons with backtest data |
+| `GET` | `/current-season` | Current-season performance |
+| `GET` | `/table` | Per-round table data |
+| `GET` | `/{heuristic}/performance` | Heuristic performance metrics |
+| `GET` | `/compare` | Compare all heuristics for a season |
+| `POST` | `/run` | Trigger a backtest (requires `X-API-Key`) |
 
-### Function URLs
+### Admin Router
 
-In production, functions are accessible via the DO Functions gateway:
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/{job_name}/trigger` | Manually trigger `daily-sync`, `match-completion`, `tip-generation`, or `historic-refresh` (requires `X-API-Key`) |
+| `GET` | `/historic-refresh/progress` | Current progress of the historic-refresh job |
+| `GET` | `/metrics` | Per-job execution metrics |
 
-```
-https://faas.syd1.digitaloceanspaces.com/{namespace}/api/{function}
-```
+### OpenAPI / Swagger
 
-> **Note:** There is no automatic Swagger/OpenAPI UI. See [docs/api.md](api.md) for the complete endpoint reference.
+The full machine-readable schema is available at:
+
+- `GET /openapi.json` — the raw OpenAPI 3 spec
+- `GET /docs` — Swagger UI (interactive)
+- `GET /redoc` — ReDoc (read-only)
 
 ---
 
-## Scheduled Functions
+## Scheduled Jobs
 
-The backend runs **4 scheduled (cron) functions** for automated data collection and tip generation. All schedules are in **UTC**.
+The backend runs **4 scheduled jobs** in-process via APScheduler (see [`app/core/scheduler.py`](../backend/app/core/scheduler.py:1)).  The scheduler is started in the FastAPI lifespan (see [`app/core/lifespan.py`](../backend/app/core/lifespan.py:1)) and stopped on shutdown.
 
-| Function | Schedule (UTC) | Memory | Timeout | Description |
-|----------|----------------|--------|---------|-------------|
-| [`daily-sync`](../backend/packages/cron/daily-sync/__init__.py:1) | `*/15 * * * *` (every 15 min) | 256 MB | 10 min | Sync games/teams from Squiggle API |
-| [`match-completion`](../backend/packages/cron/match-completion/__init__.py:1) | `5,20,35,50 * * * *` (4×/hour) | 256 MB | 10 min | Detect completed matches and update scores |
-| [`tip-generation`](../backend/packages/cron/tip-generation/__init__.py:1) | `0 19 * * *` (3 AM AWST) | 512 MB | 15 min | Generate tips for upcoming games |
-| [`historic-refresh`](../backend/packages/cron/historic-refresh/__init__.py:1) | `0 20 * * 6` (4 AM Sun AWST) | 512 MB | 15 min | Refresh historical player/injury/weather data |
+All schedules are in **`CRON_TIMEZONE`** (default `Australia/Perth`, UTC+8).  Schedules can be overridden per-environment with the env vars listed in the table below.
+
+| Job | Default Schedule | Env var | Description |
+|-----|------------------|---------|-------------|
+| `daily-sync` | `*/15 * * * *` | `DAILY_SYNC_CRON` | Sync games/teams from Squiggle API |
+| `match-completion` | `5,20,35,50 * * * *` | `MATCH_COMPLETION_CRON` | Detect completed matches, update final scores |
+| `tip-generation` | `0 3 * * *` | `TIP_GENERATION_CRON` | Generate tips for the next round + AI explanations |
+| `historic-refresh` | `0 4 * * 0` | `HISTORIC_REFRESH_CRON` | Refresh historical data (player stats, injuries, weather) |
+
+### Concurrency / multi-instance safety
+
+Each job is wrapped in a Postgres advisory lock (see [`packages/shared/crud/jobs.py`](../backend/packages/shared/crud/jobs.py:1)) so when the FastAPI app is deployed as multiple instances (e.g. for HA), only one instance runs each job at a time.  Lock TTL is `JOB_LOCK_EXPIRE_SECONDS` (default 900 s = 15 min).
+
+### Job lifecycle
+
+1. The APScheduler triggers the job function on its schedule
+2. The `BaseJob` wrapper (see [`app/cron/base.py`](../backend/app/cron/base.py:1)) acquires the advisory lock
+3. If the lock is held, the job is skipped (and a `skipped` execution is recorded)
+4. The job runs with retry-with-backoff (`JOB_MAX_RETRIES`, `JOB_RETRY_DELAY_SECONDS`)
+5. On success: lock released, `job_executions` row marked `success`
+6. On `TransientJobError`: lock left to expire, row marked `failed_retryable`, alert sent
+7. On `PermanentJobError` / timeout: lock released, row marked `failed`/`timeout`, alert sent
 
 ### daily-sync
 
@@ -429,21 +410,18 @@ The backend runs **4 scheduled (cron) functions** for automated data collection 
 
 **Purpose**: Generates tips for all upcoming games in the current round.
 
-- Runs nightly at 3:00 AM AWST (19:00 UTC)
+- Runs nightly at 3:00 AM AWST (the default schedule)
 - Uses [`services/tip_generation.py`](../backend/packages/shared/services/tip_generation.py:1) which invokes the [`ModelOrchestrator`](../backend/packages/shared/orchestrator.py:1)
 - Runs all 8 ML models in parallel, applies 3 heuristic strategies
 - Generates AI explanations via OpenRouter
-- Requires 512 MB memory due to concurrent model execution
-- Uses advisory locking via [`JobLockCRUD`](../backend/packages/shared/crud/jobs.py:1) to prevent concurrent runs
 
 ### historic-refresh
 
 **Purpose**: Refreshes historical data including player stats, injury lists, and weather data.
 
-- Runs weekly on Saturday at 4:00 AM AWST (20:00 UTC Saturday)
+- Runs weekly on Sunday at 4:00 AM AWST (the default schedule)
 - Uses [`services/historic_data_refresh.py`](../backend/packages/shared/services/historic_data_refresh.py:1)
 - Fetches data from AFLTables, FootyWire, and Open-Meteo
-- Requires 512 MB memory due to heavy data processing
 
 ---
 
@@ -455,7 +433,7 @@ Database connections are managed by [`packages/shared/db.py`](../backend/package
 
 - **Async SQLAlchemy engine** using the asyncpg driver (`postgresql+asyncpg://`)
 - **Session factory** (`factory()`) — context manager that yields an `AsyncSession`
-- **Engine disposal** — `dispose_engine(force=...)` for cleanup in `finally` blocks
+- **Engine disposal** — `dispose_engine(force=...)` for shutdown
 
 ```python
 from packages.shared.db import factory
@@ -467,9 +445,20 @@ async def do_work():
         ...
 ```
 
+In FastAPI routes, use the `get_db` dependency instead:
+
+```python
+from app.core.db_deps import get_db
+from sqlalchemy.ext.asyncio import AsyncSession
+
+@router.get("/")
+async def handler(db: AsyncSession = Depends(get_db)):
+    ...
+```
+
 ### Database Models
 
-SQLAlchemy models are defined in [`packages/shared/models/`](../backend/packages/shared/models/__init__.py:1):
+SQLAlchemy models are defined in [`packages/shared/models/`](../backend/packages/shared/models/__init__.py):
 
 - **Game** — AFL match data (teams, round, venue, scores, status)
 - **Tip** — Generated tips (team, confidence, margin, heuristic)
@@ -496,8 +485,6 @@ See [docs/migrations.md](migrations.md) for the full migration workflow.
 
 ## Caching Layer
 
-### Redis Cache Architecture
-
 Caching is implemented in [`packages/shared/cache.py`](../backend/packages/shared/cache.py:1) using a **3-tier TTL strategy**:
 
 | Tier | TTL | Use Case |
@@ -513,8 +500,7 @@ Redis connections use a shared connection pool managed by [`_get_pool()`](../bac
 ```python
 from packages.shared.cache import RedisCache
 
-# Get a cache instance with a specific tier
-cache = RedisCache(prefix="games", ttl=300)  # medium tier
+cache = RedisCache(prefix="games", ttl=300)
 value = await cache.get("key")
 await cache.set("key", value)
 ```
@@ -545,10 +531,11 @@ await invalidate_cache_pattern(RedisCache(prefix="games"), "*")
 
 ### Resource Cleanup
 
+The FastAPI lifespan handles Redis pool teardown on shutdown (see [`app/core/lifespan.py`](../backend/app/core/lifespan.py:1)):
+
 ```python
 from packages.shared.cache import close_redis_pool
 
-# Must be called in finally blocks
 await close_redis_pool(force=had_error)
 ```
 
@@ -621,6 +608,7 @@ await AlertingService.send_timeout_alert(
 ```
 
 Alerting is configured via:
+
 - `ALERT_WEBHOOK_URL` — webhook endpoint for notifications
 - `ALERT_ENABLED` — enable/disable alerting (default: `true`)
 - `ALERT_TIMEOUT_SECONDS` — HTTP client timeout for sending alerts
@@ -638,6 +626,7 @@ Defined in [`packages/shared/exceptions.py`](../backend/packages/shared/exceptio
 | `TransientJobError` | Retryable error (network timeout, DB connection issue) |
 | `PermanentJobError` | Non-retryable error (schema mismatch, invalid config) |
 | `JobTimeoutError` | Job exceeded its configured time limit |
+| `BackendServiceError` | FastAPI-layer error mapped to an HTTP status code |
 
 ### Error Classification
 
@@ -652,11 +641,13 @@ except Exception as e:
     error_type = classify_error(e)  # TransientJobError | PermanentJobError | JobTimeoutError
 ```
 
-### Cron Job Error Flow
+### FastAPI Exception Handlers
 
-1. **Transient errors**: The advisory lock is left to expire naturally (prevents immediate re-run), the execution is marked as `failed_retryable`, and an alert is sent.
-2. **Permanent errors**: The lock is released, the execution is marked as `failed`, and an alert is sent.
-3. **Timeout errors**: The lock is released, the execution is marked as `timeout`, and an alert is sent.
+See [`main.py`](../backend/main.py:1) for the global exception handlers:
+
+- `BackendServiceError` → mapped to its declared `status_code` (with `Retry-After` for 429)
+- `RequestValidationError` → 422 with structured `errors` array
+- `Exception` (catch-all) → 500 with sanitized message + request ID
 
 ---
 
@@ -666,30 +657,44 @@ except Exception as e:
 
 ```
 backend/tests/
-├── conftest.py                     # Shared fixtures
-├── unit/                           # Unit tests (fast, no external deps)
-│   ├── test_api_games.py
-│   ├── test_api_tips.py
-│   ├── test_api_backtest.py
-│   ├── test_api_admin.py
-│   ├── test_api_helpers_security.py
-│   ├── test_cron_daily_sync.py
-│   ├── test_cron_match_completion.py
-│   ├── test_cron_tip_generation.py
-│   ├── test_cron_historic_refresh.py
+├── conftest.py                         # Shared fixtures
+├── unit/                               # Unit tests (fast, no external deps)
+│   ├── test_app_health.py
+│   ├── test_app_lifespan.py
+│   ├── test_app_middleware.py
+│   ├── test_app_security.py
+│   ├── test_app_rate_limit.py
+│   ├── test_app_scheduler.py
+│   ├── test_app_cron_base.py
+│   ├── test_app_cron_daily_sync.py
+│   ├── test_app_cron_match_completion.py
+│   ├── test_app_cron_tip_generation.py
+│   ├── test_app_cron_historic_refresh.py
+│   ├── test_app_api_games.py
+│   ├── test_app_api_tips.py
+│   ├── test_app_api_backtest.py
+│   ├── test_app_api_admin.py
+│   ├── test_app_exceptions.py
+│   ├── test_proxy_config.py            # nginx.conf on-disk validation
+│   ├── test_deploy_script.py           # deploy.sh contract tests
+│   ├── test_daily_sync_service.py
+│   ├── test_historic_refresh_service.py
+│   ├── test_match_completion_service.py
+│   ├── test_tip_generation_service.py
+│   ├── test_heuristics.py
 │   ├── test_models.py
 │   ├── test_new_models.py
-│   ├── test_heuristics.py
 │   ├── test_cache.py
 │   ├── test_alerting.py
 │   ├── test_exceptions.py
 │   ├── test_schemas_validation.py
-│   └── ...                         # Model-specific tests, client tests
-├── integration/                    # Integration tests (DB, Redis, API)
+│   └── ...                             # Client tests (squiggle, weather, …)
+├── integration/                        # Integration tests (DB, Redis, API)
 │   ├── conftest.py
 │   ├── test_api_integration.py
 │   ├── test_cache_integration.py
 │   └── test_db_integration.py
+└── __init__.py
 ```
 
 ### Running Tests
@@ -697,7 +702,7 @@ backend/tests/
 ```bash
 cd backend
 
-# Start local PostgreSQL + Redis
+# Start local PostgreSQL + Redis (for integration tests)
 ./scripts/dev.sh
 
 # Run unit tests
@@ -727,24 +732,41 @@ Test configuration is defined in [`pyproject.toml`](../backend/pyproject.toml:1)
 
 ### Deployment Script
 
-[`scripts/deploy.sh`](../backend/scripts/deploy.sh:1) — Full deployment pipeline:
+[`scripts/deploy.sh`](../backend/scripts/deploy.sh:1) — Container-based deploy pipeline:
 
-1. **Run tests** — `uv run pytest tests/unit/ -v`
-2. **Run migrations** — `uv run alembic upgrade head`
-3. **Deploy functions** — `doctl serverless deploy . --env .env`
-4. **Health verification** — Checks deployed function URLs
+1. **Pre-flight** — checks for `docker`, `doctl`, `uv`
+2. **Loads `.env`** — picks up `DO_REGISTRY`, `DO_APP_ID`, etc.
+3. **Unit tests** — `uv run pytest tests/unit/ -v`
+4. **Migrations** — `uv run alembic upgrade head`
+5. **Build** — `docker build -f Dockerfile -t ${DO_REGISTRY}/api:${IMAGE_TAG} .`
+6. **Push** — `docker push ${DO_REGISTRY}/api:${IMAGE_TAG}`
+7. **Trigger deploy** — `doctl apps create-deployment ${DO_APP_ID} --force-rebuild`
+8. **Health poll** — best-effort curl of `/health` for up to 60 s
+
+`IMAGE_TAG` defaults to the current git short SHA.  Pass `--dry-run` to print every command without executing.  Pass `SKIP_TESTS=1` or `SKIP_MIGRATE=1` to skip the corresponding step.
 
 ```bash
 cd backend
-./scripts/deploy.sh
+./scripts/deploy.sh                     # full deploy
+./scripts/deploy.sh --dry-run           # show the plan
+SKIP_TESTS=1 ./scripts/deploy.sh        # skip tests (e.g. for a quick hotfix)
+IMAGE_TAG=my-feature ./scripts/deploy.sh
+```
+
+### Dockerfile Smoke Test
+
+[`scripts/test_dockerfile.sh`](../backend/scripts/test_dockerfile.sh:1) — builds the image, runs the container, and curls `/health` to confirm the process starts.  Gracefully skips when Docker is unavailable.
+
+```bash
+./scripts/test_dockerfile.sh
 ```
 
 ### Local Development Script
 
 [`scripts/dev.sh`](../backend/scripts/dev.sh:1) — Starts local infrastructure via Docker:
 
-- **PostgreSQL 16** (`postgres:16-alpine`)
-- **Redis 7** (`redis:7-alpine`)
+- **PostgreSQL 16** (`postgres:16-alpine`) on port 5432
+- **Redis 7** (`redis:7-alpine`) on port 6379
 
 ```bash
 cd backend

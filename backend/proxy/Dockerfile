@@ -1,25 +1,24 @@
 # ──────────────────────────────────────────────────────────────────────
-# whatismytip-proxy: thin nginx reverse proxy in front of the function
-# component.  Forwards `/api/...` (incoming from the public ingress) to
-# `http://${FUNCTION_HOST}:${FUNCTION_PORT}/api/api/...` (the function
-# gateway) so the OpenWhisk runtime sees the `/api/<package>/<action>`
-# path it expects.
+# whatismytip-proxy: thin nginx reverse proxy in front of the FastAPI
+# app container.  Forwards all requests (with the standard reverse-
+# proxy headers) to the FastAPI component over the App Platform
+# private network.
 # ──────────────────────────────────────────────────────────────────────
 FROM nginx:1.27-alpine
 
 # Drop the default site config and install ours.
 RUN rm /etc/nginx/conf.d/default.conf
 
-# Templated config: substitute ${FUNCTION_HOST} / ${FUNCTION_PORT} at
-# container start via `envsubst` so the same image works in any
-# environment (staging, prod, local docker-compose, etc.).
-COPY nginx.conf /etc/nginx/templates/default.conf.template
+# The nginx config now references `fastapi:8000` directly via App
+# Platform's internal DNS, so no envsubst is needed at container
+# start — the image is fully self-contained.
+COPY nginx.conf /etc/nginx/conf.d/default.conf
 
 # `nginx -t` validates the config at startup if we let it crash, so
-# we add a simple healthcheck that hits our own `/api/games/health`
-# proxy endpoint (which transitively checks the function gateway).
-HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+# we add a simple healthcheck that hits our own `/healthz` endpoint
+# (which is served by nginx itself and does NOT depend on FastAPI).
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD wget --quiet --tries=1 --spider \
-        http://127.0.0.1:8080/api/games/health || exit 1
+        http://127.0.0.1:8080/healthz || exit 1
 
 EXPOSE 8080

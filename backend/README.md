@@ -1,35 +1,66 @@
-# WhatIsMyTip FaaS Backend
+# WhatIsMyTip Backend
 
-Serverless backend for WhatIsMyTip AFL tipping application, running on Digital Ocean Functions with PostgreSQL and Redis.
+FastAPI backend for the WhatIsMyTip AFL tipping application, backed by managed PostgreSQL, Redis, and an in-process APScheduler for cron jobs. Deployed as a container on DigitalOcean App Platform (Phase 4).
 
 ## Architecture
 
-- **Functions:** 4 HTTP + 4 Scheduled (Digital Ocean Functions)
-- **Database:** PostgreSQL (Digital Ocean Managed Database)
-- **Cache:** Redis (Digital Ocean Managed Redis)
-- **ML Models:** Pure Python (no numpy/scikit-learn dependency)
+- **Runtime:** Single FastAPI process (`uvicorn main:app`) per container
+- **Scheduling:** In-process [APScheduler](https://apscheduler.readthedocs.io/) — cron jobs run in the same process as the API
+- **Database:** PostgreSQL 16 (DigitalOcean Managed, asyncpg driver)
+- **Cache:** Redis 7 (DigitalOcean Managed, 3-tier TTL)
+- **ML Models:** 8 pure-Python models (no numpy/scikit-learn dependency)
+- **Container:** Multi-stage Dockerfile (Python 3.12-slim + uv)
 
 ## Project Structure
 
 ```
 backend/
-├── project.yml          # DO Functions project + function configuration
-├── packages/
-│   ├── shared/          # Shared code (models, CRUD, services, etc.)
-│   ├── api/             # HTTP-triggered functions
-│   │   ├── games/       # Game endpoints
-│   │   ├── tips/        # Tips endpoints
-│   │   ├── backtest/    # Backtest endpoints
-│   │   └── admin/       # Admin endpoints (API key auth)
-│   └── cron/            # Scheduled functions
-│       ├── daily-sync/  # Every 15 min
-│       ├── match-completion/  # Every 15 min (offset)
-│       ├── tip-generation/    # Daily 3 AM AWST
-│       └── historic-refresh/  # Sunday 4 AM AWST
-├── alembic/             # Database migrations
-├── tests/               # Unit tests
-└── scripts/             # Deployment and utility scripts
+├── main.py                      # FastAPI app entry point
+├── Dockerfile                   # Multi-stage container image
+├── pyproject.toml               # Python project config + dependencies
+├── uv.lock                      # Locked dependencies
+├── alembic/                     # Database migrations
+├── app/                         # FastAPI app — routers, middleware, scheduler
+│   ├── api/                     # HTTP routers
+│   │   ├── games.py
+│   │   ├── tips.py
+│   │   ├── backtest.py
+│   │   ├── admin.py
+│   │   └── health.py
+│   ├── core/                    # Middleware, lifespan, security, scheduler
+│   │   ├── lifespan.py          # App startup/shutdown (DB pool, scheduler, …)
+│   │   ├── scheduler.py         # APScheduler wiring for the 4 cron jobs
+│   │   ├── middleware.py
+│   │   ├── security.py
+│   │   └── rate_limit.py
+│   └── cron/                    # Job function objects bound to the scheduler
+│       ├── daily_sync.py
+│       ├── match_completion.py
+│       ├── tip_generation.py
+│       └── historic_refresh.py
+├── packages/                    # Shared business logic (DB models, services, ML)
+│   └── shared/                  # Imported as `packages.shared.*`
+│       ├── config.py
+│       ├── db.py
+│       ├── cache.py
+│       ├── models/
+│       ├── models_ml/           # 8 ML models
+│       ├── heuristics/          # 3 heuristic strategies
+│       ├── services/            # Business logic (sync, tip-gen, refresh, …)
+│       ├── schemas/             # Pydantic request/response models
+│       └── …
+├── tests/
+│   ├── unit/                    # Fast unit tests (no external deps)
+│   └── integration/             # Integration tests (PostgreSQL + Redis via testcontainers)
+├── proxy/                       # nginx reverse proxy (used by App Platform)
+│   ├── nginx.conf               # Forwards /api/... to the FastAPI container
+│   └── Dockerfile               # nginx:1.27-alpine image
+└── scripts/                     # dev.sh, deploy.sh, test_dockerfile.sh, …
 ```
+
+> **Phase 5 cleanup:** the legacy `packages/api/` and `packages/cron/` FaaS handler
+> directories were deleted in Phase 5 (June 2026). The FastAPI app in `app/` is the
+> single source of truth for HTTP routes and scheduled jobs.
 
 ## Quick Start
 
@@ -38,7 +69,7 @@ backend/
 - Python 3.12+
 - [uv](https://docs.astral.sh/uv/) (Python package manager)
 - [doctl](https://docs.digitalocean.com/reference/doctl/how-to/install/) CLI (for deployment)
-- Docker (for local PostgreSQL/Redis)
+- Docker (for local PostgreSQL/Redis + the Dockerfile smoke test)
 
 ### Setup
 
@@ -58,7 +89,10 @@ uv sync
 # Run migrations
 uv run alembic upgrade head
 
-# Run tests
+# Run the FastAPI app locally (hot-reload)
+uv run uvicorn main:app --reload
+
+# Run unit tests
 uv run pytest tests/unit/ -v
 ```
 
@@ -69,7 +103,7 @@ uv run pytest tests/unit/ -v
 uv run pytest tests/unit/ -v
 
 # Specific test file
-uv run pytest tests/unit/test_api_games.py -v
+uv run pytest tests/unit/test_app_api_games.py -v
 
 # With coverage
 uv run pytest tests/unit/ -v --cov=packages
@@ -91,10 +125,10 @@ uv run alembic revision --autogenerate -m "description"
 ### Deploy
 
 ```bash
-# Full deployment (tests + migrations + deploy)
+# Build the image, push to DO Container Registry, trigger an App Platform deploy
 ./scripts/deploy.sh
 
-# Just run migrations
+# Just run migrations (one-off task)
 ./scripts/run-migrations.sh
 
 # Database setup (first time)
@@ -103,74 +137,78 @@ uv run alembic revision --autogenerate -m "description"
 
 ## API Endpoints
 
+All endpoints are mounted directly under `/api/...` (no path rewriting).
+
 ### Public
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| GET | `/api/api/games` | List games |
-| GET | `/api/api/games/{slug}` | Get game by slug |
-| GET | `/api/api/games/{slug}/detail` | Full game detail |
-| GET | `/api/api/tips` | List tips |
-| GET | `/api/api/tips/games-with-tips` | Games with tips |
-| GET | `/api/api/tips/{heuristic}` | Tips by heuristic |
-| POST | `/api/api/tips/generate` | Generate tips |
-| GET | `/api/api/backtest/performance` | Backtest performance |
-| GET | `/api/api/backtest/summary` | Backtest summary |
-| GET | `/api/api/backtest/leaderboard` | Backtest leaderboard |
+| GET | `/health` | Liveness probe (DB + Redis status) |
+| GET | `/api/games` | List games (filter by `season`, `round`, `upcoming`, `latest`) |
+| GET | `/api/games/{slug}` | Get a single game by slug |
+| GET | `/api/games/{slug}/detail` | Full game detail (tips, predictions, weather, analysis) |
+| GET | `/api/games/health` | Games router health |
+| GET | `/api/tips` | List tips (filter by `heuristic`, `season`, `round`, `limit`) |
+| GET | `/api/tips/{heuristic}` | Tips for one heuristic |
+| GET | `/api/tips/games-with-tips` | Games with their best-bet tips |
+| POST | `/api/tips/generate` | Generate tips for a round |
+| GET | `/api/backtest` | List backtest results |
+| GET | `/api/backtest/{heuristic}/performance` | Heuristic performance |
+| GET | `/api/backtest/compare` | Compare all heuristics for a season |
+| POST | `/api/backtest/run` | Run a backtest |
 
 ### Admin (requires `X-API-Key` header)
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| POST | `/api/api/admin/daily-sync/trigger` | Trigger daily sync |
-| POST | `/api/api/admin/match-completion/trigger` | Trigger match completion |
-| POST | `/api/api/admin/tip-generation/trigger` | Trigger tip generation |
-| POST | `/api/api/admin/historic-refresh/trigger` | Trigger historic refresh |
-| GET | `/api/api/admin/historic-refresh/progress` | Get refresh progress |
+| POST | `/api/admin/{job_name}/trigger` | Manually trigger `daily-sync`, `match-completion`, `tip-generation`, or `historic-refresh` |
+| GET | `/api/admin/historic-refresh/progress` | Current progress of the historic-refresh job |
+| GET | `/api/admin/metrics` | Per-job execution metrics |
 
-## Scheduled Functions
+The full machine-readable schema is available at `/openapi.json` (Swagger UI at `/docs`, ReDoc at `/redoc`).
 
-| Function | Schedule | Description |
-|----------|----------|-------------|
-| `daily-sync` | Every 15 min | Syncs games and tips from Squiggle API |
-| `match-completion` | Every 15 min (offset) | Detects completed matches, updates results |
-| `tip-generation` | Daily 3 AM AWST | Generates tips for upcoming games |
-| `historic-refresh` | Sunday 4 AM AWST | Refreshes historic data and recalibrates models |
+## Scheduled Jobs (in-process APScheduler)
+
+| Job | Schedule (AWST) | Description |
+|-----|-----------------|-------------|
+| `daily-sync` | Every 15 min | Syncs games from the Squiggle API |
+| `match-completion` | Every 15 min, offset by 5 | Detects completed matches and updates results |
+| `tip-generation` | Daily 03:00 | Generates tips + AI explanations for the next round |
+| `historic-refresh` | Sunday 04:00 | Refreshes historical data and recalibrates models |
+
+Schedules are configured via the cron expressions in [`packages/shared/config.py`](packages/shared/config.py) and can be overridden per-environment with `TIP_GENERATION_CRON` / `HISTORIC_REFRESH_CRON` / `DAILY_SYNC_CRON` / `MATCH_COMPLETION_CRON` env vars (the in-process APScheduler reads these directly — there are no FaaS-style `CRON_*` env vars any more).
 
 ## Environment Variables
 
-See [`.env.example`](.env.example) for all configuration options:
+See [`.env.example`](.env.example) for the full template. Highlights:
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `DATABASE_URL` | Yes | PostgreSQL connection string |
-| `REDIS_URL` | Yes | Redis connection string |
+| `DATABASE_URL` | Yes | PostgreSQL connection string (`postgresql+asyncpg://…`) |
+| `REDIS_URL` | Yes | Redis connection string (`rediss://…` for managed) |
 | `SQUIGGLE_API_BASE` | Yes | Squiggle API base URL |
 | `SQUIGGLE_CONTACT_EMAIL` | Yes | Contact email for Squiggle API |
 | `OPENROUTER_API_KEY` | No | API key for OpenRouter (AI explanations) |
 | `OPENROUTER_MODEL` | No | Model to use for explanations |
-| `ADMIN_API_KEY` | Yes | API key for admin endpoints |
+| `ADMIN_API_KEY` | Yes | API key for admin endpoints (sent as `X-API-Key` header) |
 | `ENVIRONMENT` | No | `development` or `production` |
+| `CORS_ORIGINS` | No | Comma-separated allowed origins (default: `*`) |
+| `RATE_LIMIT_PER_MINUTE` | No | Per-IP rate limit (default: `60`) |
 
 ## CI/CD
 
-The [GitHub Actions workflow](../.github/workflows/deploy-faas.yml) automatically:
+The GitHub Actions workflow at [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) runs the unit tests on every push/PR.
 
-1. Runs tests, linting, and type checking on push to `main` or `dev`
-2. Deploys functions to Digital Ocean on merge to `main`
-3. Runs database migrations after deployment
-
-### Required GitHub Secrets
+The deployment workflow (`.github/workflows/deploy.yml`) builds the image, pushes to the DigitalOcean Container Registry, and triggers an App Platform deployment. Required GitHub secrets:
 
 - `DIGITALOCEAN_ACCESS_TOKEN` — DO API token
 - `DATABASE_URL` — Production database connection string
+- `REDIS_URL` — Production Redis connection string
+- `OPENROUTER_API_KEY`, `ADMIN_API_KEY`, `SQUIGGLE_*` — app secrets
 
-## Migration from FastAPI
+## See Also
 
-This FaaS backend replaces the original FastAPI + SQLite backend (`backend/`). Key changes:
-
-- **Database:** SQLite → PostgreSQL (with asyncpg driver)
-- **Cache:** In-memory → Redis
-- **Runtime:** Long-running server → Serverless functions
-- **ML Models:** Removed numpy/scikit-learn dependencies (pure Python)
-- **Deployment:** Manual → CI/CD with GitHub Actions
+- [docs/backend.md](../docs/backend.md) — Architecture deep-dive
+- [docs/api.md](../docs/api.md) — Full API reference
+- [docs/deployment.md](../docs/deployment.md) — Production deployment guide
+- [docs/development.md](../docs/development.md) — Local development workflow

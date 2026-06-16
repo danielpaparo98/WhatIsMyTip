@@ -67,3 +67,18 @@ frontend/debug-*.png
 frontend/frontend/
 frontend/test-screenshots/
 backend/data/
+
+# Local debug / working files
+*.txt.local
+backend/config_test.txt
+backend/deploy_test.txt
+backend/final_full.txt
+backend/final_test.txt
+backend/proxy_test.txt
+backend/routes*.txt
+backend/test_output.txt
+frontend/bun_install.txt
+frontend/generate.txt
+frontend/nuxt_help.txt
+frontend/nuxt_prepare.txt
+frontend/typecheck.txt
