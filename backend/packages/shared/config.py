@@ -46,13 +46,9 @@ class Settings(BaseSettings):
     # Daily Sync Configuration
     current_season: int = Field(default_factory=_default_season)
     daily_sync_enabled: bool = True
-
-    # Game Sync (frequent to keep live round data fresh)
-    cron_daily_sync: str = "*/15 * * * *"  # Every 15 minutes (legacy FaaS)
     daily_sync_timeout_seconds: int = 3600  # 1 hour
 
     # Match Completion Detector
-    cron_match_completion_check: str = "5,20,35,50 * * * *"  # Every 15 min, offset by 5
     match_completion_buffer_minutes: int = 60  # 1 hour buffer
     match_completion_check_enabled: bool = True  # Enable/disable the job
     completion_check_timeout_seconds: int = 300  # 5 minutes
@@ -63,7 +59,6 @@ class Settings(BaseSettings):
     # configured timezone (default: Australia/Perth, UTC+8).  No more
     # UTC-only DO Functions triggers — the app reads these strings
     # directly so the timezone is whatever the host/container is set to.
-    cron_tip_generation: str = "0 3 * * *"  # 3:00 AM AWST daily
     tip_generation_timeout_seconds: int = 1800  # 30 minutes
     tip_generation_enabled: bool = True
     tip_generation_regenerate_existing: bool = False
@@ -71,7 +66,6 @@ class Settings(BaseSettings):
     # Historical Data Refresh
     # See note above — the expression is in the FastAPI app's local
     # timezone (default Australia/Perth).
-    cron_historical_refresh: str = "0 4 * * 0"  # 4:00 AM AWST Sunday
     historic_refresh_enabled: bool = True
     historic_refresh_seasons: str = "2010-2025"
     historic_refresh_regenerate_tips: bool = False
