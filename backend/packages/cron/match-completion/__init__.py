@@ -69,93 +69,34 @@ async def main(args: dict) -> dict:
             execution = await execution_crud.create_execution(JOB_NAME, status="running")
             await session.commit()
 
-            # 3. Execute job logic
+            # 3. Execute job logic (delegated to the reusable service function
+            #    shared with the new in-process BaseJob wrapper).
             start_time = time.time()
-            buffer_minutes = settings.match_completion_buffer_minutes
 
-            squiggle_client = SquiggleClient()
-            try:
-                detector_service = MatchCompletionDetectorService(
-                    squiggle_client=squiggle_client,
-                    db_session=session,
-                    buffer_minutes=buffer_minutes,
-                )
+            from packages.shared.services.match_completion import (
+                run_match_completion as _service,
+            )
 
-                logger.info(
-                    "Detecting completed matches with %s minute buffer",
-                    buffer_minutes,
-                )
-                completion_stats = await detector_service.detect_and_process_completed_matches()
+            result = await _service(session)
+            summary = result.get("message", "")
+            games_checked = result.get("games_checked", 0)
+            error_count = result.get("errors", 0)
+            duration = time.time() - start_time
 
-                games_checked = completion_stats["games_checked"]
-                games_completed = completion_stats["games_completed"]
-                games_already_completed = completion_stats["games_already_completed"]
-                games_not_ready = completion_stats["games_not_ready"]
-                error_count = len(completion_stats.get("errors", []))
+            logger.info("%s completed: %s", JOB_NAME, summary, extra=log_extra)
 
-                elo_cache_updated = False
+            # 4. Mark success
+            await execution_crud.update_execution(
+                execution.id,
+                status="completed",
+                duration_seconds=int(duration),
+                items_processed=games_checked,
+                items_failed=error_count,
+                result_summary=summary,
+            )
+            await session.commit()
 
-                # Update Elo ratings cache if games were completed
-                if games_completed > 0:
-                    logger.info(
-                        "Updating Elo ratings cache after %s completed games",
-                        games_completed,
-                    )
-                    try:
-                        await EloModel.update_cache(session)
-                        elo_cache_updated = True
-                        logger.info("Elo ratings cache updated successfully")
-                    except Exception as elo_error:
-                        logger.error(
-                            "Failed to update Elo cache: %s",
-                            elo_error,
-                            exc_info=True,
-                        )
-                        # Don't fail the job if Elo cache update fails
-
-                duration = time.time() - start_time
-
-                # Build summary
-                summary_parts = [
-                    f"Checked {games_checked} games for completion",
-                    f"Marked {games_completed} games as complete",
-                    f"{games_not_ready} games not ready",
-                    f"{games_already_completed} already complete",
-                ]
-
-                if elo_cache_updated:
-                    summary_parts.append("Elo cache updated")
-
-                if error_count > 0:
-                    summary_parts.append(f"Failed: {error_count}")
-
-                summary = "; ".join(summary_parts)
-                logger.info("%s completed: %s", JOB_NAME, summary, extra=log_extra)
-
-                # 3a. Invalidate stale cache entries after scores change
-                try:
-                    deleted = await invalidate_cache_pattern(medium_cache, "games")
-                    await invalidate_cache_pattern(medium_cache, "tips")
-                    if deleted > 0:
-                        logger.info("Cache invalidated: %s entries", deleted)
-                except Exception:
-                    pass  # cache invalidation is best-effort
-
-                # 4. Mark success
-                await execution_crud.update_execution(
-                    execution.id,
-                    status="completed",
-                    duration_seconds=int(duration),
-                    items_processed=games_checked,
-                    items_failed=error_count,
-                    result_summary=summary,
-                )
-                await session.commit()
-
-                return {"statusCode": 200, "body": {"message": summary}}
-
-            finally:
-                await squiggle_client.close()
+            return {"statusCode": 200, "body": {"message": summary}}
 
         except Exception as e:
             had_error = True

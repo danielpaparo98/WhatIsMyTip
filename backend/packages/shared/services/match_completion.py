@@ -6,8 +6,11 @@ from typing import Any, Dict, Optional
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ..cache import invalidate_cache_pattern, medium_cache
+from ..config import settings
 from ..crud.games import GameCRUD
 from ..logger import get_logger
+from ..models_ml.elo import EloModel
 from ..squiggle import SquiggleClient
 from ..squiggle.utils import parse_squiggle_complete
 
@@ -218,3 +221,83 @@ class MatchCompletionDetectorService:
         except Exception as e:
             self.logger.error(f"Error checking game {squiggle_id}: {str(e)}", exc_info=True)
             return {"squiggle_id": squiggle_id, "status": "error", "error": str(e)}
+
+
+# ---------------------------------------------------------------------------
+# Reusable cron-job core (extracted from FaaS handler in Phase 3)
+# ---------------------------------------------------------------------------
+
+
+async def run_match_completion(session: AsyncSession) -> Dict[str, Any]:
+    """Run a single match-completion pass.
+
+    Detects recently completed matches via Squiggle, updates final
+    scores, refreshes the Elo ratings cache if any game was newly
+    completed, and invalidates related cache entries.
+
+    Returns:
+        A result dict with:
+        - ``status``: ``"success"`` (this job has no skip branch).
+        - ``message``: human-readable summary.
+        - ``games_checked``, ``games_completed``, ``games_already_completed``,
+          ``games_not_ready``, ``errors``: detector stats.
+        - ``elo_cache_updated``: ``True`` if Elo cache was refreshed.
+    """
+    buffer_minutes = settings.match_completion_buffer_minutes
+
+    squiggle_client = SquiggleClient()
+    try:
+        detector = MatchCompletionDetectorService(
+            squiggle_client=squiggle_client,
+            db_session=session,
+            buffer_minutes=buffer_minutes,
+        )
+
+        completion_stats = await detector.detect_and_process_completed_matches()
+
+        games_checked = completion_stats.get("games_checked", 0)
+        games_completed = completion_stats.get("games_completed", 0)
+        games_already_completed = completion_stats.get("games_already_completed", 0)
+        games_not_ready = completion_stats.get("games_not_ready", 0)
+        error_count = len(completion_stats.get("errors", []))
+
+        elo_cache_updated = False
+        if games_completed > 0:
+            try:
+                await EloModel.update_cache(session)
+                elo_cache_updated = True
+            except Exception:  # noqa: BLE001
+                logger.exception("Elo cache update failed; continuing")
+
+        summary_parts = [
+            f"Checked {games_checked} games for completion",
+            f"Marked {games_completed} games as complete",
+            f"{games_not_ready} games not ready",
+            f"{games_already_completed} already complete",
+        ]
+        if elo_cache_updated:
+            summary_parts.append("Elo cache updated")
+        if error_count > 0:
+            summary_parts.append(f"Failed: {error_count}")
+        summary = "; ".join(summary_parts)
+        logger.info("match-completion completed: %s", summary)
+
+        # Invalidate stale cache entries (best-effort)
+        try:
+            await invalidate_cache_pattern(medium_cache, "games")
+            await invalidate_cache_pattern(medium_cache, "tips")
+        except Exception:  # noqa: BLE001
+            pass
+
+        return {
+            "status": "success",
+            "message": summary,
+            "games_checked": games_checked,
+            "games_completed": games_completed,
+            "games_already_completed": games_already_completed,
+            "games_not_ready": games_not_ready,
+            "errors": error_count,
+            "elo_cache_updated": elo_cache_updated,
+        }
+    finally:
+        await squiggle_client.close()
