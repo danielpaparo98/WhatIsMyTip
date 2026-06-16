@@ -109,192 +109,27 @@ async def main(args: dict) -> dict:
             execution = await execution_crud.create_execution(JOB_NAME, status="running")
             await session.commit()
 
-            # 3. Determine seasons to process.
-            #    Priority:  (1) Redis fast-path continuation marker,
-            #               (2) DB `generation_progress` table fallback,
-            #               (3) Fresh start with all seasons.
-            remaining = await cache.get(CONTINUATION_KEY)
-            if remaining:
-                seasons_to_process = remaining
-                logger.info(
-                    "Resuming from Redis continuation marker: %s seasons remaining",
-                    len(seasons_to_process),
-                )
-            else:
-                # Check the DB for an in-progress record from a previous
-                # invocation that was killed before finishing.
-                active_ops = await GenerationProgressCRUD.get_in_progress_operations(
-                    session, operation_type="historic_refresh"
-                )
-                db_progress = active_ops[0] if active_ops else None
-                if db_progress and db_progress.completed_items:
-                    already_done = db_progress.completed_items
-                    remaining_indices = list(range(already_done, len(ALL_SEASONS)))
-                    seasons_to_process = [ALL_SEASONS[i] for i in remaining_indices]
-                    logger.info(
-                        "Resuming from DB progress (record %s): "
-                        "%s seasons already done, %s remaining",
-                        db_progress.id,
-                        already_done,
-                        len(seasons_to_process),
-                    )
-                else:
-                    seasons_to_process = list(ALL_SEASONS)
-                    logger.info(
-                        "Starting fresh: processing all %s seasons",
-                        len(seasons_to_process),
-                    )
+            # 3. Execute job logic (delegated to the reusable service function
+            #    shared with the new in-process BaseJob wrapper).
+            start_time = time.time()
 
-            batches = _build_batches(seasons_to_process)
+            from packages.shared.services.historic_refresh import (
+                run_historic_refresh as _service,
+            )
 
-            # 4. Process batches with time check
-            overall_start = time.time()
-            total_seasons_processed = 0
-            total_games_synced = 0
-            total_tips_generated = 0
-            total_errors = 0
-            batches_processed = 0
+            result = await _service(session, cache=cache)
+            summary = result.get("message", "")
+            total_seasons_processed = result.get("total_seasons_processed", 0)
+            total_errors = result.get("total_errors", 0)
+            duration = time.time() - start_time
 
-            for batch_idx, seasons in enumerate(batches):
-                # Check if we have time for another batch
-                elapsed = time.time() - overall_start
-                if elapsed > MAX_RUNTIME_SECONDS:
-                    # Store remaining seasons in Redis for next invocation
-                    remaining_seasons = []
-                    for remaining_batch in batches[batch_idx:]:
-                        remaining_seasons.extend(remaining_batch)
-                    await cache.set(
-                        CONTINUATION_KEY,
-                        remaining_seasons,
-                        ttl=CONTINUATION_TTL,
-                    )
-                    logger.warning(
-                        "Approaching timeout after %.0fs, "
-                        "processed %s batch(es). "
-                        "Stored %s remaining seasons in Redis.",
-                        elapsed,
-                        batches_processed,
-                        len(remaining_seasons),
-                    )
-                    try:
-                        alerting = AlertingService()
-                        await alerting.send_timeout_alert(
-                            job_name=JOB_NAME,
-                            elapsed_seconds=elapsed,
-                            remaining_work=f"{len(remaining_seasons)} seasons remaining",
-                        )
-                    except Exception:
-                        logger.error("Failed to send timeout alert: %s", traceback.format_exc())
-                    break
-
-                seasons_str = ",".join(str(s) for s in seasons)
-
-                logger.info(
-                    "Processing batch %s/%s: %s",
-                    batch_idx + 1,
-                    len(batches),
-                    seasons_str,
-                )
-
-                batch_start = time.time()
-
-                refresh_service = HistoricDataRefreshService(
-                    db_session=session,
-                    seasons=seasons,
-                    round_id=None,
-                    regenerate_tips=settings.historic_refresh_regenerate_tips,
-                )
-
-                refresh_stats = await refresh_service.refresh_from_string(
-                    seasons_str=seasons_str,
-                    round_id=None,
-                    regenerate_tips=settings.historic_refresh_regenerate_tips,
-                )
-
-                batch_duration = time.time() - batch_start
-                total_seasons_processed += refresh_stats["seasons_processed"]
-                total_games_synced += refresh_stats["games_synced"]
-                total_tips_generated += refresh_stats["tips_generated"]
-                total_errors += len(refresh_stats.get("errors", []))
-                batches_processed += 1
-
-                # Persist completed count to generation_progress so the next
-                # invocation can resume even if Redis is wiped.
-                try:
-                    await GenerationProgressCRUD.upsert_active(
-                        session,
-                        operation_type="historic_refresh",
-                        total_items=len(ALL_SEASONS),
-                        completed_items=total_seasons_processed,
-                    )
-                    await session.commit()
-                except Exception:
-                    logger.warning(
-                        "Failed to persist DB continuation marker", exc_info=True
-                    )
-
-                logger.info(
-                    "Batch %s completed in %.1fs: "
-                    "%s seasons, "
-                    "%s games, "
-                    "%s tips",
-                    seasons_str,
-                    batch_duration,
-                    refresh_stats["seasons_processed"],
-                    refresh_stats["games_synced"],
-                    refresh_stats["tips_generated"],
-                )
-
-            # If all batches were processed, clear both continuation markers
-            if batches_processed == len(batches):
-                await cache.delete(CONTINUATION_KEY)
-                # Mark the DB progress record as completed
-                try:
-                    active_ops = await GenerationProgressCRUD.get_in_progress_operations(
-                        session, operation_type="historic_refresh"
-                    )
-                    for op in active_ops:
-                        await GenerationProgressCRUD.mark_completed(
-                            session, op.id, completed_items=len(ALL_SEASONS)
-                        )
-                    await session.commit()
-                    if active_ops:
-                        logger.info("DB continuation marker(s) marked completed")
-                except Exception:
-                    logger.warning(
-                        "Failed to clear DB continuation marker", exc_info=True
-                    )
-                logger.info("All seasons processed, continuation markers cleared")
-
-            # Build summary
-            overall_duration = time.time() - overall_start
-            summary_parts = [
-                f"Processed {total_seasons_processed} seasons across {batches_processed} batch(es)",
-                f"Synced {total_games_synced} games",
-                f"Generated {total_tips_generated} tips",
-            ]
-
-            if total_errors > 0:
-                summary_parts.append(f"Failed: {total_errors} season(s)")
-
-            summary = "; ".join(summary_parts)
             logger.info("%s completed: %s", JOB_NAME, summary, extra=log_extra)
-
-            # 4a. Full cache invalidation after historic data refresh
-            try:
-                deleted = await invalidate_cache_pattern(medium_cache, "games")
-                await invalidate_cache_pattern(medium_cache, "tips")
-                await invalidate_cache_pattern(medium_cache, "backtest")
-                if deleted > 0:
-                    logger.info("Cache invalidated: %s entries across all patterns", deleted)
-            except Exception:
-                pass  # cache invalidation is best-effort
 
             # 5. Mark success
             await execution_crud.update_execution(
                 execution.id,
                 status="completed",
-                duration_seconds=int(overall_duration),
+                duration_seconds=int(duration),
                 items_processed=total_seasons_processed,
                 items_failed=total_errors,
                 result_summary=summary,
