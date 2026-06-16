@@ -64,6 +64,35 @@ def read_csv(filepath: str) -> List[dict]:
         reader = csv.DictReader(f)
         return list(reader)
 
+def discover_csv_dir(candidates: List[str]) -> Optional[str]:
+    """Return the first candidate directory that exists and contains CSVs.
+
+    Args:
+        candidates: Ordered list of directory paths to check.  Earlier
+            entries win.
+
+    Returns:
+        Absolute path string of the first match, or ``None`` if none of
+        the candidates exist or contain at least one ``.csv`` file.
+
+    This helper is used by the local Docker init container (and the
+    ``migrate_and_seed.py --from-csv`` flow) to find a user's seed
+    directory without hard-coding a single path.  The caller passes a
+    list of well-known locations (project-root ``data/``,
+    ``backend/seed_data/``, ``backend/data/``) and the first one that
+    actually contains CSVs wins.
+    """
+    for path in candidates:
+        if not path:
+            continue
+        if not os.path.isdir(path):
+            continue
+        # Must contain at least one *.csv file
+        for entry in os.listdir(path):
+            if entry.lower().endswith(".csv"):
+                return path
+    return None
+
 
 # ---------------------------------------------------------------------------
 # Seed functions
