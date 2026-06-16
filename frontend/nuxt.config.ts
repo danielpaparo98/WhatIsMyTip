@@ -78,20 +78,15 @@ export default defineNuxtConfig({
   
   runtimeConfig: {
     public: {
-      // Legacy single-backend URL (used when FaaS URLs are not set)
-      apiBase: process.env.API_BASE_URL || 'http://localhost:8000',
+      // Single FastAPI backend base URL (Phase 4: no more per-function
+      // FaaS URLs — the FastAPI app exposes a single base URL and the
+      // backend's /api/... routers handle the rest).  Set via
+      // NUXT_PUBLIC_API_BASE at build time.
+      apiBase: process.env.NUXT_PUBLIC_API_BASE || 'http://localhost:8000',
       umamiHost: process.env.UMAMI_HOST || '',
       umamiWebsiteId: process.env.UMAMI_WEBSITE_ID || '',
       siteUrl: process.env.SITE_URL || 'https://whatismytip.com',
       buyMeACoffeeUrl: process.env.NUXT_PUBLIC_BUY_ME_A_COFFEE_URL || '',
-      // FaaS function URLs — set these to enable FaaS routing mode.
-      // When any FaaS URL is configured, API calls are routed to the
-      // correct function instead of the monolithic apiBase.
-      // Example: https://faas.sfo3.digitalocean.com/{namespace}/api/games
-      gamesFnUrl: process.env.NUXT_PUBLIC_GAMES_FN_URL || '',
-      tipsFnUrl: process.env.NUXT_PUBLIC_TIPS_FN_URL || '',
-      backtestFnUrl: process.env.NUXT_PUBLIC_BACKTEST_FN_URL || '',
-      adminFnUrl: process.env.NUXT_PUBLIC_ADMIN_FN_URL || '',
     }
   },
   
