@@ -134,6 +134,176 @@ uv run pytest tests/unit/ -v
 
 ---
 
+## Local Development with Docker (full stack)
+
+Phase 6 introduces a single `docker compose` workflow that brings up the
+**entire stack** (Postgres + Redis + FastAPI + Nuxt frontend) on your
+local machine so you can exercise every endpoint and every heuristic
+against a real database.  This is the recommended way to develop and
+manually test the application end-to-end.
+
+### Prerequisites
+
+- **Docker Desktop** (Windows / macOS) **or Podman** (Linux / macOS)
+  - Docker: <https://www.docker.com/products/docker-desktop/>
+  - Podman: <https://podman.io/docs/installation>
+- **Git** (already installed)
+- *(Optional)* `curl` and `psql` for poking at the running services
+
+The dev script ([`scripts/dev.sh`](../scripts/dev.sh:1) /
+[`scripts/dev.ps1`](../scripts/dev.ps1:1)) auto-detects Docker first,
+then Podman, then errors out cleanly.  Override with
+`WIMT_RUNTIME=docker` / `WIMT_RUNTIME=podman` (or `$env:WIMT_RUNTIME` on
+PowerShell) when you have both installed.
+
+### Quick start
+
+```bash
+# macOS / Linux / WSL
+git clone https://github.com/danielpaparo98/WhatIsMyTip.git
+cd WhatIsMyTip
+git checkout feature/local-docker-stack    # this branch
+./scripts/dev.sh up
+# Open http://localhost:3000  (frontend)
+# Open http://localhost:8000  (API)
+# Open http://localhost:8000/docs  (Swagger UI)
+```
+
+```powershell
+# Windows + PowerShell
+git clone https://github.com/danielpaparo98/WhatIsMyTip.git
+cd WhatIsMyTip
+git checkout feature/local-docker-stack    # this branch
+.\scripts\dev.ps1 up
+# Open http://localhost:3000  (frontend)
+# Open http://localhost:8000  (API)
+# Open http://localhost:8000/docs  (Swagger UI)
+```
+
+The first `up` builds the `whatismytip-api:local` image from
+[`backend/Dockerfile`](../backend/Dockerfile:1) and pulls `postgres:16-alpine`,
+`redis:7-alpine`, and `oven/bun:1.1`.  Subsequent ups are seconds-fast.
+
+### What you get
+
+| Service     | Port  | Notes |
+|-------------|-------|-------|
+| `postgres`  | 5432  | `wimt / wimt_dev_password` (dev only) |
+| `redis`     | 6379  | No password |
+| `api`       | 8000  | FastAPI + Uvicorn (`--reload` for hot-reload) |
+| `frontend`  | 3000  | Nuxt 4 dev server (HMR) |
+| `init-data` | n/a   | One-shot: runs migrations + CSV load, then exits 0 |
+
+The `init-data` service runs **before** `api` starts (via
+`service_completed_successfully`), so the API never serves traffic
+against an unmigrated database.  The init container is bind-mounted
+against `./data/` at the project root, so dropping CSVs there and
+restarting the init container is enough to seed real data.
+
+### Common commands
+
+```bash
+# Bash (macOS / Linux / WSL)
+./scripts/dev.sh up --logs       # start + follow logs
+./scripts/dev.sh down            # stop (volumes preserved)
+./scripts/dev.sh reset           # stop AND delete the database volume
+./scripts/dev.sh logs api        # tail logs of a specific service
+./scripts/dev.sh ps              # show running containers
+./scripts/dev.sh shell api       # bash into the api container
+./scripts/dev.sh psql            # psql shell
+./scripts/dev.sh redis           # redis-cli shell
+./scripts/dev.sh config          # validate docker-compose.yml
+```
+
+```powershell
+# PowerShell (Windows)
+.\scripts\dev.ps1 up -Up -Logs
+.\scripts\dev.ps1 down
+.\scripts\dev.ps1 reset
+.\scripts\dev.ps1 logs api
+.\scripts\dev.ps1 ps
+.\scripts\dev.ps1 shell api
+.\scripts\dev.ps1 psql
+.\scripts\dev.ps1 redis
+.\scripts\dev.ps1 config
+```
+
+### Loading real CSV data
+
+The `init-data` service bind-mounts `./data/` (at the project root) to
+`/data` in the container, then runs:
+
+```bash
+python scripts/migrate_and_seed.py --from-csv --csv-dir=/data --no-seed --verbose
+```
+
+To load real data, drop the CSVs that
+[`scrape_to_csv.py`](../backend/scripts/scrape_to_csv.py:1) produces
+into `./data/` and re-run the init step:
+
+```bash
+docker compose run --rm init-data          # bash
+# or simply reset and bring the stack back up
+./scripts/dev.sh reset && ./scripts/dev.sh up
+```
+
+`scripts/migrate_and_seed.py` accepts three new flags for the Docker
+flow:
+
+- `--from-csv` — load CSVs from `--csv-dir` (or auto-discovered
+  location) instead of running the synthetic seeder.
+- `--csv-dir PATH` — explicit CSV directory (defaults to auto-discovery
+  via `find_csv_seed_dir()`).
+- `--skip-migrations` — skip `alembic upgrade head` (used when the
+  schema is already up to date).
+- `--no-seed` — skip the synthetic `seed_data.py` run.
+
+### Disabling the in-process cron jobs
+
+The FastAPI app runs four APScheduler cron jobs in-process (see
+[Scheduled Jobs](#scheduled-jobs-in-process-apscheduler) below).  For
+local dev these are usually noise — set `CRON_ENABLED=false` in the
+`api` service environment to silence them.  It is set to `false` by
+default in [`docker-compose.yml`](../docker-compose.yml:1).  To
+exercise the cron paths, set `CRON_ENABLED=true` and restart the api
+container.
+
+### Hot-reload
+
+- **Backend:** `api` bind-mounts `./backend` and runs
+  `uvicorn main:app --reload`.  Edits to anything under `backend/`
+  trigger an automatic restart.
+- **Frontend:** `frontend` bind-mounts `./frontend` and runs
+  `bun run dev --host 0.0.0.0`.  Nuxt HMR is enabled by default.
+
+### Smoke test (CI-friendly)
+
+A pure-Python + bash smoke test lives at
+[`scripts/smoke_local.sh`](../scripts/smoke_local.sh:1) (and
+[`scripts/smoke_local.ps1`](../scripts/smoke_local.ps1:1) for Windows).
+It validates the compose file without bringing the stack up:
+
+```bash
+./scripts/smoke_local.sh
+# (optionally also bring the stack up and check /health)
+./scripts/smoke_local.sh --up --health
+```
+
+If no container runtime is detected, the smoke test falls back to
+validating the YAML structure with Python (handy in CI sandboxes).
+
+### Troubleshooting
+
+| Symptom | Fix |
+|---------|-----|
+| `Cannot connect to Docker daemon` | Start Docker Desktop (or `podman machine init && podman machine start`). |
+| Port 5432 / 6379 / 8000 / 3000 already in use | Stop the conflicting process or edit the `ports:` mapping in `docker-compose.yml`. |
+| `init-data` keeps restarting | Inspect `docker compose logs init-data` — usually a CSV parse error or a stale `data/` directory. |
+| Frontend can't reach the API | Check `NUXT_PUBLIC_API_BASE=http://localhost:8000` (set in compose).  The browser hits the host's localhost, NOT the container network. |
+| Want a fresh database | `./scripts/dev.sh reset` (or `.\scripts\dev.ps1 reset`). |
+
+---
+
 ## Testing Functions Locally
 
 ### Unit Tests

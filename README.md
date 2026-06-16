@@ -79,6 +79,53 @@ WhatIsMyTip is a comprehensive AFL tipping application that combines machine lea
 - **AFLTables / FootyWire**: Historical AFL data (injury, player, matchup data)
 - **Open-Meteo**: Match-day weather data
 
+## Quick Start (Docker — full stack)
+
+The fastest way to run the entire stack (Postgres + Redis + FastAPI +
+Nuxt) on your machine is `docker compose`.  This works on Windows +
+PowerShell, macOS, and Linux (Docker Desktop or Podman).
+
+```bash
+# macOS / Linux / WSL
+git clone https://github.com/danielpaparo98/WhatIsMyTip.git
+cd WhatIsMyTip
+git checkout feature/local-docker-stack
+./scripts/dev.sh up --logs
+# Open http://localhost:3000  (frontend)
+# Open http://localhost:8000  (API)
+# Open http://localhost:8000/docs  (Swagger UI)
+```
+
+```powershell
+# Windows + PowerShell
+git clone https://github.com/danielpaparo98/WhatIsMyTip.git
+cd WhatIsMyTip
+git checkout feature/local-docker-stack
+.\scripts\dev.ps1 up -Up -Logs
+```
+
+That's it — the dev script auto-detects Docker (or Podman), builds the
+API image, runs Alembic migrations + a one-shot CSV loader, and brings
+up Postgres, Redis, the API, and the frontend.
+
+Useful commands:
+
+| Command | Effect |
+|---------|--------|
+| `./scripts/dev.sh down` | Stop the stack (volumes preserved) |
+| `./scripts/dev.sh reset` | Stop AND delete the database volume (full reset) |
+| `./scripts/dev.sh logs api` | Tail the API container logs |
+| `./scripts/dev.sh shell api` | Bash into the API container |
+| `./scripts/dev.sh psql` | Open a psql shell against the dev DB |
+| `./scripts/dev.sh config` | Validate `docker-compose.yml` |
+
+For PowerShell, use the same subcommand names with `.\scripts\dev.ps1`
+(`.\scripts\dev.ps1 reset`, etc.).
+
+See [`docs/development.md`](docs/development.md:1) for the full local
+development guide (loading CSV data, hot-reload, disabling the in-process
+cron jobs, troubleshooting).
+
 ## Installation
 
 ### Prerequisites
