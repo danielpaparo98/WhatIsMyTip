@@ -1,11 +1,14 @@
 """Unit tests for the Daily Sync scheduled function.
 
-Tests the ``main()`` entry point by mocking the database session factory,
-CRUD operations, services, and Redis pool. No external dependencies required.
+Tests the ``main()`` FaaS entry point, which (post-Phase 3 refactor)
+delegates to ``packages.shared.services.daily_sync.run_daily_sync``.
+We mock at the service layer to verify the FaaS handler still wires
+up lock acquisition, execution tracking, and the OpenWhisk-shaped
+``statusCode`` / ``body`` response.
 
-Note: The cron function directories use hyphens (e.g. ``daily-sync/``) which
-are not valid Python identifiers.  We use ``importlib`` to load the module
-from its file path.
+Note: The cron function directories use hyphens (e.g. ``daily-sync/``)
+which are not valid Python identifiers, so we use ``importlib`` to
+load the module from its file path.
 """
 
 import importlib.util
@@ -28,6 +31,10 @@ def _import_daily_sync():
     return daily_sync
 
 
+# Service module path used to mock the delegated logic
+SERVICE_PATH = "packages.shared.services.daily_sync"
+
+
 class TestDailySyncFunction:
     """Test the daily-sync scheduled function."""
 
@@ -39,20 +46,21 @@ class TestDailySyncFunction:
         mock_session = AsyncMock()
         mock_execution = MagicMock(id=1)
 
-        mock_stats = {
+        mock_service_result = {
+            "status": "success",
+            "message": "Synced 9 games for season 2025; Created: 2, Updated: 5, Skipped: 2; Elo cache updated",
+            "total_games": 9,
             "games_created": 2,
             "games_updated": 5,
             "games_skipped": 2,
-            "total_games": 9,
-            "errors": [],
+            "errors": 0,
+            "duration_seconds": 3,
         }
 
         with patch.object(mod, "_get_session_factory") as mock_factory, \
              patch.object(mod, "JobLockCRUD") as mock_lock_crud_cls, \
              patch.object(mod, "JobExecutionCRUD") as mock_exec_crud_cls, \
-             patch.object(mod, "SquiggleClient") as mock_squiggle_cls, \
-             patch.object(mod, "GameSyncService") as mock_sync_cls, \
-             patch.object(mod, "EloModel") as mock_elo, \
+             patch(f"{SERVICE_PATH}.run_daily_sync", new_callable=AsyncMock, return_value=mock_service_result), \
              patch.object(mod, "close_redis_pool", new_callable=AsyncMock):
 
             mock_factory.return_value.return_value.__aenter__ = AsyncMock(return_value=mock_session)
@@ -66,18 +74,14 @@ class TestDailySyncFunction:
             mock_exec_crud.create_execution = AsyncMock(return_value=mock_execution)
             mock_exec_crud.update_execution = AsyncMock()
 
-            mock_squiggle = mock_squiggle_cls.return_value
-            mock_squiggle.close = AsyncMock()
-
-            mock_sync = mock_sync_cls.return_value
-            mock_sync.sync_games = AsyncMock(return_value=mock_stats)
-
-            mock_elo.update_cache = AsyncMock()
-
             result = await mod.main({})
 
         assert result["statusCode"] == 200
         assert "Synced 9 games" in result["body"]["message"]
+        # Execution row finalised
+        update_call = mock_exec_crud.update_execution.call_args
+        assert update_call.kwargs["status"] == "completed"
+        assert update_call.kwargs["items_processed"] == 9
 
     @pytest.mark.asyncio
     async def test_lock_acquisition_failure(self):
@@ -102,8 +106,8 @@ class TestDailySyncFunction:
         assert "already running" in result["body"]["message"].lower()
 
     @pytest.mark.asyncio
-    async def test_sync_error_returns_500(self):
-        """When sync raises an exception, returns 500."""
+    async def test_service_error_returns_500(self):
+        """When the service raises an exception, returns 500."""
         mod = _import_daily_sync()
 
         mock_session = AsyncMock()
@@ -112,8 +116,7 @@ class TestDailySyncFunction:
         with patch.object(mod, "_get_session_factory") as mock_factory, \
              patch.object(mod, "JobLockCRUD") as mock_lock_crud_cls, \
              patch.object(mod, "JobExecutionCRUD") as mock_exec_crud_cls, \
-             patch.object(mod, "SquiggleClient") as mock_squiggle_cls, \
-             patch.object(mod, "GameSyncService") as mock_sync_cls, \
+             patch(f"{SERVICE_PATH}.run_daily_sync", new_callable=AsyncMock, side_effect=RuntimeError("API down")), \
              patch.object(mod, "close_redis_pool", new_callable=AsyncMock):
 
             mock_factory.return_value.return_value.__aenter__ = AsyncMock(return_value=mock_session)
@@ -127,12 +130,6 @@ class TestDailySyncFunction:
             mock_exec_crud.create_execution = AsyncMock(return_value=mock_execution)
             mock_exec_crud.update_execution = AsyncMock()
 
-            mock_squiggle = mock_squiggle_cls.return_value
-            mock_squiggle.close = AsyncMock()
-
-            mock_sync = mock_sync_cls.return_value
-            mock_sync.sync_games = AsyncMock(side_effect=RuntimeError("API down"))
-
             result = await mod.main({})
 
         assert result["statusCode"] == 500
@@ -140,20 +137,26 @@ class TestDailySyncFunction:
 
     @pytest.mark.asyncio
     async def test_off_season_skip(self):
-        """During off-season outside 2-4 AM window, sync is skipped."""
+        """When the service returns a skipped result, the FaaS still returns 200."""
         mod = _import_daily_sync()
 
         mock_session = AsyncMock()
         mock_execution = MagicMock(id=1)
 
-        # Mock datetime to return a month in the off-season (November) at 10 AM
-        mock_dt = MagicMock()
-        mock_dt.now.return_value = MagicMock(month=11, hour=10)
+        mock_service_result = {
+            "status": "skipped",
+            "message": "Skipping daily sync – off-season reduced frequency (month=11, hour=10)",
+            "total_games": 0,
+            "games_created": 0,
+            "games_updated": 0,
+            "games_skipped": 0,
+            "errors": 0,
+        }
 
         with patch.object(mod, "_get_session_factory") as mock_factory, \
              patch.object(mod, "JobLockCRUD") as mock_lock_crud_cls, \
              patch.object(mod, "JobExecutionCRUD") as mock_exec_crud_cls, \
-             patch.object(mod, "datetime", mock_dt), \
+             patch(f"{SERVICE_PATH}.run_daily_sync", new_callable=AsyncMock, return_value=mock_service_result), \
              patch.object(mod, "close_redis_pool", new_callable=AsyncMock):
 
             mock_factory.return_value.return_value.__aenter__ = AsyncMock(return_value=mock_session)
