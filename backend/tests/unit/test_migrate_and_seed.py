@@ -619,3 +619,174 @@ class TestRealCsvParsing:
         assert isinstance(elo, EloCache)
         assert elo.team_name is not None
         assert elo.rating is not None
+
+
+
+# ---------------------------------------------------------------------------
+# Path discovery
+# ---------------------------------------------------------------------------
+
+
+class TestFindCsvSeedDir:
+    """Tests for find_csv_seed_dir() -- auto-detect the seed directory."""
+
+    def test_prefers_root_data_dir(self, tmp_path):
+        """Project-root ``data/`` wins over ``backend/seed_data/``."""
+        from scripts.migrate_and_seed import find_csv_seed_dir
+
+        root_data = tmp_path / "data"
+        root_data.mkdir()
+        (root_data / "games.csv").write_text("a\n")
+        backend_seed = tmp_path / "backend" / "seed_data"
+        backend_seed.mkdir(parents=True)
+        (backend_seed / "games.csv").write_text("a\n")
+
+        project_root = tmp_path
+        result = find_csv_seed_dir(project_root=project_root)
+        assert result == root_data
+
+    def test_falls_back_to_backend_seed_data(self, tmp_path):
+        """If no ``data/`` exists, use ``backend/seed_data/``."""
+        from scripts.migrate_and_seed import find_csv_seed_dir
+
+        backend_seed = tmp_path / "backend" / "seed_data"
+        backend_seed.mkdir(parents=True)
+        (backend_seed / "games.csv").write_text("a\n")
+
+        result = find_csv_seed_dir(project_root=tmp_path)
+        assert result == backend_seed
+
+    def test_falls_back_to_backend_data(self, tmp_path):
+        """If neither ``data/`` nor ``backend/seed_data/`` exists, try ``backend/data/``."""
+        from scripts.migrate_and_seed import find_csv_seed_dir
+
+        backend_data = tmp_path / "backend" / "data"
+        backend_data.mkdir(parents=True)
+        (backend_data / "games.csv").write_text("a\n")
+
+        result = find_csv_seed_dir(project_root=tmp_path)
+        assert result == backend_data
+
+    def test_returns_none_when_nothing_found(self, tmp_path):
+        """If no candidate exists, return None."""
+        from scripts.migrate_and_seed import find_csv_seed_dir
+
+        result = find_csv_seed_dir(project_root=tmp_path)
+        assert result is None
+
+    def test_empty_dirs_are_skipped(self, tmp_path):
+        """Empty directories (no CSVs) are not selected."""
+        from scripts.migrate_and_seed import find_csv_seed_dir
+
+        empty = tmp_path / "data"
+        empty.mkdir()
+        (empty / "README.md").write_text("not a csv")
+
+        with_csv = tmp_path / "backend" / "seed_data"
+        with_csv.mkdir(parents=True)
+        (with_csv / "games.csv").write_text("a\n")
+
+        result = find_csv_seed_dir(project_root=tmp_path)
+        assert result == with_csv
+
+
+# ---------------------------------------------------------------------------
+# New CLI flags: --from-csv and --skip-migrations
+# ---------------------------------------------------------------------------
+
+
+class TestFromCsvFlag:
+    """--from-csv should only load CSVs (skip synthetic seed_data)."""
+
+    def test_from_csv_invokes_load_csv(self, tmp_path):
+        """--from-csv should call scripts.migrate_and_seed._run_load_csv."""
+        from scripts.migrate_and_seed import main as migrate_main
+
+        csv_dir = tmp_path / "data"
+        csv_dir.mkdir()
+        (csv_dir / "games.csv").write_text("a\n")
+
+        test_args = [
+            "migrate_and_seed",
+            "--database-url", "postgresql://localhost/db",
+            "--from-csv",
+            "--csv-dir", str(csv_dir),
+            "--skip-migrations",
+            "--no-seed",
+        ]
+
+        with patch("sys.argv", test_args):
+            with patch("scripts.migrate_and_seed._run_load_csv") as mock_load:
+                with patch("scripts.migrate_and_seed.run_migrations") as mock_mig:
+                    with patch("scripts.migrate_and_seed._run_synthetic_seed") as mock_seed:
+                        migrate_main()
+
+        mock_load.assert_called_once()
+        mock_mig.assert_not_called()
+        mock_seed.assert_not_called()
+
+    def test_from_csv_skipped_when_not_provided(self, tmp_path):
+        """Without --from-csv, no CSV load should be invoked."""
+        from scripts.migrate_and_seed import main as migrate_main
+
+        test_args = [
+            "migrate_and_seed",
+            "--database-url", "postgresql://localhost/db",
+            "--skip-migrations",
+            "--no-seed",
+        ]
+
+        with patch("sys.argv", test_args):
+            with patch("scripts.migrate_and_seed._run_load_csv") as mock_load:
+                with patch("scripts.migrate_and_seed.run_migrations") as mock_mig:
+                    with patch("scripts.migrate_and_seed._run_synthetic_seed") as mock_seed:
+                        migrate_main()
+
+        mock_load.assert_not_called()
+        mock_mig.assert_not_called()
+        mock_seed.assert_not_called()
+
+
+class TestSkipMigrationsFlag:
+    """--skip-migrations should suppress alembic upgrade head."""
+
+    def test_skip_migrations_skips_alembic(self, tmp_path):
+        """With --skip-migrations, run_migrations() must NOT be called."""
+        from scripts.migrate_and_seed import main as migrate_main
+
+        test_args = [
+            "migrate_and_seed",
+            "--database-url", "postgresql://localhost/db",
+            "--skip-migrations",
+            "--no-seed",
+        ]
+
+        with patch("sys.argv", test_args):
+            with patch("scripts.migrate_and_seed.run_migrations") as mock_mig:
+                with patch("scripts.migrate_and_seed._run_load_csv") as mock_load:
+                    with patch("scripts.migrate_and_seed._run_synthetic_seed") as mock_seed:
+                        migrate_main()
+
+        mock_mig.assert_not_called()
+        mock_load.assert_not_called()
+        mock_seed.assert_not_called()
+
+    def test_default_runs_migrations(self, tmp_path):
+        """Without --skip-migrations, run_migrations() should be called."""
+        from scripts.migrate_and_seed import main as migrate_main
+
+        test_args = [
+            "migrate_and_seed",
+            "--database-url", "postgresql://localhost/db",
+            "--no-seed",
+        ]
+
+        with patch("sys.argv", test_args):
+            with patch("scripts.migrate_and_seed.run_migrations") as mock_mig:
+                with patch("scripts.migrate_and_seed._run_load_csv") as mock_load:
+                    with patch("scripts.migrate_and_seed._run_synthetic_seed") as mock_seed:
+                        migrate_main()
+
+        mock_mig.assert_called_once()
+        mock_load.assert_not_called()
+        mock_seed.assert_not_called()

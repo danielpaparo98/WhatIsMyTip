@@ -199,3 +199,74 @@ class TestReadCsv:
         assert len(result) == 2
         assert result[0]["name"] == "alice"
         assert result[1]["value"] == "2"
+
+
+# ---------------------------------------------------------------------------
+# Tests for discover_csv_dir
+# ---------------------------------------------------------------------------
+
+
+class TestDiscoverCsvDir:
+    """Tests for discover_csv_dir() — auto-detect the CSV seed directory."""
+
+    def test_first_candidate_wins(self, tmp_path):
+        """When multiple candidates exist, the first one in the list wins."""
+        from scripts.load_csv_to_db import discover_csv_dir
+
+        first = tmp_path / "data"
+        first.mkdir()
+        (first / "players.csv").write_text("name\nA\n")
+        second = tmp_path / "backend" / "data"
+        second.mkdir(parents=True)
+        (second / "players.csv").write_text("name\nB\n")
+
+        candidates = [str(first), str(second)]
+        result = discover_csv_dir(candidates)
+        assert result == str(first)
+
+    def test_skips_missing_dirs(self, tmp_path):
+        """Missing candidate directories are silently skipped."""
+        from scripts.load_csv_to_db import discover_csv_dir
+
+        existing = tmp_path / "data"
+        existing.mkdir()
+        (existing / "x.csv").write_text("a\n")
+        candidates = [
+            str(tmp_path / "missing_a"),
+            str(existing),
+            str(tmp_path / "missing_b"),
+        ]
+        result = discover_csv_dir(candidates)
+        assert result == str(existing)
+
+    def test_returns_none_when_nothing_found(self, tmp_path):
+        """If no candidate exists, return None."""
+        from scripts.load_csv_to_db import discover_csv_dir
+
+        candidates = [
+            str(tmp_path / "a"),
+            str(tmp_path / "b"),
+        ]
+        result = discover_csv_dir(candidates)
+        assert result is None
+
+    def test_empty_candidate_list_returns_none(self):
+        """An empty candidate list returns None."""
+        from scripts.load_csv_to_db import discover_csv_dir
+
+        assert discover_csv_dir([]) is None
+
+    def test_directory_must_contain_csv_files(self, tmp_path):
+        """Empty directories (no CSVs) should be skipped, not returned."""
+        from scripts.load_csv_to_db import discover_csv_dir
+
+        empty = tmp_path / "empty"
+        empty.mkdir()
+        (empty / "README.md").write_text("# not a csv")
+
+        with_csv = tmp_path / "with_csv"
+        with_csv.mkdir()
+        (with_csv / "data.csv").write_text("a,b\n1,2\n")
+
+        result = discover_csv_dir([str(empty), str(with_csv)])
+        assert result == str(with_csv)
