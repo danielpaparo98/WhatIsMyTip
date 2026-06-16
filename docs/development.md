@@ -228,6 +228,29 @@ restarting the init container is enough to seed real data.
 .\scripts\dev.ps1 config
 ```
 
+### Generating real CSV data with `make-data.sh`
+
+The fastest way to populate `./data/` with real AFL data is to run the Phase-7 wrapper:
+
+```bash
+# Bash / macOS / Linux / WSL
+./scripts/make-data.sh        # default: 2020-2025 (10-30 min)
+
+# PowerShell / Windows
+.\scripts\make-data.ps1
+```
+
+The script calls [`backend/scripts/scrape_to_csv.py`](../backend/scripts/scrape_to_csv.py:1) under the hood,
+pipes its output to `./data/scrape.log`, and prints a per-CSV row-count
+summary at the end.  See [`docs/data-loading.md`](data-loading.md) for the full
+scope decision, data sources, and 'when to re-scrape' guidance.
+
+Override the default seasons via the `SEASONS` env var:
+
+```bash
+SEASONS="2024 2025" ./scripts/make-data.sh      # just 2 seasons, ~3 min
+```
+
 ### Loading real CSV data
 
 The `init-data` service bind-mounts `./data/` (at the project root) to
