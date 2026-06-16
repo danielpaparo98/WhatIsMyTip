@@ -58,28 +58,32 @@ class Settings(BaseSettings):
     completion_check_timeout_seconds: int = 300  # 5 minutes
 
     # Tip Generation
-    # NOTE: cron expressions here are for documentation only — the actual trigger
-    # schedule is configured in project.yml:
-    #   tip-generation:  "0 19 * * *"  (= 3:00 AM AWST, UTC+8)
-    cron_tip_generation: str = "0 3 * * *"  # 3:00 AM AWST (= 19:00 UTC)
+    # Phase 4: cron expressions here are interpreted by the in-process
+    # APScheduler (see app/core/scheduler.py) in the FastAPI app's
+    # configured timezone (default: Australia/Perth, UTC+8).  No more
+    # UTC-only DO Functions triggers — the app reads these strings
+    # directly so the timezone is whatever the host/container is set to.
+    cron_tip_generation: str = "0 3 * * *"  # 3:00 AM AWST daily
     tip_generation_timeout_seconds: int = 1800  # 30 minutes
     tip_generation_enabled: bool = True
     tip_generation_regenerate_existing: bool = False
 
     # Historical Data Refresh
-    # NOTE: actual trigger schedule in project.yml:
-    #   historic-refresh:  "0 20 * * 6"  (= 4:00 AM AWST Sunday, UTC+8)
-    cron_historical_refresh: str = "0 4 * * 0"  # 4:00 AM AWST Sunday (= 20:00 UTC Saturday)
+    # See note above — the expression is in the FastAPI app's local
+    # timezone (default Australia/Perth).
+    cron_historical_refresh: str = "0 4 * * 0"  # 4:00 AM AWST Sunday
     historic_refresh_enabled: bool = True
     historic_refresh_seasons: str = "2010-2025"
     historic_refresh_regenerate_tips: bool = False
     historical_refresh_start_year: int = 2010
-    historical_refresh_timeout_seconds: int = 900  # 15 minutes (DO Functions hard limit)
+    historical_refresh_timeout_seconds: int = 900  # 15 minutes (safety cap for in-process scheduler)
 
     # Retry Configuration
     job_timeout_seconds: int = 3600
-    # Lock expiry should match the platform timeout (900s), not the runtime budget.
-    # DO Functions enforces a hard 15-minute ceiling; set locks to 900s max.
+    # Lock expiry caps how long a crashed in-process job can hold the
+    # advisory lock before another instance / restart is allowed to
+    # pick it up.  15 minutes is the original FaaS ceiling; keeping
+    # it as a sane upper bound on the in-process scheduler too.
     job_lock_expire_seconds: int = 900
     job_max_retries: int = 3
     job_retry_delay_seconds: int = 60
