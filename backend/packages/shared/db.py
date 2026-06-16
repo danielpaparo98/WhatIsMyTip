@@ -94,6 +94,20 @@ def _get_session_factory():
     return _async_session_factory
 
 
+def get_session() -> AsyncSession:
+    """Return a new :class:`AsyncSession` from the shared factory.
+
+    Used as a FastAPI dependency via :mod:`app.core.db_deps` so that route
+    handlers can write ``db: AsyncSession = Depends(get_session)`` and have
+    the session lifecycle managed by FastAPI.
+
+    The caller is responsible for committing/rolling back and closing the
+    session (use :func:`get_db` in :mod:`app.core.db_deps` for the standard
+    FastAPI generator-based pattern).
+    """
+    return _get_session_factory()()
+
+
 async def dispose_engine(force: bool = False) -> None:
     """Dispose of the engine and its connection pool.
 
