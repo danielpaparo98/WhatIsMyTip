@@ -68,119 +68,21 @@ async def main(args: dict) -> dict:
             execution = await execution_crud.create_execution(JOB_NAME, status="running")
             await session.commit()
 
-            # 3. Find next upcoming round that needs tips
-            next_round = await GameCRUD.get_next_upcoming_round(session)
-
-            if not next_round:
-                msg = "No upcoming rounds found that need tips"
-                logger.info(msg)
-                await execution_crud.update_execution(
-                    execution.id,
-                    status="completed",
-                    result_summary=msg,
-                )
-                await session.commit()
-                return {"statusCode": 200, "body": {"message": msg}}
-
-            season, round_id = next_round
-            logger.info("Found next upcoming round: season %s, round %s", season, round_id)
-
-            # 4. Execute job logic
+            # 3. Execute job logic (delegated to the reusable service function
+            #    shared with the new in-process BaseJob wrapper).
             start_time = time.time()
-            regenerate = settings.tip_generation_regenerate_existing
 
-            generation_service = TipGenerationService(
-                db_session=session,
-                season=season,
-                round_id=round_id,
+            from packages.shared.services.tip_generation import (
+                run_tip_generation as _service,
             )
 
-            logger.info(
-                "Generating tips for season %s, round %s, "
-                "regenerate=%s",
-                season,
-                round_id,
-                regenerate,
-            )
-
-            generation_stats = await generation_service.generate_for_round(
-                season=season,
-                round_id=round_id,
-                regenerate=regenerate,
-            )
-
-            games_processed = generation_stats["games_processed"]
-            tips_created = generation_stats["tips_created"]
-            tips_skipped = generation_stats["tips_skipped"]
-            tips_updated = generation_stats.get("tips_updated", 0)
-            model_predictions_created = generation_stats["model_predictions_created"]
-            model_predictions_updated = generation_stats.get("model_predictions_updated", 0)
-            error_count = len(generation_stats.get("errors", []))
-
-            # Build summary
-            summary_parts = [
-                f"Generated tips for season {season}, round {round_id}",
-                f"Processed {games_processed} games",
-                f"Created {tips_created} tips",
-                f"Skipped {tips_skipped} existing tips",
-            ]
-
-            if tips_updated > 0:
-                summary_parts.append(f"Updated {tips_updated} tips")
-
-            summary_parts.append(
-                f"Created {model_predictions_created} model predictions"
-            )
-
-            if model_predictions_updated > 0:
-                summary_parts.append(
-                    f"Updated {model_predictions_updated} model predictions"
-                )
-
-            if error_count > 0:
-                summary_parts.append(f"Failed: {error_count}")
-
-            # Generate AI explanations for the round's tips
-            try:
-                explanation_service = ExplanationService()
-                explanation_count = await explanation_service.generate_for_round(
-                    session, season, round_id
-                )
-                if explanation_count > 0:
-                    summary_parts.append(
-                        f"Generated {explanation_count} AI explanations"
-                    )
-                    logger.info(
-                        "Generated %s AI explanations for "
-                        "season %s, round %s",
-                        explanation_count,
-                        season,
-                        round_id,
-                    )
-                await explanation_service.close()
-            except Exception as e:
-                # Explanation failure should not fail the job
-                logger.warning(
-                    "Explanation generation failed for season %s, "
-                    "round %s: %s",
-                    season,
-                    round_id,
-                    e,
-                    exc_info=True,
-                )
-                summary_parts.append("Explanation generation failed (tips still saved)")
-
+            result = await _service(session)
+            summary = result.get("message", "")
+            games_processed = result.get("games_processed", 0)
+            error_count = result.get("errors", 0)
             duration = time.time() - start_time
-            summary = "; ".join(summary_parts)
-            logger.info("%s completed: %s", JOB_NAME, summary, extra=log_extra)
 
-            # 4a. Invalidate stale cache entries after new tips generated
-            try:
-                await invalidate_cache_pattern(medium_cache, "tips")
-                await invalidate_cache_pattern(medium_cache, "backtest")
-                logger.info("Cache invalidated: tips and backtest entries cleared")
-            except Exception:
-                pass  # cache invalidation is best-effort
+            logger.info("%s completed: %s", JOB_NAME, summary, extra=log_extra)
 
             # 5. Mark success
             await execution_crud.update_execution(
