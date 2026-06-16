@@ -108,11 +108,15 @@ async def retry_with_backoff(
     backoff_multiplier: float = 2.0,
     max_delay: float = 300.0,
     jitter: float = 0.1,
+    retryable_exceptions: tuple[type[BaseException], ...] = (Exception,),
 ) -> _T:
     """Retry an async callable with exponential backoff and jitter.
 
-    Only retries on ``TransientJobError``.  ``PermanentJobError`` is
-    re-raised immediately, and all other exceptions are assumed transient.
+    Only retries on exceptions that match ``retryable_exceptions``.
+    ``PermanentJobError`` is always re-raised immediately (it is not
+    retried regardless of ``retryable_exceptions``).  All other
+    exceptions are assumed transient by default but the caller can
+    narrow the retry set via ``retryable_exceptions``.
 
     Args:
         func: An async callable that takes no arguments.
@@ -121,6 +125,8 @@ async def retry_with_backoff(
         backoff_multiplier: Multiplier for exponential backoff (default 2.0).
         max_delay: Maximum delay between retries in seconds (default 300.0).
         jitter: Random jitter factor, 0–1 (default 0.1).
+        retryable_exceptions: Tuple of exception types that should be retried
+            (default: ``(Exception,)``).  PermanentJobError is never retried.
 
     Returns:
         The return value of ``func()``.
@@ -130,7 +136,7 @@ async def retry_with_backoff(
         Exception: If all retries are exhausted, the last transient
             exception is re-raised.
     """
-    last_exception: Exception | None = None
+    last_exception: BaseException | None = None
     delay = initial_delay
 
     for attempt in range(max_retries + 1):
@@ -138,17 +144,20 @@ async def retry_with_backoff(
             return await func()
         except PermanentJobError:
             raise
-        except TransientJobError:
-            last_exception = TransientJobError(str(last_exception)) if last_exception else None  # type: ignore[arg-type]
-            last_exception = TransientJobError(str(last_exception))  # noqa
-        except Exception as e:
+        except retryable_exceptions as e:
             last_exception = e
+        except Exception:
+            # Not in retryable_exceptions — re-raise immediately
+            raise
 
         if attempt == max_retries:
             break
 
         actual_delay = min(delay * (1 + random.uniform(-jitter, jitter)), max_delay)
         delay *= backoff_multiplier
-        await asyncio.sleep(actual_delay)
+        if actual_delay > 0:
+            await asyncio.sleep(actual_delay)
 
-    raise last_exception  # type: ignore[misc]
+    if last_exception is None:
+        raise RuntimeError("retry_with_backoff: no exception was caught")
+    raise last_exception
