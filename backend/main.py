@@ -159,8 +159,15 @@ async def unhandled_exception_handler(
 # Phase 1
 app.include_router(health_router, tags=["health"])
 
-# Phase 2 (intentionally NOT registered in Phase 1):
-#   app.include_router(games_router,    prefix="/api/games",    tags=["games"])
-#   app.include_router(tips_router,     prefix="/api/tips",     tags=["tips"])
-#   app.include_router(backtest_router, prefix="/api/backtest", tags=["backtest"])
-#   app.include_router(admin_router,    prefix="/api/admin",    tags=["admin"])
+# Phase 2 — ported from the FaaS handlers; URL paths and response
+# field names are preserved 1:1 so the frontend and existing clients
+# don't change.
+from app.api.games import router as games_router
+from app.api.tips import router as tips_router
+from app.api.backtest import router as backtest_router
+from app.api.admin import router as admin_router
+
+app.include_router(games_router, prefix="/api/games", tags=["games"])
+app.include_router(tips_router, prefix="/api/tips", tags=["tips"])
+app.include_router(backtest_router, prefix="/api/backtest", tags=["backtest"])
+app.include_router(admin_router, prefix="/api/admin", tags=["admin"])

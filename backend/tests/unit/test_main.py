@@ -10,7 +10,7 @@ Covers:
 - BackendServiceError → 401/4xx/5xx with structured JSON
 - RequestValidationError → 422 with structured JSON
 - Unhandled exceptions → 500 with sanitized body
-- Routers from Phase 2 are NOT yet registered (intentional Phase 1 scope)
+- Phase 2 routers ARE registered at their FaaS-compatible prefixes
 """
 
 from __future__ import annotations
@@ -30,7 +30,6 @@ def _all_paths(app) -> set[str]:
             if isinstance(r, Route):
                 paths.add(r.path)
                 continue
-            # ``_IncludedRouter`` wraps the original APIRouter; use that.
             inner = getattr(r, "original_router", None)
             if inner is not None and hasattr(inner, "routes"):
                 walk(inner.routes)
@@ -41,9 +40,27 @@ def _all_paths(app) -> set[str]:
     return paths
 
 
-class TestAppImport:
-    """``main.app`` is importable and the object exists."""
+def _api_prefixes(app) -> set[str]:
+    """Return the set of top-level ``/api/*`` route prefixes.
 
+    FastAPI's ``_IncludedRouter`` objects store the include prefix on
+    ``include_context.prefix`` (a private field) — not on the
+    ``original_router`` itself, which keeps an empty prefix.
+    """
+    prefixes: set[str] = set()
+    for r in app.routes:
+        if type(r).__name__ != "_IncludedRouter":
+            continue
+        ctx = getattr(r, "include_context", None)
+        if ctx is None:
+            continue
+        prefix = getattr(ctx, "prefix", "") or ""
+        if prefix.startswith("/api/"):
+            prefixes.add(prefix)
+    return prefixes
+
+
+class TestAppImport:
     def test_app_is_fastapi(self):
         from main import app
 
@@ -71,8 +88,6 @@ class TestAppImport:
 
 
 class TestHealthRoute:
-    """The /health route is wired into the main app."""
-
     def test_health_returns_200(self):
         from main import app
 
@@ -89,8 +104,6 @@ class TestHealthRoute:
 
 
 class TestSecurityHeaders:
-    """The main app applies security headers to every response."""
-
     def test_security_headers_on_health(self):
         from main import app
 
@@ -120,8 +133,6 @@ class TestSecurityHeaders:
 
 
 class TestCors:
-    """CORS preflight (OPTIONS) is handled."""
-
     def test_cors_preflight(self):
         from main import app
 
@@ -133,17 +144,11 @@ class TestCors:
                 "Access-Control-Request-Method": "GET",
             },
         )
-        # Either 200 (preflight passed) or 405 (method not allowed) are
-        # both valid FastAPI behaviors for OPTIONS on a registered route.
-        # The important thing is CORS headers are present in the response.
         assert resp.headers.get("access-control-allow-origin") is not None
 
 
 class TestExceptionHandlers:
-    """Global exception handlers produce the documented JSON shapes."""
-
     def test_backend_service_error_returns_structured_json(self):
-        """A route that raises BackendServiceError returns code/message/details."""
         from app.core.exceptions import BackendServiceError
         from main import app
 
@@ -179,19 +184,30 @@ class TestExceptionHandlers:
         assert body["code"] == "internal_error"
         assert body["message"] == "An internal error occurred"
         assert "request_id" in body
-        # Sanitized: no traceback leaked
         assert "kaboom" not in body["message"]
 
 
-class TestPhase1Scope:
-    """Phase 2 routers are NOT registered yet (intentional Phase 1 scope)."""
-
-    def test_no_games_router(self):
+class TestPhase2Wiring:
+    def test_games_router_registered(self):
         from main import app
 
-        paths = _all_paths(app)
-        # None of the Phase 2 routes should be registered yet
-        assert not any(p.startswith("/api/games") for p in paths)
-        assert not any(p.startswith("/api/tips") for p in paths)
-        assert not any(p.startswith("/api/backtest") for p in paths)
-        assert not any(p.startswith("/api/admin") for p in paths)
+        prefixes = _api_prefixes(app)
+        assert any(p.startswith("/api/games") for p in prefixes), prefixes
+
+    def test_tips_router_registered(self):
+        from main import app
+
+        prefixes = _api_prefixes(app)
+        assert any(p.startswith("/api/tips") for p in prefixes), prefixes
+
+    def test_backtest_router_registered(self):
+        from main import app
+
+        prefixes = _api_prefixes(app)
+        assert any(p.startswith("/api/backtest") for p in prefixes), prefixes
+
+    def test_admin_router_registered(self):
+        from main import app
+
+        prefixes = _api_prefixes(app)
+        assert any(p.startswith("/api/admin") for p in prefixes), prefixes
