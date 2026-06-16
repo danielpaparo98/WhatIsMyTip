@@ -35,12 +35,20 @@ class Settings(BaseSettings):
     cron_enabled: bool = True
     cron_timezone: str = "Australia/Perth"
 
+    # --- Phase 3 in-process APScheduler cron expressions ---
+    # The FastAPI app uses these directly via ``app.core.scheduler``.
+    # The values are in AWST (the scheduler's timezone).
+    daily_sync_cron: str = "*/15 * * * *"
+    match_completion_cron: str = "5,20,35,50 * * * *"
+    tip_generation_cron: str = "0 3 * * *"  # 3:00 AM AWST daily
+    historic_refresh_cron: str = "0 4 * * 0"  # 4:00 AM AWST Sunday
+
     # Daily Sync Configuration
     current_season: int = Field(default_factory=_default_season)
     daily_sync_enabled: bool = True
 
     # Game Sync (frequent to keep live round data fresh)
-    cron_daily_sync: str = "*/15 * * * *"  # Every 15 minutes
+    cron_daily_sync: str = "*/15 * * * *"  # Every 15 minutes (legacy FaaS)
     daily_sync_timeout_seconds: int = 3600  # 1 hour
 
     # Match Completion Detector
