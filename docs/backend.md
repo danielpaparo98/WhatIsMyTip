@@ -82,7 +82,6 @@ All HTTP endpoints and cron jobs share a common code base under `packages/shared
 | Cron job objects (bound to the scheduler) | `backend/app/cron/*.py` |
 | Scheduler wiring | `backend/app/core/scheduler.py` |
 | Shared business logic, DB, cache, ML, services | `backend/packages/shared/` |
-| Legacy FaaS handlers (kept for back-compat — deletion deferred to Phase 5) | `backend/packages/api/`, `backend/packages/cron/` |
 | Container image | `backend/Dockerfile` |
 | Reverse proxy (in front of the FastAPI container) | `backend/proxy/` |
 
@@ -161,10 +160,6 @@ backend/
 │   │   ├── afl_data/                  # AFLTables + FootyWire clients
 │   │   ├── weather/                   # Open-Meteo weather client
 │   │   └── openrouter/                # OpenRouter AI client
-│   ├── api/                           # Legacy FaaS HTTP handlers (Phase 5 deletion)
-│   │   └── backtest/__init__.py
-│   └── cron/                          # Legacy FaaS cron handlers (Phase 5 deletion)
-│       ├── daily-sync/__init__.py
 │       ├── historic-refresh/__init__.py
 │       ├── match-completion/__init__.py
 │       └── tip-generation/__init__.py
@@ -374,10 +369,10 @@ All schedules are in **`CRON_TIMEZONE`** (default `Australia/Perth`, UTC+8).  Sc
 
 | Job | Default Schedule | Env var | Description |
 |-----|------------------|---------|-------------|
-| `daily-sync` | `*/15 * * * *` | `CRON_DAILY_SYNC` | Sync games/teams from Squiggle API |
-| `match-completion` | `5,20,35,50 * * * *` | `CRON_MATCH_COMPLETION_CHECK` | Detect completed matches, update final scores |
-| `tip-generation` | `0 3 * * *` | `CRON_TIP_GENERATION` | Generate tips for the next round + AI explanations |
-| `historic-refresh` | `0 4 * * 0` | `CRON_HISTORICAL_REFRESH` | Refresh historical data (player stats, injuries, weather) |
+| `daily-sync` | `*/15 * * * *` | `DAILY_SYNC_CRON` | Sync games/teams from Squiggle API |
+| `match-completion` | `5,20,35,50 * * * *` | `MATCH_COMPLETION_CRON` | Detect completed matches, update final scores |
+| `tip-generation` | `0 3 * * *` | `TIP_GENERATION_CRON` | Generate tips for the next round + AI explanations |
+| `historic-refresh` | `0 4 * * 0` | `HISTORIC_REFRESH_CRON` | Refresh historical data (player stats, injuries, weather) |
 
 ### Concurrency / multi-instance safety
 

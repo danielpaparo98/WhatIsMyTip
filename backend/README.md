@@ -39,18 +39,16 @@ backend/
 │       ├── tip_generation.py
 │       └── historic_refresh.py
 ├── packages/                    # Shared business logic (DB models, services, ML)
-│   ├── shared/                  # Imported as `packages.shared.*`
-│   │   ├── config.py
-│   │   ├── db.py
-│   │   ├── cache.py
-│   │   ├── models/
-│   │   ├── models_ml/           # 8 ML models
-│   │   ├── heuristics/          # 3 heuristic strategies
-│   │   ├── services/            # Business logic (sync, tip-gen, refresh, …)
-│   │   ├── schemas/             # Pydantic request/response models
-│   │   └── …
-│   ├── api/                     # Legacy FaaS HTTP handlers (kept for back-compat — Phase 5 deletion)
-│   └── cron/                    # Legacy FaaS cron handlers (kept for back-compat — Phase 5 deletion)
+│   └── shared/                  # Imported as `packages.shared.*`
+│       ├── config.py
+│       ├── db.py
+│       ├── cache.py
+│       ├── models/
+│       ├── models_ml/           # 8 ML models
+│       ├── heuristics/          # 3 heuristic strategies
+│       ├── services/            # Business logic (sync, tip-gen, refresh, …)
+│       ├── schemas/             # Pydantic request/response models
+│       └── …
 ├── tests/
 │   ├── unit/                    # Fast unit tests (no external deps)
 │   └── integration/             # Integration tests (PostgreSQL + Redis via testcontainers)
@@ -59,6 +57,10 @@ backend/
 │   └── Dockerfile               # nginx:1.27-alpine image
 └── scripts/                     # dev.sh, deploy.sh, test_dockerfile.sh, …
 ```
+
+> **Phase 5 cleanup:** the legacy `packages/api/` and `packages/cron/` FaaS handler
+> directories were deleted in Phase 5 (June 2026). The FastAPI app in `app/` is the
+> single source of truth for HTTP routes and scheduled jobs.
 
 ## Quick Start
 
@@ -101,7 +103,7 @@ uv run pytest tests/unit/ -v
 uv run pytest tests/unit/ -v
 
 # Specific test file
-uv run pytest tests/unit/test_api_games.py -v
+uv run pytest tests/unit/test_app_api_games.py -v
 
 # With coverage
 uv run pytest tests/unit/ -v --cov=packages
@@ -174,7 +176,7 @@ The full machine-readable schema is available at `/openapi.json` (Swagger UI at 
 | `tip-generation` | Daily 03:00 | Generates tips + AI explanations for the next round |
 | `historic-refresh` | Sunday 04:00 | Refreshes historical data and recalibrates models |
 
-Schedules are configured via the cron expressions in [`packages/shared/config.py`](packages/shared/config.py) and can be overridden per-environment with `CRON_TIP_GENERATION` / `CRON_HISTORICAL_REFRESH` / `CRON_DAILY_SYNC` / `CRON_MATCH_COMPLETION_CHECK` env vars.
+Schedules are configured via the cron expressions in [`packages/shared/config.py`](packages/shared/config.py) and can be overridden per-environment with `TIP_GENERATION_CRON` / `HISTORIC_REFRESH_CRON` / `DAILY_SYNC_CRON` / `MATCH_COMPLETION_CRON` env vars (the in-process APScheduler reads these directly — there are no FaaS-style `CRON_*` env vars any more).
 
 ## Environment Variables
 

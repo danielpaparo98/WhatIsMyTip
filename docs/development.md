@@ -2,7 +2,7 @@
 
 ## Overview
 
-This guide covers setting up and working with the WhatIsMyTip development environment. The backend is a **serverless FaaS application** running on DigitalOcean Functions — there is no persistent server process to run locally. Instead, you develop against local PostgreSQL + Redis (via Docker), run unit tests, and deploy functions using `doctl`.
+This guide covers setting up and working with the WhatIsMyTip development environment. The backend is a **single FastAPI Python process** that runs locally with `uvicorn`, talks to local PostgreSQL + Redis (via Docker), and is deployed to DigitalOcean App Platform as a container.
 
 ## Prerequisites
 
@@ -86,7 +86,7 @@ The frontend will be available at `http://localhost:3000`
 
 ### Backend Setup
 
-The FaaS backend does **not** use `uvicorn` or a persistent server. Development is done via Docker services + unit tests.
+The FastAPI backend runs locally with `uvicorn main:app --reload` (which auto-reloads on code change). Tests run against Docker services — see [Quick Start](#quick-start) below.
 
 1. **Install Python dependencies**:
    ```bash
@@ -147,7 +147,7 @@ cd backend
 uv run pytest tests/unit/ -v
 
 # Run specific test file
-uv run pytest tests/unit/test_cron_tip_generation.py -v
+uv run pytest tests/unit/test_app_cron_tip_generation.py -v
 
 # Run with coverage
 uv run pytest tests/unit/ --cov
@@ -176,48 +176,47 @@ To test functions end-to-end, deploy to your DO Functions namespace:
 
 ```bash
 cd backend
-doctl serverless deploy . --env .env
+./scripts/deploy.sh          # Build image, push to DO Container Registry, trigger App Platform deploy
 
-# Then test using the deployed function URLs:
-curl https://faas.syd1.digitaloceanspaces.com/<namespace>/api/games/health
-curl https://faas.syd1.digitaloceanspaces.com/<namespace>/api/games
+# Then test against the deployed URL (deploy.sh polls /health before returning):
+curl https://whatismytip.com/api/games
+curl https://whatismytip.com/health
 ```
 
 ---
 
-## Scheduled Functions (Cron Jobs)
+## Scheduled Jobs (in-process APScheduler)
 
-Scheduled functions are deployed as DO Functions with cron triggers — they are **not** run locally via a daemon. Schedules are defined in [`project.yml`](../backend/project.yml:1) and managed by the DigitalOcean Functions platform.
+The 4 scheduled jobs run **in-process** via APScheduler inside the FastAPI container. They are
+not separate FaaS handlers — they live in [`backend/app/cron/`](../backend/app/cron/) and are
+registered in [`backend/app/core/scheduler.py`](../backend/app/core/scheduler.py:1). Schedules
+are read from [`packages/shared/config.py`](../backend/packages/shared/config.py:1).
 
-### Function Schedules
+### Job Schedules (Australia/Perth timezone)
 
-| Function | Schedule (UTC) | AWST |
-|----------|----------------|------|
-| `daily-sync` | `*/15 * * * *` | Every 15 minutes |
-| `match-completion` | `5,20,35,50 * * * *` | 4× per hour |
-| `tip-generation` | `0 19 * * *` | 3:00 AM daily |
-| `historic-refresh` | `0 20 * * 6` | 4:00 AM Saturday |
+| Job | Default Schedule | Env var |
+|-----|------------------|---------|
+| `daily-sync` | `*/15 * * * *` | `DAILY_SYNC_CRON` |
+| `match-completion` | `5,20,35,50 * * * *` | `MATCH_COMPLETION_CRON` |
+| `tip-generation` | `0 3 * * *` | `TIP_GENERATION_CRON` |
+| `historic-refresh` | `0 4 * * 0` | `HISTORIC_REFRESH_CRON` |
 
 ### Manual Job Triggering
 
-Trigger cron functions via the admin API (requires `ADMIN_API_KEY`):
+Trigger jobs via the FastAPI admin API (requires `X-Admin-API-Key` header matching `ADMIN_API_KEY`):
 
 ```bash
-# Trigger daily game sync
+# Production
 curl -X POST -H "X-Admin-API-Key: $ADMIN_API_KEY" \
-  https://faas.syd1.digitaloceanspaces.com/<namespace>/api/admin/jobs/daily-sync/trigger
-
-# Trigger match completion detection
+  https://whatismytip.com/api/admin/daily-sync/trigger
 curl -X POST -H "X-Admin-API-Key: $ADMIN_API_KEY" \
-  https://faas.syd1.digitaloceanspaces.com/<namespace>/api/admin/jobs/match-completion/trigger
-
-# Trigger tip generation
+  https://whatismytip.com/api/admin/match-completion/trigger
 curl -X POST -H "X-Admin-API-Key: $ADMIN_API_KEY" \
-  https://faas.syd1.digitaloceanspaces.com/<namespace>/api/admin/jobs/tip-generation/trigger
-
-# Check job status
+  https://whatismytip.com/api/admin/tip-generation/trigger
+curl -X POST -H "X-Admin-API-Key: $ADMIN_API_KEY" \
+  https://whatismytip.com/api/admin/historic-refresh/trigger
 curl -H "X-Admin-API-Key: $ADMIN_API_KEY" \
-  https://faas.syd1.digitaloceanspaces.com/<namespace>/api/admin/jobs/status
+  https://whatismytip.com/api/admin/metrics
 ```
 
 ### Testing Scheduled Functions

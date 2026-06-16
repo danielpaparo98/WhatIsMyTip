@@ -78,11 +78,11 @@ The frontend uses environment variables for configuration:
 # Local development
 API_BASE_URL=http://localhost:8000
 
-# Production (DigitalOcean Functions gateway)
-API_BASE_URL=https://faas.syd1.digitaloceanspaces.com/<namespace>
+# Production (FastAPI container behind nginx)
+API_BASE_URL=https://whatismytip.com/api
 ```
 
-The backend API is served by DigitalOcean Functions. In production, `API_BASE_URL` should point to the DO Functions gateway URL (e.g., `https://faas.syd1.digitaloceanspaces.com/<namespace>`).
+The backend API is served by a single FastAPI container behind an nginx reverse proxy. In production, `API_BASE_URL` should point at the public domain (e.g., `https://whatismytip.com/api`).
 
 ## Design System
 
@@ -211,7 +211,7 @@ The frontend communicates with the backend API using the `useApi` composable.
 
 ### Base URL
 
-Default: `http://localhost:8000` (development) or `https://faas.syd1.digitaloceanspaces.com/<namespace>` (production)
+Default: `http://localhost:8000` (development) or `https://whatismytip.com/api` (production)
 
 Configured via the `API_BASE_URL` environment variable. In production, this points to the DO Functions gateway URL.
 

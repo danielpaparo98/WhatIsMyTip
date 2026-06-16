@@ -166,7 +166,7 @@ DO_REGISTRY=registry.digitalocean.com/whatismytip
 DO_APP_ID=<your-app-platform-app-id>
 ```
 
-The cron schedules themselves (`CRON_DAILY_SYNC`, `CRON_TIP_GENERATION`, `CRON_HISTORICAL_REFRESH`, `CRON_MATCH_COMPLETION_CHECK`) are read by the in-process APScheduler — they default to the Australia/Perth schedules baked into `packages/shared/config.py` and can be overridden per-environment.
+The cron schedules themselves (`DAILY_SYNC_CRON`, `TIP_GENERATION_CRON`, `HISTORIC_REFRESH_CRON`, `MATCH_COMPLETION_CRON`) are read directly by the in-process APScheduler — they default to the Australia/Perth schedules baked into `packages/shared/config.py` and can be overridden per-environment. (The older `CRON_DAILY_SYNC` / `CRON_TIP_GENERATION` / `CRON_HISTORICAL_REFRESH` / `CRON_MATCH_COMPLETION_CHECK` env vars used by the FaaS handlers were removed in Phase 5 alongside the FaaS code itself.)
 
 ---
 
@@ -293,7 +293,7 @@ The four cron jobs run in the **same process** as the FastAPI app (no separate F
 | `tip-generation` | `0 3 * * *` | 3:00 AM daily |
 | `historic-refresh` | `0 4 * * 0` | 4:00 AM Sunday |
 
-Schedules can be overridden via env vars (`CRON_DAILY_SYNC`, `CRON_TIP_GENERATION`, `CRON_HISTORICAL_REFRESH`, `CRON_MATCH_COMPLETION_CHECK`) — see [`packages/shared/config.py`](../backend/packages/shared/config.py:1).
+Schedules can be overridden via env vars (`DAILY_SYNC_CRON`, `TIP_GENERATION_CRON`, `HISTORIC_REFRESH_CRON`, `MATCH_COMPLETION_CRON`) — see [`packages/shared/config.py`](../backend/packages/shared/config.py:1). (The old `CRON_*` env vars used by the FaaS handlers were removed in Phase 5.)
 
 > **Why this changed**: Phase 3 moved the cron jobs in-process (from per-FaaS OpenWhisk triggers) so the deployments don't need a separate FaaS namespace.  The single long-lived FastAPI process owns the locks; multi-instance deploys share the locks via Postgres advisory locks (see [`app/core/scheduler.py`](../backend/app/core/scheduler.py:1)).
 

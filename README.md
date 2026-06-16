@@ -6,11 +6,12 @@ AI-powered AFL tipping with smart heuristics and data-driven predictions.
 ![Python](https://img.shields.io/badge/python-3.12+-green.svg)
 ![Node.js](https://img.shields.io/badge/node.js-18+-brightgreen.svg)
 ![Nuxt](https://img.shields.io/badge/nuxt-4.0.0-00DC82.svg)
-![DO Functions](https://img.shields.io/badge/DO_Functions-Serverless-0080FF.svg)
+![FastAPI](https://img.shields.io/badge/FastAPI-Container-009688.svg)
+![DO App Platform](https://img.shields.io/badge/DO_App_Platform-Container-0080FF.svg)
 
 ## Overview
 
-WhatIsMyTip is a comprehensive AFL tipping application that combines machine learning models, heuristic strategies, and AI-powered explanations to provide accurate footy predictions. Built with modern technologies, it offers a serverless backend on DigitalOcean Functions and a sleek frontend with Nuxt 4.
+WhatIsMyTip is a comprehensive AFL tipping application that combines machine learning models, heuristic strategies, and AI-powered explanations to provide accurate footy predictions. Built with modern technologies, it offers a single FastAPI container backend on DigitalOcean App Platform (with an in-process APScheduler for cron jobs) and a sleek frontend with Nuxt 4.
 
 ## Features
 
@@ -45,8 +46,9 @@ WhatIsMyTip is a comprehensive AFL tipping application that combines machine lea
 - **Monochrome Bold Typographic Design**: Clean, modern UI with high contrast
 - **Static Site Generation**: Fast, SEO-friendly frontend
 - **Async Database Operations**: PostgreSQL with SQLAlchemy (asyncpg driver)
-- **Redis Caching**: 3-tier TTL cache (60s / 300s / 3600s) shared across all functions
-- **Serverless**: Pay-per-invocation backend on DigitalOcean Functions
+- **Redis Caching**: 3-tier TTL cache (60s / 300s / 3600s) shared across all routes
+- **Container-based**: Single FastAPI process per container, deployed to DigitalOcean App Platform
+- **In-process APScheduler**: 4 scheduled jobs (daily-sync, match-completion, tip-generation, historic-refresh) running inside the API process
 - **Rate Limiting**: 60 requests per minute per IP
 - **CORS Support**: Configurable cross-origin requests
 - **No GPU Required**: Cost-efficient AI explanations using CPU
@@ -60,7 +62,8 @@ WhatIsMyTip is a comprehensive AFL tipping application that combines machine lea
 - **Bun**: JavaScript runtime and package manager
 
 ### Backend
-- **DigitalOcean Functions**: Serverless runtime (Apache OpenWhisk) — 4 HTTP + 4 scheduled functions
+- **FastAPI**: Single Python web framework process (the API server)
+- **APScheduler**: In-process cron scheduler for the 4 background jobs
 - **PostgreSQL**: Managed relational database (asyncpg driver)
 - **Redis**: Managed cache with 3-tier TTL strategy
 - **Pydantic Settings**: Configuration and environment management
@@ -68,6 +71,7 @@ WhatIsMyTip is a comprehensive AFL tipping application that combines machine lea
 - **Alembic**: Database migrations
 - **SQLAlchemy**: Async ORM for database operations
 - **uv**: Python package manager
+- **Multi-stage Docker**: `backend/Dockerfile` produces a slim runtime image
 
 ### AI & Data
 - **OpenRouter**: AI-powered explanation generation
@@ -130,25 +134,20 @@ The frontend will be available at `http://localhost:3000`
 
 ### Backend Development
 
-The FaaS backend runs on DigitalOcean Functions. For local development, use Docker for
-PostgreSQL + Redis, then run unit tests:
+The FastAPI backend runs as a single Python process. For local development, use Docker for
+PostgreSQL + Redis, then run the unit tests:
 
 ```bash
 cd backend
-./scripts/dev.sh          # Starts local PostgreSQL + Redis via Docker
-uv run alembic upgrade head
-uv run pytest tests/unit/ -v
+./scripts/dev.sh                  # Starts local PostgreSQL + Redis via Docker
+uv run alembic upgrade head       # Apply migrations
+uv run pytest tests/unit/ -v      # Run unit tests
+uv run uvicorn main:app --reload  # Run the API on http://localhost:8000
 ```
 
-To test individual functions locally against a connected DO Functions namespace:
-
-```bash
-doctl serverless deploy .
-# Then use the function URLs from the deploy output
-```
-
-> **Note:** The FaaS backend does not expose an automatic Swagger UI. See
-> [`docs/backend.md`](docs/backend.md) for the function inventory and endpoint reference.
+The app exposes Swagger UI at `http://localhost:8000/docs` and ReDoc at
+`http://localhost:8000/redoc`. The OpenAPI 3 spec is at `http://localhost:8000/openapi.json`.
+See [`docs/api.md`](docs/api.md) for the full endpoint reference.
 
 ### Running Both
 
@@ -194,8 +193,9 @@ ENVIRONMENT=development
 **Frontend**:
 
 ```bash
-# Point to the DO Functions gateway URL in production, e.g.:
-# API_BASE_URL=https://faas.syd1.digitaloceanspaces.com/<namespace>
+# Production points at the FastAPI container behind the nginx reverse proxy:
+# API_BASE_URL=https://whatismytip.com/api
+# Local development:
 API_BASE_URL=http://localhost:8000
 ```
 
@@ -222,25 +222,31 @@ whatismytip/
 │   ├── components/        # Vue components
 │   ├── composables/       # Vue composables
 │   └── pages/             # Page routes
-├── backend/               # FaaS backend (DigitalOcean Functions)
-│   ├── project.yml        # DO Functions project + function configuration
+├── backend/               # FastAPI backend (single Python process)
+│   ├── main.py            # FastAPI app entry point
+│   ├── Dockerfile         # Multi-stage container image
+│   ├── docker-compose.yml # Local dev (PostgreSQL + Redis)
 │   ├── pyproject.toml     # Python project configuration and dependencies
+│   ├── app/               # FastAPI app (routers, middleware, scheduler)
+│   │   ├── api/           # HTTP routers (games, tips, backtest, admin, health)
+│   │   ├── core/          # Lifespan, middleware, scheduler, security, rate limit
+│   │   └── cron/          # Job classes bound to the in-process APScheduler
 │   ├── packages/
-│   │   ├── api/           # HTTP-triggered functions (games, tips, backtest, admin)
-│   │   ├── cron/          # Scheduled functions (daily-sync, match-completion,
-│   │   │                  #   tip-generation, historic-refresh)
 │   │   └── shared/        # Shared code (crud, services, models, models_ml,
-│   │                      #   heuristics, schemas, afl_data, squiggle, weather,
+│   │                      #   heuristics, schemas, squiggle, weather,
 │   │                      #   openrouter, cache, config, db, alerting, etc.)
+│   ├── proxy/             # nginx reverse proxy (App Platform)
 │   ├── alembic/           # Database migrations (env.py + versions/)
 │   ├── tests/             # Unit + integration tests
 │   └── scripts/           # Deployment and utility scripts (deploy.sh, dev.sh)
 ├── docs/                  # Documentation
-│   ├── backend.md         # Backend architecture (FaaS)
+│   ├── backend.md         # Backend architecture (FastAPI monolith)
 │   ├── frontend.md        # Frontend documentation
 │   ├── deployment.md      # Deployment guide
 │   ├── development.md     # Development guide
-│   └── api.md             # API reference
+│   ├── api.md             # API reference
+│   ├── FULL-REVIEW.md     # Original 2026-04 code review (now closed — see Resolution Status)
+│   └── FAAS-EVALUATION.md # FaaS-era evaluation (now closed — see Resolution Status)
 ├── CONTRIBUTING.md        # Contributing guidelines
 ├── README.md
 └── LICENSE
@@ -250,19 +256,21 @@ whatismytip/
 
 Comprehensive documentation is available in the [`docs/`](docs/) directory:
 
-- [`docs/backend.md`](docs/backend.md) - Backend architecture (FaaS)
+- [`docs/backend.md`](docs/backend.md) - Backend architecture (FastAPI monolith)
 - [`docs/frontend.md`](docs/frontend.md) - Frontend structure and design system
-- [`docs/deployment.md`](docs/deployment.md) - Deployment to Digital Ocean
+- [`docs/deployment.md`](docs/deployment.md) - Container deployment to DigitalOcean App Platform
 - [`docs/development.md`](docs/development.md) - Local development setup
 - [`docs/api.md`](docs/api.md) - Complete API reference
+- [`docs/FULL-REVIEW.md`](docs/FULL-REVIEW.md) - Original 2026-04 code review (all findings closed — see Resolution Status)
+- [`docs/FAAS-EVALUATION.md`](docs/FAAS-EVALUATION.md) - FaaS-era evaluation (all concerns addressed — see Resolution Status)
 
 ## Deployment
 
-See [docs/deployment.md](docs/deployment.md) for detailed deployment instructions to DigitalOcean Functions + Managed PostgreSQL + Managed Redis.
+See [docs/deployment.md](docs/deployment.md) for detailed deployment instructions to DigitalOcean App Platform + Managed PostgreSQL + Managed Redis.
 
 ### Quick Deployment
 
-**Backend** (deploys all functions via `doctl serverless deploy`):
+**Backend** (builds the Docker image, pushes to DO Container Registry, triggers an App Platform deploy):
 ```bash
 cd backend
 ./scripts/deploy.sh
@@ -309,7 +317,7 @@ Contributions are welcome! Please read [CONTRIBUTING.md](CONTRIBUTING.md) for de
 - [ ] Betting odds integration
 - [ ] Real-time notifications
 - [ ] Advanced analytics dashboard
-- [ ] OpenAPI spec generation for the FaaS functions
+- [x] OpenAPI spec generation — `/openapi.json` and Swagger UI at `/docs`
 
 ## Support
 
@@ -322,7 +330,8 @@ Contributions are welcome! Please read [CONTRIBUTING.md](CONTRIBUTING.md) for de
 - [Squiggle API](https://api.squiggle.com.au/) for AFL data
 - [OpenRouter](https://openrouter.ai/) for AI model access
 - [Nuxt](https://nuxt.com/) for the frontend framework
-- [DigitalOcean Functions](https://docs.digitalocean.com/products/functions/) for the serverless backend runtime
+- [FastAPI](https://fastapi.tiangolo.com/) for the backend web framework
+- [DigitalOcean App Platform](https://www.digitalocean.com/products/app-platform) for the container hosting
 
 ## Authors
 

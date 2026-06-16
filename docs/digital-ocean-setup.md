@@ -272,7 +272,7 @@ The four cron jobs run **inside the FastAPI container** (no separate Functions n
 | `tip-generation` | Daily 3:00 AM | Generate tips for upcoming round |
 | `historic-refresh` | Weekly Sunday 4:00 AM | Refresh historical data |
 
-Schedules can be overridden via env vars (e.g. `CRON_DAILY_SYNC`, `CRON_TIP_GENERATION`, `CRON_HISTORICAL_REFRESH`, `CRON_MATCH_COMPLETION_CHECK`) — see [`packages/shared/config.py`](../backend/packages/shared/config.py:1).
+Schedules can be overridden via env vars (e.g. `DAILY_SYNC_CRON`, `TIP_GENERATION_CRON`, `HISTORIC_REFRESH_CRON`, `MATCH_COMPLETION_CRON`) — see [`packages/shared/config.py`](../backend/packages/shared/config.py:1). (The old `CRON_*` env vars used by the FaaS handlers were removed in Phase 5.)
 
 Multi-instance deploys coordinate via Postgres advisory locks (only one instance runs each job at a time).
 
