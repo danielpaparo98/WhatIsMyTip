@@ -45,11 +45,9 @@
 
 | Dependency | Where applied | Behaviour | Source |
 |---|---|---|---|
-| `require_admin_key` (alias for `Depends(verify_api_key)`) | `APRouter(dependencies=[require_admin_key])` on the **admin** router; per-route on `POST /api/backtest/run` | Reads `X-API-Key` header, constant-time compares to `settings.admin_api_key`; raises `BackendServiceError(401, "invalid_api_key")` on missing/empty/wrong key | [`backend/app/core/security.py`](backend/app/core/security.py:19) |
+| `require_admin_key` (alias for `Depends(verify_api_key)`) | `APRouter(dependencies=[require_admin_key])` on the **admin** router; per-route on `POST /api/backtest/run` and `POST /api/tips/generate` | Reads `X-API-Key` header, constant-time compares to `settings.admin_api_key`; raises `BackendServiceError(401, "invalid_api_key")` on missing/empty/wrong key | [`backend/app/core/security.py`](backend/app/core/security.py:19) |
 
-> `POST /api/tips/generate` deliberately has **no** `require_admin_key` dependency
-> — the docstring and unit tests confirm it is open to the public frontend and
-> protected only by the 10/min IP rate limit. See “Risks” below.
+> `POST /api/tips/generate` requires the admin `X-API-Key` header (R1 follow-up fix). The endpoint calls OpenRouter (real cost) and writes to the DB, so it is not public; in addition it is rate-limited to 10 requests/minute per client IP.
 
 ---
 
@@ -158,16 +156,17 @@
 
 | Field | Value |
 |---|---|
-| **Source** | [`backend/app/api/tips.py`](backend/app/api/tips.py:257) — `@router.post("/generate")` + `@_post_generate_limiter.limit("10/minute")` lines 257-258 |
-| **Auth** | **None** (open to the public frontend — see Risks) |
+| **Source** | [`backend/app/api/tips.py`](backend/app/api/tips.py:257) — `@router.post("/generate", dependencies=[require_admin_key])` + `@_post_generate_limiter.limit("10/minute")` lines 257-258 |
+| **Auth** | **`X-API-Key` header** (per-route `require_admin_key` — admin-only; the endpoint calls OpenRouter and writes to the DB) |
 | **Rate limit** | **10/minute per client IP** (slowapi) |
 | **Request (body)** | `TipGenerateRequest`: `{ season: int (REQUIRED, ge=2000), round_id: int? (ge=1), heuristics: list[str]? (allow-list), regenerate: bool=false }` |
 | **Example body** | ```json\n{ "season": 2025, "round_id": 1, "regenerate": false, "heuristics": ["best_bet", "yolo"] }\n``` |
 | **Response 200** | `{ status: "success", season, round_id, games_processed, tips_created, tips_skipped, tips_updated, errors: [] }` |
+| **Response 401** | `invalid_api_key` (missing/wrong `X-API-Key`); auth is checked before the rate limit. |
 | **Response 422** | `invalid_heuristics` if any heuristic not in `["best_bet","high_risk_high_reward","yolo"]`; also `validation_error` when `round_id` is `null` (re-validated inside the handler, line 287). |
 | **Response 404** | `not_found` when no games exist for the round. |
-| **Example** | `curl -X POST -H 'Content-Type: application/json' -d '{"season":2025,"round_id":1}' http://localhost:8000/api/tips/generate` |
-| **Notes / risks** | **Doc drift:** `docs/api.md` line 163 claims this endpoint requires `X-API-Key`; the code and unit tests (`backend/tests/unit/test_app_api_tips.py:350`) explicitly state it does *not*. This is a documentation bug. Triggers `TipGenerationService.generate_for_round` — may invoke OpenRouter for AI explanations, so it's both expensive and un-authenticated. |
+| **Example** | `curl -X POST -H 'X-API-Key: $ADMIN_API_KEY' -H 'Content-Type: application/json' -d '{"season":2025,"round_id":1}' http://localhost:8000/api/tips/generate` |
+| **Notes / risks** | R1 follow-up (this branch): added `require_admin_key` as a route-level dependency — auth is checked before the rate limiter and the service is never reached on a 401. The unit test `tests/unit/test_app_api_tips.py::TestGenerateTips` asserts all three paths. Triggers `TipGenerationService.generate_for_round` — may invoke OpenRouter for AI explanations, so the admin-only auth is necessary. |
 
 ### 9. `GET /api/backtest/` — Deprecated
 
