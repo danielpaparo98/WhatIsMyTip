@@ -21,6 +21,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from typing import Annotated, Optional
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, Path, Query
 from sqlalchemy import and_, func, select
@@ -44,7 +45,6 @@ from packages.shared.schemas import (
     WeatherResponse,
 )
 from packages.shared.schemas.match_analysis import MatchAnalysisResponse
-from zoneinfo import ZoneInfo
 
 router = APIRouter()
 
@@ -73,6 +73,15 @@ async def list_games(
         bool,
         Query(description="Return the round locator for the next/current round"),
     ] = False,
+    limit: Annotated[
+        int,
+        Query(
+            ge=1,
+            le=500,
+            description="Maximum number of games to return (default 50). "
+            "Prevents unbounded scans on large seasons.",
+        ),
+    ] = 50,
 ):
     """List games, with optional filters.
 
@@ -140,15 +149,16 @@ async def list_games(
             "has_upcoming": False,
         }
 
-    # Standard list path
+    # Standard list path — always plumb the `limit` through to the CRUD layer
+    # so the SQL is bounded and a single call cannot scan an entire season.
     if upcoming:
-        games = await GameCRUD.get_upcoming(db)
+        games = await GameCRUD.get_upcoming(db, limit=limit)
     elif season and round_id is not None:
-        games = await GameCRUD.get_by_round(db, season, round_id)
+        games = await GameCRUD.get_by_round(db, season, round_id, limit=limit)
     elif season:
-        games = await GameCRUD.get_by_season(db, season)
+        games = await GameCRUD.get_by_season(db, season, limit=limit)
     else:
-        games = await GameCRUD.get_upcoming(db)
+        games = await GameCRUD.get_upcoming(db, limit=limit)
 
     resp = GameListResponse(
         games=[GameResponse.model_validate(g) for g in games],

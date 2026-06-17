@@ -293,7 +293,9 @@ async def scrape_injuries(output_dir: str, verbose: bool = False) -> int:
             {
                 "player_name": inj.get("player", ""),
                 "team": inj.get("team", ""),
-                "injury": inj.get("injury", ""),
+                # Column name must match the Injury.injury_type ORM column
+                # and the column load_csv_to_db.load_injuries() reads.
+                "injury_type": inj.get("injury", ""),
                 "return_timeline": inj.get("return_timeline", ""),
                 "source": "footywire",
                 "scraped_at": now,

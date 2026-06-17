@@ -141,6 +141,47 @@ _DEFAULT_SEED_DIR = _BACKEND_FAAS_DIR / "seed_data"
 
 
 # ---------------------------------------------------------------------------
+# CSV directory discovery (used by the --from-csv flow inside Docker)
+# ---------------------------------------------------------------------------
+
+
+def find_csv_seed_dir(project_root=None):
+    """Return the first existing CSV seed directory under *project_root*.
+
+    Checks (in order):
+
+    1. ``<project_root>/data``
+    2. ``<project_root>/backend/seed_data``
+    3. ``<project_root>/backend/data``
+    4. ``<project_root>/scripts/data``  (last-resort dev location)
+
+    A directory is only considered a hit if it contains at least one
+    ``.csv`` file.  Returns ``None`` if no candidate is found.
+
+    Exposed at module level (not nested under ``_``) because unit tests
+    patch it directly.
+    """
+    if project_root is None:
+        project_root = _BACKEND_FAAS_DIR.parent
+    project_root = Path(project_root)
+    backend_dir = project_root / "backend"
+
+    candidates = [
+        project_root / "data",
+        backend_dir / "seed_data",
+        backend_dir / "data",
+        project_root / "scripts" / "data",
+    ]
+    for cand in candidates:
+        if not cand.is_dir():
+            continue
+        for entry in cand.iterdir():
+            if entry.is_file() and entry.suffix.lower() == ".csv":
+                return cand
+    return None
+
+
+# ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
@@ -384,6 +425,55 @@ def _resolve_database_url(args: argparse.Namespace) -> str:
     sys.exit(1)
 
 
+def _run_load_csv(
+    async_url: str,
+    csv_dir: Path,
+    *,
+    verbose: bool = False,
+    clear: bool = False,
+) -> Dict[str, int]:
+    """Load seed data from a directory of CSVs.
+
+    Wraps :func:`scripts.load_csv_to_db.load_csv_data` in a thin adapter
+    so unit tests can patch this seam without having to mock the
+    underlying module.
+    """
+    from scripts import load_csv_to_db  # type: ignore[import-not-found]
+
+    return asyncio.run(
+        load_csv_to_db.load_csv_data(
+            input_dir=str(csv_dir),
+            clear=clear,
+            verbose=verbose,
+        )
+    )
+
+
+def _run_synthetic_seed(
+    async_url: str,
+    *,
+    verbose: bool = False,
+    clear: bool = False,
+) -> None:
+    """Run the offline synthetic seeder (``scripts/seed_data.py``).
+
+    Wrapped in a try/except so a network or import failure (e.g. when
+    running offline) does not abort the whole init container.
+    """
+    try:
+        from scripts import seed_data  # type: ignore[import-not-found]
+    except Exception as exc:  # pragma: no cover - defensive
+        print(f"[!!] Could not import seed_data: {exc}", file=sys.stderr)
+        return
+    try:
+        seed_data.main()  # type: ignore[attr-defined]
+    except SystemExit:
+        # seed_data.py calls sys.exit on completion -- swallow it
+        pass
+    except Exception as exc:  # pragma: no cover - defensive
+        print(f"[!!] seed_data.py failed: {exc}", file=sys.stderr)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Run database migrations and optionally seed CSV data.",
@@ -392,7 +482,8 @@ def main() -> None:
             "Examples:\n"
             '  uv run python scripts/migrate_and_seed.py -d "postgresql://user:pass@localhost/db"\n'
             '  uv run python scripts/migrate_and_seed.py -d "postgresql://user:pass@localhost/db" --seed\n'
-            '  uv run python scripts/migrate_and_seed.py -d "postgresql://user:pass@localhost/db" --seed --clear\n'
+            '  uv run python scripts/migrate_and_seed.py -d "postgresql://user:pass@localhost/db" --from-csv\n'
+            '  uv run python scripts/migrate_and_seed.py -d "postgresql://user:pass@localhost/db" --from-csv --skip-migrations --no-seed\n'
         ),
     )
     parser.add_argument(
@@ -433,6 +524,34 @@ def main() -> None:
         action="store_true",
         help="Run only migrations (equivalent to omitting --seed).",
     )
+    parser.add_argument(
+        "--from-csv",
+        action="store_true",
+        help=(
+            "Load data from a directory of CSVs (auto-discovered via "
+            "find_csv_seed_dir, or override with --csv-dir).  Used by the "
+            "local Docker init container."
+        ),
+    )
+    parser.add_argument(
+        "--csv-dir",
+        type=str,
+        default=None,
+        help=(
+            "Explicit CSV directory to use with --from-csv.  When omitted, "
+            "find_csv_seed_dir() walks a list of well-known locations."
+        ),
+    )
+    parser.add_argument(
+        "--skip-migrations",
+        action="store_true",
+        help="Skip the alembic upgrade head step (used by --from-csv when DB already up to date).",
+    )
+    parser.add_argument(
+        "--no-seed",
+        action="store_true",
+        help="Skip the synthetic seed_data.py run (used by --from-csv when CSVs are sufficient).",
+    )
     args = parser.parse_args()
 
     raw_url = _resolve_database_url(args)
@@ -441,9 +560,33 @@ def main() -> None:
     seed_dir = Path(args.seed_dir) if args.seed_dir else _DEFAULT_SEED_DIR
 
     # --- Migrations ---
-    run_migrations(sync_url, verbose=args.verbose)
+    if not args.skip_migrations:
+        run_migrations(sync_url, verbose=args.verbose)
 
-    # --- Seeding (optional) ---
+    # --- CSV-driven seed (Docker init container) ---
+    if args.from_csv:
+        csv_dir: Optional[Path] = None
+        if args.csv_dir:
+            csv_dir = Path(args.csv_dir)
+        else:
+            csv_dir = find_csv_seed_dir()
+        if csv_dir is None or not csv_dir.is_dir():
+            print(
+                f"[!!] --from-csv requested but no CSV directory found "
+                f"(tried {args.csv_dir or 'auto-discovery'}); skipping CSV load.",
+                file=sys.stderr,
+            )
+        else:
+            if args.verbose:
+                print(f"\n[>>] Loading CSV data from {csv_dir} ...")
+            _run_load_csv(
+                async_url,
+                csv_dir,
+                verbose=args.verbose,
+                clear=args.clear,
+            )
+
+    # --- Original --seed flow (offline synthetic data) ---
     if args.seed:
         if args.verbose:
             print(f"\n[>>] Loading seed data from {seed_dir} ...")
@@ -454,6 +597,17 @@ def main() -> None:
                 clear=args.clear,
                 verbose=args.verbose,
             )
+        )
+
+    if not args.no_seed and not args.seed:
+        # Run the synthetic offline seeder unless explicitly skipped.
+        # This gives a populated DB out of the box for local dev.
+        if args.verbose:
+            print("\n[>>] Running synthetic seed_data.py ...")
+        _run_synthetic_seed(
+            async_url,
+            verbose=args.verbose,
+            clear=args.clear,
         )
 
 

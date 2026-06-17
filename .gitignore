@@ -59,8 +59,15 @@ Desktop.ini
 *.temp
 .cache/
 
-# Generated seed data CSVs
 seed_data/
+
+# Top-level scraped CSVs produced by scripts/make-data.sh
+data/
+data/**/*.csv
+data/**/*.log
+data/sample/
+# but keep the .gitkeep so the dir exists in fresh checkouts
+!data/.gitkeep
 
 # Debug screenshots and test artifacts
 frontend/debug-*.png

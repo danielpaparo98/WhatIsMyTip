@@ -29,12 +29,17 @@ class GameResponse(BaseModel):
     squiggle_id: int
     round_id: int
     season: int
-    home_team: str
-    away_team: str
+    # home_team / away_team / venue are nullable in Postgres to support
+    # stub future-fixture rows from the Squiggle feed (e.g. unannounced
+    # AFL games in the current season).  We accept ``None`` here so the
+    # /api/games list endpoint does not 500 when one of these is null;
+    # the frontend renders a 'TBD' placeholder for null values.
+    home_team: Optional[str] = None
+    away_team: Optional[str] = None
     home_score: Optional[int] = None
     away_score: Optional[int] = None
-    venue: str
-    date: datetime
+    venue: Optional[str] = None
+    date: Optional[datetime] = None
     completed: bool
 
     class Config:

@@ -263,6 +263,61 @@ class TestCachedDecorator:
         # Our cache.set calls client.set(full_key, json.dumps(value), ex=int(ttl))
         assert mock_client.set.await_count == 1
 
+    @pytest.mark.asyncio
+    async def test_decorator_with_serializer_converts_value(self):
+        """The ``serializer`` callable converts the return value before
+        it is stored in the cache.  This lets the cache layer accept
+        values that are not JSON-serializable as-is (e.g. SQLAlchemy ORM
+        objects) by passing a converter that produces JSON-safe data.
+        """
+        mock_client = _mock_redis_client()
+        mock_client.get = AsyncMock(return_value=None)
+        cache = RedisCache(default_ttl=60, prefix="dec:")
+
+        class FakeORM:
+            def __init__(self, name):
+                self.name = name
+            def __repr__(self):
+                return f"<FakeORM {self.name}>"
+
+        @cached(
+            cache=cache,
+            key_prefix="orm:",
+            serializer=lambda v: {"name": v.name},
+        )
+        async def my_function(db):
+            return FakeORM("foo")
+
+        with patch("packages.shared.cache._get_client", return_value=mock_client):
+            result = await my_function("fake_db")
+
+        # Decorator returns the ORIGINAL value to the caller
+        assert isinstance(result, FakeORM)
+        assert result.name == "foo"
+        # But the cache SET call received the serialized form
+        args, _ = mock_client.set.call_args
+        cached_value = args[1]
+        assert json.loads(cached_value) == {"name": "foo"}
+
+    @pytest.mark.asyncio
+    async def test_decorator_without_serializer_uses_raw_value(self):
+        """When no serializer is given, the raw value is sent to the cache
+        (existing behaviour is preserved)."""
+        mock_client = _mock_redis_client()
+        mock_client.get = AsyncMock(return_value=None)
+        cache = RedisCache(default_ttl=60, prefix="dec:")
+
+        @cached(cache=cache, key_prefix="raw:")
+        async def my_function(db):
+            return {"a": 1}
+
+        with patch("packages.shared.cache._get_client", return_value=mock_client):
+            await my_function("fake_db")
+
+        args, _ = mock_client.set.call_args
+        cached_value = args[1]
+        assert json.loads(cached_value) == {"a": 1}
+
 
 # ---------------------------------------------------------------------------
 # invalidate_cache_pattern

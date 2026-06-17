@@ -11,11 +11,9 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy.ext.asyncio import AsyncSession
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -65,9 +63,10 @@ def _make_tip_mock(**overrides) -> MagicMock:
 
 def _build_app_with_games_router():
     """Construct a minimal FastAPI app with the games router registered."""
+    from fastapi.responses import JSONResponse
+
     from app.api.games import router
     from app.core.exceptions import BackendServiceError
-    from fastapi.responses import JSONResponse
 
     app = FastAPI()
     app.include_router(router, prefix="/api/games")
@@ -159,8 +158,10 @@ class TestListGames:
         assert resp.status_code == 200
         body = resp.json()
         assert body["count"] == 1
+        # The endpoint now always forwards the bounded ``limit`` to the
+        # CRUD layer (default 50) so the SQL cannot scan an entire round.
         mock_crud.get_by_round.assert_awaited_once_with(
-            mock_session, 2025, 1
+            mock_session, 2025, 1, limit=50
         )
 
     def test_list_games_with_upcoming_true(self):
@@ -179,6 +180,86 @@ class TestListGames:
         body = resp.json()
         assert body["count"] == 1
         mock_crud.get_upcoming.assert_awaited_once()
+
+    def test_list_games_with_season_only_passes_default_limit(self):
+        """``season`` (no round) calls ``get_by_season`` with default ``limit``."""
+        mock_session = AsyncMock(spec=AsyncSession)
+        mock_games = [_make_game_mock()]
+        app = _build_app_with_games_router()
+        _override_db(app, mock_session)
+
+        with patch("app.api.games.GameCRUD") as mock_crud:
+            mock_crud.get_by_season = AsyncMock(return_value=mock_games)
+            client = TestClient(app)
+            resp = client.get("/api/games?season=2026")
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["count"] == 1
+        # Limit is plumbed through (default 50 here) so the SQL is bounded.
+        mock_crud.get_by_season.assert_awaited_once_with(
+            mock_session, 2026, limit=50
+        )
+
+    def test_list_games_with_season_and_limit_passes_limit(self):
+        """``?limit=N`` is wired through to ``GameCRUD.get_by_season``."""
+        mock_session = AsyncMock(spec=AsyncSession)
+        mock_games = [_make_game_mock()]
+        app = _build_app_with_games_router()
+        _override_db(app, mock_session)
+
+        with patch("app.api.games.GameCRUD") as mock_crud:
+            mock_crud.get_by_season = AsyncMock(return_value=mock_games)
+            client = TestClient(app)
+            resp = client.get("/api/games?season=2026&limit=3")
+
+        assert resp.status_code == 200
+        mock_crud.get_by_season.assert_awaited_once_with(
+            mock_session, 2026, limit=3
+        )
+
+    def test_list_games_with_season_and_round_passes_limit(self):
+        """``season`` + ``round`` + ``limit`` all flow to ``get_by_round``."""
+        mock_session = AsyncMock(spec=AsyncSession)
+        mock_games = [_make_game_mock()]
+        app = _build_app_with_games_router()
+        _override_db(app, mock_session)
+
+        with patch("app.api.games.GameCRUD") as mock_crud:
+            mock_crud.get_by_round = AsyncMock(return_value=mock_games)
+            client = TestClient(app)
+            resp = client.get("/api/games?season=2026&round=15&limit=7")
+
+        assert resp.status_code == 200
+        mock_crud.get_by_round.assert_awaited_once_with(
+            mock_session, 2026, 15, limit=7
+        )
+
+    def test_list_games_with_null_team_fields_returns_200(self):
+        """Games with NULL home_team/away_team/venue do not cause 500.
+
+        Regression: the 2026 season contains stub game rows from the
+        Squiggle future-fixture feed where home_team/away_team/venue are
+        NULL in Postgres.  ``GameResponse`` must accept these as nullables.
+        """
+        mock_session = AsyncMock(spec=AsyncSession)
+        mock_game = _make_game_mock(
+            home_team=None, away_team=None, venue=None
+        )
+        app = _build_app_with_games_router()
+        _override_db(app, mock_session)
+
+        with patch("app.api.games.GameCRUD") as mock_crud:
+            mock_crud.get_upcoming = AsyncMock(return_value=[mock_game])
+            client = TestClient(app)
+            resp = client.get("/api/games")
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["count"] == 1
+        assert body["games"][0]["home_team"] is None
+        assert body["games"][0]["away_team"] is None
+        assert body["games"][0]["venue"] is None
 
     def test_list_games_with_latest_returns_round_locator(self):
         """``latest=true`` returns the round-locator shape, not a games list."""
