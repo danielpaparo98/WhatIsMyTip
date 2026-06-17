@@ -178,3 +178,70 @@ def test_nginx_passes_path_through_verbatim(incoming_path: str) -> None:
     forwards paths unchanged.
     """
     assert resolve_upstream_path(incoming_path) == incoming_path
+
+
+# ── Defence-in-depth security headers (CR-005) ─────────────────────────
+#
+# FastAPI's security middleware also sets these, but the proxy is the
+# final hop on the wire — if a regression strips them in the app, the
+# proxy still emits them on every response (including 4xx/5xx).
+
+
+def test_nginx_conf_sets_x_content_type_options() -> None:
+    conf = _read_nginx_conf()
+    assert re.search(r'add_header\s+X-Content-Type-Options\s+"nosniff"\s+always', conf), (
+        "nginx.conf must set X-Content-Type-Options nosniff always"
+    )
+
+
+def test_nginx_conf_sets_x_frame_options() -> None:
+    conf = _read_nginx_conf()
+    assert re.search(r'add_header\s+X-Frame-Options\s+"SAMEORIGIN"\s+always', conf), (
+        "nginx.conf must set X-Frame-Options SAMEORIGIN always"
+    )
+
+
+def test_nginx_conf_sets_referrer_policy() -> None:
+    conf = _read_nginx_conf()
+    assert re.search(
+        r'add_header\s+Referrer-Policy\s+"strict-origin-when-cross-origin"\s+always',
+        conf,
+    ), "nginx.conf must set Referrer-Policy"
+
+
+def test_nginx_conf_sets_hsts() -> None:
+    conf = _read_nginx_conf()
+    assert re.search(r"add_header\s+Strict-Transport-Security", conf), (
+        "nginx.conf must set Strict-Transport-Security"
+    )
+
+
+# ── Per-IP rate limit (HI-002) ──────────────────────────────────────────
+
+
+def test_nginx_conf_has_rate_limit_zone() -> None:
+    conf = _read_nginx_conf()
+    assert "limit_req_zone" in conf, (
+        "nginx.conf must define a limit_req_zone"
+    )
+    assert "limit_req" in conf, (
+        "nginx.conf must apply limit_req to the / location"
+    )
+
+
+# ── Top-level proxy_buffering off was a HI-002 finding ─────────────────
+
+
+def test_nginx_conf_removes_global_proxy_buffering_off() -> None:
+    """Global proxy_buffering off was a HI-002 finding."""
+    conf = _read_nginx_conf()
+    # The directive may appear inside a specific location block (for
+    # streaming endpoints) but not at the top level of the server.
+    server_block = re.search(
+        r"server\s*\{(.*)\}", conf, re.DOTALL
+    )
+    assert server_block
+    body = server_block.group(1)
+    assert not re.search(r"^\s*proxy_buffering\s+off\s*;", body, re.MULTILINE), (
+        "nginx.conf must not have a top-level proxy_buffering off"
+    )
