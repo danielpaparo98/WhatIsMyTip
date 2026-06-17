@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..cache import cached, medium_cache, short_cache
 from ..models import Game, Tip
+from ..schemas.games import GameResponse
 from ..squiggle import SquiggleClient
 from ..squiggle.utils import parse_squiggle_complete
 from ..utils import generate_slug
@@ -39,36 +40,77 @@ class GameCRUD:
     @staticmethod
     @cached(cache=short_cache, key_prefix="games_by_round:")
     async def get_by_round(
-        db: AsyncSession, season: int, round_id: int
+        db: AsyncSession,
+        season: int,
+        round_id: int,
+        limit: Optional[int] = None,
     ) -> List[Game]:
-        """Get all games for a specific round and season."""
-        result = await db.execute(
+        """Get all games for a specific round and season.
+
+        ``limit`` bounds the returned list (and the SQL ``LIMIT`` clause).
+        ``None`` means no client-side limit; callers that pass ``limit``
+        should still expect the underlying query to be bounded.
+        """
+        stmt = (
             select(Game)
             .where(Game.season == season, Game.round_id == round_id)
             .order_by(Game.date)
         )
+        if limit is not None:
+            stmt = stmt.limit(limit)
+        result = await db.execute(stmt)
         return list(result.scalars().all())
 
     @staticmethod
     @cached(cache=short_cache, key_prefix="upcoming_games:")
-    async def get_upcoming(db: AsyncSession) -> List[Game]:
-        """Get all upcoming (not completed) games."""
-        result = await db.execute(
+    async def get_upcoming(
+        db: AsyncSession, limit: Optional[int] = None
+    ) -> List[Game]:
+        """Get all upcoming (not completed) games.
+
+        ``limit`` bounds the returned list (and the SQL ``LIMIT`` clause).
+        """
+        stmt = (
             select(Game)
             .where(not Game.completed)
             .order_by(Game.date)
         )
+        if limit is not None:
+            stmt = stmt.limit(limit)
+        result = await db.execute(stmt)
         return list(result.scalars().all())
 
     @staticmethod
-    @cached(cache=medium_cache, key_prefix="games_by_season:")
-    async def get_by_season(db: AsyncSession, season: int) -> List[Game]:
-        """Get all games for a season."""
-        result = await db.execute(
+    @cached(
+        cache=medium_cache,
+        key_prefix="games_by_season:",
+        serializer=lambda games: [
+            GameResponse.model_validate(g).model_dump(mode="json")
+            for g in games
+        ],
+    )
+    async def get_by_season(
+        db: AsyncSession, season: int, limit: Optional[int] = None
+    ) -> List[Game]:
+        """Get all games for a season.
+
+        ``limit`` bounds the returned list (and the SQL ``LIMIT`` clause)
+        so a single call cannot scan an entire season.
+
+        The ``@cached`` decorator passes a ``serializer`` so the live
+        SQLAlchemy ``Game`` ORM instances are converted to JSON-safe
+        ``GameResponse`` dicts before being stored in Redis.  The caller
+        still receives the original ``List[Game]`` objects; only the
+        cached value is the serialized form.
+        """
+        stmt = (
             select(Game)
             .where(Game.season == season)
             .order_by(Game.date)
         )
+        if limit is not None:
+            stmt = stmt.limit(limit)
+        result = await db.execute(stmt)
         return list(result.scalars().all())
 
     @staticmethod

@@ -166,17 +166,28 @@ def cached(
     cache: RedisCache = medium_cache,
     key_prefix: str = "",
     ttl: Optional[float] = None,
+    serializer: Optional[Callable[[Any], Any]] = None,
 ):
     """
     Decorator for caching async function results in Redis.
 
     Args:
-        cache: The cache instance to use
-        key_prefix: Prefix for cache keys
-        ttl: Override default TTL for this function
+        cache: The cache instance to use.
+        key_prefix: Prefix for cache keys.
+        ttl: Override default TTL for this function.
+        serializer: Optional callable that converts the function's return
+            value into a JSON-serializable form before it is stored in
+            the cache.  Use this for functions that return live
+            SQLAlchemy ORM instances or any other value that is not
+            directly JSON-serializable.  The caller still receives the
+            ORIGINAL return value; only the cached copy is serialized.
 
     Example:
-        @cached(cache=short_cache, key_prefix="games:")
+        @cached(
+            cache=short_cache,
+            key_prefix="games_by_season:",
+            serializer=lambda games: [g.to_dict() for g in games],
+        )
         async def get_games(db, season):
             ...
     """
@@ -205,8 +216,16 @@ def cached(
             result = await func(*args, **kwargs)
             func_time = time.time() - func_start
 
+            # Convert the return value to a JSON-safe form before storing.
+            # Without a serializer, callers that return SQLAlchemy ORM
+            # instances would trigger RedisCache.set's "Object of type X is
+            # not JSON serializable" warning on every call.  The caller
+            # still receives ``result`` (the live objects); only the
+            # cached copy is the serialized form.
+            cacheable = serializer(result) if serializer is not None else result
+
             set_start = time.time()
-            await cache.set(cache_key, result, ttl)
+            await cache.set(cache_key, cacheable, ttl)
             set_time = time.time() - set_start
 
             logger.debug(
