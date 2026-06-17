@@ -298,9 +298,20 @@ class TestAdminTriggers:
 
 
 class TestAdminHistoricRefreshProgress:
-    """``GET /api/admin/historic-refresh/progress``."""
+    """``GET /api/admin/historic-refresh/progress`` contract (R4 follow-up):
 
-    def test_progress_with_active_operation(self, monkeypatch):
+    The route returns:
+    * **200** with the in-flight row if one exists (most-recent ``in_progress``).
+    * **200** with the most-recently-finished row (``completed``/``failed``)
+      when no job is currently in flight.
+    * **404** when there is no row for this operation.
+
+    The CRUD-level contract (in-flight > completed > None) is covered by
+    :mod:`tests.unit.test_generation_progress_crud` (testcontainers-backed).
+    These tests pin the **HTTP** contract by stubbing the service layer.
+    """
+
+    def test_progress_with_in_progress_operation_returns_200(self, monkeypatch):
         mock_session = AsyncMock(spec=AsyncSession)
         mock_progress = {
             "progress_id": 1,
@@ -332,7 +343,74 @@ class TestAdminHistoricRefreshProgress:
         assert body["status"] == "in_progress"
         assert body["progress_percentage"] == 75.0
 
-    def test_progress_with_no_active_operation(self, monkeypatch):
+    def test_progress_with_completed_operation_returns_200(self, monkeypatch):
+        """No in-flight row → route returns the most-recently-finished row."""
+        mock_session = AsyncMock(spec=AsyncSession)
+        mock_progress = {
+            "progress_id": 2,
+            "operation_type": "historic_refresh",
+            "total_items": 100,
+            "completed_items": 100,
+            "status": "completed",
+            "started_at": "2025-01-01T00:00:00Z",
+            "completed_at": "2025-01-01T01:00:00Z",
+            "error_message": None,
+            "progress_percentage": 100.0,
+        }
+
+        app = _build_app_with_admin_router(monkeypatch=monkeypatch)
+        _override_db(app, mock_session)
+
+        with patch("app.api.admin.HistoricDataRefreshService") as mock_svc_cls:
+            mock_svc_cls.return_value.get_progress = AsyncMock(
+                return_value=mock_progress
+            )
+            client = TestClient(app)
+            resp = client.get(
+                "/api/admin/historic-refresh/progress",
+                headers=ADMIN_HEADERS,
+            )
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["status"] == "completed"
+        assert body["progress_id"] == 2
+
+    def test_progress_with_failed_operation_returns_200(self, monkeypatch):
+        """A ``failed`` row is treated like a completed row in the contract."""
+        mock_session = AsyncMock(spec=AsyncSession)
+        mock_progress = {
+            "progress_id": 3,
+            "operation_type": "historic_refresh",
+            "total_items": 100,
+            "completed_items": 42,
+            "status": "failed",
+            "started_at": "2025-01-01T00:00:00Z",
+            "completed_at": "2025-01-01T00:30:00Z",
+            "error_message": "Squiggle API unreachable",
+            "progress_percentage": 42.0,
+        }
+
+        app = _build_app_with_admin_router(monkeypatch=monkeypatch)
+        _override_db(app, mock_session)
+
+        with patch("app.api.admin.HistoricDataRefreshService") as mock_svc_cls:
+            mock_svc_cls.return_value.get_progress = AsyncMock(
+                return_value=mock_progress
+            )
+            client = TestClient(app)
+            resp = client.get(
+                "/api/admin/historic-refresh/progress",
+                headers=ADMIN_HEADERS,
+            )
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["status"] == "failed"
+        assert body["error_message"] == "Squiggle API unreachable"
+
+    def test_progress_with_no_operation_returns_404(self, monkeypatch):
+        """No row for this operation → 404 ``not_found`` (R4 follow-up)."""
         mock_session = AsyncMock(spec=AsyncSession)
         app = _build_app_with_admin_router(monkeypatch=monkeypatch)
         _override_db(app, mock_session)
@@ -345,11 +423,10 @@ class TestAdminHistoricRefreshProgress:
                 headers=ADMIN_HEADERS,
             )
 
-        assert resp.status_code == 200
+        assert resp.status_code == 404
         body = resp.json()
-        assert body["status"] is None
-        assert body["progress_id"] is None
-        assert "message" in body
+        assert body["code"] == "not_found"
+        assert "no historic refresh" in body["message"].lower()
 
 
 # ---------------------------------------------------------------------------

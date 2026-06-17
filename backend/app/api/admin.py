@@ -282,8 +282,19 @@ async def _run_historic_refresh(
 async def historic_refresh_progress(
     db: AsyncSession = Depends(get_db),
 ):
-    """Return the current historic-refresh progress (or a null shape if
-    no operation is in flight)."""
+    """Return the current historic-refresh progress (R4 contract).
+
+    Returns:
+
+    * **200** with the in-flight row if a historic-refresh operation is
+      currently running (``status == 'in_progress'``).
+    * **200** with the most-recently-finished row (``status`` in
+      ``completed`` / ``failed``) when no job is in flight.
+    * **404** ``not_found`` when no historic-refresh row exists.
+
+    The "in-flight wins" rule keeps clients polling a long-running job
+    from being confused by stale completed rows in the table.
+    """
     refresh_service = HistoricDataRefreshService(
         db_session=db,
         seasons=[],
@@ -292,30 +303,23 @@ async def historic_refresh_progress(
     )
     progress = await refresh_service.get_progress()
 
-    if progress:
-        return {
-            "progress_id": progress.get("progress_id"),
-            "operation_type": progress.get("operation_type"),
-            "total_items": progress.get("total_items"),
-            "completed_items": progress.get("completed_items"),
-            "status": progress.get("status"),
-            "started_at": progress.get("started_at"),
-            "completed_at": progress.get("completed_at"),
-            "error_message": progress.get("error_message"),
-            "progress_percentage": progress.get("progress_percentage"),
-        }
+    if not progress:
+        raise http_error(
+            404,
+            "not_found",
+            "No historic refresh operation found for this endpoint",
+        )
 
     return {
-        "progress_id": None,
-        "operation_type": None,
-        "total_items": None,
-        "completed_items": None,
-        "status": None,
-        "started_at": None,
-        "completed_at": None,
-        "error_message": None,
-        "progress_percentage": None,
-        "message": "No active historic refresh operation found",
+        "progress_id": progress.get("progress_id"),
+        "operation_type": progress.get("operation_type"),
+        "total_items": progress.get("total_items"),
+        "completed_items": progress.get("completed_items"),
+        "status": progress.get("status"),
+        "started_at": progress.get("started_at"),
+        "completed_at": progress.get("completed_at"),
+        "error_message": progress.get("error_message"),
+        "progress_percentage": progress.get("progress_percentage"),
     }
 
 
