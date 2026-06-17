@@ -194,3 +194,104 @@ def test_deploy_script_runs_migrations() -> None:
         "deploy.sh should run `alembic upgrade head` (or equivalent) "
         "so the database schema is in sync with the new code."
     )
+
+
+# ── Group B infra/devops-review findings (CR-004, HI-004, HI-009,
+#    ME-008, ME-009, LO-005, LO-006, LO-012, LO-013) ─────────────────
+
+
+def test_deploy_script_has_crlf_check() -> None:
+    """The script must refuse to run if it has CRLF line endings (ME-008)."""
+    content = _read_deploy_script()
+    assert "Refusing to run" in content, (
+        "deploy.sh must include a CRLF self-check (ME-008)"
+    )
+    assert "od -An -c" in content or "head -c1" in content, (
+        "deploy.sh must inspect its first byte for \\r"
+    )
+
+
+def test_deploy_script_validates_registry_login() -> None:
+    """The script must verify doctl can reach the target registry (HI-004)."""
+    content = _read_deploy_script()
+    assert "doctl registry login" in content, (
+        "deploy.sh must call `doctl registry login --registry ...` after sourcing .env"
+    )
+
+
+def test_deploy_script_no_force_rebuild() -> None:
+    """The script must NOT pass --force-rebuild (HI-009)."""
+    content = _read_deploy_script()
+    assert "--force-rebuild" not in content, (
+        "deploy.sh should rely on IMAGE_TAG uniqueness, not --force-rebuild "
+        "(HI-009 — --force-rebuild bypasses the App Platform build cache)"
+    )
+
+
+def test_deploy_script_captures_previous_deployment_id() -> None:
+    """The script must capture the previous deployment ID for rollback reference (CR-004)."""
+    content = _read_deploy_script()
+    assert "PREVIOUS_DEPLOYMENT_ID" in content or "list-deployments" in content, (
+        "deploy.sh must capture the previous deployment ID for the rollback message"
+    )
+    assert "doctl apps rollback" in content, (
+        "deploy.sh must print the rollback command on health-check failure"
+    )
+
+
+def test_deploy_script_health_poll_at_least_5_minutes() -> None:
+    """The /health poll window must be ≥ 5 minutes (ME-009)."""
+    content = _read_deploy_script()
+    # Look for "30" retries × "10s" sleeps OR an explicit "300 s" mention.
+    assert ("seq 1 30" in content and "sleep 10" in content) or "300" in content, (
+        "deploy.sh must poll /health for at least 5 minutes (ME-009)"
+    )
+
+
+def test_deploy_script_uses_printf_not_echo_e() -> None:
+    """The script must use printf, not `echo -e`, for portability (LO-005)."""
+    content = _read_deploy_script()
+    # Look for the legacy `echo -e` pattern in coloured output lines.
+    import re
+    bad = re.findall(r'echo\s+-e\b', content)
+    assert not bad, (
+        f"deploy.sh should use printf instead of `echo -e` (found {len(bad)} "
+        "occurrences — LO-005)"
+    )
+
+
+def test_deploy_script_pytest_no_conflicting_flags() -> None:
+    """The pytest invocation must not mix -v and -q (LO-006)."""
+    content = _read_deploy_script()
+    # Find pytest invocations and ensure no line has both -v and -q.
+    import re
+    for line in content.splitlines():
+        if "pytest" in line and re.search(r"\bpytest\b", line):
+            has_v = bool(re.search(r"(^|\s)-v(\s|$)", line))
+            has_q = bool(re.search(r"(^|\s)-q(\s|$)", line))
+            assert not (has_v and has_q), (
+                f"deploy.sh pytest invocation mixes -v and -q: {line!r}"
+            )
+
+
+def test_deploy_script_uses_fsSL_for_health_check() -> None:
+    """The health-check curl must use -fsSL (LO-012)."""
+    content = _read_deploy_script()
+    import re
+    # Find the line that curls APP_URL/health and assert it uses -fsSL.
+    for line in content.splitlines():
+        if "APP_URL}/health" in line or "${APP_URL}/health" in line or "${APP_URL}/\\health" in line:
+            assert "-fsSL" in line, (
+                f"deploy.sh health-check curl must use -fsSL (LO-012): {line!r}"
+            )
+            break
+    else:
+        raise AssertionError("could not find health-check curl line in deploy.sh")
+
+
+def test_deploy_script_has_err_trap_for_cleanup() -> None:
+    """The script must trap ERR and clean up dangling images (LO-013)."""
+    content = _read_deploy_script()
+    assert "trap" in content and "ERR" in content, (
+        "deploy.sh must trap ERR and clean up dangling docker images (LO-013)"
+    )

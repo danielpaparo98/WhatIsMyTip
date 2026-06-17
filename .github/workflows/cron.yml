@@ -1,7 +1,7 @@
 name: Scheduled Jobs (cron)
 
 # ── Purpose ────────────────────────────────────────────────────────────────
-# The FastAPI app (Phase 4 reimplementation) runs the four scheduled
+# The FastAPI app (Phase 4+ reimplementation) runs the four scheduled
 # jobs *in-process* via APScheduler (see app/core/scheduler.py), so
 # GitHub Actions is no longer the primary firing mechanism.  This
 # workflow remains as a **manual / fallback trigger** — invoking the
@@ -15,6 +15,10 @@ name: Scheduled Jobs (cron)
 #
 # Schedule is intentionally empty — the real schedule is inside the
 # container.  The workflow only fires on workflow_dispatch.
+#
+# ME-014: requires `production` environment approval (a human must
+# approve before the job runs).  The triggering actor's note is
+# logged to stdout for audit.
 # ─────────────────────────────────────────────────────────────────────────
 
 on:
@@ -29,21 +33,43 @@ on:
           - match-completion
           - tip-generation
           - historic-refresh
+      user_note:
+        description: Why are you triggering this? (free text, logged for audit)
+        required: true
+        type: string
 
 jobs:
   trigger:
     name: Invoke admin trigger endpoint
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    environment: production   # ME-014: manual approval gate
     steps:
+      - name: Log the trigger
+        env:
+          ACTOR: ${{ github.actor }}
+          JOB: ${{ inputs.job }}
+          NOTE: ${{ inputs.user_note }}
+        run: |
+          printf '[%s] triggering cron job "%s" by %s — note: %s\n' \
+            "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            "${JOB}" \
+            "${ACTOR}" \
+            "${NOTE}"
+
       - name: Invoke the admin trigger endpoint
         env:
           ADMIN_API_KEY: ${{ secrets.ADMIN_API_KEY }}
           JOB: ${{ inputs.job }}
+          NOTE: ${{ inputs.user_note }}
         run: |
           URL="https://whatismytip.com/api/admin/${JOB}/trigger"
           echo "POST $URL"
+          # Pass the note as a request header so the FastAPI app can
+          # log it for audit.
           curl --fail-with-body --show-error --silent --retry 3 --retry-delay 10 \
             -X POST \
             -H "X-API-Key: ${ADMIN_API_KEY}" \
+            -H "X-Trigger-Note: ${NOTE}" \
+            -H "X-Triggered-By: ${ACTOR}" \
             "${URL}"
