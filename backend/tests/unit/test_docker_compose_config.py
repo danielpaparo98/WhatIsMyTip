@@ -175,9 +175,11 @@ class TestInitDataService:
         """init-data must respect the WIMT_INIT_MODE env var.
 
         ``csv`` (default) loads scraped CSVs from /data; ``seed`` runs
-        the synthetic offline seeder.  The command should mention both
-        branches and the environment should default to ``csv`` when
-        WIMT_INIT_MODE is unset.
+        the synthetic offline seeder.  We trigger the latter by
+        invoking ``migrate_and_seed.py`` *without* ``--seed`` *and*
+        without ``--no-seed`` so the script falls through to
+        ``_run_synthetic_seed()`` (which calls ``scripts/seed_data.py``
+        under the hood).
         """
         svc = compose["services"]["init-data"]
         cmd = svc["command"]
@@ -185,11 +187,21 @@ class TestInitDataService:
         # Both branches of the toggle are present in the shell command.
         assert "WIMT_INIT_MODE" in cmd_str
         assert "--from-csv" in cmd_str
-        assert "--seed" in cmd_str
+        assert "migrate_and_seed.py" in cmd_str
         # Default fallback is "csv".
         env = svc["environment"]
         assert "WIMT_INIT_MODE" in env
         assert env["WIMT_INIT_MODE"] == "${WIMT_INIT_MODE:-csv}"
+        # The seed branch must NOT pass --seed (that would try to load
+        # CSVs from the image's seed_data/ which is gitignored / empty)
+        # and must NOT pass --no-seed (that would skip the synthetic
+        # seeder entirely).
+        seed_branch = cmd_str.split("else")[0]
+        assert "--seed" not in seed_branch
+        assert "--no-seed" not in seed_branch
+        csv_branch = cmd_str.split("else")[1]
+        assert "--from-csv" in csv_branch
+        assert "--no-seed" in csv_branch
 
 
 class TestFrontendService:
