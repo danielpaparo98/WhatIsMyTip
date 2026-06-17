@@ -327,7 +327,8 @@ def section_public_reads_with_slug(
 # ---------------------------------------------------------------------------
 
 
-def section_validation(results: List[Result], base: str, slug: str) -> None:
+def section_validation(results: List[Result], base: str, slug: str,
+                        admin_key: str = "") -> None:
     def add(
         name: str,
         method: str,
@@ -359,6 +360,11 @@ def section_validation(results: List[Result], base: str, slug: str) -> None:
             r.pass_fail = "fail"
         results.append(r)
 
+    # POST /api/tips/generate now requires ``X-API-Key`` (R1 follow-up
+    # fix).  Include the admin key in the two validation cases so the
+    # 422 path is exercised rather than the 401 path.
+    authed_headers = {"X-API-Key": admin_key} if admin_key else {}
+
     add("game_slug_404", "GET", "/api/games/this-slug-does-not-exist-zzz", 404)
     add("game_detail_404", "GET", "/api/games/this-slug-does-not-exist-zzz/detail", 404)
     add("backtest_compare_no_season", "GET", "/api/backtest/compare", 422)
@@ -369,11 +375,13 @@ def section_validation(results: List[Result], base: str, slug: str) -> None:
     add("tips_bogus_heuristic", "GET", "/api/tips/bogus_heuristic", 422)
     add("tips_generate_invalid_body", "POST", "/api/tips/generate",
         422, body="{}",
+        headers=authed_headers,
         note="Missing required `season` → 422.")
     add("tips_generate_bad_heuristic", "POST", "/api/tips/generate",
         422,
         body=json.dumps({"season": 2026, "round_id": 1,
                           "heuristics": ["not-a-real-heuristic"]}),
+        headers=authed_headers,
         note="Invalid heuristic in list → 422.")
 
 
@@ -386,12 +394,21 @@ def section_rate_limited_generate(
     results: List[Result],
     base: str,
     max_hits: int = 9,
+    admin_key: str = "",
 ) -> None:
-    """Hit the public rate-limited POST up to ``max_hits`` times."""
+    """Hit the rate-limited POST up to ``max_hits`` times.
+
+    POST /api/tips/generate requires ``X-API-Key`` (R1 follow-up) on top
+    of the per-IP rate limit.  Pass ``admin_key`` to exercise the 200
+    / 404 / 422 / 429 / 500 paths; without it every call would short-
+    circuit to 401.
+    """
 
     url = "/api/tips/generate"
     body = json.dumps({"season": 2026, "round_id": 1})
-    headers = {"Content-Type": "application/json"}
+    headers: Dict[str, str] = {"Content-Type": "application/json"}
+    if admin_key:
+        headers["X-API-Key"] = admin_key
 
     # First, a single call (likely 200/404/500 depending on whether
     # games exist for round 1, and whether OpenRouter is happy).
@@ -689,10 +706,10 @@ def run_sweep(base: str, admin_key: str, skip_long: bool = False) -> List[Result
             ))
 
     # 3. validation negatives
-    section_validation(results, base, slug or "no-slug")
+    section_validation(results, base, slug or "no-slug", admin_key=admin_key)
 
     # 4. rate-limited POST /api/tips/generate
-    section_rate_limited_generate(results, base, max_hits=9)
+    section_rate_limited_generate(results, base, max_hits=9, admin_key=admin_key)
 
     # 5. admin unauth
     section_admin_unauth(results)
