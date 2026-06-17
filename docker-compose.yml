@@ -80,23 +80,35 @@ services:
   # One-shot init container: runs Alembic migrations, then (optionally)
   # loads CSV data from the bind-mounted ./data directory.  Exits 0
   # on success; ``api`` waits for it via service_completed_successfully.
+  #
+  # WIMT_INIT_MODE toggle (env var, default: csv):
+  #   csv   - load real scraped CSVs from /data (default; used in prod-like
+  #           local runs once ``scripts/make-data.sh`` has produced data).
+  #   seed  - run the synthetic offline seeder (``--seed``) which populates
+  #           the DB from ``backend/seed_data``.  Use this when you want a
+  #           fast end-to-end test without waiting for the scraper.
   init-data:
     build:
-      context: .
-      dockerfile: backend/Dockerfile
+      context: backend
+      dockerfile: Dockerfile
     image: whatismytip-api:local
     container_name: wimt-init
     command:
-      - python
-      - scripts/migrate_and_seed.py
-      - --from-csv
-      - --csv-dir=/data
-      - --no-seed
-      - --verbose
+      - sh
+      - -c
+      - >-
+        if [ "$$WIMT_INIT_MODE" = "seed" ]; then
+        echo "[init-data] WIMT_INIT_MODE=seed -> running synthetic seeder";
+        python scripts/migrate_and_seed.py --seed --verbose;
+        else
+        echo "[init-data] WIMT_INIT_MODE=csv -> loading CSVs from /data";
+        python scripts/migrate_and_seed.py --from-csv --csv-dir=/data --no-seed --verbose;
+        fi
     environment:
       DATABASE_URL: postgresql+asyncpg://wimt:wimt_dev_password@postgres:5432/whatismytip
       REDIS_URL: redis://redis:6379/0
       ENVIRONMENT: development
+      WIMT_INIT_MODE: ${WIMT_INIT_MODE:-csv}
     volumes:
       - ./data:/data:ro
     depends_on:
@@ -109,8 +121,8 @@ services:
   api:
     image: whatismytip-api:local
     build:
-      context: .
-      dockerfile: backend/Dockerfile
+      context: backend
+      dockerfile: Dockerfile
     container_name: wimt-api
     ports:
       - "8000:8000"
