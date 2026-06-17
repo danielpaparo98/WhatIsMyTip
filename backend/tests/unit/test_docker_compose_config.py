@@ -103,7 +103,12 @@ class TestApiService:
 
     def test_built_from_backend_dockerfile(self, compose):
         svc = compose["services"]["api"]
-        assert svc["build"]["dockerfile"] == "backend/Dockerfile"
+        # The api image is built from the Dockerfile in the backend
+        # folder.  The compose file uses ``context: backend`` so the
+        # dockerfile path is relative to that context (i.e. just
+        # ``Dockerfile``).
+        assert svc["build"]["context"] == "backend"
+        assert svc["build"]["dockerfile"] == "Dockerfile"
 
     def test_waits_for_init_data_completion(self, compose):
         svc = compose["services"]["api"]
@@ -165,6 +170,26 @@ class TestInitDataService:
     def test_uses_asyncpg_url(self, compose):
         svc = compose["services"]["init-data"]
         assert "asyncpg" in svc["environment"]["DATABASE_URL"]
+
+    def test_supports_init_mode_toggle(self, compose):
+        """init-data must respect the WIMT_INIT_MODE env var.
+
+        ``csv`` (default) loads scraped CSVs from /data; ``seed`` runs
+        the synthetic offline seeder.  The command should mention both
+        branches and the environment should default to ``csv`` when
+        WIMT_INIT_MODE is unset.
+        """
+        svc = compose["services"]["init-data"]
+        cmd = svc["command"]
+        cmd_str = " ".join(cmd) if isinstance(cmd, list) else str(cmd)
+        # Both branches of the toggle are present in the shell command.
+        assert "WIMT_INIT_MODE" in cmd_str
+        assert "--from-csv" in cmd_str
+        assert "--seed" in cmd_str
+        # Default fallback is "csv".
+        env = svc["environment"]
+        assert "WIMT_INIT_MODE" in env
+        assert env["WIMT_INIT_MODE"] == "${WIMT_INIT_MODE:-csv}"
 
 
 class TestFrontendService:
