@@ -68,20 +68,40 @@ if (-not $Runtime) {
 }
 
 # ---- compose command ------------------------------------------------
-function Get-ComposeCommand {
+# Compose command is represented as a single string (the executable)
+# plus an optional list of extra args.  Keeping it simple avoids
+# PowerShell's array-splatting quirks with single-element arrays.
+function Resolve-ComposeCommand {
     if ($Runtime -eq "docker") {
-        return @("docker", "compose")
+        return @{ Cmd = "docker"; Extra = @("compose") }
     }
-    # podman compose plugin
-    try { podman help compose | Out-Null; return @("podman", "compose") } catch { }
-    $podmanCompose = Get-Command podman-compose -ErrorAction SilentlyContinue
-    if ($podmanCompose) { return @("podman-compose") }
-    Write-Err "Error: podman found but the compose plugin is not installed."
-    Write-Host "Install with: pipx install podman-compose"
+    # Prefer the real ``podman-compose`` (Python) tool over ``podman
+    # compose`` because, on Windows, the latter is a thin wrapper that
+    # falls back to ``docker-compose.exe`` and ends up driving the
+    # Docker engine instead of Podman.  Using podman-compose directly
+    # keeps the whole stack on the chosen runtime.
+    $podmanCompose = Get-Command "podman-compose" -ErrorAction SilentlyContinue
+    if ($podmanCompose) { return @{ Cmd = "podman-compose"; Extra = @() } }
+    # podman compose plugin (wrapper that may delegate to docker-compose)
+    try { podman help compose | Out-Null; return @{ Cmd = "podman"; Extra = @("compose") } } catch { }
+    Write-Err "Error: podman found but no compose provider is available."
+    Write-Host "Install with: uv tool install podman-compose  (or 'pipx install podman-compose')"
     exit 1
 }
 
-$Compose = Get-ComposeCommand
+$Compose = Resolve-ComposeCommand
+
+# Helper: invoke the resolved compose command with extra args.
+function Invoke-Compose {
+    param([Parameter(ValueFromRemainingArguments = $true)][string[]]$Args)
+    $cmd = $Compose.Cmd
+    $extra = $Compose.Extra
+    if ($extra) {
+        & $cmd @extra @Args
+    } else {
+        & $cmd @Args
+    }
+}
 
 # ---- usage ---------------------------------------------------------
 function Show-Usage {
@@ -108,11 +128,12 @@ Environment:
 function Invoke-Up {
     param([string[]]$ExtraArgs)
 
-    Write-Banner "WhatIsMyTip dev  ·  runtime=$Runtime  ·  compose=$($Compose -join ' ')"
+    $composeDesc = if ($Compose.Extra.Count -gt 0) { $Compose.Cmd + " " + ($Compose.Extra -join " ") } else { $Compose.Cmd }
+    Write-Banner "WhatIsMyTip dev  ·  runtime=$Runtime  ·  compose=$composeDesc"
     Write-Info "Starting stack..."
 
-    & $Compose[0] $Compose[1..($Compose.Count - 1)] up -d --build
-    if ($LASTEXITCODE -ne 0) { throw "docker compose up failed." }
+    Invoke-Compose up -d --build
+    if ($LASTEXITCODE -ne 0) { throw "compose up failed." }
 
     Write-Ok "Stack up."
     Write-Host "  API:       http://localhost:8000  (Swagger UI at /docs)"
@@ -122,13 +143,13 @@ function Invoke-Up {
     Write-Host ""
 
     if ($ExtraArgs -contains "--logs") {
-        & $Compose[0] $Compose[1..($Compose.Count - 1)] logs -f --tail=100
+        Invoke-Compose logs -f --tail=100
     }
 }
 
 function Invoke-Down {
     Write-Banner "WhatIsMyTip dev  ·  runtime=$Runtime"
-    & $Compose[0] $Compose[1..($Compose.Count - 1)] down
+    Invoke-Compose down
     Write-Ok "Stack stopped (volumes preserved)."
 }
 
@@ -140,7 +161,7 @@ function Invoke-Reset {
         Write-Host "Aborted."
         return
     }
-    & $Compose[0] $Compose[1..($Compose.Count - 1)] down -v
+    Invoke-Compose down -v
     Write-Ok "Stack stopped and volumes deleted."
 }
 
@@ -148,36 +169,36 @@ function Invoke-Logs {
     param([string[]]$Services)
     Write-Banner "WhatIsMyTip dev  ·  runtime=$Runtime"
     if (-not $Services -or $Services.Count -eq 0) {
-        & $Compose[0] $Compose[1..($Compose.Count - 1)] logs -f --tail=100
+        Invoke-Compose logs -f --tail=100
     } else {
-        & $Compose[0] $Compose[1..($Compose.Count - 1)] logs -f --tail=100 @Services
+        Invoke-Compose logs -f --tail=100 @Services
     }
 }
 
 function Invoke-Ps {
     Write-Banner "WhatIsMyTip dev  ·  runtime=$Runtime"
-    & $Compose[0] $Compose[1..($Compose.Count - 1)] ps
+    Invoke-Compose ps
 }
 
 function Invoke-Shell {
     param([string]$Service = "api")
     Write-Banner "WhatIsMyTip dev  ·  runtime=$Runtime"
-    & $Compose[0] $Compose[1..($Compose.Count - 1)] exec $Service /bin/bash
+    Invoke-Compose exec $Service /bin/bash
 }
 
 function Invoke-Psql {
     Write-Banner "WhatIsMyTip dev  ·  runtime=$Runtime"
-    & $Compose[0] $Compose[1..($Compose.Count - 1)] exec postgres psql -U wimt -d whatismytip
+    Invoke-Compose exec postgres psql -U wimt -d whatismytip
 }
 
 function Invoke-Redis {
     Write-Banner "WhatIsMyTip dev  ·  runtime=$Runtime"
-    & $Compose[0] $Compose[1..($Compose.Count - 1)] exec redis redis-cli
+    Invoke-Compose exec redis redis-cli
 }
 
 function Invoke-Config {
     Write-Banner "WhatIsMyTip dev  ·  runtime=$Runtime"
-    & $Compose[0] $Compose[1..($Compose.Count - 1)] config
+    Invoke-Compose config
 }
 
 # ---- main ----------------------------------------------------------
