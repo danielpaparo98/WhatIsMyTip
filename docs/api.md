@@ -160,14 +160,14 @@ Get tips for one heuristic (`best_bet`, `yolo`, or `high_risk_high_reward`).  Qu
 POST /api/tips/generate
 ```
 
-Generate tips for a round.  **Requires `X-API-Key` header** (admin auth — this endpoint calls OpenRouter for AI explanations and writes to the database, so it is not public).  Also rate-limited to 10 requests/minute per client IP.  Query parameters: `season`, `round`, `heuristics` (optional, comma-separated), `regenerate` (default: `false`).
+Generate tips for a round.  **Intentionally public.** Rate-limited to 10 requests/minute per IP (see [`backend/app/api/tips.py`](backend/app/api/tips.py:261)). Any caller may trigger tip generation for a season/round that has no tips yet.  Query parameters: `season`, `round`, `heuristics` (optional, comma-separated), `regenerate` (default: `false`).
 
 **Example**:
 ```bash
-curl -X POST -H "X-API-Key: $ADMIN_API_KEY" \
+curl -X POST \
   'http://localhost:8000/api/tips/generate?season=2025&round=1'
 
-curl -X POST -H "X-API-Key: $ADMIN_API_KEY" \
+curl -X POST \
   'http://localhost:8000/api/tips/generate?season=2025&round=1&heuristics=best_bet,yolo&regenerate=true'
 ```
 

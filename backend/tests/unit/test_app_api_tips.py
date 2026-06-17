@@ -10,6 +10,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -336,68 +337,45 @@ class TestTipsByHeuristic:
 
 
 # ---------------------------------------------------------------------------
-# POST /generate  — admin
+# POST /generate  — public, rate-limited
 # ---------------------------------------------------------------------------
 
 
 class TestGenerateTips:
-    """``POST /api/tips/generate`` requires the admin ``X-API-Key`` header.
+    """``POST /api/tips/generate`` is intentionally public.
 
-    The endpoint hits OpenRouter (real cost) and writes to the DB, so it is
-    protected by ``require_admin_key`` at the route level in addition to
-    the per-IP rate limit (10 req/min).  Auth is checked first; an
-    invalid or missing key never reaches the rate limiter or the service.
+    The endpoint hits OpenRouter (real cost) and writes to the DB, but
+    the deliberate design is that **any caller may trigger tip generation
+    for a season/round that has no tips yet**.  The only protection is the
+    per-IP rate limit (10 req/min) declared on the route.  These tests
+    lock in the public contract: no ``X-API-Key`` is read or required,
+    and a stray ``X-API-Key`` header is silently ignored.
     """
 
-    def test_generate_without_api_key_returns_401(self, monkeypatch):
-        """No ``X-API-Key`` header → 401 ``invalid_api_key`` (no service call)."""
-        mock_session = AsyncMock(spec=AsyncSession)
-        app = _build_app_with_tips_router(monkeypatch=monkeypatch)
-        _override_db(app, mock_session)
+    @pytest.fixture(autouse=True)
+    def _reset_post_generate_limiter(self):
+        """Reset the per-route limiter between tests.
 
-        with patch("app.api.tips.GameCRUD") as mock_game_crud, \
-             patch("app.api.tips.TipGenerationService") as mock_service_cls:
-            client = TestClient(app)
-            resp = client.post(
-                "/api/tips/generate",
-                json={"season": 2025, "round_id": 1, "regenerate": False},
-            )
+        The route-level ``_post_generate_limiter`` is a module-level
+        singleton in ``app.api.tips``, so its in-memory request counts
+        persist across tests in the same process.  Without a reset, the
+        fourth test in this class would see 429 instead of 200/404
+        because the 10/minute cap is shared.  The reset mirrors the
+        pattern used in ``tests/integration/conftest.py``.
+        """
+        from app.api.tips import _post_generate_limiter
 
-        assert resp.status_code == 401
-        body = resp.json()
-        assert body["code"] == "invalid_api_key"
-        # Service must not be invoked when auth fails.
-        mock_service_cls.return_value.generate_for_round.assert_not_called()
-        mock_game_crud.get_by_round.assert_not_called()
+        if hasattr(_post_generate_limiter, "reset"):
+            try:
+                _post_generate_limiter.reset()
+            except Exception:  # noqa: BLE001 — best-effort reset
+                pass
+        yield
 
-    def test_generate_with_wrong_api_key_returns_401(self, monkeypatch):
-        """An arbitrary / wrong ``X-API-Key`` header is rejected with 401."""
-        mock_session = AsyncMock(spec=AsyncSession)
-        app = _build_app_with_tips_router(monkeypatch=monkeypatch)
-        _override_db(app, mock_session)
-
-        with patch("app.api.tips.GameCRUD") as mock_game_crud, \
-             patch("app.api.tips.TipGenerationService") as mock_service_cls:
-            client = TestClient(app)
-            resp = client.post(
-                "/api/tips/generate",
-                json={
-                    "season": 2025,
-                    "round_id": 1,
-                    "regenerate": True,
-                    "heuristics": ["best_bet"],
-                },
-                headers={"X-API-Key": "definitely-not-the-secret-key"},
-            )
-
-        assert resp.status_code == 401
-        body = resp.json()
-        assert body["code"] == "invalid_api_key"
-        mock_service_cls.return_value.generate_for_round.assert_not_called()
-        mock_game_crud.get_by_round.assert_not_called()
-
-    def test_generate_with_valid_api_key_returns_200(self, monkeypatch):
-        """A valid ``X-API-Key`` header runs the service and returns 200."""
+    def test_generate_tips_public_no_auth_required_returns_200(
+        self, monkeypatch
+    ):
+        """No headers at all → 200 (public endpoint, no auth required)."""
         mock_session = AsyncMock(spec=AsyncSession)
         mock_stats = {
             "games_processed": 9,
@@ -424,7 +402,6 @@ class TestGenerateTips:
             resp = client.post(
                 "/api/tips/generate",
                 json={"season": 2025, "round_id": 1, "regenerate": False},
-                headers={"X-API-Key": "the-secret-key"},
             )
 
         assert resp.status_code == 200
@@ -434,6 +411,44 @@ class TestGenerateTips:
         assert body["round_id"] == 1
         assert body["tips_created"] == 27
         assert body["tips_skipped"] == 0
+        mock_service_cls.return_value.generate_for_round.assert_awaited_once()
+
+    def test_generate_tips_ignores_invalid_x_api_key_header(self, monkeypatch):
+        """A garbage ``X-API-Key`` header is silently ignored → 200.
+
+        This pins the public design: if someone re-adds ``require_admin_key``
+        to the route in the future, this test will fail with 401 instead
+        of 200 and the regression will be caught immediately.
+        """
+        mock_session = AsyncMock(spec=AsyncSession)
+        mock_stats = {
+            "games_processed": 1,
+            "tips_created": 3,
+            "tips_skipped": 0,
+            "tips_updated": 0,
+            "errors": [],
+        }
+
+        app = _build_app_with_tips_router(monkeypatch=monkeypatch)
+        _override_db(app, mock_session)
+
+        with patch("app.api.tips.GameCRUD") as mock_game_crud, \
+             patch("app.api.tips.TipGenerationService") as mock_service_cls:
+            mock_game_crud.get_by_round = AsyncMock(return_value=[_make_game_mock()])
+            mock_service_cls.return_value.generate_for_round = AsyncMock(
+                return_value=mock_stats
+            )
+
+            client = TestClient(app)
+            resp = client.post(
+                "/api/tips/generate",
+                json={"season": 2025, "round_id": 1, "regenerate": False},
+                headers={"X-API-Key": "garbage-value-the-server-should-ignore"},
+            )
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["status"] == "success"
         mock_service_cls.return_value.generate_for_round.assert_awaited_once()
 
     def test_generate_missing_season_returns_422(self, monkeypatch):

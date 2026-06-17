@@ -9,9 +9,11 @@ Routes (mounted at ``/api/tips``):
 * ``GET  /games-with-tips``     — games-with-tips for a round (requires season, round)
 * ``GET  /{heuristic}``         — tips for one heuristic (``best_bet`` /
                                    ``high_risk_high_reward`` / ``yolo``)
-* ``POST /generate``            — admin-only: generate tips for a round
-                                   (requires ``X-API-Key`` + rate-limited
-                                   10/minute per IP)
+* ``POST /generate``            — public: generate tips for a round
+                                   (no auth — intentionally public so any
+                                   caller can trigger generation when no
+                                   tips exist for a period; rate-limited
+                                   to 10/minute per IP)
 """
 
 from __future__ import annotations
@@ -26,7 +28,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.db_deps import get_db
 from app.core.exceptions import http_error
-from app.core.security import require_admin_key
 from packages.shared.crud import GameCRUD, ModelPredictionCRUD, TipCRUD
 from packages.shared.models import Game, Tip
 from packages.shared.schemas import (
@@ -256,7 +257,8 @@ async def tips_by_heuristic(
 # ---------------------------------------------------------------------------
 
 
-@router.post("/generate", dependencies=[require_admin_key])
+# Intentionally public — rate-limited to 10/min per IP. See docs/api.md.
+@router.post("/generate")
 @_post_generate_limiter.limit("10/minute")
 async def generate_tips(
     request: Request,
@@ -265,9 +267,9 @@ async def generate_tips(
 ):
     """Generate tips for a specific round.
 
-    Requires the admin ``X-API-Key`` header (this endpoint hits
-    OpenRouter and writes to the DB, so it is **not** public).
-    Also rate-limited to 10 requests/minute per client IP.
+    **Intentionally public.**  No ``X-API-Key`` is required: any caller
+    may trigger tip generation for a season/round that has no tips yet.
+    Protection is the per-IP rate limit of 10 requests/minute.
     """
     season = body.season
     round_id = body.round_id

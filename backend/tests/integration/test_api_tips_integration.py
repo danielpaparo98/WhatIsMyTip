@@ -5,14 +5,18 @@ Covers the four declared routes:
 * ``GET  /api/tips/``                       — list tips with filters
 * ``GET  /api/tips/games-with-tips``        — games-with-tips for a round
 * ``GET  /api/tips/{heuristic}``            — tips for one heuristic
-* ``POST /api/tips/generate``               — admin-only tip generation
+* ``POST /api/tips/generate``               — public tip generation
+                                              (intentionally public, rate
+                                              limited to 10/min per IP)
 
 The seed fixture inserts one ``best_bet`` tip for game id 1.
 
 Special cases (from the inventory):
 
-* ``POST /api/tips/generate`` is **admin-only** (R1 fix on this
-  branch): ``require_admin_key`` runs before the rate limiter.
+* ``POST /api/tips/generate`` is **intentionally public** (any caller
+  may trigger tip generation for a season/round that has no tips yet).
+  The only protection is the per-IP rate limit (10 req/min) declared on
+  the route.  No ``X-API-Key`` is read or required.
 * ``POST /api/tips/generate`` writes to the DB and may call OpenRouter
   for AI explanations — so its 200 happy-path test stubs
   ``TipGenerationService`` (matching the unit-test pattern in
@@ -24,8 +28,6 @@ from datetime import datetime, timezone
 from unittest.mock import AsyncMock, patch
 
 import pytest
-
-from tests.integration.conftest import ADMIN_HEADERS
 
 
 # ---------------------------------------------------------------------------
@@ -247,49 +249,82 @@ class TestTipsByHeuristic:
 
 
 # ---------------------------------------------------------------------------
-# POST /api/tips/generate  (admin-only — R1 follow-up)
+# POST /api/tips/generate  (public — intentionally no auth, R1 reverted)
 # ---------------------------------------------------------------------------
 
 
-class TestGenerateTipsAuth:
-    """``POST /api/tips/generate`` — admin-only auth contract."""
+class TestGenerateTipsPublic:
+    """``POST /api/tips/generate`` — public endpoint contract.
 
-    def test_generate_tips_without_api_key_returns_401(self, client):
-        """No ``X-API-Key`` header → 401 ``invalid_api_key``.
+    The endpoint is intentionally public (no ``X-API-Key`` required).
+    Any caller may trigger tip generation for a season/round that has
+    no tips yet.  These tests pin the public contract: hitting the
+    route without any header must return 200, and a stray
+    ``X-API-Key`` header is silently ignored.
+    """
 
-        This is the R1 follow-up fix: the endpoint was previously
-        unauthenticated and could fire OpenRouter calls and DB writes
-        anonymously.  The new ``require_admin_key`` dependency runs
-        before the rate limiter.
+    def test_generate_tips_does_not_require_auth(self, client):
+        """Hitting the route with no headers at all → 200 (public).
+
+        This is the explicit lock-in test for the public design.  If
+        someone re-adds ``require_admin_key`` to the route in the
+        future, this test will start returning 401 and the regression
+        will be caught immediately.
         """
-        resp = client.post(
-            "/api/tips/generate",
-            json={"season": 2025, "round_id": 1},
-        )
-        assert resp.status_code == 401
-        body = resp.json()
-        assert body["code"] == "invalid_api_key"
-        assert "request_id" in body
+        with patch("app.api.tips.TipGenerationService") as mock_service_cls:
+            mock_service = mock_service_cls.return_value
+            mock_service.generate_for_round = AsyncMock(
+                return_value={
+                    "games_processed": 1,
+                    "tips_created": 3,
+                    "tips_skipped": 0,
+                    "tips_updated": 0,
+                    "errors": [],
+                }
+            )
 
-    def test_generate_tips_with_wrong_api_key_returns_401(self, client):
-        """Wrong key → 401 (constant-time comparison in ``verify_api_key``)."""
-        resp = client.post(
-            "/api/tips/generate",
-            json={"season": 2025, "round_id": 1},
-            headers={"X-API-Key": "this-is-the-wrong-key"},
-        )
-        assert resp.status_code == 401
-        body = resp.json()
-        assert body["code"] == "invalid_api_key"
+            resp = client.post(
+                "/api/tips/generate",
+                json={"season": 2025, "round_id": 1},
+            )
 
-    def test_generate_tips_with_empty_api_key_returns_401(self, client):
-        """Empty key header → 401 (treated as missing)."""
-        resp = client.post(
-            "/api/tips/generate",
-            json={"season": 2025, "round_id": 1},
-            headers={"X-API-Key": ""},
-        )
-        assert resp.status_code == 401
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["status"] == "success"
+        assert body["season"] == 2025
+        assert body["round_id"] == 1
+        mock_service.generate_for_round.assert_awaited_once()
+
+    def test_generate_tips_ignores_invalid_x_api_key_header(self, client):
+        """A garbage ``X-API-Key`` header is silently ignored → 200.
+
+        Companion to ``test_generate_tips_does_not_require_auth``:
+        even if a client (correctly or incorrectly) sends an
+        ``X-API-Key`` header, the endpoint must not require it and
+        must not 401.
+        """
+        with patch("app.api.tips.TipGenerationService") as mock_service_cls:
+            mock_service = mock_service_cls.return_value
+            mock_service.generate_for_round = AsyncMock(
+                return_value={
+                    "games_processed": 1,
+                    "tips_created": 3,
+                    "tips_skipped": 0,
+                    "tips_updated": 0,
+                    "errors": [],
+                }
+            )
+
+            resp = client.post(
+                "/api/tips/generate",
+                json={"season": 2025, "round_id": 1},
+                headers={"X-API-Key": "garbage-value-the-server-should-ignore"},
+            )
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["status"] == "success"
+        mock_service.generate_for_round.assert_awaited_once()
 
 
 class TestGenerateTipsValidation:
@@ -300,7 +335,6 @@ class TestGenerateTipsValidation:
         resp = client.post(
             "/api/tips/generate",
             json={},
-            headers=ADMIN_HEADERS,
         )
         assert resp.status_code == 422
         body = resp.json()
@@ -319,7 +353,6 @@ class TestGenerateTipsValidation:
                 "round_id": 1,
                 "heuristics": ["best_bet", "NOT_A_HEURISTIC"],
             },
-            headers=ADMIN_HEADERS,
         )
         assert resp.status_code == 422
         body = resp.json()
@@ -338,7 +371,6 @@ class TestGenerateTipsValidation:
         resp = client.post(
             "/api/tips/generate",
             json={"season": 1999, "round_id": 1},
-            headers=ADMIN_HEADERS,
         )
         assert resp.status_code == 404
         body = resp.json()
@@ -357,7 +389,6 @@ class TestGenerateTipsRoundId:
         resp = client.post(
             "/api/tips/generate",
             json={"season": 2025},
-            headers=ADMIN_HEADERS,
         )
         assert resp.status_code == 422
         body = resp.json()
@@ -375,7 +406,6 @@ class TestGenerateTipsRoundId:
         resp = client.post(
             "/api/tips/generate",
             json={"season": 2025, "round_id": 0},
-            headers=ADMIN_HEADERS,
         )
         assert resp.status_code == 404
         body = resp.json()
@@ -390,7 +420,6 @@ class TestGenerateTipsNotFound:
         resp = client.post(
             "/api/tips/generate",
             json={"season": 2025, "round_id": 99},
-            headers=ADMIN_HEADERS,
         )
         assert resp.status_code == 404
         body = resp.json()
@@ -404,7 +433,8 @@ class TestGenerateTipsSuccess:
     The real service would invoke OpenRouter for AI explanations; we
     stub ``TipGenerationService.generate_for_round`` so the test stays
     fast and deterministic, matching the unit-test pattern at
-    ``test_app_api_tips.py::TestGenerateTips``.
+    ``test_app_api_tips.py::TestGenerateTips``.  The endpoint is public,
+    so these tests intentionally send **no** ``X-API-Key`` header.
     """
 
     def test_generate_tips_returns_200_with_contract_shape(self, client):
@@ -426,7 +456,6 @@ class TestGenerateTipsSuccess:
             resp = client.post(
                 "/api/tips/generate",
                 json={"season": 2025, "round_id": 1},
-                headers=ADMIN_HEADERS,
             )
 
         assert resp.status_code == 200
@@ -462,7 +491,6 @@ class TestGenerateTipsSuccess:
                     "heuristics": ["best_bet"],
                     "regenerate": True,
                 },
-                headers=ADMIN_HEADERS,
             )
 
         assert resp.status_code == 200
@@ -490,7 +518,6 @@ class TestGenerateTipsSuccess:
             resp = client.post(
                 "/api/tips/generate",
                 json={"season": 2025, "round_id": 1},
-                headers=ADMIN_HEADERS,
             )
 
         assert resp.status_code == 200

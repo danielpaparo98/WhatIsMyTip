@@ -45,9 +45,9 @@
 
 | Dependency | Where applied | Behaviour | Source |
 |---|---|---|---|
-| `require_admin_key` (alias for `Depends(verify_api_key)`) | `APRouter(dependencies=[require_admin_key])` on the **admin** router; per-route on `POST /api/backtest/run` and `POST /api/tips/generate` | Reads `X-API-Key` header, constant-time compares to `settings.admin_api_key`; raises `BackendServiceError(401, "invalid_api_key")` on missing/empty/wrong key | [`backend/app/core/security.py`](backend/app/core/security.py:19) |
+| `require_admin_key` (alias for `Depends(verify_api_key)`) | `APRouter(dependencies=[require_admin_key])` on the **admin** router; per-route on `POST /api/backtest/run` | Reads `X-API-Key` header, constant-time compares to `settings.admin_api_key`; raises `BackendServiceError(401, "invalid_api_key")` on missing/empty/wrong key | [`backend/app/core/security.py`](backend/app/core/security.py:19) |
 
-> `POST /api/tips/generate` requires the admin `X-API-Key` header (R1 follow-up fix). The endpoint calls OpenRouter (real cost) and writes to the DB, so it is not public; in addition it is rate-limited to 10 requests/minute per client IP.
+> `POST /api/tips/generate` is **intentionally public** (R1 reverted): no `X-API-Key` is read or required. The endpoint calls OpenRouter (real cost) and writes to the DB, but the deliberate design is that any caller may trigger tip generation for a season/round that has no tips yet. The only protection is the per-IP rate limit of 10 requests/minute.
 
 ---
 
@@ -156,17 +156,17 @@
 
 | Field | Value |
 |---|---|
-| **Source** | [`backend/app/api/tips.py`](backend/app/api/tips.py:257) — `@router.post("/generate", dependencies=[require_admin_key])` + `@_post_generate_limiter.limit("10/minute")` lines 257-258 |
-| **Auth** | **`X-API-Key` header** (per-route `require_admin_key` — admin-only; the endpoint calls OpenRouter and writes to the DB) |
+| **Source** | [`backend/app/api/tips.py`](backend/app/api/tips.py:261) — `@router.post("/generate")` + `@_post_generate_limiter.limit("10/minute")` lines 261-262 |
+| **Auth** | **None** (intentionally public — no `X-API-Key` is read or required; any caller may trigger tip generation for a season/round that has no tips yet) |
 | **Rate limit** | **10/minute per client IP** (slowapi) |
 | **Request (body)** | `TipGenerateRequest`: `{ season: int (REQUIRED, ge=2000), round_id: int? (ge=1), heuristics: list[str]? (allow-list), regenerate: bool=false }` |
 | **Example body** | ```json\n{ "season": 2025, "round_id": 1, "regenerate": false, "heuristics": ["best_bet", "yolo"] }\n``` |
 | **Response 200** | `{ status: "success", season, round_id, games_processed, tips_created, tips_skipped, tips_updated, errors: [] }` |
-| **Response 401** | `invalid_api_key` (missing/wrong `X-API-Key`); auth is checked before the rate limit. |
 | **Response 422** | `invalid_heuristics` if any heuristic not in `["best_bet","high_risk_high_reward","yolo"]`; also `validation_error` when `round_id` is `null` (re-validated inside the handler, line 287). |
 | **Response 404** | `not_found` when no games exist for the round. |
-| **Example** | `curl -X POST -H 'X-API-Key: $ADMIN_API_KEY' -H 'Content-Type: application/json' -d '{"season":2025,"round_id":1}' http://localhost:8000/api/tips/generate` |
-| **Notes / risks** | R1 follow-up (this branch): added `require_admin_key` as a route-level dependency — auth is checked before the rate limiter and the service is never reached on a 401. The unit test `tests/unit/test_app_api_tips.py::TestGenerateTips` asserts all three paths. Triggers `TipGenerationService.generate_for_round` — may invoke OpenRouter for AI explanations, so the admin-only auth is necessary. |
+| **Response 429** | Rate limit (10/min/IP) exceeded. |
+| **Example** | `curl -X POST -H 'Content-Type: application/json' -d '{"season":2025,"round_id":1}' http://localhost:8000/api/tips/generate` |
+| **Notes / risks** | **Intentionally public.**  The earlier "R1 follow-up" that added `require_admin_key` to this route was reverted: the deliberate design is that any user should be able to trigger tip generation when no tips exist for a period.  The only protection is the per-IP rate limit (10/min).  Pinned by `tests/unit/test_app_api_tips.py::TestGenerateTips` and `tests/integration/test_api_tips_integration.py::TestGenerateTipsPublic`.  Triggers `TipGenerationService.generate_for_round` — may invoke OpenRouter for AI explanations. |
 
 ### 9. `GET /api/backtest/` — Deprecated
 
@@ -305,7 +305,7 @@
 
 | # | Category | Observation | Source |
 |---|---|---|---|
-| R1 | **Auth gap (data-integrity risk)** | `POST /api/tips/generate` is unauthenticated and runs `TipGenerationService.generate_for_round`, which can invoke OpenRouter and write tips to the DB. The only barrier is the 10/min IP rate limit. `docs/api.md:163` is wrong — it claims the endpoint requires `X-API-Key`, but the code and `test_app_api_tips.py:350` confirm the key is **not** checked. | [`backend/app/api/tips.py:257`](backend/app/api/tips.py:257), [`backend/tests/unit/test_app_api_tips.py:350`](backend/tests/unit/test_app_api_tips.py:350), [`docs/api.md:163`](docs/api.md:163) |
+| R1 | **Resolution:** Endpoint kept public | `POST /api/tips/generate` is intentionally public (no `X-API-Key` is read or required). Per-IP rate limit of 10/min is the only protection (see [`backend/app/api/tips.py`](backend/app/api/tips.py:261)). Rationale: any user should be able to trigger tip generation when no tips exist for a period. Pinned by `tests/unit/test_app_api_tips.py::TestGenerateTips::test_generate_tips_ignores_invalid_x_api_key_header` and `tests/integration/test_api_tips_integration.py::TestGenerateTipsPublic::test_generate_tips_does_not_require_auth`. | [`backend/app/api/tips.py:261`](backend/app/api/tips.py:261), [`backend/tests/unit/test_app_api_tips.py`](backend/tests/unit/test_app_api_tips.py), [`docs/api.md:163`](docs/api.md:163) |
 | R2 | **Destructive POST** | `POST /api/admin/{job_name}/trigger` and `POST /api/backtest/run` mutate state (DB writes, external API calls). They are correctly gated by `require_admin_key`. **Curl them only with a real `X-API-Key`.** | [`backend/app/api/admin.py:71`](backend/app/api/admin.py:71), [`backend/app/api/backtest.py:258`](backend/app/api/backtest.py:258) |
 | R3 | **Path-parameter shadowing** | `GET /api/tips/{heuristic}` (`tips.py:219`) is a catch-all that is registered after `GET /api/tips/games-with-tips` (`tips.py:103`). FastAPI's static-first matcher makes the live behaviour correct, but the OpenAPI ordering is a maintenance hazard — renaming `games-with-tips` could silently break it. | [`backend/app/api/tips.py:103`](backend/app/api/tips.py:103) |
 | R4 | **Health always 200** | `/health` never returns a non-2xx status; check the `status` field (`"healthy"` / `"degraded"`) instead. | [`backend/app/api/health.py:50`](backend/app/api/health.py:50) |
@@ -357,10 +357,10 @@ Run curls in this order so dependencies and auth state are validated early, and 
    - `GET /api/tips/bogus_heuristic` → 422 (path-pattern rejection)
    - `POST /api/tips/generate` with invalid body → 422
 
-4. **Authenticated, rate-limited write (no admin key)**
+4. **Public, rate-limited write (intentionally no auth)**
    - `POST /api/tips/generate` *(rate-limited 10/min — fire at most ~9 times)*
    - Verify 429 on the 11th call within a minute
-   - 401 checks skipped here: this endpoint is intentionally open (see R1)
+   - No `X-API-Key` is required: the endpoint is intentionally open (see R1)
 
 5. **Admin (require `X-API-Key`)**
    - **Without key** (expect 401 on each):
