@@ -1,80 +1,97 @@
 #!/bin/bash
 set -euo pipefail
 
-# Colors for output
+# Colors for output (printed via printf for portability — LO-005).
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m'
 
-echo -e "${GREEN}=== WhatIsMyTip Database Setup ===${NC}"
+printf '%s=== WhatIsMyTip Database Setup ===%s\n' "$GREEN" "$NC"
 
 # Change to project root
 cd "$(dirname "$0")/.."
 
 # Load environment variables
 if [ -f .env ]; then
-    echo -e "${YELLOW}Loading .env...${NC}"
+    printf '%sLoading .env...%s\n' "$YELLOW" "$NC"
     set -a
     source <(grep -v '^#' .env | grep -v '^$')
     set +a
 else
-    echo -e "${RED}Error: .env file not found${NC}"
-    echo "Copy .env.example to .env and configure your settings."
+    printf '%sError: .env file not found%s\n' "$RED" "$NC" >&2
+    printf 'Copy .env.example to .env and configure your settings.\n' >&2
     exit 1
 fi
 
-# Check for DATABASE_URL
-if [ -z "${DATABASE_URL:-}" ]; then
-    echo -e "${RED}Error: DATABASE_URL not set in .env${NC}"
-    exit 1
-fi
+# Check for DATABASE_URL (LO-014: fail fast with a clear message
+# rather than letting alembic fail with an opaque error).
+: "${DATABASE_URL:?DATABASE_URL must be set in .env}"
 
-# Extract database name from DATABASE_URL
-DB_NAME=$(echo "$DATABASE_URL" | sed -n 's|.*/\([^?]*\).*|\1|p')
-DB_HOST=$(echo "$DATABASE_URL" | sed -n 's|.*@\([^:/]*\).*|\1|p')
-DB_USER=$(echo "$DATABASE_URL" | sed -n 's|.*://\([^:]*\).*|\1|p')
-DB_PASS=$(echo "$DATABASE_URL" | sed -n 's|.*://[^:]*:\([^@]*\).*|\1|p')
-DB_PORT=$(echo "$DATABASE_URL" | sed -n 's|.*:\([0-9]*\)/.*|\1|p')
+# Use psql via PGPASSWORD / PGHOST / PGPORT / PGUSER / PGDATABASE
+# env vars (set by psql itself from the connection URI) so the
+# password never appears in argv (visible in `ps` / `/proc`) and
+# special characters in the password are handled correctly.  (ME-002)
+extract_pg_env() {
+    # Python is always available in the dev venv; use it to parse
+    # the URI cleanly.
+    python - <<PY
+import os, urllib.parse
+u = urllib.parse.urlparse(os.environ["DATABASE_URL"])
+os.environ["PGHOST"]     = u.hostname or "localhost"
+os.environ["PGPORT"]     = str(u.port or 5432)
+os.environ["PGUSER"]     = u.username or ""
+os.environ["PGPASSWORD"] = u.password or ""
+os.environ["PGDATABASE"] = (u.path or "/").lstrip("/")
+for k in ("PGHOST", "PGPORT", "PGUSER", "PGPASSWORD", "PGDATABASE"):
+    print(f"export {k}={os.environ[k]!r}")
+PY
+}
 
-echo -e "${YELLOW}Database: ${DB_NAME} on ${DB_HOST}:${DB_PORT}${NC}"
+# Print a redacted summary only (don't echo the password — ME-002).
+DB_NAME=$(python -c "import os, urllib.parse; print((urllib.parse.urlparse(os.environ['DATABASE_URL']).path or '/').lstrip('/'))")
+DB_HOST=$(python -c "import os, urllib.parse; print(urllib.parse.urlparse(os.environ['DATABASE_URL']).hostname or 'localhost')")
+DB_PORT=$(python -c "import os, urllib.parse; print(urllib.parse.urlparse(os.environ['DATABASE_URL']).port or 5432)")
+printf '%sDatabase: %s on %s:%s%s\n' "$YELLOW" "$DB_NAME" "$DB_HOST" "$DB_PORT" "$NC"
 
 # Check if psql is available
-if command -v psql &> /dev/null; then
-    echo -e "${YELLOW}Checking if database exists...${NC}"
+if command -v psql >/dev/null 2>&1; then
+    eval "$(extract_pg_env)"
 
-    # Try to connect to the database
-    if psql "postgresql://${DB_USER}:${DB_PASS}@${DB_HOST}:${DB_PORT}/${DB_NAME}" -c "SELECT 1" &> /dev/null; then
-        echo -e "${GREEN}Database '${DB_NAME}' already exists.${NC}"
+    printf '%sChecking if database exists...%s\n' "$YELLOW" "$NC"
+    if PGPASSWORD="$PGPASSWORD" psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -tAc "SELECT 1" >/dev/null 2>&1; then
+        printf '%sDatabase %s already exists.%s\n' "$GREEN" "$DB_NAME" "$NC"
     else
-        echo -e "${YELLOW}Creating database '${DB_NAME}'...${NC}"
-        psql "postgresql://${DB_USER}:${DB_PASS}@${DB_HOST}:${DB_PORT}/postgres" \
-            -c "CREATE DATABASE \"${DB_NAME}\";" 2>/dev/null || true
-        echo -e "${GREEN}Database created!${NC}"
+        printf '%sCreating database %s...%s\n' "$YELLOW" "$DB_NAME" "$NC"
+        # Create by connecting to the maintenance DB ("postgres").
+        PGPASSWORD="$PGPASSWORD" psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d postgres \
+            -c "CREATE DATABASE \"${DB_NAME}\"" >/dev/null 2>&1 || true
+        printf '%sDatabase created!%s\n' "$GREEN" "$NC"
     fi
 else
-    echo -e "${YELLOW}Warning: psql not found. Skipping database creation.${NC}"
-    echo -e "${YELLOW}Ensure the database '${DB_NAME}' exists on the server.${NC}"
+    printf '%sWarning: psql not found. Skipping database existence check.%s\n' "$YELLOW" "$NC"
+    printf '%sEnsure the database %s exists on the server.%s\n' "$YELLOW" "$DB_NAME" "$NC"
 fi
 
 # Run migrations
-echo -e "${YELLOW}Running Alembic migrations...${NC}"
+printf '%sRunning Alembic migrations...%s\n' "$YELLOW" "$NC"
 uv run alembic upgrade head
-echo -e "${GREEN}Migrations complete!${NC}"
+printf '%sMigrations complete!%s\n' "$GREEN" "$NC"
 
-# Optionally seed data
-if [ "${1:-}" == "--seed" ]; then
-    echo -e "${YELLOW}Seeding initial data...${NC}"
-    echo -e "${YELLOW}Note: Historic data will be loaded by the historic-refresh cron job.${NC}"
-    echo -e "${YELLOW}You can trigger it manually via the admin endpoint after deployment.${NC}"
+# Optionally seed data (note: real data is loaded by the historic-refresh cron job)
+if [ "${1:-}" = "--seed" ]; then
+    printf '%sSeeding initial data...%s\n' "$YELLOW" "$NC"
+    printf '%sNote: Historic data will be loaded by the historic-refresh cron job.%s\n' "$YELLOW" "$NC"
+    printf '%sYou can trigger it manually via the admin endpoint after deployment.%s\n' "$YELLOW" "$NC"
 fi
 
 # Verify tables
-echo -e "${YELLOW}Verifying database schema...${NC}"
-if command -v psql &> /dev/null; then
-    TABLE_COUNT=$(psql "postgresql://${DB_USER}:${DB_PASS}@${DB_HOST}:${DB_PORT}/${DB_NAME}" \
-        -t -c "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'public';" 2>/dev/null | xargs)
-    echo -e "${GREEN}Found ${TABLE_COUNT} tables in database.${NC}"
+if command -v psql >/dev/null 2>&1; then
+    printf '%sVerifying database schema...%s\n' "$YELLOW" "$NC"
+    eval "$(extract_pg_env)"
+    TABLE_COUNT=$(PGPASSWORD="$PGPASSWORD" psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" \
+        -tAc "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='public'" 2>/dev/null || echo 0)
+    printf '%sFound %s tables in database.%s\n' "$GREEN" "$TABLE_COUNT" "$NC"
 fi
 
-echo -e "${GREEN}=== Database setup complete! ===${NC}"
+printf '%s=== Database setup complete! ===%s\n' "$GREEN" "$NC"

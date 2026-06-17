@@ -20,14 +20,13 @@ htmlcov/
 .mypy_cache/
 .ruff_cache/
 
-# Environment files
+# Environment files — tracked templates only, never the populated .env
 .env
 .env.local
 .env.*.local
 .env.production
 .env.*
 !.env.example
-*.env
 
 # IDE files
 .vscode/
