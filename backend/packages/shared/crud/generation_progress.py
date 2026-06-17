@@ -92,7 +92,7 @@ class GenerationProgressCRUD:
         operation_type: str,
         season: Optional[int] = None,
     ) -> Optional[GenerationProgress]:
-        """Get progress by operation type and season.
+        """Get the most-recent progress record for the given operation.
 
         Args:
             db: Database session
@@ -100,7 +100,14 @@ class GenerationProgressCRUD:
             season: Optional season year
 
         Returns:
-            Most recent GenerationProgress record or None
+            Most recent :class:`GenerationProgress` record or ``None``.
+
+        Note:
+            Multiple rows can match the ``(operation_type, season)``
+            pair (e.g. a re-triggered ``historic-refresh``).  We use
+            ``scalars().first()`` to return the most-recent row
+            rather than ``scalar_one_or_none()``, which would raise
+            :class:`sqlalchemy.exc.MultipleResultsFound`.
         """
         query = select(GenerationProgress).where(
             GenerationProgress.operation_type == operation_type
@@ -114,7 +121,7 @@ class GenerationProgressCRUD:
         query = query.order_by(GenerationProgress.started_at.desc())
 
         result = await db.execute(query)
-        return result.scalar_one_or_none()
+        return result.scalars().first()
 
     @staticmethod
     async def get_active_operations(
