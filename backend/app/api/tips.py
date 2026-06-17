@@ -18,14 +18,13 @@ from __future__ import annotations
 from typing import Annotated, Optional
 
 from fastapi import APIRouter, Body, Depends, Path, Query, Request
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
 from slowapi import Limiter
 from slowapi.util import get_remote_address
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.db_deps import get_db
 from app.core.exceptions import http_error
-from app.core.security import require_admin_key
 from packages.shared.crud import GameCRUD, ModelPredictionCRUD, TipCRUD
 from packages.shared.models import Game, Tip
 from packages.shared.schemas import (
@@ -251,23 +250,21 @@ async def tips_by_heuristic(
 
 
 # ---------------------------------------------------------------------------
-# POST /generate  — admin, rate-limited
+# POST /generate  — public, rate-limited
 # ---------------------------------------------------------------------------
 
 
-@router.post(
-    "/generate",
-    dependencies=[require_admin_key],
-)
+@router.post("/generate")
 @_post_generate_limiter.limit("10/minute")
 async def generate_tips(
     request: Request,
     body: Annotated[TipGenerateRequest, Body(...)],
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
-    """Generate tips for a specific round.  Admin-only.
+    """Generate tips for a specific round.
 
-    Rate-limited to 10 requests/minute per client IP.
+    Open to the frontend (no admin key required).  Rate-limited to 10
+    requests/minute per client IP to avoid abuse.
     """
     season = body.season
     round_id = body.round_id

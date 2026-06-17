@@ -10,11 +10,9 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy.ext.asyncio import AsyncSession
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -64,10 +62,11 @@ def _make_game_mock(**overrides) -> MagicMock:
 
 def _build_app_with_tips_router(monkeypatch=None):
     """Build a minimal FastAPI app with the tips router and exception handlers."""
-    from app.api.tips import router
-    from app.core.exceptions import BackendServiceError
     from fastapi.exceptions import RequestValidationError
     from fastapi.responses import JSONResponse
+
+    from app.api.tips import router
+    from app.core.exceptions import BackendServiceError
 
     app = FastAPI()
     app.include_router(router, prefix="/api/tips")
@@ -342,44 +341,14 @@ class TestTipsByHeuristic:
 
 
 class TestGenerateTips:
-    """``POST /api/tips/generate`` requires admin key + valid body."""
+    """``POST /api/tips/generate`` is public (no admin key required) and
+    runs the tip-generation service when given a valid body.
 
-    def test_generate_missing_api_key_returns_401(self, monkeypatch):
-        app = _build_app_with_tips_router(monkeypatch=monkeypatch)
-        _override_db(app, AsyncMock(spec=AsyncSession))
-        client = TestClient(app)
-        resp = client.post(
-            "/api/tips/generate",
-            json={"season": 2025, "round_id": 1},
-        )
-        assert resp.status_code == 401
-        body = resp.json()
-        assert body["code"] == "invalid_api_key"
+    Rate-limited to 10 requests/minute per client IP.
+    """
 
-    def test_generate_invalid_api_key_returns_401(self, monkeypatch):
-        app = _build_app_with_tips_router(monkeypatch=monkeypatch)
-        _override_db(app, AsyncMock(spec=AsyncSession))
-        client = TestClient(app)
-        resp = client.post(
-            "/api/tips/generate",
-            json={"season": 2025, "round_id": 1},
-            headers={"X-API-Key": "wrong-key"},
-        )
-        assert resp.status_code == 401
-
-    def test_generate_missing_season_returns_422(self, monkeypatch):
-        app = _build_app_with_tips_router(monkeypatch=monkeypatch)
-        _override_db(app, AsyncMock(spec=AsyncSession))
-        client = TestClient(app)
-        resp = client.post(
-            "/api/tips/generate",
-            json={"round_id": 1},
-            headers={"X-API-Key": "the-secret-key"},
-        )
-        assert resp.status_code == 422
-
-    def test_generate_success(self, monkeypatch):
-        """Valid request with admin key calls the service and returns stats."""
+    def test_generate_without_api_key_returns_200(self, monkeypatch):
+        """No ``X-API-Key`` header → endpoint is open and runs the service."""
         mock_session = AsyncMock(spec=AsyncSession)
         mock_stats = {
             "games_processed": 9,
@@ -406,7 +375,6 @@ class TestGenerateTips:
             resp = client.post(
                 "/api/tips/generate",
                 json={"season": 2025, "round_id": 1, "regenerate": False},
-                headers={"X-API-Key": "the-secret-key"},
             )
 
         assert resp.status_code == 200
@@ -417,7 +385,9 @@ class TestGenerateTips:
         assert body["tips_created"] == 27
         assert body["tips_skipped"] == 0
 
-    def test_generate_with_regenerate_flag(self, monkeypatch):
+    def test_generate_with_wrong_api_key_still_works(self, monkeypatch):
+        """An arbitrary / wrong ``X-API-Key`` header is ignored — the
+        endpoint no longer checks the admin key at all."""
         mock_session = AsyncMock(spec=AsyncSession)
         mock_stats = {
             "games_processed": 9,
@@ -447,12 +417,22 @@ class TestGenerateTips:
                     "regenerate": True,
                     "heuristics": ["best_bet"],
                 },
-                headers={"X-API-Key": "the-secret-key"},
+                headers={"X-API-Key": "definitely-not-the-secret-key"},
             )
 
         assert resp.status_code == 200
         body = resp.json()
         assert body["tips_created"] == 27
+
+    def test_generate_missing_season_returns_422(self, monkeypatch):
+        app = _build_app_with_tips_router(monkeypatch=monkeypatch)
+        _override_db(app, AsyncMock(spec=AsyncSession))
+        client = TestClient(app)
+        resp = client.post(
+            "/api/tips/generate",
+            json={"round_id": 1},
+        )
+        assert resp.status_code == 422
 
     def test_generate_no_games_returns_404(self, monkeypatch):
         mock_session = AsyncMock(spec=AsyncSession)
@@ -465,7 +445,6 @@ class TestGenerateTips:
             resp = client.post(
                 "/api/tips/generate",
                 json={"season": 2025, "round_id": 1},
-                headers={"X-API-Key": "the-secret-key"},
             )
 
         assert resp.status_code == 404
