@@ -43,6 +43,10 @@ dist/
 .output/
 build/
 *.log
+# Track the integration-test curl-sweep deliverables
+!backend/logs/curl-sweep.log
+!backend/logs/curl-sweep-summary.md
+!backend/logs/.gitkeep
 
 # Database files
 *.db
