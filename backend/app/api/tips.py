@@ -10,7 +10,8 @@ Routes (mounted at ``/api/tips``):
 * ``GET  /{heuristic}``         — tips for one heuristic (``best_bet`` /
                                    ``high_risk_high_reward`` / ``yolo``)
 * ``POST /generate``            — admin-only: generate tips for a round
-                                   (rate-limited 10/minute)
+                                   (requires ``X-API-Key`` + rate-limited
+                                   10/minute per IP)
 """
 
 from __future__ import annotations
@@ -25,6 +26,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.db_deps import get_db
 from app.core.exceptions import http_error
+from app.core.security import require_admin_key
 from packages.shared.crud import GameCRUD, ModelPredictionCRUD, TipCRUD
 from packages.shared.models import Game, Tip
 from packages.shared.schemas import (
@@ -254,7 +256,7 @@ async def tips_by_heuristic(
 # ---------------------------------------------------------------------------
 
 
-@router.post("/generate")
+@router.post("/generate", dependencies=[require_admin_key])
 @_post_generate_limiter.limit("10/minute")
 async def generate_tips(
     request: Request,
@@ -263,8 +265,9 @@ async def generate_tips(
 ):
     """Generate tips for a specific round.
 
-    Open to the frontend (no admin key required).  Rate-limited to 10
-    requests/minute per client IP to avoid abuse.
+    Requires the admin ``X-API-Key`` header (this endpoint hits
+    OpenRouter and writes to the DB, so it is **not** public).
+    Also rate-limited to 10 requests/minute per client IP.
     """
     season = body.season
     round_id = body.round_id

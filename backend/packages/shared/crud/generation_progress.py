@@ -92,29 +92,64 @@ class GenerationProgressCRUD:
         operation_type: str,
         season: Optional[int] = None,
     ) -> Optional[GenerationProgress]:
-        """Get progress by operation type and season.
+        """Get the progress record for the given operation (R4 contract).
+
+        Returns the most relevant :class:`GenerationProgress` row for an
+        operation_type / season pair, in this priority order:
+
+        1. **In-flight** — the most-recent row with
+           ``status == 'in_progress'``.
+        2. **Finished** — the most-recent row with
+           ``status IN ('completed', 'failed')``.
+        3. ``None`` — when no row matches either bucket.
 
         Args:
-            db: Database session
-            operation_type: Type of operation
-            season: Optional season year
+            db: Database session.
+            operation_type: Type of operation (e.g. ``"historic_refresh"``).
+            season: Optional season year.  When ``None``, only rows with
+                ``season IS NULL`` match.
 
         Returns:
-            Most recent GenerationProgress record or None
+            The single most-relevant :class:`GenerationProgress` row or
+            ``None`` when no row matches.
+
+        Note:
+            Multiple rows can match the ``(operation_type, season)``
+            pair (e.g. a re-triggered ``historic-refresh``).  We use
+            ``scalars().first()`` to return the most-recent row
+            rather than ``scalar_one_or_none()``, which would raise
+            :class:`sqlalchemy.exc.MultipleResultsFound`.
         """
-        query = select(GenerationProgress).where(
-            GenerationProgress.operation_type == operation_type
-        )
-
+        base_filters = [GenerationProgress.operation_type == operation_type]
         if season is not None:
-            query = query.where(GenerationProgress.season == season)
+            base_filters.append(GenerationProgress.season == season)
         else:
-            query = query.where(GenerationProgress.season.is_(None))
+            base_filters.append(GenerationProgress.season.is_(None))
 
-        query = query.order_by(GenerationProgress.started_at.desc())
+        # 1. In-flight wins.  A row is considered in-flight when its
+        #    status is exactly ``in_progress`` (the same definition used
+        #    by ``get_in_progress_operations``).
+        in_progress_result = await db.execute(
+            select(GenerationProgress)
+            .where(*base_filters, GenerationProgress.status == "in_progress")
+            .order_by(GenerationProgress.started_at.desc())
+        )
+        in_progress = in_progress_result.scalars().first()
+        if in_progress is not None:
+            return in_progress
 
-        result = await db.execute(query)
-        return result.scalar_one_or_none()
+        # 2. Fall back to the most-recently-finished row.  We treat
+        #    ``completed`` and ``failed`` as finished; ``pending`` rows
+        #    are ignored (they have not started).
+        finished_result = await db.execute(
+            select(GenerationProgress)
+            .where(
+                *base_filters,
+                GenerationProgress.status.in_(["completed", "failed"]),
+            )
+            .order_by(GenerationProgress.started_at.desc())
+        )
+        return finished_result.scalars().first()
 
     @staticmethod
     async def get_active_operations(
