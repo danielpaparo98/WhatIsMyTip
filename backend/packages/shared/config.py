@@ -112,11 +112,16 @@ class Settings(BaseSettings):
 
     # Retry Configuration
     job_timeout_seconds: int = 3600
-    # Lock expiry caps how long a crashed in-process job can hold the
-    # advisory lock before another instance / restart is allowed to
-    # pick it up.  15 minutes is the original FaaS ceiling; keeping
-    # it as a sane upper bound on the in-process scheduler too.
-    job_lock_expire_seconds: int = 900
+    # SEC-ME-009: lock expiry caps how long a crashed in-process job
+    # can hold the advisory lock before another instance / restart is
+    # allowed to pick it up.  The 15-minute default was a FaaS
+    # carry-over; on the in-process scheduler any job that hasn't
+    # finished within 5 minutes is almost certainly stuck and needs
+    # operator attention rather than a stale lock.  The CRUD layer
+    # also clamps the caller-supplied expiry to this value as a
+    # hard ceiling, so this setting is the upper bound for any lock
+    # acquisition.
+    job_lock_expire_seconds: int = 300
     job_max_retries: int = 3
     job_retry_delay_seconds: int = 60
 

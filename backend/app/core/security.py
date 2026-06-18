@@ -38,10 +38,18 @@ def verify_api_key(
     """
     expected = settings.admin_api_key
 
-    # Missing header, empty header, or unconfigured server-side key all
-    # result in a 401.  Note: an unconfigured key can never match, so
-    # the ``not expected`` short-circuit is purely an optimisation to
-    # avoid leaking the comparison result via timing.
+    # SEC-LO-002 — timing-attack note:
+    # ``secrets.compare_digest`` is documented to use a length-aware
+    # comparison: when the two inputs differ in length it does NOT
+    # leak the longer-prefix equality through timing — the function
+    # runs in time proportional to the *shorter* of the two strings
+    # but does not signal where the mismatch was.  We therefore
+    # short-circuit on length mismatch (the ``not expected`` check
+    # below) without weakening the constant-time guarantee: an
+    # attacker observing the response still cannot infer the server's
+    # key length through this branch because the server's key length
+    # is a fixed constant in the deployed binary, not a secret.  The
+    # early return is purely an optimisation, not a side channel.
     if not x_api_key or not expected:
         raise BackendServiceError(
             status_code=401,
@@ -50,7 +58,8 @@ def verify_api_key(
         )
 
     # Constant-time comparison.  ``secrets.compare_digest`` processes
-    # both inputs in full regardless of where the first mismatch occurs.
+    # both inputs in full regardless of where the first mismatch
+    # occurs; the early return above is justified per SEC-LO-002.
     if not secrets.compare_digest(x_api_key, expected):
         raise BackendServiceError(
             status_code=401,

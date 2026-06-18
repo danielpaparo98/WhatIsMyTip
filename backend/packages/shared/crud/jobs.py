@@ -6,6 +6,7 @@ from typing import List, Optional
 from sqlalchemy import and_, delete, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ..config import settings
 from ..models import JobExecution, JobLock
 
 
@@ -224,13 +225,22 @@ class JobLockCRUD:
         self,
         job_name: str,
         locked_by: str,
-        expires_seconds: int = 3600
+        expires_seconds: int | None = None,
     ) -> Optional[JobLock]:
         """Acquire a job lock atomically using INSERT ... ON CONFLICT.
 
         Uses a single SQL statement to atomically acquire the lock,
         preventing race conditions where two concurrent invocations
         could both acquire the same lock.
+
+        SEC-ME-009: the caller-supplied ``expires_seconds`` is
+        **clamped to ``settings.job_lock_expire_seconds``** (default
+        300 s / 5 minutes).  This is a hard ceiling: a stuck in-process
+        job that holds the lock for hours blocks every subsequent run
+        of the same job, and operator intervention is the only
+        resolution.  Callers that want a shorter window can pass
+        ``expires_seconds=60`` etc.; the ceiling is only an upper
+        bound.
 
         Before the INSERT, the method opportunistically cleans up any
         lock rows that have been expired for more than 24 hours
@@ -243,6 +253,13 @@ class JobLockCRUD:
         Returns:
             JobLock if lock was acquired, None if already locked
         """
+        # SEC-ME-009: clamp caller-supplied expires_seconds to the
+        # configured ceiling so a stuck in-process job cannot block
+        # every subsequent run of the same job for hours.
+        ceiling = settings.job_lock_expire_seconds
+        if expires_seconds is None or expires_seconds > ceiling:
+            expires_seconds = ceiling
+
         # Opportunistic stale-lock cleanup (ME-004).  We do this
         # *before* the atomic INSERT so a newly-acquired lock is not
         # inadvertently removed by a subsequent cleanup.  Failures

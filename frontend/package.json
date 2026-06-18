@@ -15,10 +15,10 @@
     "test:unit:watch": "vitest"
   },
   "dependencies": {
-    "@nuxtjs/tailwindcss": "^6.12.0",
-    "chart.js": "^4.5.1",
-    "nuxt": "^4.0.0",
-    "vue-chartjs": "^5.3.3"
+    "@nuxtjs/tailwindcss": "6.14.0",
+    "chart.js": "4.5.1",
+    "nuxt": "4.4.2",
+    "vue-chartjs": "5.3.3"
   },
   "devDependencies": {
     "@nuxt/eslint": "^0.7.0",

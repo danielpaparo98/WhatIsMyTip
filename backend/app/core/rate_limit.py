@@ -26,8 +26,10 @@ def get_limiter() -> Limiter:
     Returns:
         A Limiter with the default limit derived from
         ``settings.rate_limit_max_requests`` /
-        ``settings.rate_limit_window_seconds`` and the key function
-        pinned to :func:`slowapi.util.get_remote_address` (real IP).
+        ``settings.rate_limit_window_seconds``, the key function pinned
+        to :func:`slowapi.util.get_remote_address` (real IP), and a
+        Redis-backed ``storage_uri`` so multi-worker deployments share
+        a single counter (SEC-ME-004).
     """
     default_limit = (
         f"{settings.rate_limit_max_requests}/"
@@ -37,6 +39,12 @@ def get_limiter() -> Limiter:
     return Limiter(
         key_func=get_remote_address,
         default_limits=[default_limit],
+        # SEC-ME-004: in-memory storage breaks under multi-worker
+        # deployments (each worker tracks its own counter, multiplying
+        # the effective rate limit).  Pointing storage_uri at the
+        # same Redis we use for caching gives a single counter shared
+        # across all workers.
+        storage_uri=settings.redis_url,
         # When the limit is exceeded, slowapi raises ``RateLimitExceeded``,
         # which is mapped to a 429 by the exception handler registered
         # in ``main.py``.

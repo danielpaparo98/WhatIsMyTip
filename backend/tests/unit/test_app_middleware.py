@@ -65,14 +65,25 @@ class TestSecurityHeadersMiddleware:
         resp = client.get("/")
         assert resp.headers["Cross-Origin-Opener-Policy"] == "same-origin"
 
-    def test_csp_allows_self_data_https_and_unsafe_inline_styles(self, app):
+    def test_csp_narrows_img_src_and_keeps_inline_style_policy(self, app):
+        """SEC-ME-006: ``img-src`` is narrowed to ``'self' data:`` (the
+        ``https:`` wildcard was dropped because we never load images
+        from arbitrary third-party HTTPS hosts).  ``style-src`` still
+        permits ``'unsafe-inline'`` until the Nuxt-side migration to
+        CSP nonces lands (the middleware now exposes a
+        ``generate_csp_nonce`` helper for that work)."""
         client = TestClient(app)
         resp = client.get("/")
         csp = resp.headers["Content-Security-Policy"]
         assert "default-src 'self'" in csp
-        assert "img-src 'self' data: https:" in csp
-        assert "style-src 'self' 'unsafe-inline'" in csp
+        assert "img-src 'self' data:" in csp
+        assert "img-src 'self' data: https:" not in csp
+        assert "style-src 'self'" in csp
         assert "script-src 'self'" in csp
+        # The unsafe-inline policy is intentionally still in place —
+        # we don't ship the per-request nonce in the response header
+        # until the Nuxt side is coordinated (see SEC-ME-006).
+        assert "'unsafe-inline'" in csp
 
     def test_hsts_only_emitted_over_https(self):
         from app.core.middleware import SecurityHeadersMiddleware
