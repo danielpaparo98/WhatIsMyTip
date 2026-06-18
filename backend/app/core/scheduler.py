@@ -22,12 +22,31 @@ from app.cron.tip_generation import TipGenerationJob
 from packages.shared.config import settings
 
 
-# Mis-fire grace time (seconds) per job type.  Misfires (trigger missed
-# because the scheduler was busy) are coalesced into a single run.
+# Mis-fire grace time (seconds) per job type.
+#
+# NOTE: ``misfire_grace_time`` and the per-job ``timeout_seconds`` are
+# two *different* mechanisms (ME-007):
+#
+# * ``timeout_seconds`` lives on the :class:`BaseJob` subclass and
+#   bounds the runtime of a *single* job invocation via
+#   ``asyncio.wait_for``.  It exists so a stuck job cannot block
+#   forever; once it elapses the job is cancelled and the lock is
+#   released.
+# * ``misfire_grace_time`` is an APScheduler property.  When the
+#   scheduler is busy at the moment a cron trigger fires, the
+#   "misfired" run is queued and APScheduler will only dispatch it
+#   if the wall-clock is still inside this grace window.  Anything
+#   older is dropped (or coalesced with the next run thanks to
+#   ``coalesce=True``).
+#
+# The values below are kept slightly *larger* than the matching
+# ``timeout_seconds`` for the same job.  This way a job that just
+# missed its window because the previous invocation was still
+# running has a chance to fire after the predecessor finishes.
 _MISFIRE_GRACE = {
-    "daily-sync": 300,        # 5 min — high-frequency, low-stakes
-    "match-completion": 300,  # 5 min
-    "tip-generation": 600,    # 10 min — once a day, OpenRouter can be slow
+    "daily-sync": 900,        # 15 min — was 5 min; bumped (ME-007)
+    "match-completion": 900,  # 15 min — was 5 min; bumped
+    "tip-generation": 1200,   # 20 min — was 10 min; bumped
     "historic-refresh": 3600, # 1 hour — weekly batch job
 }
 
