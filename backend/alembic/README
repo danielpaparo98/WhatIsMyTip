@@ -1,1 +1,1 @@
-Generic single-database configuration with an async connection.
+WhatIsMyTip Alembic migrations — see [`docs/migrations.md`](../docs/migrations.md) for the workflow and `versions/` for the two migrations on disk (0001 baseline, 0002 weather/players/injuries).

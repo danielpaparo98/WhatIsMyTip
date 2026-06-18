@@ -62,6 +62,18 @@ backend/
 > directories were deleted in Phase 5 (June 2026). The FastAPI app in `app/` is the
 > single source of truth for HTTP routes and scheduled jobs.
 
+### Destructive scripts
+
+These scripts mutate or wipe database data — read the source first and run against a **non-production** DB:
+
+| Script | What it does |
+|--------|--------------|
+| [`scripts/_reset_matches.py`](scripts/_reset_matches.py:1) | Clears `afltables_match_id` for a season (use to re-scrape matches) |
+| [`scripts/load_csv_to_db.py`](scripts/load_csv_to_db.py:1) (with `--clear`) | Wipes tables before loading CSVs |
+| [`scripts/migrate_and_seed.py`](scripts/migrate_and_seed.py:1) (with `--clear`) | Wipes tables before synthetic seeding |
+
+There is **no `WIMT_ALLOW_DESTRUCTIVE_SCRIPTS` env var** — destructive scripts run unconditionally. Use the right environment and back up before running them.
+
 ## Quick Start
 
 ### Prerequisites
