@@ -6,7 +6,7 @@
   "packageManager": "bun@1.x",
   "scripts": {
     "dev": "node node_modules/@nuxt/cli/bin/nuxi.mjs dev",
-    "build": "nuxt build",
+    "build": "nuxt generate",
     "generate": "nuxt generate",
     "preview": "nuxt preview",
     "lint": "eslint .",

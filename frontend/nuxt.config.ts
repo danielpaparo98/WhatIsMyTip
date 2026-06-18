@@ -90,6 +90,10 @@ export default defineNuxtConfig({
     }
   },
   
+  // NOTE: `nitro.preset = 'static'` means the build must run `nuxt generate`
+  // (pre-render every route to HTML) — NOT `nuxt build` (SSR/Node server).
+  // The `package.json` `build` script is therefore wired to `nuxt generate`
+  // so `bun run build` actually produces the static site.  See Fix CR-001.
   nitro: {
     preset: 'static'
   }
