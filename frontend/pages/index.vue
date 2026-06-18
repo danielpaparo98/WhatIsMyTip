@@ -182,8 +182,7 @@ const loadLatestRound = async () => {
   } catch (e) {
     
 
-    // FX-13: dev-only logging so prod bundles stay quiet.
- (import.meta.dev) console.error('Failed to load latest round:', e)
+    if (import.meta.dev) console.error('Failed to load latest round:', e)
   }
 }
 

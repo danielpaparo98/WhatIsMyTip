@@ -353,8 +353,7 @@ const loadAvailableSeasons = async () => {
   } catch (e) {
     
 
-    // FX-13: dev-only logging so prod bundles stay quiet.
- (import.meta.dev) console.error('Failed to load available seasons:', e)
+    if (import.meta.dev) console.error('Failed to load available seasons:', e)
     // Fallback to generated years on error
     const currentYear = new Date().getFullYear()
     availableYears.value = generateFallbackYears(currentYear)
