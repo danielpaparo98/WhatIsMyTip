@@ -114,6 +114,7 @@
 
 <script setup lang="ts">
 import type { GameDetailResponse } from '~/composables/useApi'
+import { isValidGameSlug } from '~/composables/useGameSlug'
 
 const route = useRoute()
 const { getGameDetail } = useApi()
@@ -127,11 +128,13 @@ const error = ref<string | null>(null)
 // Fetch game detail on mount
 onMounted(async () => {
   try {
-    const slug = route.params.slug as string
-    if (!slug || !/^[a-zA-Z0-9]{10,12}$/.test(slug)) {
+    const slug = route.params.slug
+    // CR-004: regex loosened from `^[a-zA-Z0-9]{10,12}$` to support
+    // hyphens and a wider length range.  See composables/useGameSlug.ts.
+    if (!isValidGameSlug(slug)) {
       throw new Error('Invalid game slug')
     }
-    
+
     gameDetail.value = await getGameDetail(slug)
   } catch (err) {
     error.value = err instanceof Error ? err.message : 'Failed to load game details'
