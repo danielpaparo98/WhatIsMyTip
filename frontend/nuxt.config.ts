@@ -41,8 +41,8 @@ export default defineNuxtConfig({
       ],
       script: [
         {
-          src: process.env.UMAMI_HOST ? `${process.env.UMAMI_HOST}/script.js` : '',
-          'data-website-id': process.env.UMAMI_WEBSITE_ID || '',
+          src: process.env.NUXT_PUBLIC_UMAMI_HOST ? `${process.env.NUXT_PUBLIC_UMAMI_HOST}/script.js` : '',
+          'data-website-id': process.env.NUXT_PUBLIC_UMAMI_WEBSITE_ID || '',
           defer: true,
           key: 'umami-analytics'
         },
@@ -82,10 +82,14 @@ export default defineNuxtConfig({
       // FaaS URLs — the FastAPI app exposes a single base URL and the
       // backend's /api/... routers handle the rest).  Set via
       // NUXT_PUBLIC_API_BASE at build time.
+      //
+      // All client-side env vars use the NUXT_PUBLIC_* prefix so they
+      // are exposed to the browser by Nuxt's runtime config.  See
+      // frontend/.env.example for the canonical list.  Fix CR-002/003.
       apiBase: process.env.NUXT_PUBLIC_API_BASE || 'http://localhost:8000',
-      umamiHost: process.env.UMAMI_HOST || '',
-      umamiWebsiteId: process.env.UMAMI_WEBSITE_ID || '',
-      siteUrl: process.env.SITE_URL || 'https://whatismytip.com',
+      umamiHost: process.env.NUXT_PUBLIC_UMAMI_HOST || '',
+      umamiWebsiteId: process.env.NUXT_PUBLIC_UMAMI_WEBSITE_ID || '',
+      siteUrl: process.env.NUXT_PUBLIC_SITE_URL || 'https://whatismytip.com',
       buyMeACoffeeUrl: process.env.NUXT_PUBLIC_BUY_ME_A_COFFEE_URL || '',
     }
   },
