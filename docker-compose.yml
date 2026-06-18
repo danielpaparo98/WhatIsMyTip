@@ -1,48 +1,32 @@
 # ──────────────────────────────────────────────────────────────────────
 # WhatIsMyTip local Docker Compose stack.
 #
-# Phase 6 brings the FastAPI reimplementation, Postgres, Redis, and the
-# Nuxt frontend up under a single `docker compose up` so the whole
-# stack can be exercised locally with real data.
-#
-# Components
-# ----------
-#   postgres   – PostgreSQL 16 (alpine) with a persistent named volume
-#   redis      – Redis 7 (alpine) with a persistent named volume
-#   init-data  – one-shot init container.  Built from the same image as
-#                the API; runs Alembic migrations + (optionally) loads
-#                CSV data from the bind-mounted ``./data`` directory.
-#                Exits 0 on success; ``api`` waits for it via
-#                ``service_completed_successfully``.
-#   api        – the FastAPI application (binds ./backend for hot
-#                reload) on http://localhost:8000
-#   frontend   – Nuxt 4 dev server on http://localhost:3000
+# Two networks are defined for least-privilege: `backend_net` carries
+# api/init-data/postgres/redis traffic; `frontend_net` carries
+# frontend ↔ api traffic.  Postgres and Redis are NOT reachable from
+# the frontend container.
 #
 # Quick start
 # -----------
-#   # from the project root:
 #   docker compose up -d            # start everything (builds on first run)
 #   docker compose logs -f init-data  # watch the init step
 #   docker compose logs -f api        # watch the API
 #   curl http://localhost:8000/health
 #   open http://localhost:3000
 #
-#   # tear it all down (including the database volume):
 #   docker compose down -v
-#
-# Notes
-# -----
-#   * The user is on Windows + PowerShell; bind-mounts use relative
-#     paths so the same compose file works on Windows / macOS / Linux.
-#   * ``init-data`` uses the API image (multi-stage, already built in
-#     Phase 4) and only overrides the entrypoint.  This avoids baking
-#     a second image and keeps the migration story identical to
-#     production.
-#   * For podman users: ``podman compose up`` works against this file
-#     without changes (podman compose reads docker-compose.yml).
 # ──────────────────────────────────────────────────────────────────────
 
 name: whatismytip
+
+# ── Networks ──────────────────────────────────────────────────────────
+# backend_net: api ↔ init-data ↔ postgres ↔ redis
+# frontend_net: api ↔ frontend
+networks:
+  backend_net:
+    driver: bridge
+  frontend_net:
+    driver: bridge
 
 services:
   postgres:
@@ -52,8 +36,6 @@ services:
       POSTGRES_USER: wimt
       POSTGRES_PASSWORD: wimt_dev_password
       POSTGRES_DB: whatismytip
-    ports:
-      - "5432:5432"
     volumes:
       - wimt_postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -62,12 +44,19 @@ services:
       timeout: 5s
       retries: 10
     restart: unless-stopped
+    networks:
+      - backend_net
+    # Hardening
+    security_opt:
+      - "no-new-privileges:true"
+    # No `ports:` — postgres is reachable only via backend_net.
+    # To connect from the host (psql, TablePlus, etc.) for local
+    # debugging, run `docker compose port postgres 5432` after
+    # `docker compose up` and use the published port.
 
   redis:
     image: redis:7-alpine
     container_name: wimt-redis
-    ports:
-      - "6379:6379"
     volumes:
       - wimt_redis_data:/data
     healthcheck:
@@ -76,17 +65,15 @@ services:
       timeout: 3s
       retries: 10
     restart: unless-stopped
+    networks:
+      - backend_net
+    security_opt:
+      - "no-new-privileges:true"
+    # No `ports:` — see postgres above.
 
   # One-shot init container: runs Alembic migrations, then (optionally)
   # loads CSV data from the bind-mounted ./data directory.  Exits 0
-  # on success; ``api`` waits for it via service_completed_successfully.
-  #
-  # WIMT_INIT_MODE toggle (env var, default: csv):
-  #   csv   - load real scraped CSVs from /data (default; used in prod-like
-  #           local runs once ``scripts/make-data.sh`` has produced data).
-  #   seed  - run the synthetic offline seeder (``--seed``) which populates
-  #           the DB from ``backend/seed_data``.  Use this when you want a
-  #           fast end-to-end test without waiting for the scraper.
+  # on success; `api` waits for it via service_completed_successfully.
   init-data:
     build:
       context: backend
@@ -117,6 +104,13 @@ services:
       redis:
         condition: service_healthy
     restart: "no"
+    networks:
+      - backend_net
+    security_opt:
+      - "no-new-privileges:true"
+    read_only: true
+    tmpfs:
+      - /tmp
 
   api:
     image: whatismytip-api:local
@@ -127,10 +121,12 @@ services:
     ports:
       - "8000:8000"
     environment:
-      DATABASE_URL: postgresql+asyncpg://wimt:wimt_dev_password@postgres:5432/whatismytip
-      REDIS_URL: redis://redis:6379/0
+      # DATABASE_URL comes from .env when present, with a sensible
+      # default for the compose network.
+      DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://wimt:wimt_dev_password@postgres:5432/whatismytip}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
       CORS_ORIGINS: http://localhost:3000,http://localhost:8000
-      ADMIN_API_KEY: dev_admin_key_change_me
+      ADMIN_API_KEY: ${ADMIN_API_KEY:-dev_admin_key_change_me}
       ENVIRONMENT: development
       # Disable the in-process APScheduler cron jobs during local dev
       # so the API doesn't fire background syncs every 15 minutes.
@@ -138,7 +134,10 @@ services:
       CRON_ENABLED: "false"
       LOG_FORMAT: plain
     volumes:
-      - ./backend:/app/backend
+      # Overlay the WHOLE backend on /app so --reload watches
+      # main.py, app/, packages/, and scripts/ (not just the
+      # partial /app/backend tree).
+      - ./backend:/app
     depends_on:
       init-data:
         condition: service_completed_successfully
@@ -155,12 +154,20 @@ services:
       - "8000"
       - --reload
     restart: unless-stopped
+    networks:
+      - backend_net
+      - frontend_net
+    security_opt:
+      - "no-new-privileges:true"
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /app/.cache
 
   frontend:
-    # Use the latest 1.x bun so we can read the committed ``bun.lockb``
-    # (created with bun 1.3+); bun 1.1 (the previous pin) refuses to
-    # parse it with "Outdated lockfile version".
-    image: oven/bun:1
+    # Pin the bun version that matches the committed bun.lockb
+    # (lockfile generated with bun 1.3.x).  Floats are not safe.
+    image: oven/bun:1.3.6
     container_name: wimt-frontend
     working_dir: /app
     ports:
@@ -170,25 +177,19 @@ services:
       NODE_ENV: development
     volumes:
       - ./frontend:/app
-      - wimt_bun_cache:/root/.bun
-      - wimt_nuxt_cache:/app/.nuxt
-      - wimt_nuxt_output:/app/.output
-    # --no-save means we won't fail if the lockfile is ahead/behind
-    # the in-image bun version; we still get reproducible installs
-    # because the bind-mounted ``bun.lockb`` is respected when it can
-    # be parsed.
     command:
       - sh
       - -c
-      - "bun install --no-save && bun run dev --host 0.0.0.0"
+      - "bun install --frozen && bun run dev --host 0.0.0.0"
     depends_on:
       api:
         condition: service_started
     restart: unless-stopped
+    networks:
+      - frontend_net
+    security_opt:
+      - "no-new-privileges:true"
 
 volumes:
   wimt_postgres_data:
   wimt_redis_data:
-  wimt_bun_cache:
-  wimt_nuxt_cache:
-  wimt_nuxt_output:

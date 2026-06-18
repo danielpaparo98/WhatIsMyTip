@@ -3,7 +3,7 @@
 from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 
-from sqlalchemy import and_, func, select, text
+from sqlalchemy import and_, delete, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..models import JobExecution, JobLock
@@ -196,27 +196,22 @@ class JobExecutionCRUD:
         self,
         days_to_keep: int = 30
     ) -> int:
-        """Delete old job execution records."""
+        """Delete job execution records older than ``days_to_keep``.
+
+        Implementation: a SINGLE ``DELETE ... WHERE started_at <
+        cutoff`` statement.  The previous implementation ran an N+1
+        loop (one SELECT for ids, then one SELECT + one ORM
+        ``session.delete()`` per id), which timed out on
+        ``job_executions`` tables with a few thousand rows.
+        """
         cutoff_date = datetime.now(timezone.utc) - timedelta(days=days_to_keep)
 
         result = await self.db.execute(
-            select(JobExecution.id).where(JobExecution.started_at < cutoff_date)
+            delete(JobExecution).where(JobExecution.started_at < cutoff_date)
         )
-        old_ids = [row[0] for row in result.all()]
+        await self.db.commit()
 
-        if old_ids:
-            await self.db.execute(
-                select(JobExecution).where(JobExecution.id.in_(old_ids))
-            )
-
-            for execution_id in old_ids:
-                execution = await self.get_execution(execution_id)
-                if execution:
-                    await self.db.delete(execution)
-
-            await self.db.commit()
-
-        return len(old_ids)
+        return result.rowcount or 0
 
 
 class JobLockCRUD:

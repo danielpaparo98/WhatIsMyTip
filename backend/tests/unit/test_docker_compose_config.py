@@ -49,9 +49,22 @@ class TestDockerComposeStructure:
 
     def test_required_volumes_present(self, compose):
         volumes = compose.get("volumes", {}) or {}
-        # All four volumes should be declared
-        for v in ("wimt_postgres_data", "wimt_redis_data", "wimt_bun_cache"):
+        # Two named volumes: postgres + redis.  Bun/nuxt caches are
+        # bind-mounted into the host, not declared as named volumes.
+        for v in ("wimt_postgres_data", "wimt_redis_data"):
             assert v in volumes, f"Missing named volume: {v}"
+
+    def test_required_networks_present(self, compose):
+        """Split-network design (HI-006): backend_net + frontend_net."""
+        networks = compose.get("networks", {}) or {}
+        assert "backend_net" in networks, (
+            "docker-compose.yml must define `backend_net` "
+            "(api ↔ db/redis traffic)"
+        )
+        assert "frontend_net" in networks, (
+            "docker-compose.yml must define `frontend_net` "
+            "(api ↔ frontend traffic)"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -73,9 +86,31 @@ class TestPostgresService:
         assert "healthcheck" in svc
         assert "test" in svc["healthcheck"]
 
-    def test_exposes_5432(self, compose):
+    def test_does_not_publish_5432(self, compose):
+        """HI-005: postgres must not be reachable from the host by default.
+
+        Use ``docker compose port postgres 5432`` to grab an ephemeral
+        host port for ad-hoc debugging instead.
+        """
         svc = compose["services"]["postgres"]
-        assert "5432:5432" in svc["ports"]
+        assert "ports" not in svc, (
+            "postgres must not publish 5432 to the host; it should only "
+            "be reachable via the backend_net network."
+        )
+
+    def test_attached_to_backend_net(self, compose):
+        svc = compose["services"]["postgres"]
+        nets = svc.get("networks", [])
+        assert "backend_net" in nets, (
+            "postgres must be attached to backend_net"
+        )
+
+    def test_has_no_new_privileges(self, compose):
+        svc = compose["services"]["postgres"]
+        opts = svc.get("security_opt", [])
+        assert "no-new-privileges:true" in opts, (
+            "postgres must run with no-new-privileges"
+        )
 
 
 class TestRedisService:
@@ -91,9 +126,20 @@ class TestRedisService:
         svc = compose["services"]["redis"]
         assert "healthcheck" in svc
 
-    def test_exposes_6379(self, compose):
+    def test_does_not_publish_6379(self, compose):
+        """HI-005: redis must not be reachable from the host by default."""
         svc = compose["services"]["redis"]
-        assert "6379:6379" in svc["ports"]
+        assert "ports" not in svc, (
+            "redis must not publish 6379 to the host; it should only "
+            "be reachable via the backend_net network."
+        )
+
+    def test_attached_to_backend_net(self, compose):
+        svc = compose["services"]["redis"]
+        nets = svc.get("networks", [])
+        assert "backend_net" in nets, (
+            "redis must be attached to backend_net"
+        )
 
 
 class TestApiService:
@@ -141,6 +187,25 @@ class TestApiService:
         cors = svc["environment"]["CORS_ORIGINS"]
         assert "http://localhost:3000" in cors
         assert "http://localhost:8000" in cors
+
+    def test_api_attached_to_both_networks(self, compose):
+        """The api is the bridge between frontend_net and backend_net."""
+        svc = compose["services"]["api"]
+        nets = svc.get("networks", [])
+        assert "backend_net" in nets, "api must be on backend_net"
+        assert "frontend_net" in nets, "api must be on frontend_net"
+
+    def test_api_read_only_filesystem(self, compose):
+        """HI-008: the api should run with a read-only root fs + tmpfs."""
+        svc = compose["services"]["api"]
+        assert svc.get("read_only") is True, (
+            "api service should run with read_only: true"
+        )
+        tmpfs = svc.get("tmpfs", [])
+        # /tmp is the minimum; the api also needs /app/.cache writable
+        # for uv/python to function.  Don't pin the exact list, just
+        # assert at least one tmpfs path exists.
+        assert len(tmpfs) >= 1, "api service should declare at least one tmpfs"
 
 
 class TestInitDataService:
@@ -213,6 +278,16 @@ class TestFrontendService:
         svc = compose["services"]["frontend"]
         assert svc["image"].startswith("oven/bun")
 
+    def test_uses_pinned_bun_1_3(self, compose):
+        """HI-008: pin the bun version that matches the committed bun.lockb."""
+        svc = compose["services"]["frontend"]
+        # Accept the 1.3.6 patch pin or any 1.3.x patch level; reject
+        # the bare `oven/bun:1` float.
+        image = svc["image"]
+        assert image.startswith("oven/bun:1.3"), (
+            f"frontend must use a pinned oven/bun:1.3.x image, got {image!r}"
+        )
+
     def test_exposes_3000(self, compose):
         svc = compose["services"]["frontend"]
         assert "3000:3000" in svc["ports"]
@@ -222,6 +297,16 @@ class TestFrontendService:
         env = svc["environment"]
         assert "NUXT_PUBLIC_API_BASE" in env
         assert "http://localhost:8000" in env["NUXT_PUBLIC_API_BASE"]
+
+    def test_frontend_attached_to_frontend_net_only(self, compose):
+        """Postgres/redis must NOT be reachable from the frontend."""
+        svc = compose["services"]["frontend"]
+        nets = svc.get("networks", [])
+        assert "frontend_net" in nets, "frontend must be on frontend_net"
+        assert "backend_net" not in nets, (
+            "frontend must NOT be on backend_net (least-privilege: "
+            "frontend has no business talking to postgres/redis directly)"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -237,8 +322,6 @@ class TestSmokeScriptExists:
         assert path.exists(), "scripts/smoke_local.sh is missing"
 
     def test_smoke_ps1_exists(self):
-        path = PROJECT_ROOT / "scripts" / "smoke_ps1.ps1"  # allow either name
-        # Actually the file is named smoke_local.ps1
         path = PROJECT_ROOT / "scripts" / "smoke_local.ps1"
         assert path.exists(), "scripts/smoke_local.ps1 is missing"
 

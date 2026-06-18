@@ -11,6 +11,7 @@ Three middlewares are exported:
 from __future__ import annotations
 
 import json
+import re
 import uuid
 from typing import Awaitable, Callable
 
@@ -19,6 +20,25 @@ from starlette.datastructures import State
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from packages.shared.config import settings
+
+
+# ---------------------------------------------------------------------------
+# X-Request-ID validation
+# ---------------------------------------------------------------------------
+#
+# Inbound ``X-Request-ID`` values are untrusted: an attacker can put
+# anything in the header, including CRLF sequences that would let
+# them forge log lines or smuggle additional headers, or very long
+# values that blow up log indexers.  We therefore reject any value
+# outside the allow-list ``[A-Za-z0-9_-]{1,128}`` and replace it with
+# a fresh UUID4.  UUID4 itself is 36 chars and matches the
+# allow-list, so the canonical path is always safe.
+_REQUEST_ID_ALLOWED = re.compile(r"^[A-Za-z0-9_\-]{1,128}$")
+
+
+def _is_valid_request_id(value: str) -> bool:
+    """Return True iff ``value`` is a safe inbound ``X-Request-ID``."""
+    return bool(_REQUEST_ID_ALLOWED.match(value))
 
 
 # ---------------------------------------------------------------------------
@@ -213,13 +233,23 @@ class RequestIDMiddleware:
             await self.app(scope, receive, send)
             return
 
-        # Reuse upstream X-Request-ID if present.
+        # Reuse upstream X-Request-ID if present, but ONLY if it
+        # matches the allow-list ``^[A-Za-z0-9_-]{1,128}$``.  Any
+        # other value (CRLF, control chars, overlong, non-ASCII,
+        # anything outside the allow-list) MUST be replaced with a
+        # fresh UUID4 — otherwise the value would flow into log
+        # lines and could be used to forge log entries or smuggle
+        # headers.
         headers = dict(scope.get("headers") or [])
         request_id_raw = headers.get(b"x-request-id")
         if request_id_raw:
             try:
-                request_id = request_id_raw.decode("latin-1")
+                candidate = request_id_raw.decode("latin-1")
             except UnicodeDecodeError:
+                candidate = ""
+            if _is_valid_request_id(candidate):
+                request_id = candidate
+            else:
                 request_id = str(uuid.uuid4())
         else:
             request_id = str(uuid.uuid4())

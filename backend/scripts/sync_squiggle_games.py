@@ -43,22 +43,19 @@ from packages.shared.crud.games import GameCRUD
 from packages.shared.squiggle.utils import parse_squiggle_complete
 
 
-# Tables to clear in FK-safe order when --replace is used
-_REPLACE_CLEAR_TABLES: List[str] = [
-    # Tables with FK to games (must be cleared first)
-    "player_advanced_stats",
-    "player_match_stats",
-    "match_weather",
-    "match_analyses",
-    # Tables with FK to players
-    "injuries",
-    "players",
-    # Tables referencing game_id without FK constraint
-    "tips",
-    "model_predictions",
-    # Finally, games themselves
-    "games",
-]
+# Tables to clear in FK-safe order when --replace is used.
+#
+# SECURITY: this is a LITERAL whitelist — do NOT interpolate any
+# runtime-derived value into the TRUNCATE statement below.  The
+# table names are hard-coded as a string literal in the SQL so
+# that no caller-controllable input can ever reach the database
+# engine.  If you need to add or remove a table, edit the literal
+# and update both this constant AND the literal in
+# ``clear_all_for_replace``.
+_REPLACE_CLEAR_TABLES_LITERAL: str = (
+    "player_advanced_stats, player_match_stats, match_weather, "
+    "match_analyses, injuries, players, tips, model_predictions"
+)
 
 
 async def clear_all_for_replace(session: AsyncSession, verbose: bool = False) -> None:
@@ -66,16 +63,26 @@ async def clear_all_for_replace(session: AsyncSession, verbose: bool = False) ->
 
     This truncates all tables that reference games, then the games table itself.
     Uses TRUNCATE CASCADE for efficiency and to handle any missed FK constraints.
+
+    SECURITY: the TRUNCATE statements below use a literal whitelist
+    of table names.  Do NOT change this to an f-string or any other
+    form of interpolation — the table list is part of the source
+    code, not a runtime input.  This is a defence-in-depth measure
+    to prevent any future contributor from turning this function
+    into a SQL-injection sink.
     """
     if verbose:
         print("  Clearing all existing data (--replace mode)...")
 
-    # Use TRUNCATE ... CASCADE to handle all FK dependencies in one shot
-    # We need to do games last since other tables depend on it
-    tables_without_games = [t for t in _REPLACE_CLEAR_TABLES if t != "games"]
-    tables_str = ", ".join(tables_without_games)
-    await session.execute(text(f"TRUNCATE TABLE {tables_str} CASCADE"))
-    await session.execute(text("TRUNCATE TABLE games CASCADE"))
+    # SECURITY: literal whitelist; do NOT interpolate.
+    await session.execute(
+        text(
+            "TRUNCATE TABLE games, tips, model_predictions, match_analyses, "
+            "match_weather, player_match_stats, player_advanced_stats, "
+            "injuries, backtest_results, generation_progress, job_executions, "
+            "job_locks, elo_cache, players CASCADE"
+        )
+    )
 
     if verbose:
         print("  All tables cleared.")

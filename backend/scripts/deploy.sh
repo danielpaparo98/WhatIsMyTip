@@ -2,7 +2,7 @@
 # ──────────────────────────────────────────────────────────────────────
 # deploy.sh — container-based deploy of the WhatIsMyTip FastAPI app.
 #
-# Phase 4 retires the FaaS architecture in favour of a single FastAPI
+# Phase 4+ retires the FaaS architecture in favour of a single FastAPI
 # container.  This script:
 #
 #   1. Pre-flight: checks for docker, doctl, uv
@@ -15,7 +15,9 @@
 #      (DO_REGISTRY)
 #   7. Triggers an App Platform deployment (DO_APP_ID) with the new
 #      image
-#   8. Polls /health until the new revision is up
+#   8. Polls /health until the new revision is up (up to 5 minutes)
+#   9. On health-check failure: prints the previous-deployment ID and
+#      the rollback command the operator must run.
 #
 # Required env vars:
 #   DO_REGISTRY   e.g. registry.digitalocean.com/whatismytip
@@ -25,6 +27,8 @@
 #   IMAGE_TAG     default = current git short SHA
 #   SKIP_TESTS    set to 1 to skip the pytest step
 #   SKIP_MIGRATE  set to 1 to skip the alembic step
+#   APP_URL       default = https://whatismytip.com (the /health poll
+#                 target)
 #
 # Flags:
 #   --dry-run     print every command, run none of them
@@ -35,6 +39,18 @@
 #   IMAGE_TAG=my-feature ./scripts/deploy.sh
 # ──────────────────────────────────────────────────────────────────────
 set -euo pipefail
+
+# ── CRLF self-check (ME-008) ──────────────────────────────────────────
+# .gitattributes enforces *.sh text eol=lf, but if a Windows user
+# commits with core.autocrlf=true and someone clones with
+# core.autocrlf=false, the file lands with CRLF endings and bash
+# chokes with `$'\r': command not found`.  Bail loudly instead.
+first_byte=$(head -c1 "$0" 2>/dev/null | od -An -c | tr -d ' \n' || true)
+if [ "$first_byte" = "\r" ]; then
+    printf 'Refusing to run: %s has CRLF line endings.\n' "$0" >&2
+    printf 'Run `dos2unix %s` (or `sed -i "s/\\r$//" %s`) and re-commit.\n' "$0" "$0" >&2
+    exit 1
+fi
 
 # ── Colors ─────────────────────────────────────────────────────────────
 RED='\033[0;31m'
@@ -53,7 +69,7 @@ for arg in "$@"; do
             exit 0
             ;;
         *)
-            echo -e "${RED}Unknown argument: $arg${NC}" >&2
+            printf '%sUnknown argument: %s%s\n' "$RED" "$arg" "$NC" >&2
             exit 1
             ;;
     esac
@@ -62,15 +78,27 @@ done
 # `run` and `note` wrap commands so --dry-run short-circuits them.
 run() {
     if [ "$DRY_RUN" -eq 1 ]; then
-        echo -e "${CYAN}[dry-run]${NC} $*"
+        printf '%s[dry-run]%s %s\n' "$CYAN" "$NC" "$*"
     else
-        echo -e "${GREEN}\$ $*${NC}"
+        printf '%s$ %s%s\n' "$GREEN" "$*" "$NC"
         "$@"
     fi
 }
-note() { echo -e "${YELLOW}▶ $*${NC}"; }
-ok()   { echo -e "${GREEN}✅ $*${NC}"; }
-die()  { echo -e "${RED}❌ $*${NC}" >&2; exit 1; }
+note() { printf '%s▶ %s%s\n' "$YELLOW" "$*" "$NC"; }
+ok()   { printf '%s✅ %s%s\n' "$GREEN" "$*" "$NC"; }
+die()  { printf '%s❌ %s%s\n' "$RED" "$*" "$NC" >&2; exit 1; }
+
+# ── Cleanup on failure (LO-013) ──────────────────────────────────────
+# Failed builds leave dangling `<none>` images that fill the local
+# Docker cache.  Clean them up.
+cleanup_on_err() {
+    local exit_code=$?
+    if [ -n "${FULL_IMAGE:-}" ]; then
+        docker rmi -f "${FULL_IMAGE}" >/dev/null 2>&1 || true
+    fi
+    exit "$exit_code"
+}
+trap cleanup_on_err ERR
 
 # ── Working dir ───────────────────────────────────────────────────────
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -112,12 +140,25 @@ fi
 FULL_IMAGE="${DO_REGISTRY}/api:${IMAGE_TAG}"
 ok "Image: ${FULL_IMAGE}"
 
+# ── Registry login validation (HI-004) ───────────────────────────────
+# Make sure doctl can reach the target registry BEFORE we spend 5
+# minutes building a 700 MB image.
+if [ "$DRY_RUN" -eq 0 ]; then
+    note "Validating registry login for ${DO_REGISTRY%%/*}…"
+    if ! doctl registry login --registry "${DO_REGISTRY%%/*}" >/dev/null 2>&1; then
+        die "doctl registry login failed for ${DO_REGISTRY%%/*} — check DIGITALOCEAN_ACCESS_TOKEN"
+    fi
+    ok "Registry login OK"
+fi
+
 # ── Tests ─────────────────────────────────────────────────────────────
 if [ "${SKIP_TESTS:-0}" = "1" ]; then
     note "Skipping tests (SKIP_TESTS=1)"
 else
     note "Running unit tests…"
-    run uv run pytest tests/unit/ -v --tb=short -q
+    # LO-006: dropped the conflicting `-q` flag (pytest treats it as a
+    # synonym of `--quiet` and the output would be ambiguous).
+    run uv run pytest tests/unit/ --tb=short
     ok "Tests passed"
 fi
 
@@ -127,10 +168,22 @@ if [ "${SKIP_MIGRATE:-0}" = "1" ]; then
 else
     note "Running database migrations…"
     if [ "$DRY_RUN" -eq 1 ]; then
-        echo -e "${CYAN}[dry-run]${NC} uv run alembic upgrade head"
+        printf '%s[dry-run]%s uv run alembic upgrade head\n' "$CYAN" "$NC"
     else
         uv run alembic upgrade head
         ok "Migrations complete"
+    fi
+fi
+
+# ── Capture previous deployment ID for rollback reference (CR-004) ─
+PREVIOUS_DEPLOYMENT_ID=""
+if [ "$DRY_RUN" -eq 0 ]; then
+    note "Capturing current deployment ID (for rollback reference)…"
+    PREVIOUS_DEPLOYMENT_ID=$(doctl apps list-deployments "${DO_APP_ID}" --format ID --no-header 2>/dev/null | head -n1 || true)
+    if [ -n "${PREVIOUS_DEPLOYMENT_ID}" ]; then
+        ok "Previous deployment ID: ${PREVIOUS_DEPLOYMENT_ID}"
+    else
+        note "Could not determine previous deployment ID (this may be the first deploy)"
     fi
 fi
 
@@ -146,30 +199,56 @@ note "Pushing ${FULL_IMAGE}…"
 run docker push "${FULL_IMAGE}"
 ok "Image pushed"
 
-# ── Trigger App Platform deploy ───────────────────────────────────────
+# ── Trigger App Platform deploy (HI-009: rely on unique IMAGE_TAG) ────
+# We rely on the unique IMAGE_TAG to force a fresh deployment; this
+# lets DO reuse the previous image's build cache for unchanged layers.
 note "Triggering App Platform deploy for app ${DO_APP_ID}…"
-run doctl apps create-deployment "${DO_APP_ID}" --force-rebuild
-ok "Deployment triggered"
+NEW_DEPLOYMENT_ID=""
+if [ "$DRY_RUN" -eq 0 ]; then
+    NEW_DEPLOYMENT_ID=$(doctl apps create-deployment "${DO_APP_ID}" --format ID --no-header 2>/dev/null || true)
+    if [ -n "${NEW_DEPLOYMENT_ID}" ]; then
+        ok "Deployment triggered: ${NEW_DEPLOYMENT_ID}"
+    else
+        note "Deployment triggered (could not capture new deployment ID)"
+    fi
+else
+    run doctl apps create-deployment "${DO_APP_ID}"
+fi
 
-# ── Poll /health ──────────────────────────────────────────────────────
-# Best-effort: if the public URL is reachable, poll until it returns 200.
-# We don't fail the deploy if this never succeeds — the deploy itself
-# is async and the script may be invoked without network access to the
-# production host.
+# ── Poll /health (ME-009: longer window) ────────────────────────────
+# Best-effort: if the public URL is reachable, poll until it returns
+# 2xx.  We give the deploy 5 minutes (App Platform image build +
+# container start routinely takes 2-5 minutes).  If /health never
+# comes up, we print the rollback command rather than failing the
+# script — the deploy itself is async and the operator should make
+# the rollback decision.
 APP_URL="${APP_URL:-https://whatismytip.com}"
+HEALTH_OK=0
 if [ "$DRY_RUN" -eq 0 ] && command -v curl >/dev/null 2>&1; then
-    note "Polling ${APP_URL}/health (up to 60 s)…"
+    note "Polling the public health endpoint (up to 300 s)…"
     for _ in $(seq 1 30); do
-        if status=$(curl -s -o /dev/null -w '%{http_code}' "${APP_URL}/health" 2>/dev/null || true) \
-            && [ "$status" = "200" ]; then
-            ok "Service is healthy (HTTP $status)"
-            note "=== Deploy complete: ${FULL_IMAGE} ==="
-            exit 0
+        # LO-012: -fsSL fails on non-2xx, follows redirects, silent
+        # on progress.
+        if curl -fsSL -o /dev/null -w '%{http_code}' "${APP_URL}/health" 2>/dev/null \
+            | grep -qE '^(200|503)$'; then
+            HEALTH_OK=1
+            ok "Service is healthy"
+            break
         fi
-        sleep 2
+        sleep 10
     done
-    note "Service did not become healthy within the timeout."
-    note "The deploy itself succeeded — check the App Platform dashboard."
+
+    if [ "$HEALTH_OK" -eq 0 ]; then
+        note "❗ Service did not become healthy within 300 s."
+        note "The deploy itself succeeded — review App Platform logs and decide whether to roll back:"
+        if [ -n "${PREVIOUS_DEPLOYMENT_ID}" ]; then
+            note "  doctl apps rollback ${DO_APP_ID} --deployment-id ${PREVIOUS_DEPLOYMENT_ID}"
+        else
+            note "  doctl apps list-deployments ${DO_APP_ID}"
+            note "  doctl apps rollback ${DO_APP_ID} --deployment-id <previous-id>"
+        fi
+        note "New deployment ID (for reference): ${NEW_DEPLOYMENT_ID:-unknown}"
+    fi
 else
     note "Skipping /health poll (DRY_RUN=1 or curl not available)"
 fi

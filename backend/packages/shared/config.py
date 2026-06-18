@@ -15,9 +15,17 @@ def _default_season() -> int:
 class Settings(BaseSettings):
     database_url: str = "postgresql+asyncpg://localhost/whatismytip"
     redis_url: str = "redis://localhost:6379/0"
+    # ``cors_origins`` — single source of truth.  Pydantic-settings
+    # hands the value to the model as either a CSV string (from the
+    # ``CORS_ORIGINS`` env var) or a list (from a programmatic
+    # construction).  The field validator below normalizes BOTH
+    # shapes to a clean ``List[str]`` with whitespace stripped and
+    # empty entries dropped.
+    # There is intentionally NO ``cors_origins_list`` property —
+    # callers should always read ``settings.cors_origins`` directly.
     cors_origins: Union[str, List[str]] = Field(
         default=["http://localhost:3000", "http://127.0.0.1:3000"],
-        description="Allowed CORS origins"
+        description="Allowed CORS origins (CSV in env, list in code)",
     )
     rate_limit_per_minute: int = 60
     squiggle_api_base: str = "https://api.squiggle.com.au"
@@ -30,6 +38,14 @@ class Settings(BaseSettings):
 
     environment: str = "development"
     admin_api_key: str = ""  # Set via ADMIN_API_KEY env var
+
+    # Postgres TLS verification.  When True (production default), the
+    # engine built in ``packages.shared.db`` will refuse any connection
+    # whose certificate is not signed by a CA in the system trust
+    # store AND whose hostname does not match.  Set to False ONLY for
+    # local development against a Postgres container with a
+    # self-signed cert.  Env var: DB_SSL_VERIFY.
+    db_ssl_verify: bool = True
 
     # Cron Job Configuration
     cron_enabled: bool = True
@@ -101,16 +117,21 @@ class Settings(BaseSettings):
 
     @field_validator("cors_origins", mode="before")
     @classmethod
-    def parse_cors_origins(cls, v: Union[str, List[str]]) -> List[str]:
-        if isinstance(v, str):
-            return [origin.strip() for origin in v.split(",")]
-        return v
+    def _parse_cors_origins(cls, v: Union[str, List[str]]) -> List[str]:
+        """Normalize ``cors_origins`` to a clean ``List[str]``.
 
-    @property
-    def cors_origins_list(self) -> List[str]:
-        if isinstance(self.cors_origins, str):
-            return [origin.strip() for origin in self.cors_origins.split(",")]
-        return self.cors_origins
+        Pydantic-settings reads ``CORS_ORIGINS`` from the env as a
+        raw string.  We split on commas, strip whitespace, and drop
+        empty entries — that way ``""`` is ``[]`` (not ``[""]``) and
+        ``"  http://a ,  http://b  "`` is ``["http://a", "http://b"]``.
+
+        This is the SINGLE source of truth for the CORS origin list.
+        There is intentionally no ``cors_origins_list`` property —
+        callers should always read ``settings.cors_origins`` directly.
+        """
+        if isinstance(v, str):
+            return [origin.strip() for origin in v.split(",") if origin.strip()]
+        return [str(origin).strip() for origin in v if str(origin).strip()]
 
 
 settings = Settings()

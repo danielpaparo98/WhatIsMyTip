@@ -111,18 +111,18 @@ def _resolve_cors_origin(request_args: dict | None = None) -> str:
     origins list. Returns the matching origin or '*' if no match / no
     configured origins.
     """
+    allowed_origins = settings.cors_origins
     if not request_args:
-        return settings.cors_origins[0] if settings.cors_origins else "*"
+        return allowed_origins[0] if allowed_origins else "*"
 
     headers = request_args.get("__ow_headers", {}) or {}
     request_origin = headers.get("origin") or headers.get("Origin", "")
 
     if request_origin:
-        allowed = settings.cors_origins_list
-        if allowed and request_origin in allowed:
+        if allowed_origins and request_origin in allowed_origins:
             return request_origin
 
-    return settings.cors_origins[0] if settings.cors_origins else "*"
+    return allowed_origins[0] if allowed_origins else "*"
 
 
 def response(

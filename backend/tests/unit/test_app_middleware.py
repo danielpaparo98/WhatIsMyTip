@@ -302,3 +302,139 @@ class TestRequestIDMiddleware:
         client = TestClient(app)
         ids = {client.get("/").headers["X-Request-ID"] for _ in range(10)}
         assert len(ids) == 10  # all unique
+
+    # -----------------------------------------------------------------
+    # Inbound X-Request-ID validation
+    # -----------------------------------------------------------------
+    #
+    # The middleware now REJECTS any inbound X-Request-ID that does
+    # not match ``^[A-Za-z0-9_\-]{1,128}$`` and replaces it with a
+    # fresh UUID4.  Without this guard, an attacker can inject CRLF
+    # sequences into log lines (one log entry per byte, fake log
+    # records, etc.) or smuggle very long strings that blow up log
+    # indexers.  See the corresponding fix in ``app.core.middleware``.
+
+    @pytest.mark.parametrize(
+        "valid_id",
+        [
+            "abc123",                                # short alnum
+            "550e8400-e29b-41d4-a716-446655440000",  # UUID4
+            "request_id_with_underscores-1234",      # underscores + dashes
+            "a" * 128,                               # exactly the max length
+            "A" * 128,                               # uppercase boundary
+            "0" * 128,                               # digit boundary
+        ],
+    )
+    def test_valid_request_id_is_echoed(self, valid_id):
+        """Allow-listed request IDs are echoed verbatim."""
+        from app.core.middleware import RequestIDMiddleware
+
+        app = FastAPI()
+        app.add_middleware(RequestIDMiddleware)
+
+        @app.get("/")
+        def _r():
+            return {"ok": True}
+
+        client = TestClient(app)
+        resp = client.get("/", headers={"X-Request-ID": valid_id})
+        assert resp.headers["X-Request-ID"] == valid_id, (
+            f"valid request ID {valid_id!r} should be echoed verbatim"
+        )
+
+    @pytest.mark.parametrize(
+        "invalid_id",
+        [
+            "contains space",                        # whitespace
+            "has/slash",                             # path separator
+            "has.dot",                               # punctuation
+            "has:colon",                             # punctuation
+            "evil\r\nX-Injected: yes",               # CRLF injection
+            "evil\nX-Injected: yes",                 # bare LF injection
+            "a" * 129,                               # 1 over the max
+            "a" * 1000,                              # far over the max
+            "",                                      # empty
+            # NOTE: non-ASCII (e.g. "unicode-\u2603-snowman") is
+            # rejected by httpx/starlette at the client layer with a
+            # UnicodeEncodeError — it never reaches the middleware.
+            # The allow-list regex still rejects it, but we cannot
+            # exercise that path via the TestClient.
+        ],
+    )
+    def test_invalid_request_id_is_replaced_with_uuid4(self, invalid_id):
+        """Disallowed request IDs MUST be replaced with a fresh UUID4.
+
+        Log-injection payloads (CRLF, control chars), overlong
+        values, and anything outside ``[A-Za-z0-9_-]`` are dropped
+        silently.  The replacement UUID4 follows the same shape
+        used elsewhere in the middleware (36 chars, version 4).
+        """
+        from app.core.middleware import RequestIDMiddleware
+
+        app = FastAPI()
+        app.add_middleware(RequestIDMiddleware)
+
+        @app.get("/")
+        def _r():
+            return {"ok": True}
+
+        client = TestClient(app)
+        resp = client.get("/", headers={"X-Request-ID": invalid_id})
+        echoed = resp.headers["X-Request-ID"]
+        assert echoed != invalid_id, (
+            f"invalid request ID {invalid_id!r} should NOT be echoed"
+        )
+        # Replacement must be a fresh UUID4 (36 chars, version 4).
+        assert len(echoed) == 36
+        assert echoed[14] == "4"
+
+    def test_crlf_injection_does_not_split_log_lines(self, caplog):
+        """The original bug: a CRLF in the X-Request-ID would, if
+        echoed raw, split a single log line into two — letting an
+        attacker forge log entries like ``HTTP/1.1 200 OK``.
+
+        With validation in place, the injected CRLF MUST be
+        discarded and the replacement UUID4 logged instead.
+        """
+        import logging
+
+        from app.core.middleware import RequestIDMiddleware
+
+        # Drive the middleware directly through the ASGI scope/recv
+        # so we can assert on the request_id stored in
+        # ``scope["state"]``.
+        captured: dict = {}
+
+        async def _app(scope, receive, send):
+            captured["rid"] = getattr(scope["state"], "request_id", None)
+            await send({"type": "http.response.start", "status": 200, "headers": []})
+            await send({"type": "http.response.body", "body": b""})
+
+        mw = RequestIDMiddleware(_app)
+        scope = {
+            "type": "http",
+            "method": "GET",
+            "path": "/",
+            "headers": [(b"x-request-id", b"good\r\nX-Evil: pwned")],
+            "state": type("S", (), {})(),
+        }
+
+        async def _receive():
+            return {"type": "http.request", "body": b"", "more_body": False}
+
+        async def _send(_message):
+            return None
+
+        import asyncio
+
+        asyncio.run(mw(scope, _receive, _send))
+
+        assert "rid" in captured
+        # The captured ID MUST NOT contain the CRLF bytes — if it
+        # did, an attacker could split log lines / inject headers.
+        assert "\r" not in captured["rid"]
+        assert "\n" not in captured["rid"]
+        assert "X-Evil" not in captured["rid"]
+        # And it must be a valid UUID4.
+        assert len(captured["rid"]) == 36
+        assert captured["rid"][14] == "4"
