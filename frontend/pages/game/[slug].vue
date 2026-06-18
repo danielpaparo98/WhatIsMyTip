@@ -115,6 +115,12 @@
 <script setup lang="ts">
 import type { GameDetailResponse } from '~/composables/useApi'
 
+// FX-03: cache rendered game detail pages during client-side navigation
+// so going back/forward to a previously viewed game doesn't re-fetch.
+definePageMeta({
+  keepalive: true,
+})
+
 const route = useRoute()
 const { getGameDetail } = useApi()
 const { getLogoUrl } = useTeamLogos()
