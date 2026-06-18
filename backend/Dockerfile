@@ -69,6 +69,13 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 # 2 is the default for basic-xxs; bump to 4 on apps-s-1vcpu-1gb.
 ENV WORKERS=2
 
+# Trusted upstream proxies for X-Forwarded-* headers.  Locked to the
+# App Platform private network (10.0.0.0/8) by default; override via
+# -e FORWARDED_ALLOW_IPS="..." in environments where the proxy lives
+# elsewhere.  Using '*' (the upstream uvicorn default) is a security
+# risk: it lets any client forge the X-Forwarded-For header.
+ENV FORWARDED_ALLOW_IPS=10.0.0.0/8
+
 WORKDIR /app
 
 # Create a non-root user to run the app.
@@ -89,7 +96,8 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health').read()" || exit 1
 
 # Run uvicorn.  --proxy-headers makes it trust X-Forwarded-* headers
-# from the nginx reverse proxy; --forwarded-allow-ips=* accepts them
-# from any source (lock this down if you put a non-trusted proxy in
-# front of the proxy).
-CMD ["sh", "-c", "exec uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000} --workers ${WORKERS:-2} --proxy-headers --forwarded-allow-ips '*'"]
+# from the nginx reverse proxy; --forwarded-allow-ips restricts which
+# upstream IPs are allowed to set them.  Default is the App Platform
+# private network (10.0.0.0/8); override with -e FORWARDED_ALLOW_IPS
+# in environments where the proxy lives in a different subnet.
+CMD ["sh", "-c", "exec uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000} --workers ${WORKERS:-2} --proxy-headers --forwarded-allow-ips ${FORWARDED_ALLOW_IPS:-10.0.0.0/8}"]
