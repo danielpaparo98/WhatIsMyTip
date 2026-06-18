@@ -60,16 +60,16 @@
               <div class="match-info">
                 <div class="teams">
                   <div class="team home">
-                    <img :src="getLogoUrl(game.home_team)" :alt="game.home_team + ' logo'" class="team-logo" loading="lazy" width="40" height="40" />
+                    <img :src="getLogoUrl(game.home_team ?? 'TBD')" :alt="`${game.home_team ?? 'TBD'} logo`" class="team-logo" loading="lazy" width="40" height="40" />
                   </div>
                   <span class="vs">VS</span>
                   <div class="team away">
-                    <img :src="getLogoUrl(game.away_team)" :alt="game.away_team + ' logo'" class="team-logo" loading="lazy" width="40" height="40" />
+                    <img :src="getLogoUrl(game.away_team ?? 'TBD')" :alt="`${game.away_team ?? 'TBD'} logo`" class="team-logo" loading="lazy" width="40" height="40" />
                   </div>
                 </div>
                 <div class="match-details">
-                  <span class="venue">{{ game.venue }}</span>
-                  <span class="date">{{ formatDate(game.date) }}</span>
+                  <span class="venue">{{ game.venue ?? 'TBD' }}</span>
+                  <span class="date">{{ game.date ? formatDate(game.date) : 'TBD' }}</span>
                 </div>
               </div>
               

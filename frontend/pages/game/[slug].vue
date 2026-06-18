@@ -28,16 +28,16 @@
 
           <div class="teams">
             <div class="team home">
-              <img :src="getLogoUrl(gameDetail.game.home_team)" :alt="gameDetail.game.home_team + ' logo'" class="team-logo" loading="lazy" width="80" height="80" />
-              <span class="team-name">{{ gameDetail.game.home_team }}</span>
+              <img :src="getLogoUrl(gameDetail.game.home_team ?? 'TBD')" :alt="`${gameDetail.game.home_team ?? 'TBD'} logo`" class="team-logo" loading="lazy" width="80" height="80" />
+              <span class="team-name">{{ gameDetail.game.home_team ?? 'TBD' }}</span>
               <span v-if="gameDetail.game.home_score !== null" class="score">{{ gameDetail.game.home_score }}</span>
             </div>
-            
+
             <div class="vs">VS</div>
-            
+
             <div class="team away">
-              <img :src="getLogoUrl(gameDetail.game.away_team)" :alt="gameDetail.game.away_team + ' logo'" class="team-logo" loading="lazy" width="80" height="80" />
-              <span class="team-name">{{ gameDetail.game.away_team }}</span>
+              <img :src="getLogoUrl(gameDetail.game.away_team ?? 'TBD')" :alt="`${gameDetail.game.away_team ?? 'TBD'} logo`" class="team-logo" loading="lazy" width="80" height="80" />
+              <span class="team-name">{{ gameDetail.game.away_team ?? 'TBD' }}</span>
               <span v-if="gameDetail.game.away_score !== null" class="score">{{ gameDetail.game.away_score }}</span>
             </div>
           </div>
@@ -45,15 +45,15 @@
           <div class="game-meta">
             <div class="meta-item">
               <span class="label">Venue:</span>
-              <span class="value">{{ gameDetail.game.venue }}</span>
+              <span class="value">{{ gameDetail.game.venue ?? 'TBD' }}</span>
             </div>
             <div class="meta-item">
               <span class="label">Date:</span>
-              <span class="value">{{ formatDate(gameDetail.game.date) }}</span>
+              <span class="value">{{ gameDetail.game.date ? formatDate(gameDetail.game.date) : 'TBD' }}</span>
             </div>
             <div class="meta-item">
               <span class="label">Time:</span>
-              <span class="value">{{ formatTime(gameDetail.game.date) }}</span>
+              <span class="value">{{ gameDetail.game.date ? formatTime(gameDetail.game.date) : 'TBD' }}</span>
             </div>
           </div>
         </div>
@@ -114,6 +114,7 @@
 
 <script setup lang="ts">
 import type { GameDetailResponse } from '~/composables/useApi'
+import { isValidGameSlug } from '~/composables/useGameSlug'
 
 const route = useRoute()
 const { getGameDetail } = useApi()
@@ -127,11 +128,13 @@ const error = ref<string | null>(null)
 // Fetch game detail on mount
 onMounted(async () => {
   try {
-    const slug = route.params.slug as string
-    if (!slug || !/^[a-zA-Z0-9]{10,12}$/.test(slug)) {
+    const slug = route.params.slug
+    // CR-004: regex loosened from `^[a-zA-Z0-9]{10,12}$` to support
+    // hyphens and a wider length range.  See composables/useGameSlug.ts.
+    if (!isValidGameSlug(slug)) {
       throw new Error('Invalid game slug')
     }
-    
+
     gameDetail.value = await getGameDetail(slug)
   } catch (err) {
     error.value = err instanceof Error ? err.message : 'Failed to load game details'
