@@ -22,8 +22,43 @@ from fastapi import FastAPI
 from app.core.scheduler import init_scheduler, shutdown_scheduler
 from packages.shared import cache as _cache
 from packages.shared import db as _db
+from packages.shared.config import settings
 
 logger = logging.getLogger(__name__)
+
+
+def _validate_production_security() -> None:
+    """Refuse to start the app in production with a missing admin key.
+
+    In any other environment (development, test, staging, etc.) we
+    emit a WARNING and let the app boot — empty ``ADMIN_API_KEY`` is
+    the local-dev default in ``.env.example``.
+
+    In production we fail fast: every ``/api/admin/**`` endpoint
+    would otherwise respond 403 to every caller, which is silent and
+    invisible in the health check (the app looks "up").  A misconfig
+    of this kind should take the instance out of the load-balancer
+    rotation immediately.
+    """
+    if settings.environment != "production":
+        if not settings.admin_api_key:
+            logger.warning(
+                "ADMIN_API_KEY is empty in non-production environment "
+                "(environment=%r). Admin endpoints will reject every "
+                "request until ADMIN_API_KEY is set.",
+                settings.environment,
+            )
+        return
+
+    # Production: refuse to start if the admin key is missing.
+    if not settings.admin_api_key:
+        msg = (
+            "Refusing to start: ADMIN_API_KEY is empty in production. "
+            "Set ADMIN_API_KEY in the App Platform spec to a high-entropy "
+            "secret before deploying."
+        )
+        logger.critical(msg)
+        raise RuntimeError(msg)
 
 
 @asynccontextmanager
@@ -48,8 +83,18 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     Failures during startup are logged but do not abort the app — the
     ``/health`` endpoint will report ``"degraded"`` until the
     dependency recovers.
+
+    SECURITY: the production / missing-``ADMIN_API_KEY`` check is
+    NOT a soft failure — it raises ``RuntimeError`` and refuses to
+    yield to the application.  See ``_validate_production_security``.
     """
     # ----- Startup -----
+    # SECURITY: refuse to start the app in production with a missing
+    # admin key.  This MUST run before any other startup work — if
+    # we accept the request, the load balancer will route traffic to
+    # us and every admin call will silently 403.
+    _validate_production_security()
+
     try:
         engine = _db.get_engine()
         app.state.engine = engine
