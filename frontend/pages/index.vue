@@ -107,11 +107,18 @@
 </template>
 
 <script setup lang="ts">
+import type { GameWithTip, GamesWithTipsResponse } from '~/composables/useApi'
 const api = useApi()
 const { getLogoUrl } = useTeamLogos()
 const { formatHeuristic, formatDate: formatDateUtil } = useFormatters()
 
 // Page-specific SEO
+// FX-05 / FX-20: page-specific SEO + canonical URL (alongside useHead for legacy meta)
+useSeoMeta({
+  ogType: 'website',
+  canonical: 'https://whatismytip.com/'
+})
+
 useHead({
   title: 'AFL Tips & Predictions',
   meta: [
@@ -144,8 +151,8 @@ useHead({
 
 const loading = ref(true)
 const error = ref<string | null>(null)
-const gamesWithTips = ref<any[]>([])
-const latestRound = ref<any>(null)
+const gamesWithTips = ref<GameWithTip[]>([])
+const latestRound = ref<GamesWithTipsResponse | null>(null)
 const selectedHeuristic = ref<string>('best_bet')
 const generating = ref(false)
 const AUTO_REFRESH_MS = 5 * 60 * 1000
@@ -165,7 +172,7 @@ const loadLatestRound = async () => {
   try {
     latestRound.value = await api.getLatestRound()
   } catch (e) {
-    console.error('Failed to load latest round:', e)
+    if (import.meta.dev) console.error('Failed to load latest round:', e)
   }
 }
 
@@ -185,13 +192,13 @@ const loadGames = async () => {
     gamesWithTips.value = data.games || []
   } catch (e) {
     error.value = 'Failed to load tips'
-    console.error(e)
+    if (import.meta.dev) console.error(e)
   } finally {
     loading.value = false
   }
 }
 
-const hasRoundChanged = (nextRound: any) => {
+const hasRoundChanged = (nextRound: GamesWithTipsResponse) => {
   if (!latestRound.value) return true
   return (
     latestRound.value.season !== nextRound?.season ||
@@ -210,7 +217,7 @@ const refreshCurrentView = async () => {
       await loadGames()
     }
   } catch (e) {
-    console.error('Auto-refresh failed:', e)
+    if (import.meta.dev) console.error('Auto-refresh failed:', e)
   }
 }
 
@@ -224,7 +231,7 @@ const generateTips = async () => {
     await loadGames()
   } catch (e) {
     error.value = 'Failed to generate tips'
-    console.error(e)
+    if (import.meta.dev) console.error(e)
   } finally {
     generating.value = false
   }
