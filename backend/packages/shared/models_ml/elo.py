@@ -1,6 +1,7 @@
 import asyncio
 import json
 import time
+from datetime import datetime, timedelta, timezone
 from typing import Dict, Optional, Sequence, Tuple
 
 from sqlalchemy import select
@@ -287,55 +288,18 @@ class EloModel(BaseModel):
         return ratings if ratings is not None else {}
 
     # ------------------------------------------------------------------
-    # Instance-level methods (for backtesting)
+    # Instance-level state
     # ------------------------------------------------------------------
-
-    async def _get_team_ratings(self, db: AsyncSession) -> Dict[str, float]:
-        """Get or initialize team Elo ratings."""
-        async with self._lock:
-            if not self.ratings:
-                # Initialize all teams with 1500 rating
-                result = await db.execute(select(Game.home_team).distinct())
-                home_teams = set(r[0] for r in result.all())
-                result = await db.execute(select(Game.away_team).distinct())
-                away_teams = set(r[0] for r in result.all())
-                all_teams = home_teams.union(away_teams)
-
-                for team in all_teams:
-                    self.ratings[team] = 1500.0
-
-            return self.ratings.copy()
-
-    async def _update_ratings(self, db: AsyncSession):
-        """Update Elo ratings based on historical games."""
-        start_time = time.time()
-
-        async with self._lock:
-            query_start = time.time()
-            result = await db.execute(select(Game).where(Game.completed).order_by(Game.date))
-            games = result.scalars().all()
-            query_time = time.time() - query_start
-
-            logger.debug(
-                f"EloModel._update_ratings: Loaded {len(games)} completed "
-                f"games from database (query took {query_time:.4f}s)"
-            )
-
-            update_start = time.time()
-            self._compute_ratings_from_games(
-                games,
-                self.ratings,
-                k_factor=self.k_factor,
-                home_advantage=self.home_advantage,
-            )
-
-            update_time = time.time() - update_start
-            total_time = time.time() - start_time
-            logger.debug(
-                f"EloModel._update_ratings: Updated ratings for "
-                f"{len(games)} games (update took {update_time:.4f}s, "
-                f"total {total_time:.4f}s)"
-            )
+    #
+    # ``self.ratings`` is retained as an empty dict on each instance
+    # for backward compatibility with downstream consumers that
+    # inspect it (e.g. ``test_cron_utils.py::test_elo_instance_ratings_empty``).
+    # The legacy ``_update_ratings`` / ``_get_team_ratings`` helpers
+    # that used to populate this dict were dead code in the happy
+    # path — the live prediction flow goes through the class-level
+    # Redis-backed cache (see ``_load_ratings_from_redis`` /
+    # ``_compute_point_in_time_ratings``) and never touches the
+    # instance dict.  They've been removed (HI-001).
 
     # ------------------------------------------------------------------
     # Prediction
@@ -354,15 +318,20 @@ class EloModel(BaseModel):
             f"{game.id} ({game.home_team} vs {game.away_team}) on {game.date}"
         )
 
-        # Determine if we can use cached ratings (current predictions)
-        from datetime import datetime, timezone
-
-        now = datetime.now(timezone.utc)
-
-        # Try Redis cache first for recent/upcoming games
-        use_cache = game.date is not None and game.date >= now.replace(tzinfo=None) - __import__(
-            "datetime"
-        ).timedelta(days=7)
+        # Determine if we can use cached ratings (current predictions).
+        # ``game.date`` may be tz-aware or naive depending on how the
+        # row was written; normalise both sides to naive UTC before
+        # comparing so the 7-day cache window works in either case.
+        now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
+        game_date_naive = (
+            game.date.replace(tzinfo=None)
+            if game.date is not None and game.date.tzinfo is not None
+            else game.date
+        )
+        use_cache = (
+            game_date_naive is not None
+            and game_date_naive >= now_utc - timedelta(days=7)
+        )
 
         if use_cache:
             ratings = await self.__class__._load_ratings_from_redis()
