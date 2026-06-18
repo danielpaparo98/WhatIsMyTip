@@ -97,11 +97,11 @@ The frontend uses environment variables for configuration:
 # Local development
 API_BASE_URL=http://localhost:8000
 
-# Production (FastAPI container behind nginx)
+# Production (FastAPI service on App Platform, same-origin /api route)
 API_BASE_URL=https://whatismytip.com/api
 ```
 
-The backend API is served by a single FastAPI container behind an nginx reverse proxy. In production, `API_BASE_URL` should point at the public domain (e.g., `https://whatismytip.com/api`).
+The backend API is served by a single FastAPI container.  In production App Platform routes `/api/*` to it on the same hostname as the frontend, so `API_BASE_URL` is the public domain + `/api` (e.g., `https://whatismytip.com/api`).  No reverse proxy is in the path.
 
 ## Design System
 

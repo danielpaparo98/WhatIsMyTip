@@ -1,15 +1,5 @@
 # WhatIsMyTip Deployment Guide
 
-> ## ⚠️ Stale `.do/app.yaml` — needs rewrite (TODO)
->
-> **[`.do/app.yaml`](../.do/app.yaml) is still in the FaaS-era format** (it declares a `functions` component for OpenWhisk, references `whatismytip-backend` at port 8080, and includes the OpenWhisk-required `/api/api/` path-prefix workaround). Phase 4 migrated the app to a single FastAPI container, so the spec is no longer accurate and would fail a fresh deploy.
->
-> **TODO:** rewrite `.do/app.yaml` to declare the FastAPI `service` (the container built from [`backend/Dockerfile`](../backend/Dockerfile:1)) + the `proxy` service (from [`backend/proxy/Dockerfile`](../backend/proxy/Dockerfile:1)) + the `static_sites` component (the Nuxt frontend), with secrets in `RUN_AND_BUILD_TIME` `SECRET` envs, not plaintext values. Until that rewrite lands, **the recommended deploy path is the [`scripts/deploy.sh`](../backend/scripts/deploy.sh:1) helper** (it builds + pushes the FastAPI image to the DO Container Registry, then calls `doctl apps create-deployment` to trigger the rollout).
->
-> **Also stale:** [`.do/frontend.yaml`](../.do/frontend.yaml) is marked DEPRECATED in its own header — it should be removed once `app.yaml` is rewritten.
->
-> See [plans/infra-devops-review.md](../plans/infra-devops-review.md) for the full audit and [docs/operations.md](operations.md) for runtime/deployment operations.
-
 ## Overview
 
 This guide covers deploying WhatIsMyTip.com to DigitalOcean App Platform. The deployment consists of:
@@ -17,7 +7,6 @@ This guide covers deploying WhatIsMyTip.com to DigitalOcean App Platform. The de
 - **Backend**: a single FastAPI container (image built from `backend/Dockerfile`) with an in-process APScheduler running the 4 cron jobs
 - **Database**: Managed PostgreSQL 16
 - **Cache**: Managed Redis 7
-- **Reverse proxy**: a small nginx container in front of the FastAPI backend (handles CORS-adjacent headers + a self-contained `/healthz` liveness probe)
 - **Frontend**: Static Nuxt 4 site on App Platform (static site hosting)
 
 ## Prerequisites
@@ -40,19 +29,16 @@ This guide covers deploying WhatIsMyTip.com to DigitalOcean App Platform. The de
 │                                                                  │
 │   ┌──────────────────────┐    ┌──────────────────────┐         │
 │   │  App Platform         │    │  Container Registry   │         │
-│   │                       │    │  (registry.digital    │         │
-│   │   ┌──────────────┐   │    │   ocean.com)          │         │
-│   │   │  Frontend     │   │    │   ┌──────────────┐    │         │
-│   │   │  Nuxt 4 SSG   │   │    │   │  api:tag      │◀──┼──push───┤
+│   │  (public hostname)    │    │  (registry.digital    │         │
+│   │                       │    │   ocean.com)          │         │
+│   │   ┌──────────────┐   │    │   ┌──────────────┐    │         │
+│   │   │  Frontend     │◀──┼────┼───┤              │    │         │
+│   │   │  Nuxt 4 SSG   │ / │    │   │  api:tag      │◀──┼──push───┤
 │   │   └──────────────┘   │    │   └──────────────┘    │         │
 │   │                       │    │           ▲           │         │
 │   │   ┌──────────────┐   │    │           │           │         │
-│   │   │  proxy (nginx)│──┼────┼───────────┘           │         │
-│   │   └──────┬───────┘   │    │                       │         │
-│   │          │            │    │   ┌──────────────┐    │         │
-│   │   ┌──────▼───────┐   │    │   │  proxy:latest │    │         │
-│   │   │  api (FastAPI)│   │    │   └──────────────┘    │         │
-│   │   │  + APScheduler│   │    │                       │         │
+│   │   │  api (FastAPI)│◀──┼────┼───────────┘           │         │
+│   │   │  + APScheduler│ /api  │    │                       │         │
 │   │   └──────┬───────┘   │    │                       │         │
 │   └──────────┼────────────┘    └──────────────────────┘         │
 │              │                                                   │
@@ -65,7 +51,7 @@ This guide covers deploying WhatIsMyTip.com to DigitalOcean App Platform. The de
 └──────────────────────────────────────────────────────────────────┘
 ```
 
-The user-facing URL pattern is `/api/...`.  The App Platform ingress routes `/api` to the `whatismytip-proxy` service, which forwards requests to the `whatismytip-api` component (`fastapi:8000`) over the App Platform private network.  The nginx proxy is purely a pass-through — no path rewriting, just standard reverse-proxy headers and a self-contained `/healthz` for orchestrator probes.
+Two components, same public hostname: App Platform's edge routes `/` to the Nuxt static site and `/api/*` (plus `/health`, `/docs`, `/openapi.json`, `/redoc`) to the FastAPI service.  No reverse proxy is in the path — TLS is terminated at the edge, `X-Forwarded-*` headers are forwarded, and `FORWARDED_ALLOW_IPS=10.0.0.0/8` keeps the trust boundary closed to the App Platform private network.
 
 The frontend component (Nuxt 4 static build) is served directly by the App Platform static-site component on the primary domain.
 

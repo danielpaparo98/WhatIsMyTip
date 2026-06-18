@@ -4,7 +4,7 @@ The Phase 4 ``SecurityHeadersMiddleware`` already emits
 ``X-Frame-Options: DENY`` (the only OWASP-recommended value when
 embedding the app in a third-party ``<iframe>`` is never a supported
 flow).  This test pins that contract so a future contributor can't
-"loosen" it back to ``SAMEORIGIN`` (the nginx default, which would
+"loosen" it back to ``SAMEORIGIN`` (a common web-server default, which would
 allow framing by any same-origin page — almost certainly an
 oversight on a backend API that serves no HTML).
 """

@@ -40,7 +40,6 @@ backend/config_test.txt
 backend/deploy_test.txt
 backend/final_full.txt
 backend/final_test.txt
-backend/proxy_test.txt
 backend/routes*.txt
 backend/test_output.txt
 

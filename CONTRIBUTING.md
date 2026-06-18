@@ -262,7 +262,6 @@ git push origin feature/your-feature-name
   - `schemas/` — Pydantic validation schemas
   - `squiggle/`, `weather/`, `openrouter/` — External data clients
   - `cache.py`, `config.py`, `db.py`, `alerting.py` — Infrastructure modules
-- **proxy/**: nginx reverse proxy (used by App Platform)
 - **alembic/**: Database migrations
 - **tests/**: Unit (`tests/unit/`) and integration (`tests/integration/`) tests
 - **scripts/**: Deployment and utility scripts (`deploy.sh`, `dev.sh`)
