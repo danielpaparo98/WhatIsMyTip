@@ -1,5 +1,7 @@
 # Integration Test Suite — Summary
 
+> **Status:** Active — canonical record of the 123-test integration suite (Podman + Postgres + FastAPI TestClient, no live Redis).  Last verified **2026-06-18** (this trim round).  Regenerate with `cd backend && uv run pytest tests/integration -k "test_api_" -v --tb=short > logs/integration-test-suite.log 2>&1`.
+
 > Captures the result of the comprehensive pytest integration suite
 > added on top of the curl-sweep work.
 >
