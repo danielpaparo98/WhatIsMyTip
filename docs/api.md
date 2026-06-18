@@ -2,6 +2,7 @@
 
 > **Path reference verified against `app.routes`** (see [`backend/list_routes.py`](../backend/list_routes.py:1) for the exact route list).
 > **Interactive API**: `GET /docs` (Swagger UI) and `GET /redoc` (ReDoc) on the live app.
+> **Auth model**: see [`docs/security-model.md`](security-model.md).
 
 ## Overview
 
@@ -9,39 +10,32 @@ WhatIsMyTip provides a RESTful API for AFL tipping predictions, backtesting, and
 
 ## API Access
 
-The API is served by the FastAPI app behind the nginx reverse proxy:
-
-```
-https://<your-domain>/api/...
-```
-
-### Local development
-
-```
-http://localhost:8000/api/...
-```
-
-### Interactive docs
-
-- `GET /openapi.json` — the raw OpenAPI 3 spec
-- `GET /docs` — Swagger UI (interactive)
-- `GET /redoc` — ReDoc (read-only)
+| Environment | URL pattern |
+|-------------|-------------|
+| Production | `https://<your-domain>/api/...` (FastAPI behind the nginx reverse proxy) |
+| Local dev | `http://localhost:8000/api/...` |
+| OpenAPI 3 spec | `GET /openapi.json` |
+| Swagger UI | `GET /docs` |
+| ReDoc | `GET /redoc` |
 
 ## Authentication
 
-The API is currently public with rate limiting. Admin endpoints require an `X-API-Key` header that matches `ADMIN_API_KEY` (env var). No authentication is required for basic operations.
+The API is **public by default** with per-IP rate limiting. Admin endpoints (manual cron triggers, backtest runs, metrics) require an `X-API-Key` header that matches `ADMIN_API_KEY` (env var).  Full auth model in [`docs/security-model.md`](security-model.md).
 
 ## Rate Limiting
 
-- **General Endpoints**: 60 requests per minute per IP address
-- **Tip generation / backtest runs**: 5-10 requests per minute per IP address (admin-only)
+| Scope | Default |
+|-------|---------|
+| General endpoints | 60 req/min per IP |
+| `POST /api/tips/generate` | 10 req/min per IP (enforced by slowapi) |
+| `POST /api/backtest/run` | 5 req/min per IP (admin only) |
 
 Rate limits are enforced by FastAPI middleware (see [`app/core/rate_limit.py`](../backend/app/core/rate_limit.py:1)).
 
 ## Error Codes
 
-| Code | Description |
-|------|-------------|
+| Code | Meaning |
+|------|---------|
 | 200 | Success |
 | 400 | Bad Request (invalid parameters) |
 | 401 | Unauthorized (missing or invalid `X-API-Key` for admin endpoints) |
@@ -76,308 +70,123 @@ GET /health
 
 Check the liveness of the API.  Returns 200 in all cases (degraded/healthy) — the body's `status` field signals overall health so a load balancer can route traffic without taking the pod out of rotation for transient dependency hiccups.
 
-**Response**:
-```json
-{
-  "status": "healthy",
-  "db": "ok",
-  "redis": "ok",
-  "version": "0.1.0",
-  "request_id": "..."
-}
-```
+**Response shape**:
+
+| Field | Type | Notes |
+|-------|------|-------|
+| `status` | string | `healthy` \| `degraded` |
+| `db` | string | `ok` \| `error` |
+| `redis` | string | `ok` \| `error` |
+| `version` | string | App version |
+| `request_id` | string | Correlates with `X-Request-ID` response header |
 
 ### Games
 
-#### List games
-
-```
-GET /api/games
-```
-
-Get games data.  Query parameters: `season`, `round`, `upcoming`, `latest`, `team`, `limit`, `offset`.
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| `GET` | `/api/games` | public | List games (filter: `season`, `round`, `upcoming`, `latest`, `team`, `limit`, `offset`) |
+| `GET` | `/api/games/{slug}` | public | Get a single game by slug (e.g. `richmond-v-carlton-r1-2025`) |
+| `GET` | `/api/games/{slug}/detail` | public | Full game detail with tips, predictions, weather, and analysis |
+| `GET` | `/api/games/health` | public | Games router health |
 
 **Example**:
+
 ```bash
-# All games
 curl http://localhost:8000/api/games
-
-# Specific season + round
 curl 'http://localhost:8000/api/games?season=2025&round=1'
-
-# Upcoming only
 curl 'http://localhost:8000/api/games?upcoming=true'
-
-# Latest round
 curl 'http://localhost:8000/api/games?latest=true'
 ```
 
-#### Get game by slug
-
-```
-GET /api/games/{slug}
-```
-
-Get a single game by its slug (e.g. `richmond-v-carlton-r1-2025`).
-
-#### Get game detail
-
-```
-GET /api/games/{slug}/detail
-```
-
-Full game detail with tips, predictions, weather, and analysis.
-
 ### Tips
 
-#### List tips
-
-```
-GET /api/tips
-```
-
-Get tips.  Query parameters: `heuristic`, `season`, `round`, `limit`.
-
-#### Games with tips
-
-```
-GET /api/tips/games-with-tips
-```
-
-Get games with their best-bet tips for a round.  Query parameters: `season`, `round`, `heuristic` (default: `best_bet`).
-
-#### Tips by heuristic
-
-```
-GET /api/tips/{heuristic}
-```
-
-Get tips for one heuristic (`best_bet`, `yolo`, or `high_risk_high_reward`).  Query parameters: `limit`.
-
-#### Generate tips
-
-```
-POST /api/tips/generate
-```
-
-Generate tips for a round.  **Intentionally public.** Rate-limited to 10 requests/minute per IP (see [`backend/app/api/tips.py`](backend/app/api/tips.py:261)). Any caller may trigger tip generation for a season/round that has no tips yet.  Query parameters: `season`, `round`, `heuristics` (optional, comma-separated), `regenerate` (default: `false`).
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| `GET` | `/api/tips` | public | List tips (filter: `heuristic`, `season`, `round`, `limit`) |
+| `GET` | `/api/tips/games-with-tips` | public | Games with their best-bet tips for a round (filter: `season`, `round`, `heuristic` default `best_bet`) |
+| `GET` | `/api/tips/{heuristic}` | public | Tips for one heuristic (`best_bet` \| `yolo` \| `high_risk_high_reward`); filter: `limit` |
+| `POST` | `/api/tips/generate` | public (rate-limited) | Generate tips for a round. Body: `season`, `round_id`, `heuristics` (optional, comma-separated), `regenerate` (default `false`). See [`app/api/tips.py`](../backend/app/api/tips.py:261). |
+| `POST` | `/api/tips/explanations/generate` | public | Generate AI explanations for a round |
 
 **Example**:
-```bash
-curl -X POST \
-  'http://localhost:8000/api/tips/generate?season=2025&round=1'
 
-curl -X POST \
-  'http://localhost:8000/api/tips/generate?season=2025&round=1&heuristics=best_bet,yolo&regenerate=true'
+```bash
+# Generate for a round
+curl -X POST 'http://localhost:8000/api/tips/generate?season=2025&round=1'
+curl -X POST 'http://localhost:8000/api/tips/generate?season=2025&round=1&heuristics=best_bet,yolo&regenerate=true'
 ```
 
 ### Backtesting
 
-#### List backtest results
-
-```
-GET /api/backtest
-```
-
-List backtest results.  Query parameters: `heuristic`, `season`, `limit`.
-
-#### Compare heuristics for a season
-
-```
-GET /api/backtest/compare
-```
-
-Compare all heuristics for a season.  Query parameter: `season` (required).
-
-#### Model compare
-
-```
-GET /api/backtest/model-compare
-```
-
-Compare individual ML models (not heuristics).  Query parameters: `season`, `models` (optional, comma-separated).
-
-#### Per-round table data
-
-```
-GET /api/backtest/table
-```
-
-Per-round table data for a season.  Query parameter: `season` (required).
-
-#### List seasons with backtest data
-
-```
-GET /api/backtest/seasons
-```
-
-List all seasons that have backtest data.
-
-#### Current-season performance
-
-```
-GET /api/backtest/current-season
-```
-
-Current-season performance across all heuristics.
-
-#### Run a backtest
-
-```
-POST /api/backtest/run
-```
-
-Trigger a backtest.  **Requires `X-API-Key` header.**  Query parameters: `season` (required), `round` (optional), `heuristic` (optional).
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| `GET` | `/api/backtest` | public | List backtest results (filter: `heuristic`, `season`, `limit`) |
+| `GET` | `/api/backtest/seasons` | public | List seasons with backtest data |
+| `GET` | `/api/backtest/current-season` | public | Current-season performance across all heuristics |
+| `GET` | `/api/backtest/table` | public | Per-round table data (query: `season`) |
+| `GET` | `/api/backtest/{heuristic}/performance` | public | Heuristic performance metrics |
+| `GET` | `/api/backtest/compare` | public | Compare all heuristics for a season (query: `season`) |
+| `GET` | `/api/backtest/model-compare` | public | Compare individual ML models (query: `season`, optional `models` list) |
+| `POST` | `/api/backtest/run` | admin | Trigger a backtest. Query: `season` (required), `round` (optional), `heuristic` (optional) |
 
 **Example**:
-```bash
-# Entire season
-curl -X POST -H "X-API-Key: $ADMIN_API_KEY" \
-  'http://localhost:8000/api/backtest/run?season=2024'
 
-# Single round
-curl -X POST -H "X-API-Key: $ADMIN_API_KEY" \
-  'http://localhost:8000/api/backtest/run?season=2024&round=5'
+```bash
+curl -X POST -H "X-API-Key: $ADMIN_API_KEY" 'http://localhost:8000/api/backtest/run?season=2024'
+curl -X POST -H "X-API-Key: $ADMIN_API_KEY" 'http://localhost:8000/api/backtest/run?season=2024&round=5'
 ```
 
 ### Admin
 
 All admin endpoints **require `X-API-Key` header**.
 
-#### Trigger a cron job
-
-```
-POST /api/admin/{job_name}/trigger
-```
-
-Manually trigger one of the 4 cron jobs.
-
-**Job names**:
-- `daily-sync`
-- `match-completion`
-- `tip-generation`
-- `historic-refresh`
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/api/admin/{job_name}/trigger` | Manually trigger one of: `daily-sync`, `match-completion`, `tip-generation`, `historic-refresh` |
+| `GET` | `/api/admin/historic-refresh/progress` | Current progress of the historic-refresh job (current season, current round, items processed, ETA, etc.) |
+| `GET` | `/api/admin/metrics` | Per-job execution metrics: success rate, last-run timestamp, average duration, etc. |
 
 **Example**:
+
 ```bash
-curl -X POST -H "X-API-Key: $ADMIN_API_KEY" \
-  http://localhost:8000/api/admin/daily-sync/trigger
-
-curl -X POST -H "X-API-Key: $ADMIN_API_KEY" \
-  http://localhost:8000/api/admin/tip-generation/trigger
+curl -X POST -H "X-API-Key: $ADMIN_API_KEY" http://localhost:8000/api/admin/daily-sync/trigger
+curl -X POST -H "X-API-Key: $ADMIN_API_KEY" http://localhost:8000/api/admin/tip-generation/trigger
 ```
-
-#### Historic-refresh progress
-
-```
-GET /api/admin/historic-refresh/progress
-```
-
-Get the current progress of the historic-refresh job (current season, current round, items processed, ETA, etc.).
-
-#### Per-job execution metrics
-
-```
-GET /api/admin/metrics
-```
-
-Get per-job execution metrics: success rate, last-run timestamp, average duration, etc.
 
 ---
 
 ## Heuristics
 
-The API supports three heuristic strategies:
+The API supports three heuristic strategies. Per-class implementation details (confidence thresholds, consensus rules) live in the source files.
 
-### 1. Best Bet
-
-**Strategy**: Conservative, high-confidence picks
-
-- Requires consensus across multiple models
-- Only selects teams with high confidence (>60%)
-- Uses average of model predictions
-
-**Best for**: Long-term betting strategies
-
-### 2. YOLO
-
-**Strategy**: High-risk, high-reward selections
-
-- Selects the team with the highest confidence
-- No consensus requirement
-- Ignores confidence thresholds
-
-**Best for**: Adventurous bettors looking for big wins
-
-### 3. High Risk High Reward
-
-**Strategy**: Balanced approach for adventurous tippers
-
-- Selects teams with moderate confidence (40-70%)
-- Requires some model consensus
-- Balances risk and reward
-
-**Best for**: Moderate-risk betting strategies
+| Heuristic | Source | Description |
+|-----------|--------|-------------|
+| **Best Bet** | [`heuristics/best_bet.py`](../backend/packages/shared/heuristics/best_bet.py:1) | Conservative picks with high confidence. Best for long-term betting. |
+| **YOLO** | [`heuristics/yolo.py`](../backend/packages/shared/heuristics/yolo.py:1) | High-risk, high-reward selections. Ignores confidence thresholds. |
+| **High Risk High Reward** | [`heuristics/high_risk_high_reward.py`](../backend/packages/shared/heuristics/high_risk_high_reward.py:1) | Balanced approach for adventurous tippers. |
 
 ## ML Models
 
-The API uses 8 ML models for predictions:
+The API uses 8 ML models for predictions. Per-class implementation lives in the source files.
 
-| Model | Description |
-|-------|-------------|
-| **Elo** | Team strength tracking via Elo rating system |
-| **Form** | Recent team performance (last N games) |
-| **Home Advantage** | Venue-specific advantages |
-| **Value** | Value-based betting analysis |
-| **Weather Impact** | Weather conditions impact on game outcomes |
-| **Injury Impact** | Team injury lists and player availability |
-| **Matchup** | Head-to-head historical performance |
-| **Player Form** | Individual player form metrics |
+| Model | Source |
+|-------|--------|
+| **Elo** | [`models_ml/elo.py`](../backend/packages/shared/models_ml/elo.py:1) |
+| **Form** | [`models_ml/form.py`](../backend/packages/shared/models_ml/form.py:1) |
+| **Home Advantage** | [`models_ml/home_advantage.py`](../backend/packages/shared/models_ml/home_advantage.py:1) |
+| **Value** | [`models_ml/value.py`](../backend/packages/shared/models_ml/value.py:1) |
+| **Weather Impact** | [`models_ml/weather_impact.py`](../backend/packages/shared/models_ml/weather_impact.py:1) |
+| **Injury Impact** | [`models_ml/injury_impact.py`](../backend/packages/shared/models_ml/injury_impact.py:1) |
+| **Matchup** | [`models_ml/matchup.py`](../backend/packages/shared/models_ml/matchup.py:1) |
+| **Player Form** | [`models_ml/player_form.py`](../backend/packages/shared/models_ml/player_form.py:1) |
 
 ## AI Explanations
 
 The API can generate AI-powered explanations for tips using OpenRouter.  Explanations are generated on-demand by the tip-generation cron job and cached in PostgreSQL (one explanation per tip).
 
-### Cost Management
-
-- Cache explanations in database
-- Only generate explanations when needed
-- Monitor usage in OpenRouter dashboard
+Cost management: explanations are cached in DB and only generated when needed. Monitor usage in the OpenRouter dashboard. Model configurable via `OPENROUTER_MODEL` (e.g. `google/gemma-4-26b-a4b-it:free`).
 
 ## Integration Examples
-
-### Python
-
-```python
-import httpx
-
-async def get_tips():
-    async with httpx.AsyncClient() as client:
-        response = await client.get(
-            "http://localhost:8000/api/tips",
-            params={"heuristic": "best_bet", "limit": 10}
-        )
-        return response.json()
-
-# Run
-import asyncio
-tips = asyncio.run(get_tips())
-print(tips)
-```
-
-### JavaScript/TypeScript
-
-```typescript
-async function getTips(): Promise<any> {
-  const response = await fetch(
-    'http://localhost:8000/api/tips?heuristic=best_bet&limit=10'
-  );
-  return response.json();
-}
-
-// Run
-getTips().then(tips => console.log(tips));
-```
 
 ### cURL
 
@@ -386,8 +195,7 @@ getTips().then(tips => console.log(tips));
 curl "http://localhost:8000/api/tips?heuristic=best_bet&limit=10"
 
 # Generate tips
-curl -X POST -H "X-API-Key: $ADMIN_API_KEY" \
-  "http://localhost:8000/api/tips/generate?season=2025&round=1&heuristics=best_bet,yolo"
+curl -X POST 'http://localhost:8000/api/tips/generate?season=2025&round=1&heuristics=best_bet,yolo'
 
 # Run backtest
 curl -X POST -H "X-API-Key: $ADMIN_API_KEY" \
@@ -397,82 +205,59 @@ curl -X POST -H "X-API-Key: $ADMIN_API_KEY" \
 curl "http://localhost:8000/api/backtest/compare?season=2024"
 ```
 
-## Squiggle API
+### Python (httpx)
 
-The backend integrates with the [Squiggle API](https://api.squiggle.com.au/) for AFL data.
+```python
+import httpx
 
-### Rate Limits
+async def get_tips():
+    async with httpx.AsyncClient() as client:
+        response = await client.get(
+            "http://localhost:8000/api/tips",
+            params={"heuristic": "best_bet", "limit": 10},
+        )
+        return response.json()
+```
 
-- **60 requests per minute** per IP address (enforced by FastAPI middleware)
+### JavaScript / TypeScript
 
-### Data Sources
+```typescript
+const tips = await fetch('http://localhost:8000/api/tips?heuristic=best_bet&limit=10')
+  .then(r => r.json());
+```
 
-The Squiggle API provides:
-- Fixtures and results
-- Team information
-- Historical data
-- Player statistics
+## Data Sources
 
-## OpenRouter API
-
-The backend uses OpenRouter for AI-powered explanations (configurable model).
-
-### Configuration
-
-- **Model**: configurable via `OPENROUTER_MODEL` env var (e.g., `google/gemma-4-26b-a4b-it:free`)
-- **Base URL**: `https://openrouter.ai/api/v1` (configurable via `OPENROUTER_BASE_URL`)
-- **Rate Limit**: 5 requests per minute for explanations
-
-### Cost Management
-
-- Cache explanations in database
-- Only generate explanations when needed
-- Monitor usage in OpenRouter dashboard
+| Source | Use | Config |
+|--------|-----|--------|
+| [Squiggle API](https://api.squiggle.com.au/) | AFL fixtures, results, team info | `SQUIGGLE_API_BASE`, `SQUIGGLE_CONTACT_EMAIL` |
+| [OpenRouter](https://openrouter.ai/) | AI-powered tip explanations | `OPENROUTER_API_KEY`, `OPENROUTER_MODEL` |
+| AFLTables / FootyWire | Historical player stats, injuries (via scraper) | n/a — internal |
+| Open-Meteo | Match-day weather (via scraper) | n/a — internal |
 
 ## Best Practices
 
-1. **Use Rate Limits**: Respect API rate limits to avoid blocking
-2. **Cache Responses**: Cache frequently accessed data
-3. **Error Handling**: Implement proper error handling in your application
-4. **Pagination**: Use limit and offset for large result sets
-5. **Timeouts**: Set appropriate timeouts for API calls
-6. **Retry Logic**: Implement retry logic for transient failures
+1. **Respect rate limits** to avoid 429s
+2. **Cache responses** in your client for stable data (team info, historical results)
+3. **Implement retry with backoff** for transient 5xx
+4. **Use `limit` + `offset`** for large result sets
+5. **Set appropriate timeouts** (5–10 s for read endpoints; 60+ s for `POST /tips/generate`)
 
 ## Troubleshooting
 
-### Common Issues
-
-**Issue**: 404 Not Found
-- **Solution**: Check endpoint URL and parameters
-
-**Issue**: 401 Unauthorized
-- **Solution**: Add the `X-API-Key` header for admin endpoints
-
-**Issue**: 422 Unprocessable Entity
-- **Solution**: Check the request body / query parameters
-
-**Issue**: 429 Rate Limit Exceeded
-- **Solution**: Wait and retry, or implement caching
-
-**Issue**: 500 Internal Server Error
-- **Solution**: Check backend logs, report to maintainers
-
-**Issue**: Empty results
-- **Solution**: Check season/round parameters, verify data exists
+| Symptom | Fix |
+|---------|-----|
+| 404 Not Found | Check endpoint URL and parameters |
+| 401 Unauthorized | Add `X-API-Key: $ADMIN_API_KEY` for admin endpoints |
+| 422 Unprocessable Entity | Check request body / query parameters (Pydantic `errors[]` array gives the field) |
+| 429 Rate Limit Exceeded | Wait and retry, or implement client-side caching |
+| 500 Internal Server Error | Check `backend/logs/` or contact maintainers; the response includes a `request_id` to correlate with logs |
+| Empty results | Check `season` / `round` parameters; verify data exists |
 
 ## Support
 
-For API support:
-1. Check this documentation
+1. Check this document
 2. Check `/docs` (Swagger UI) for the live schema
-3. Review [docs/backend.md](backend.md) for backend architecture details
-4. Open an issue on GitHub
-5. Contact the development team
-
-## Versioning
-
-The API is currently in development. Versioning may be implemented in the future.
-
-## License
-
-See the [LICENSE](../LICENSE) file for details.
+3. See [`docs/backend.md`](backend.md) for backend architecture
+4. See [`docs/security-model.md`](security-model.md) for the auth model
+5. Open an issue on GitHub
