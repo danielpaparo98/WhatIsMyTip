@@ -79,15 +79,16 @@ This project adheres to a code of conduct that all contributors are expected to 
 
 ### Submitting Code
 
-#### Prerequisites
+We follow **TDD** (write the failing test first) + **gitmoji** commit prefixes + a `feature/` (or `fix/`, `chore/`, …) branch naming convention.  The toolchain is **bun** (frontend) and **uv** (backend).  See [`docs/development.md`](docs/development.md) for the local setup walkthrough.
 
-- Fork the repository
-- Create a feature branch from `main`
-- Make your changes
-- Test thoroughly
-- Commit with conventional commit messages
-- Push to your fork
-- Create a Pull Request
+#### Quick start
+
+1. Create a branch: `git checkout -b feature/your-feature-name` (or `fix/`, `chore/`, `refactor/`, `docs/`, `test/`)
+2. **Write the failing test first** (TDD).  Run the existing suite to confirm red: `cd backend && uv run pytest tests/unit/ -v` (or `cd frontend && bun run test`).
+3. Implement the change until the test passes.  Run the full suite + linter.
+4. Commit with a gitmoji prefix: `git commit -m "✨ feat(api): add new endpoint"`.
+5. Push: `git push origin feature/your-feature-name`.
+6. Open a PR against `dev` (not `main`).
 
 #### Development Setup
 
@@ -106,15 +107,17 @@ Use descriptive branch names:
 
 #### Commit Messages
 
-Use conventional commit messages:
+Use **gitmoji** commit messages (emoji + conventional commit scope):
 
-- `feat: add new ML model`
-- `fix: resolve database connection issue`
-- `docs: update API documentation`
-- `refactor: improve code structure`
-- `test: add unit tests`
-- `style: format code`
-- `chore: update dependencies`
+- `✨ feat: add new ML model`
+- `🐛 fix: resolve database connection issue`
+- `📝 docs: update API documentation`
+- `♻️ refactor: improve code structure`
+- `✅ test: add unit tests`
+- `🎨 style: format code`
+- `🔧 chore: update dependencies`
+
+The full gitmoji catalogue is at <https://gitmoji.dev/>.  When in doubt, match the prefix to the closest gitmoji entry.
 
 #### Pull Request Process
 
