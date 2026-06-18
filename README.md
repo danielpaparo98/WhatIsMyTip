@@ -287,11 +287,16 @@ whatismytip/
 │   ├── tests/             # Unit + integration tests
 │   └── scripts/           # Deployment and utility scripts (deploy.sh, dev.sh)
 ├── docs/                  # Documentation
+│   ├── index.md           # Doc-of-docs landing page
 │   ├── backend.md         # Backend architecture (FastAPI monolith)
 │   ├── frontend.md        # Frontend documentation
 │   ├── deployment.md      # Deployment guide
 │   ├── development.md     # Development guide
 │   ├── api.md             # API reference
+│   ├── operations.md      # Runtime/deployment operations
+│   ├── security-model.md  # Auth + rate limiting model
+│   ├── data-loading.md    # CSV data loading + scraper
+│   ├── migrations.md      # Alembic migrations
 │   ├── FULL-REVIEW.md     # Original 2026-04 code review (now closed — see Resolution Status)
 │   └── FAAS-EVALUATION.md # FaaS-era evaluation (now closed — see Resolution Status)
 ├── CONTRIBUTING.md        # Contributing guidelines
@@ -301,13 +306,18 @@ whatismytip/
 
 ## Documentation
 
-Comprehensive documentation is available in the [`docs/`](docs/) directory:
+Comprehensive documentation is available in the [`docs/`](docs/) directory (start at [`docs/index.md`](docs/index.md)):
 
+- [`docs/index.md`](docs/index.md) - Doc-of-docs landing page
 - [`docs/backend.md`](docs/backend.md) - Backend architecture (FastAPI monolith)
 - [`docs/frontend.md`](docs/frontend.md) - Frontend structure and design system
 - [`docs/deployment.md`](docs/deployment.md) - Container deployment to DigitalOcean App Platform
 - [`docs/development.md`](docs/development.md) - Local development setup
 - [`docs/api.md`](docs/api.md) - Complete API reference
+- [`docs/operations.md`](docs/operations.md) - Runtime/deployment operations
+- [`docs/security-model.md`](docs/security-model.md) - Auth + rate limiting model
+- [`docs/data-loading.md`](docs/data-loading.md) - CSV data loading + scraper
+- [`docs/migrations.md`](docs/migrations.md) - Alembic migrations
 - [`docs/FULL-REVIEW.md`](docs/FULL-REVIEW.md) - Original 2026-04 code review (all findings closed — see Resolution Status)
 - [`docs/FAAS-EVALUATION.md`](docs/FAAS-EVALUATION.md) - FaaS-era evaluation (all concerns addressed — see Resolution Status)
 
