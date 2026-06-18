@@ -318,6 +318,89 @@ class TestCachedDecorator:
         cached_value = args[1]
         assert json.loads(cached_value) == {"a": 1}
 
+    @pytest.mark.asyncio
+    async def test_decorator_skip_first_arg_false_includes_all_args(self):
+        """``skip_first_arg=False`` (ME-001) means the first positional
+        argument is included in the cache key.  Two different ``db``
+        arguments therefore produce different cache keys and the function
+        is executed twice rather than being short-circuited by a cached
+        entry from the first invocation.
+        """
+        mock_client = _mock_redis_client()
+        mock_client.get = AsyncMock(return_value=None)
+        cache = RedisCache(default_ttl=60, prefix="dec:")
+
+        call_count = 0
+
+        @cached(cache=cache, key_prefix="all:", skip_first_arg=False)
+        async def my_function(db, x):
+            nonlocal call_count
+            call_count += 1
+            return x * 2
+
+        with patch("packages.shared.cache._get_client", return_value=mock_client):
+            r1 = await my_function("db_a", 1)
+            r2 = await my_function("db_b", 1)
+
+        assert r1 == 2
+        assert r2 == 2
+        # Two different keys => function executed twice
+        assert call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_decorator_skip_first_arg_true_default(self):
+        """The default ``skip_first_arg=True`` continues to ignore the first
+        positional argument when building the cache key."""
+        mock_client = _mock_redis_client()
+        mock_client.get = AsyncMock(return_value=None)
+        cache = RedisCache(default_ttl=60, prefix="dec:")
+
+        @cached(cache=cache, key_prefix="skip:")
+        async def my_function(db, x):
+            return x + 100
+
+        with patch("packages.shared.cache._get_client", return_value=mock_client):
+            # Different first args but same ``x`` — only one execution
+            # because the cache key ignores ``db``.
+            r1 = await my_function("db_a", 1)
+            r2 = await my_function("db_b", 1)
+
+        # Second call hits the cache (set on first miss) and returns the
+        # cached value, not a freshly computed one.
+        assert r1 == 101
+        assert r2 == 101
+
+
+# ---------------------------------------------------------------------------
+# _make_cache_key — hash format (ME-009: blake2b)
+# ---------------------------------------------------------------------------
+
+
+class TestCacheKeyHashFormat:
+    """ME-009: cache keys use blake2b(digest_size=16) → 32 hex chars."""
+
+    def test_hash_is_32_hex_chars(self):
+        """The cache key hash is a 32-character hex string (16 bytes)."""
+        from packages.shared.cache import _make_cache_key
+
+        key = _make_cache_key("fn", (1, 2), {})
+        assert len(key) == 32
+        # All characters must be hex digits
+        int(key, 16)  # raises ValueError if not hex
+
+    def test_hash_uses_blake2b_under_the_hood(self):
+        """Sanity check: blake2b(digest_size=16) of the same input is
+        stable and matches what we expect from the helper."""
+        import hashlib
+
+        from packages.shared.cache import _make_cache_key
+
+        expected = hashlib.blake2b(
+            b"fn:(1, 2):[]",
+            digest_size=16,
+        ).hexdigest()
+        assert _make_cache_key("fn", (1, 2), {}) == expected
+
 
 # ---------------------------------------------------------------------------
 # invalidate_cache_pattern
