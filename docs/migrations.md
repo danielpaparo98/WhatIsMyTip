@@ -120,6 +120,8 @@ uv run alembic stamp <revision_id>
 
 The project uses a **consolidated baseline** rather than individual historical migrations. The old SQLite-era incremental migrations have been replaced by a single comprehensive PostgreSQL baseline.
 
+The current `head` is **`0002_weather_players_injuries`** (verified via `uv run alembic current` — there are exactly **2 migrations** on disk). The original Phase 4c plan called for a 3rd migration adding a metrics index; that index was ultimately added via the SQLAlchemy `Index(...)` declarations in `0001` / `0002` (rather than a separate `0003` migration), so no third file is expected.
+
 ### Current Migrations
 
 | Order | Revision | File | Description |
