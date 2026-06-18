@@ -795,6 +795,40 @@ API_BASE_URL=http://localhost:8000
 
 ---
 
+## Common Tasks Cheat Sheet
+
+Quick recipes for the things you do most often.
+
+| Task | Command (run from `backend/`) |
+|------|-------------------------------|
+| Start local Postgres + Redis | `./scripts/dev.sh` |
+| Apply migrations | `uv run alembic upgrade head` |
+| Roll back one migration | `uv run alembic downgrade -1` |
+| Generate a new migration | `uv run alembic revision --autogenerate -m "msg"` |
+| Run all unit tests | `uv run pytest tests/unit/ -v` |
+| Run a single test file | `uv run pytest tests/unit/test_app_api_games.py -v` |
+| Run with coverage | `uv run pytest tests/unit/ --cov` |
+| Run API with hot-reload | `uv run uvicorn main:app --reload` |
+| Lint (ruff) | `uv run ruff check .` |
+| Format (ruff) | `uv run ruff format .` |
+| Type-check (mypy) | `uv run mypy packages/` |
+| Build the Docker image | `docker build -t whatismytip-api -f Dockerfile .` |
+| Smoke-test the image build | `./scripts/test_dockerfile.sh` |
+| Trigger a cron job manually | `curl -X POST -H "X-API-Key: $ADMIN_API_KEY" http://localhost:8000/api/admin/<job>/trigger` |
+| See job metrics | `curl -H "X-API-Key: $ADMIN_API_KEY" http://localhost:8000/api/admin/metrics` |
+| Load real CSV data | `./scripts/make-data.sh` (Bash) / `.\scripts\make-data.ps1` (PowerShell) |
+
+| Task (frontend) | Command (run from `frontend/`) |
+|------|-------------------------------|
+| Install deps | `bun install` |
+| Start dev server | `bun run dev` |
+| Lint | `bun run lint` |
+| Type-check | `bun run typecheck` |
+| Run unit tests | `bun run test` |
+| Build static site | `bun run generate` |
+
+---
+
 ## Additional Resources
 
 - [Backend Architecture](backend.md)
