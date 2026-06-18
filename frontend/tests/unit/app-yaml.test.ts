@@ -125,6 +125,26 @@ describe('.do/app.yaml spec', () => {
     expect(spec).toMatch(/-\s+path:\s*\/\s*(?:\r?\n|$)/)
   })
 
+  it('declares a github source spec on every component (doctl requires it)', () => {
+    // App Platform needs an explicit `github:` (or `image:`) block on
+    // every component, otherwise doctl rejects the spec with
+    // "service ... missing source spec (image, git, github, gitlab
+    // or bitbucket)".
+    const apiBlock = spec.match(
+      /-\s+name:\s*whatismytip-api[\s\S]*?(?=\n\s*-\s+name:|\nstatic_sites:|\s*$)/,
+    )
+    const frontendBlock = spec.match(
+      /-\s+name:\s*whatismytip-frontend[\s\S]*?(?=\n\s*-\s+name:|\s*$)/,
+    )
+    expect(apiBlock, 'api service block not found').not.toBeNull()
+    expect(frontendBlock, 'frontend block not found').not.toBeNull()
+    for (const [name, block] of [['api', apiBlock![0]], ['frontend', frontendBlock![0]]]) {
+      expect(block, `${name} needs a github: source block`).toMatch(/\bgithub:\s*\n/)
+      expect(block, `${name} github block needs a 'repo:'`).toMatch(/\brepo:\s*\S/)
+      expect(block, `${name} github block needs a 'branch:'`).toMatch(/\bbranch:\s*\S/)
+    }
+  })
+
   it('puts all /api* routes inside the api component (not the frontend)', () => {
     // Find the api service block and assert it contains the /api route.
     const apiBlock = spec.match(
