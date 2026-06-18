@@ -37,6 +37,9 @@ export default defineNuxtConfig({
       link: [
         // TODO: Create favicon.ico and uncomment the following line
         // { rel: 'icon', type: 'image/x-icon', href: '/favicon.ico' },
+        // FX-19: preconnect / dns-prefetch the API origin so the first fetch is faster
+        { rel: 'preconnect', href: 'https://api.whatismytip.com' },
+        { rel: 'dns-prefetch', href: 'https://api.whatismytip.com' },
         { rel: 'canonical', href: 'https://whatismytip.com' }
       ],
       script: [

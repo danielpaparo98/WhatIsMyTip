@@ -3,8 +3,11 @@ import { fileURLToPath } from 'node:url'
 
 export default defineConfig({
   test: {
-    include: ['tests/unit/**/*.test.ts'],
-    environment: 'node',
+    environment: 'happy-dom',
+    globals: true,
+    include: ['tests/unit/**/*.test.ts', 'tests/unit/**/*.spec.ts'],
+    // Exclude Playwright e2e tests (they live in tests/ but use Playwright)
+    exclude: ['node_modules', '.nuxt', '.output', 'tests/game-detail-flow.spec.ts'],
   },
   resolve: {
     alias: {

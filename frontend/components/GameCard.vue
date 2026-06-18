@@ -6,12 +6,12 @@
     </div>
     <div class="game-body">
       <div class="team home">
-        <img :src="getLogoUrl(homeTeam ?? 'TBD')" :alt="`${homeTeam ?? 'TBD'} logo`" class="team-logo" loading="lazy" width="56" height="56" />
+<img :src="getLogoUrl(homeTeam ?? 'TBD')" :alt="`${homeTeam ?? 'TBD'} logo`" class="team-logo" loading="lazy" decoding="async" width="56" height="56" />
         <span v-if="homeScore !== null" class="score">{{ homeScore }}</span>
       </div>
       <div class="vs">VS</div>
       <div class="team away">
-        <img :src="getLogoUrl(awayTeam ?? 'TBD')" :alt="`${awayTeam ?? 'TBD'} logo`" class="team-logo" loading="lazy" width="56" height="56" />
+<img :src="getLogoUrl(awayTeam ?? 'TBD')" :alt="`${awayTeam ?? 'TBD'} logo`" class="team-logo" loading="lazy" decoding="async" width="56" height="56" />
         <span v-if="awayScore !== null" class="score">{{ awayScore }}</span>
       </div>
     </div>

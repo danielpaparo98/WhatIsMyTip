@@ -28,7 +28,7 @@
 
           <div class="teams">
             <div class="team home">
-              <img :src="getLogoUrl(gameDetail.game.home_team ?? 'TBD')" :alt="`${gameDetail.game.home_team ?? 'TBD'} logo`" class="team-logo" loading="lazy" width="80" height="80" />
+<img :src="getLogoUrl(gameDetail.game.home_team ?? 'TBD')" :alt="`${gameDetail.game.home_team ?? 'TBD'} logo`" class="team-logo" loading="lazy" decoding="async" width="80" height="80" />
               <span class="team-name">{{ gameDetail.game.home_team ?? 'TBD' }}</span>
               <span v-if="gameDetail.game.home_score !== null" class="score">{{ gameDetail.game.home_score }}</span>
             </div>
@@ -36,7 +36,7 @@
             <div class="vs">VS</div>
 
             <div class="team away">
-              <img :src="getLogoUrl(gameDetail.game.away_team ?? 'TBD')" :alt="`${gameDetail.game.away_team ?? 'TBD'} logo`" class="team-logo" loading="lazy" width="80" height="80" />
+<img :src="getLogoUrl(gameDetail.game.away_team ?? 'TBD')" :alt="`${gameDetail.game.away_team ?? 'TBD'} logo`" class="team-logo" loading="lazy" decoding="async" width="80" height="80" />
               <span class="team-name">{{ gameDetail.game.away_team ?? 'TBD' }}</span>
               <span v-if="gameDetail.game.away_score !== null" class="score">{{ gameDetail.game.away_score }}</span>
             </div>
@@ -116,6 +116,12 @@
 import type { GameDetailResponse } from '~/composables/useApi'
 import { isValidGameSlug } from '~/composables/useGameSlug'
 
+// FX-03: cache rendered game detail pages during client-side navigation
+// so going back/forward to a previously viewed game doesn't re-fetch.
+definePageMeta({
+  keepalive: true,
+})
+
 const route = useRoute()
 const { getGameDetail } = useApi()
 const { getLogoUrl } = useTeamLogos()
@@ -156,11 +162,53 @@ const getHeuristicClass = (heuristic: string): string => {
   return classes[heuristic] || ''
 }
 
-// Set page meta
-useHead({
+// FX-05 / FX-20: per-game SEO + canonical URL.  Title + meta change once
+// the game detail payload arrives; canonical is set up-front so it
+// appears in the SSR HTML head regardless of fetch timing.
+const canonicalBase = useRuntimeConfig().public.siteUrl
+const canonicalUrl = computed(() =>
+  gameDetail.value
+    ? `${canonicalBase}/game/${gameDetail.value.game.slug}`
+    : `${canonicalBase}/game/${route.params.slug as string}`
+)
+
+useSeoMeta({
   title: () => gameDetail.value
+    ? `${gameDetail.value.game.home_team} vs ${gameDetail.value.game.away_team} | WhatIsMyTip`
+    : 'Game Details | WhatIsMyTip',
+  description: () => {
+    const g = gameDetail.value?.game
+    if (!g) return 'AFL game preview, tips, model predictions, weather and match analysis from WhatIsMyTip.'
+    const completed = g.completed ? 'final' : 'upcoming'
+    return `${g.home_team} vs ${g.away_team} (${completed}, Round ${g.round_id}, ${g.season}) — AI tips, model predictions, weather and talking points.`
+  },
+  ogTitle: () => gameDetail.value
     ? `${gameDetail.value.game.home_team} vs ${gameDetail.value.game.away_team}`
-    : 'Game Details'
+    : 'Game Details',
+  ogDescription: () => {
+    const g = gameDetail.value?.game
+    return g
+      ? `AI-powered tips, predictions and analysis for ${g.home_team} vs ${g.away_team}.`
+      : 'AFL game details, tips and analysis.'
+  },
+  ogType: 'website',
+  ogUrl: canonicalUrl,
+  twitterTitle: () => gameDetail.value
+    ? `${gameDetail.value.game.home_team} vs ${gameDetail.value.game.away_team}`
+    : 'Game Details',
+  twitterDescription: () => {
+    const g = gameDetail.value?.game
+    return g
+      ? `AI-powered tips, predictions and analysis for ${g.home_team} vs ${g.away_team}.`
+      : 'AFL game details, tips and analysis.'
+  },
+  twitterCard: 'summary_large_image',
+})
+
+useHead({
+  link: [
+    { rel: 'canonical', href: canonicalUrl }
+  ]
 })
 </script>
 

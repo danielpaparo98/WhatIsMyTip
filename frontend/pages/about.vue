@@ -119,17 +119,23 @@
 </template>
 
 <script setup lang="ts">
-// Page-specific SEO
-useHead({
+// FX-05 / FX-20: page-specific SEO + canonical URL
+useSeoMeta({
   title: 'About',
-  meta: [
-    { name: 'description', content: 'Learn about WhatIsMyTip\'s AI-powered AFL tipping system. Discover our machine learning models, heuristics, and how we generate accurate AFL predictions and betting tips.' },
-    { name: 'keywords', content: 'AFL tipping models, AFL prediction algorithms, machine learning AFL, AFL betting models, Elo ratings AFL, AFL form analysis, AFL home advantage' },
-    { property: 'og:title', content: 'About | WhatIsMyTip - AI-Powered AFL Tipping' },
-    { property: 'og:description', content: 'Learn about WhatIsMyTip\'s AI-powered AFL tipping system. Discover our machine learning models and heuristics.' },
-    { property: 'og:url', content: 'https://whatismytip.com/about' },
-    { name: 'twitter:title', content: 'About | WhatIsMyTip - AI-Powered AFL Tipping' },
-    { name: 'twitter:description', content: 'Learn about WhatIsMyTip\'s AI-powered AFL tipping system. Discover our machine learning models and heuristics.' }
+  description: 'Learn about WhatIsMyTip\'s AI-powered AFL tipping system. Discover our machine learning models, heuristics, and how we generate accurate AFL predictions and betting tips.',
+  keywords: 'AFL tipping models, AFL prediction algorithms, machine learning AFL, AFL betting models, Elo ratings AFL, AFL form analysis, AFL home advantage',
+  ogTitle: 'About | WhatIsMyTip - AI-Powered AFL Tipping',
+  ogDescription: 'Learn about WhatIsMyTip\'s AI-powered AFL tipping system. Discover our machine learning models and heuristics.',
+  ogType: 'website',
+  ogUrl: 'https://whatismytip.com/about',
+  twitterTitle: 'About | WhatIsMyTip - AI-Powered AFL Tipping',
+  twitterDescription: 'Learn about WhatIsMyTip\'s AI-powered AFL tipping system. Discover our machine learning models and heuristics.',
+  twitterCard: 'summary_large_image',
+})
+
+useHead({
+  link: [
+    { rel: 'canonical', href: 'https://whatismytip.com/about' }
   ],
   script: [
     {
