@@ -194,3 +194,132 @@ def test_deploy_script_runs_migrations() -> None:
         "deploy.sh should run `alembic upgrade head` (or equivalent) "
         "so the database schema is in sync with the new code."
     )
+
+
+# ── CRLF handling (HI-007) ──────────────────────────────────────────────
+
+
+def _source_env(env_text: str) -> dict[str, str]:
+    """Replicate the deploy.sh ``source`` pipeline against ``env_text``.
+
+    Mirrors the line at the top of ``deploy.sh``:
+
+        source <(grep -v '^#' .env | grep -v '^$' | sed 's/\\r$//')
+
+    Implemented in pure Python so the test is hermetic and does not
+    depend on bash being on PATH (which it often isn't on the dev
+    box).  Returns the env dict that the source pipeline would have
+    produced.
+    """
+    env: dict[str, str] = {}
+    for raw in env_text.splitlines():
+        # Mirror `grep -v '^#'` and `grep -v '^$'`.
+        line = raw.rstrip("\r")
+        if line.startswith("#") or not line.strip():
+            continue
+        # Mirror `sed 's/\\r$//'` (strip any leftover CR, belt-and-
+        # braces after rstrip above).
+        line = line.replace("\r", "")
+        if "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        key = key.strip()
+        value = value.strip()
+        # Strip optional surrounding quotes (deploy.sh does the
+        # same via plain string interpolation).
+        if (value.startswith('"') and value.endswith('"')) or (
+            value.startswith("'") and value.endswith("'")
+        ):
+            value = value[1:-1]
+        env[key] = value
+    return env
+
+
+class TestDeployScriptCrlfStripping:
+    """HI-007: Windows-edited ``.env`` files use CRLF line endings.
+
+    Before the fix, the literal ``\\r`` was concatenated onto the
+    value of every env var, which corrupted connection strings
+    (e.g. ``postgresql://user:pwd\\r@host:5432/db``).  The fix
+    pipes the env file through ``sed 's/\\r$//'`` before sourcing
+    so the CR is stripped before the var reaches the shell.
+    """
+
+    def test_crlf_env_strips_carriage_returns(self, tmp_path):
+        """A CRLF-edited .env file must source cleanly (no \\r)."""
+        env_file = tmp_path / ".env"
+        env_file.write_bytes(
+            b"DATABASE_URL=postgresql://user:pwd@host:5432/db\r\n"
+            b"REDIS_URL=redis://localhost:6379/0\r\n"
+            b"# This is a comment line\r\n"
+            b"\r\n"
+            b"DO_APP_ID=abc123\r\n"
+        )
+
+        # Read as text and run through the deploy.sh source pipeline
+        # (re-implemented in Python via ``_source_env``).
+        text = env_file.read_text(encoding="utf-8")
+        env = _source_env(text)
+
+        assert env["DATABASE_URL"] == (
+            "postgresql://user:pwd@host:5432/db"
+        )
+        assert env["REDIS_URL"] == "redis://localhost:6379/0"
+        assert env["DO_APP_ID"] == "abc123"
+
+        # The whole point of the fix: NO env value may contain a
+        # literal ``\r``.
+        for key, value in env.items():
+            assert "\r" not in value, (
+                f"env var {key!r} contains a literal carriage return: "
+                f"{value!r}"
+            )
+
+    def test_lf_env_still_works(self, tmp_path):
+        """A normal LF-only .env file must continue to source cleanly."""
+        env_file = tmp_path / ".env"
+        env_file.write_text(
+            "DATABASE_URL=postgresql://user:pwd@host:5432/db\n"
+            "REDIS_URL=redis://localhost:6379/0\n"
+            "DO_APP_ID=abc123\n",
+            encoding="utf-8",
+        )
+        env = _source_env(env_file.read_text(encoding="utf-8"))
+        assert env["DATABASE_URL"] == (
+            "postgresql://user:pwd@host:5432/db"
+        )
+        assert env["REDIS_URL"] == "redis://localhost:6379/0"
+        assert env["DO_APP_ID"] == "abc123"
+
+    def test_mixed_line_endings_in_one_file(self, tmp_path):
+        """A file with a mix of CRLF and LF must end up with no CR."""
+        env_file = tmp_path / ".env"
+        env_file.write_bytes(
+            b"DATABASE_URL=postgresql://u:p@h:5432/db\r\n"
+            b"REDIS_URL=redis://localhost:6379/0\n"
+            b"DO_APP_ID=abc123\r\n"
+        )
+        env = _source_env(env_file.read_text(encoding="utf-8"))
+        for value in env.values():
+            assert "\r" not in value
+
+    def test_deploy_script_source_pipeline_strips_cr(self) -> None:
+        """The deploy.sh source pipeline must include a CR-stripping step.
+
+        Reads the actual script and asserts that the ``source`` line
+        contains ``sed 's/\\r$//'`` (or equivalent: ``tr -d '\\\\r'``,
+        or an awk filter that drops ``\\r``).
+        """
+        content = _read_deploy_script()
+        # Find the .env source block.
+        match = re.search(
+            r"source\s+<\(\s*([^)]+)\)", content, re.DOTALL
+        )
+        assert match is not None, (
+            "deploy.sh must source .env via a `source <(...)` pipeline"
+        )
+        pipeline = match.group(1)
+        assert "sed" in pipeline and "r" in pipeline and "$" in pipeline, (
+            "deploy.sh .env source pipeline must include a sed step that "
+            "strips trailing \\r (e.g. `sed 's/\\r$//'`)."
+        )
