@@ -13,13 +13,13 @@ test.describe('Game Detail Flow - End to End', () => {
     // Step 1: Navigate to Home Page
     await test.step('Navigate to Home Page', async () => {
       await page.goto(BASE_URL);
-      
+
       // Verify page loads successfully
       await expect(page).toHaveTitle(/WhatIsMyTip/);
-      
+
       // Wait for content to load
       await page.waitForLoadState('networkidle');
-      
+
       // Verify hero section is displayed
       await expect(page.locator('.hero h1')).toContainText('AI-Powered');
       await expect(page.locator('.hero p')).toContainText('Smart heuristics');
@@ -29,12 +29,12 @@ test.describe('Game Detail Flow - End to End', () => {
     await test.step('Verify game cards are displayed', async () => {
       // Wait for games to load
       await page.waitForSelector('.games-grid', { timeout: 10000 });
-      
+
       // Verify game cards exist
       const gameCards = page.locator('.game-card');
       const count = await gameCards.count();
       expect(count).toBeGreaterThan(0);
-      
+
       // Verify tips are shown on game cards
       const firstCard = gameCards.first();
       await expect(firstCard.locator('.tip-info')).toBeVisible();
@@ -43,15 +43,15 @@ test.describe('Game Detail Flow - End to End', () => {
     // Step 3: Click on first game card
     await test.step('Click on first game card', async () => {
       const firstCardLink = page.locator('.game-card-link').first();
-      
+
       // Get the game slug from the href
       const href = await firstCardLink.getAttribute('href');
       expect(href).toMatch(/\/game\/[a-zA-Z0-9]+/);
       gameSlug = href!.split('/').pop()!;
-      
+
       // Click on the game card
       await firstCardLink.click();
-      
+
       // Verify navigation to game detail page
       await expect(page).toHaveURL(`${BASE_URL}/game/${gameSlug}`);
     });
@@ -60,21 +60,21 @@ test.describe('Game Detail Flow - End to End', () => {
     await test.step('Verify game information is displayed', async () => {
       // Wait for content to load
       await page.waitForSelector('.game-detail-page .content', { timeout: 10000 });
-      
+
       // Verify back link
       await expect(page.locator('.back-link')).toContainText('Back to Home');
-      
+
       // Verify game info section
       await expect(page.locator('.round')).toBeVisible();
       await expect(page.locator('.season')).toBeVisible();
       await expect(page.locator('.status')).toBeVisible();
-      
+
       // Verify teams are displayed
       await expect(page.locator('.team.home .team-logo')).toBeVisible();
       await expect(page.locator('.team.away .team-logo')).toBeVisible();
       await expect(page.locator('.team.home .team-name')).toBeVisible();
       await expect(page.locator('.team.away .team-name')).toBeVisible();
-      
+
       // Verify venue and date
       await expect(page.locator('.game-meta')).toBeVisible();
       await expect(page.locator('.game-meta')).toContainText('Venue:');
@@ -85,15 +85,15 @@ test.describe('Game Detail Flow - End to End', () => {
     await test.step('Verify all 3 heuristic tips are shown', async () => {
       await expect(page.locator('.tips-section')).toBeVisible();
       await expect(page.locator('.tips-section .section-title')).toContainText('Heuristic Tips');
-      
+
       const tipsGrid = page.locator('.tips-grid');
       await expect(tipsGrid).toBeVisible();
-      
+
       // Verify 3 tips are displayed
       const tipCards = tipsGrid.locator('.tip-card');
       const tipCount = await tipCards.count();
       expect(tipCount).toBe(3);
-      
+
       // Verify each tip has required elements
       for (let i = 0; i < tipCount; i++) {
         const tip = tipCards.nth(i);
@@ -110,15 +110,15 @@ test.describe('Game Detail Flow - End to End', () => {
     await test.step('Verify all 4 model predictions are shown', async () => {
       await expect(page.locator('.models-section')).toBeVisible();
       await expect(page.locator('.models-section .section-title')).toContainText('Model Predictions');
-      
+
       const modelsGrid = page.locator('.models-grid');
       await expect(modelsGrid).toBeVisible();
-      
+
       // Verify 4 model predictions are displayed
       const modelCards = modelsGrid.locator('.model-card');
       const modelCount = await modelCards.count();
       expect(modelCount).toBe(4);
-      
+
       // Verify each model has required elements
       for (let i = 0; i < modelCount; i++) {
         const model = modelCards.nth(i);
@@ -128,7 +128,7 @@ test.describe('Game Detail Flow - End to End', () => {
         await expect(model.locator('.model-body h3')).toBeVisible();
         await expect(model.locator('.margin')).toBeVisible();
       }
-      
+
       // Verify specific model names are displayed
       const modelNames = await modelsGrid.locator('.model-name').allTextContents();
       const expectedModels = ['Elo Rating', 'Form', 'Home Advantage', 'Value'];
@@ -138,20 +138,93 @@ test.describe('Game Detail Flow - End to End', () => {
     });
   });
 
+  // CR-008 from Phase 2b: the previous single spec did not exercise
+  // the round-locator (heuristic-selector) → game-detail flow with
+  // the new heuristic tab.  This test verifies the user can:
+  //   1. land on the home page
+  //   2. switch the round-locator (heuristic) filter
+  //   3. click into a game card
+  //   4. see a TipCard AND model predictions on the game-detail page
+  test('round-locator → game detail flow with all critical sections visible', async ({ page }) => {
+    await test.step('Navigate to home and confirm round-locator is rendered', async () => {
+      await page.goto(BASE_URL);
+      await page.waitForLoadState('networkidle');
+
+      // Round display (e.g. "R7 • 2025") is the primary round-locator.
+      // The heuristic-selector lets the user re-pick which heuristic's
+      // tip is shown in the cards.
+      await expect(page.locator('.round-display')).toBeVisible();
+      await expect(page.locator('.round-display .round-value')).toContainText(/R\d+/);
+
+      // Heuristic-selector ("round-locator" in the Phase 2b report)
+      const heuristicSelector = page.locator('.heuristic-selector');
+      await expect(heuristicSelector).toBeVisible();
+      const heuristicTabs = heuristicSelector.locator('.heuristic-btn');
+      const tabCount = await heuristicTabs.count();
+      expect(tabCount).toBeGreaterThanOrEqual(3); // best_bet, yolo, high_risk_high_reward
+    });
+
+    await test.step('Click a non-default heuristic tab to exercise the locator', async () => {
+      const yoloTab = page.locator('.heuristic-selector .heuristic-btn', {
+        hasText: /yolo/i,
+      });
+      await yoloTab.first().click();
+      // The selected tab should carry the .active class.
+      await expect(yoloTab.first()).toHaveClass(/active/);
+    });
+
+    await test.step('Wait for games grid to re-render with the selected heuristic', async () => {
+      await page.waitForSelector('.games-grid', { timeout: 10000 });
+      const gameCards = page.locator('.game-card');
+      const count = await gameCards.count();
+      expect(count).toBeGreaterThan(0);
+    });
+
+    let clickedSlug: string;
+    await test.step('Click the first game card and confirm game detail page', async () => {
+      const firstCardLink = page.locator('.game-card-link').first();
+      const href = await firstCardLink.getAttribute('href');
+      expect(href).toMatch(/\/game\/[a-zA-Z0-9_-]+/);
+      clickedSlug = href!.split('/').pop()!;
+      await firstCardLink.click();
+      await expect(page).toHaveURL(`${BASE_URL}/game/${clickedSlug}`);
+      await page.waitForSelector('.game-detail-page .content', { timeout: 10000 });
+    });
+
+    await test.step('Game detail page shows TipCard (3 heuristic tips) and model predictions', async () => {
+      // TipCard visible (3 heuristic tips in the grid)
+      const tipCards = page.locator('.tips-grid .tip-card');
+      await expect(tipCards.first()).toBeVisible();
+      const tipCount = await tipCards.count();
+      expect(tipCount).toBe(3);
+
+      // Model predictions visible (≥4 model cards)
+      const modelCards = page.locator('.models-grid .model-card');
+      await expect(modelCards.first()).toBeVisible();
+      const modelCount = await modelCards.count();
+      expect(modelCount).toBeGreaterThanOrEqual(4);
+
+      // Each model card has a confidence value
+      for (let i = 0; i < modelCount; i++) {
+        await expect(modelCards.nth(i).locator('.confidence')).toBeVisible();
+      }
+    });
+  });
+
   test('should navigate back to home page', async ({ page }) => {
     // Navigate to home and click first game
     await page.goto(BASE_URL);
     await page.waitForSelector('.games-grid', { timeout: 10000 });
-    
+
     const firstCardLink = page.locator('.game-card-link').first();
     await firstCardLink.click();
-    
+
     // Wait for game detail page
     await page.waitForSelector('.game-detail-page .content', { timeout: 10000 });
-    
+
     // Click back link
     await page.click('.back-link');
-    
+
     // Verify return to home page
     await expect(page).toHaveURL(BASE_URL);
     await expect(page.locator('.hero h1')).toContainText('AI-Powered');
@@ -160,21 +233,21 @@ test.describe('Game Detail Flow - End to End', () => {
   test('should display content correctly on mobile viewport', async ({ page }) => {
     // Set mobile viewport
     await page.setViewportSize({ width: 375, height: 667 });
-    
+
     await page.goto(BASE_URL);
     await page.waitForSelector('.games-grid', { timeout: 10000 });
-    
+
     // Click first game
     await page.locator('.game-card-link').first().click();
-    
+
     // Wait for game detail page
     await page.waitForSelector('.game-detail-page .content', { timeout: 10000 });
-    
+
     // Verify content is displayed on mobile
     await expect(page.locator('.game-info')).toBeVisible();
     await expect(page.locator('.tips-section')).toBeVisible();
     await expect(page.locator('.models-section')).toBeVisible();
-    
+
     // Take screenshot for mobile
     await page.screenshot({ path: 'test-screenshots/mobile-game-detail.png' });
   });
@@ -182,21 +255,21 @@ test.describe('Game Detail Flow - End to End', () => {
   test('should display content correctly on tablet viewport', async ({ page }) => {
     // Set tablet viewport
     await page.setViewportSize({ width: 768, height: 1024 });
-    
+
     await page.goto(BASE_URL);
     await page.waitForSelector('.games-grid', { timeout: 10000 });
-    
+
     // Click first game
     await page.locator('.game-card-link').first().click();
-    
+
     // Wait for game detail page
     await page.waitForSelector('.game-detail-page .content', { timeout: 10000 });
-    
+
     // Verify content is displayed on tablet
     await expect(page.locator('.game-info')).toBeVisible();
     await expect(page.locator('.tips-section')).toBeVisible();
     await expect(page.locator('.models-section')).toBeVisible();
-    
+
     // Take screenshot for tablet
     await page.screenshot({ path: 'test-screenshots/tablet-game-detail.png' });
   });
@@ -204,21 +277,21 @@ test.describe('Game Detail Flow - End to End', () => {
   test('should display content correctly on desktop viewport', async ({ page }) => {
     // Set desktop viewport
     await page.setViewportSize({ width: 1920, height: 1080 });
-    
+
     await page.goto(BASE_URL);
     await page.waitForSelector('.games-grid', { timeout: 10000 });
-    
+
     // Click first game
     await page.locator('.game-card-link').first().click();
-    
+
     // Wait for game detail page
     await page.waitForSelector('.game-detail-page .content', { timeout: 10000 });
-    
+
     // Verify content is displayed on desktop
     await expect(page.locator('.game-info')).toBeVisible();
     await expect(page.locator('.tips-section')).toBeVisible();
     await expect(page.locator('.models-section')).toBeVisible();
-    
+
     // Take screenshot for desktop
     await page.screenshot({ path: 'test-screenshots/desktop-game-detail.png' });
   });
@@ -226,14 +299,14 @@ test.describe('Game Detail Flow - End to End', () => {
   test('should handle error states gracefully', async ({ page }) => {
     // Navigate to a non-existent game
     await page.goto(`${BASE_URL}/game/invalidslug123`);
-    
+
     // Wait for error state
     await page.waitForSelector('.error', { timeout: 10000 });
-    
+
     // Verify error message is displayed
     await expect(page.locator('.error')).toBeVisible();
     await expect(page.locator('.error h2')).toContainText('Error');
-    
+
     // Verify back link is present
     await expect(page.locator('.back-link')).toBeVisible();
   });
