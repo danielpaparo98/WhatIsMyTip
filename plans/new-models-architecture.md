@@ -1,5 +1,10 @@
 # New Prediction Models — Architecture Document
 
+> **DESIGN HISTORY — superseded by current implementation.**  All four models in this
+> plan (Weather, Injury, Matchup, Player Form) are now live in
+> [`backend/packages/shared/models_ml/`](../backend/packages/shared/models_ml/).  The
+> production ML stack is documented in [`docs/api.md`](../docs/api.md#ml-models).
+>
 > **⚠️ HISTORICAL DOCUMENT** — This plan was written during the `backend-faas` era.
 > The directory has since been renamed to `backend/`. Paths like `backend-faas/...` should be read as `backend/...` today.
 

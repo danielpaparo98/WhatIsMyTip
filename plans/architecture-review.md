@@ -1,7 +1,11 @@
 # WhatIsMyTip Architecture Review
 
-**Date**: 2026-04-12  
-**Reviewer**: Architect Mode  
+> **DESIGN HISTORY — superseded by current implementation.**  This is the April 2026 design review
+> of the legacy FastAPI + SQLite monolith.  Current architecture is documented in
+> [`docs/backend.md`](../docs/backend.md) and [`docs/frontend.md`](../docs/frontend.md).
+
+**Date**: 2026-04-12
+**Reviewer**: Architect Mode
 **Scope**: Full-stack architecture review of backend, frontend, ML pipeline, and infrastructure
 
 ---

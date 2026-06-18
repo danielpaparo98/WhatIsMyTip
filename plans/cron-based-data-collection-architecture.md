@@ -1,5 +1,11 @@
 # Cron-Based Data Collection Architecture Design
 
+> **DESIGN HISTORY — superseded by current implementation.**  This is a `fastapi-crons` design
+> proposal.  The current cron jobs run **in-process** via APScheduler inside the FastAPI container
+> (see [`backend/app/core/scheduler.py`](../backend/app/core/scheduler.py:1) and
+> [`backend/app/cron/`](../backend/app/cron/)).  See
+> [`docs/development.md`](../docs/development.md#scheduled-jobs-in-process-apscheduler).
+
 ## Executive Summary
 
 This document outlines the architecture for rebuilding the WhatIsMyTip data collection and computation system using `fastapi-crons` for cron job management. The new system will provide reliable, scheduled data scraping, match completion detection, tip generation, and historical data refresh capabilities.

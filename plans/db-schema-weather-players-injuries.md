@@ -1,5 +1,11 @@
 # DB Schema Design: Weather, Player Stats, and Injury Data
 
+> **DESIGN HISTORY — superseded by current implementation.**  This plan was written during the
+> `backend-faas` era.  The directory has since been renamed to `backend/`. Paths like
+> `backend-faas/...` should be read as `backend/...` today.  Current schema lives in
+> [`backend/alembic/versions/`](../backend/alembic/versions/) and is documented in
+> [`docs/migrations.md`](../docs/migrations.md).
+>
 > **⚠️ HISTORICAL DOCUMENT** — This plan was written during the `backend-faas` era.
 > The directory has since been renamed to `backend/`. Paths like `backend-faas/...` should be read as `backend/...` today.
 

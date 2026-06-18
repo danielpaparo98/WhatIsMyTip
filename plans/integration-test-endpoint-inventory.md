@@ -1,5 +1,10 @@
 # Backend API Endpoint Inventory
 
+> **DESIGN HISTORY — superseded by current implementation.**  The endpoint inventory in this
+> file is a snapshot from the integration test sweep.  The live, authoritative endpoint list
+> is always in [`docs/api.md`](../docs/api.md) and the live route table is printed by
+> [`backend/list_routes.py`](../backend/list_routes.py:1) at runtime.
+
 > Generated for the upcoming integration test sweep. All routes are declared in
 > FastAPI routers under [`backend/app/api/`](backend/app/api/__init__.py:1) and
 > mounted in [`backend/main.py`](backend/main.py:1). The helper script
