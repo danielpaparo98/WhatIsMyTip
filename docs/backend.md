@@ -14,6 +14,8 @@ The system uses 8 ML models, 3 heuristic strategies, and AI-powered explanations
 
 Multi-instance deploys coordinate cron-job execution via Postgres advisory locks (see [`app/core/scheduler.py`](../backend/app/core/scheduler.py:1)) so only one instance runs each job at a time.
 
+See [`docs/operations.md`](operations.md) for runtime/deployment operations and [`docs/security-model.md`](security-model.md) for the security model.
+
 ---
 
 ## Table of Contents
@@ -37,41 +39,7 @@ Multi-instance deploys coordinate cron-job execution via Postgres advisory locks
 
 ## Architecture Overview
 
-```
-┌─────────────────────────────────────────────────────────────────────┐
-│                  FastAPI App (one container)                          │
-│                                                                       │
-│   ┌───────────────────────────┐  ┌──────────────────────────────┐   │
-│   │   HTTP routers (FastAPI)    │  │   APScheduler (in-process)    │   │
-│   │                             │  │                               │   │
-│   │  • /api/games    (games)    │  │  • daily-sync      */15 min    │   │
-│   │  • /api/tips     (tips)     │  │  • match-completion /15 min    │   │
-│   │  • /api/backtest (backtest) │  │  • tip-generation  3 AM daily  │   │
-│   │  • /api/admin    (admin)    │  │  • historic-refresh 4 AM Sun   │   │
-│   │  • /health       (health)   │  │                               │   │
-│   └────────────┬────────────────┘  └──────────────┬────────────────┘   │
-│                │                                  │                    │
-│                └─────────────────┬─────────────────┘                    │
-│                                  ▼                                      │
-│                 ┌────────────────────────────┐                         │
-│                 │   packages/shared/            │                         │
-│                 │  (config, db, cache,          │                         │
-│                 │   crud, services,             │                         │
-│                 │   models_ml, heuristics,      │                         │
-│                 │   schemas, squiggle,          │                         │
-│                 │   weather, openrouter)        │                         │
-│                 └─────────┬──────────┬──────────┘                         │
-│                           │          │                                   │
-│              ┌────────────┘          └───────────────┐                  │
-│              ▼                                       ▼                  │
-│      ┌─────────────────┐                  ┌──────────────────┐          │
-│      │  PostgreSQL 16    │                  │     Redis 7        │          │
-│      │  (managed, async) │                  │  (3-tier TTL)      │          │
-│      └─────────────────┘                  └──────────────────┘          │
-└─────────────────────────────────────────────────────────────────────┘
-```
-
-All HTTP endpoints and cron jobs share a common code base under `packages/shared/`. The FastAPI app is one process; multi-instance deploys coordinate cron execution via Postgres advisory locks.
+The FastAPI app is one process; multi-instance deploys coordinate cron execution via Postgres advisory locks. All HTTP endpoints and cron jobs share a common code base under `packages/shared/`.
 
 ### Component split
 
@@ -98,7 +66,6 @@ backend/
 ├── .env.example                       # Environment variables template
 ├── alembic.ini                        # Alembic configuration
 ├── app/                               # FastAPI app — routers, middleware, scheduler
-│   ├── __init__.py
 │   ├── api/                           # HTTP routers
 │   │   ├── health.py                  # /health liveness probe
 │   │   ├── games.py                   # mounted at /api/games
@@ -120,59 +87,26 @@ backend/
 │       ├── tip_generation.py
 │       └── historic_refresh.py
 ├── packages/                          # Shared business logic
-│   ├── shared/                        # Imported as `packages.shared.*`
-│   │   ├── config.py                  # Pydantic Settings (env vars + cron expressions)
-│   │   ├── db.py                      # Async SQLAlchemy engine + session factory
-│   │   ├── cache.py                   # Redis connection pool + cached() decorator
-│   │   ├── alerting.py                # AlertingService for webhook notifications
-│   │   ├── exceptions.py              # TransientJobError / PermanentJobError / …
-│   │   ├── utils.py                   # Shared utilities
-│   │   ├── orchestrator.py            # ModelOrchestrator (8 models, 3 heuristics)
-│   │   ├── crud/                      # Database CRUD operations
-│   │   │   ├── games.py
-│   │   │   ├── tips.py
-│   │   │   ├── jobs.py                # JobExecutionCRUD + JobLockCRUD
-│   │   │   ├── elo_cache.py
-│   │   │   ├── backtest.py
-│   │   │   ├── generation_progress.py
-│   │   │   ├── model_predictions.py
-│   │   │   └── match_analysis.py
-│   │   ├── models/                    # SQLAlchemy database models
-│   │   │   └── __init__.py
-│   │   ├── models_ml/                 # 8 ML prediction models
-│   │   │   ├── base.py                # Abstract base class
-│   │   │   ├── elo.py
-│   │   │   ├── form.py
-│   │   │   ├── home_advantage.py
-│   │   │   ├── value.py
-│   │   │   ├── weather_impact.py
-│   │   │   ├── injury_impact.py
-│   │   │   ├── matchup.py
-│   │   │   └── player_form.py
-│   │   ├── heuristics/                # 3 heuristic strategies
-│   │   │   ├── base.py                # BaseHeuristic abstract class
-│   │   │   ├── best_bet.py
-│   │   │   ├── yolo.py
-│   │   │   └── high_risk_high_reward.py
-│   │   ├── schemas/                   # Pydantic validation schemas
-│   │   ├── services/                  # Business logic services
-│   │   ├── squiggle/                  # Squiggle API client
-│   │   ├── afl_data/                  # AFLTables + FootyWire clients
-│   │   ├── weather/                   # Open-Meteo weather client
-│   │   └── openrouter/                # OpenRouter AI client
-│       ├── historic-refresh/__init__.py
-│       ├── match-completion/__init__.py
-│       └── tip-generation/__init__.py
+│   └── shared/                        # Imported as `packages.shared.*`
+│       ├── config.py                  # Pydantic Settings (env vars + cron expressions)
+│       ├── db.py                      # Async SQLAlchemy engine + session factory
+│       ├── cache.py                   # Redis connection pool + cached() decorator
+│       ├── alerting.py                # AlertingService for webhook notifications
+│       ├── exceptions.py              # TransientJobError / PermanentJobError / …
+│       ├── orchestrator.py            # ModelOrchestrator (8 models, 3 heuristics)
+│       ├── crud/                      # Database CRUD operations
+│       ├── models/                    # SQLAlchemy database models
+│       ├── models_ml/                 # 8 ML prediction models
+│       ├── heuristics/                # 3 heuristic strategies
+│       ├── schemas/                   # Pydantic validation schemas
+│       ├── services/                  # Business logic services
+│       ├── squiggle/                  # Squiggle API client
+│       ├── afl_data/                  # AFLTables + FootyWire clients
+│       ├── weather/                   # Open-Meteo weather client
+│       └── openrouter/                # OpenRouter AI client
 ├── alembic/                           # Database migrations
-│   ├── env.py
-│   └── versions/
-│       ├── 0001_consolidated_postgresql_schema.py
-│       └── 0002_weather_players_injuries.py
 ├── proxy/                             # nginx reverse proxy (App Platform ingress)
-│   ├── nginx.conf                     # Forwards /api/... to the FastAPI container
-│   └── Dockerfile
 ├── tests/
-│   ├── conftest.py                    # Shared fixtures
 │   ├── unit/                          # Unit tests (fast, no external deps)
 │   └── integration/                   # Integration tests (PostgreSQL + Redis)
 └── scripts/                           # deploy.sh, dev.sh, test_dockerfile.sh, …
@@ -296,7 +230,7 @@ All configuration is managed through [`packages/shared/config.py`](../backend/pa
 
 ### Cron Job Configuration
 
-All cron schedules, timeouts, and lock expiry values are defined in [`config.py`](../backend/packages/shared/config.py:1) and can be overridden via environment variables. Schedules are interpreted in `CRON_TIMEZONE` (default `Australia/Perth`). See the [Scheduled Jobs](#scheduled-jobs) section for details.
+All cron schedules, timeouts, and lock expiry values are defined in [`config.py`](../backend/packages/shared/config.py:1) and can be overridden via environment variables. Schedules are interpreted in `CRON_TIMEZONE` (default `Australia/Perth`). See [Scheduled Jobs](#scheduled-jobs) section for details.
 
 ---
 
@@ -341,6 +275,7 @@ The FastAPI app exposes **4 HTTP routers**, each mounted at `/api/...`.  The 5th
 | `GET` | `/table` | Per-round table data |
 | `GET` | `/{heuristic}/performance` | Heuristic performance metrics |
 | `GET` | `/compare` | Compare all heuristics for a season |
+| `GET` | `/model-compare` | Compare individual ML models for a season |
 | `POST` | `/run` | Trigger a backtest (requires `X-API-Key`) |
 
 ### Admin Router
@@ -367,12 +302,12 @@ The backend runs **4 scheduled jobs** in-process via APScheduler (see [`app/core
 
 All schedules are in **`CRON_TIMEZONE`** (default `Australia/Perth`, UTC+8).  Schedules can be overridden per-environment with the env vars listed in the table below.
 
-| Job | Default Schedule | Env var | Description |
-|-----|------------------|---------|-------------|
-| `daily-sync` | `*/15 * * * *` | `DAILY_SYNC_CRON` | Sync games/teams from Squiggle API |
-| `match-completion` | `5,20,35,50 * * * *` | `MATCH_COMPLETION_CRON` | Detect completed matches, update final scores |
-| `tip-generation` | `0 3 * * *` | `TIP_GENERATION_CRON` | Generate tips for the next round + AI explanations |
-| `historic-refresh` | `0 4 * * 0` | `HISTORIC_REFRESH_CRON` | Refresh historical data (player stats, injuries, weather) |
+| Job | Default Schedule | Env var | Service / Description |
+|-----|------------------|---------|----------------------|
+| `daily-sync` | `*/15 * * * *` | `DAILY_SYNC_CRON` | [`game_sync.py`](../backend/packages/shared/services/game_sync.py:1) — Syncs games/teams from Squiggle API; caches frequently accessed data in Redis |
+| `match-completion` | `5,20,35,50 * * * *` | `MATCH_COMPLETION_CRON` | [`match_completion.py`](../backend/packages/shared/services/match_completion.py:1) — Detects completed matches, updates final scores, invalidates affected game caches |
+| `tip-generation` | `0 3 * * *` | `TIP_GENERATION_CRON` | [`tip_generation.py`](../backend/packages/shared/services/tip_generation.py:1) — Runs 8 models in parallel via [`ModelOrchestrator`](../backend/packages/shared/orchestrator.py:1), applies 3 heuristics, generates AI explanations |
+| `historic-refresh` | `0 4 * * 0` | `HISTORIC_REFRESH_CRON` | [`historic_data_refresh.py`](../backend/packages/shared/services/historic_data_refresh.py:1) — Fetches player stats, injuries, and weather from AFLTables, FootyWire, Open-Meteo |
 
 ### Concurrency / multi-instance safety
 
@@ -388,40 +323,7 @@ Each job is wrapped in a Postgres advisory lock (see [`packages/shared/crud/jobs
 6. On `TransientJobError`: lock left to expire, row marked `failed_retryable`, alert sent
 7. On `PermanentJobError` / timeout: lock released, row marked `failed`/`timeout`, alert sent
 
-### daily-sync
-
-**Purpose**: Synchronises games and team data from the Squiggle API into the database.
-
-- Runs every 15 minutes during the AFL season
-- Uses [`services/game_sync.py`](../backend/packages/shared/services/game_sync.py:1) to fetch and upsert game data
-- Caches frequently accessed data in Redis
-- Tracks execution status via [`JobExecutionCRUD`](../backend/packages/shared/crud/jobs.py:1)
-
-### match-completion
-
-**Purpose**: Detects when matches have been completed and updates final scores.
-
-- Runs 4 times per hour (at minutes 5, 20, 35, 50)
-- Uses [`services/match_completion.py`](../backend/packages/shared/services/match_completion.py:1) to check game status
-- Updates game records with final scores and completion timestamps
-- Triggers cache invalidation for affected games
-
-### tip-generation
-
-**Purpose**: Generates tips for all upcoming games in the current round.
-
-- Runs nightly at 3:00 AM AWST (the default schedule)
-- Uses [`services/tip_generation.py`](../backend/packages/shared/services/tip_generation.py:1) which invokes the [`ModelOrchestrator`](../backend/packages/shared/orchestrator.py:1)
-- Runs all 8 ML models in parallel, applies 3 heuristic strategies
-- Generates AI explanations via OpenRouter
-
-### historic-refresh
-
-**Purpose**: Refreshes historical data including player stats, injury lists, and weather data.
-
-- Runs weekly on Sunday at 4:00 AM AWST (the default schedule)
-- Uses [`services/historic_data_refresh.py`](../backend/packages/shared/services/historic_data_refresh.py:1)
-- Fetches data from AFLTables, FootyWire, and Open-Meteo
+For runtime monitoring and on-call procedures, see [`docs/operations.md`](operations.md).
 
 ---
 
@@ -472,14 +374,7 @@ SQLAlchemy models are defined in [`packages/shared/models/`](../backend/packages
 
 ### Migrations
 
-Database migrations are managed via Alembic. The baseline is a **consolidated migration** (not individual historical migrations):
-
-| Migration | Description |
-|-----------|-------------|
-| [`0001_consolidated_postgresql_schema`](../backend/alembic/versions/2026_05_28_1613-0001_consolidated_postgresql_schema.py:1) | Full schema baseline (PostgreSQL) |
-| [`0002_weather_players_injuries`](../backend/alembic/versions/2026_06_10_0600-0002_weather_players_injuries.py:1) | Weather, player, and injury tables |
-
-See [docs/migrations.md](migrations.md) for the full migration workflow.
+Database migrations are managed via Alembic. The baseline is a **consolidated migration** (not individual historical migrations). See [docs/migrations.md](migrations.md) for the full migration workflow.
 
 ---
 
@@ -543,9 +438,34 @@ await close_redis_pool(force=had_error)
 
 ## ML Models & Orchestrator
 
-### ModelOrchestrator
+The 8 prediction models and 3 heuristic strategies are documented in the source-of-truth files below. See the source files for per-class implementation details and the public attributes (e.g. confidence ranges, required input data).
 
-The [`ModelOrchestrator`](../backend/packages/shared/orchestrator.py:1) coordinates all prediction models and heuristics:
+### ML Models (8)
+
+All models inherit from [`BaseModel`](../backend/packages/shared/models_ml/base.py:1):
+
+| Model | Source |
+|-------|--------|
+| **Elo** | [`models_ml/elo.py`](../backend/packages/shared/models_ml/elo.py:1) |
+| **Form** | [`models_ml/form.py`](../backend/packages/shared/models_ml/form.py:1) |
+| **Home Advantage** | [`models_ml/home_advantage.py`](../backend/packages/shared/models_ml/home_advantage.py:1) |
+| **Value** | [`models_ml/value.py`](../backend/packages/shared/models_ml/value.py:1) |
+| **Weather Impact** | [`models_ml/weather_impact.py`](../backend/packages/shared/models_ml/weather_impact.py:1) |
+| **Injury Impact** | [`models_ml/injury_impact.py`](../backend/packages/shared/models_ml/injury_impact.py:1) |
+| **Matchup** | [`models_ml/matchup.py`](../backend/packages/shared/models_ml/matchup.py:1) |
+| **Player Form** | [`models_ml/player_form.py`](../backend/packages/shared/models_ml/player_form.py:1) |
+
+### Heuristics (3)
+
+All heuristics inherit from [`BaseHeuristic`](../backend/packages/shared/heuristics/base.py:1):
+
+| Heuristic | Source |
+|-----------|--------|
+| **Best Bet** | [`heuristics/best_bet.py`](../backend/packages/shared/heuristics/best_bet.py:1) |
+| **YOLO** | [`heuristics/yolo.py`](../backend/packages/shared/heuristics/yolo.py:1) |
+| **High Risk High Reward** | [`heuristics/high_risk_high_reward.py`](../backend/packages/shared/heuristics/high_risk_high_reward.py:1) |
+
+The [`ModelOrchestrator`](../backend/packages/shared/orchestrator.py:1) runs all 8 models in parallel using `asyncio.gather()`, then each heuristic combines the model outputs into a final prediction with a team, confidence score, and predicted margin.
 
 ```python
 from packages.shared.orchestrator import ModelOrchestrator
@@ -559,33 +479,6 @@ result = await orchestrator.predict(game, db=session, heuristic="best_bet")
 results = await orchestrator.predict_all(game, db=session)
 # Returns: {"best_bet": {...}, "yolo": {...}, "high_risk_high_reward": {...}}
 ```
-
-### ML Models (8 models)
-
-All models inherit from [`BaseModel`](../backend/packages/shared/models_ml/base.py:1):
-
-| Model | File | Description |
-|-------|------|-------------|
-| **Elo** | [`elo.py`](../backend/packages/shared/models_ml/elo.py:1) | Team strength tracking via Elo rating system |
-| **Form** | [`form.py`](../backend/packages/shared/models_ml/form.py:1) | Recent team performance (last N games) |
-| **Home Advantage** | [`home_advantage.py`](../backend/packages/shared/models_ml/home_advantage.py:1) | Venue-specific advantages |
-| **Value** | [`value.py`](../backend/packages/shared/models_ml/value.py:1) | Value-based betting analysis |
-| **Weather Impact** | [`weather_impact.py`](../backend/packages/shared/models_ml/weather_impact.py:1) | Weather conditions impact on game outcomes |
-| **Injury Impact** | [`injury_impact.py`](../backend/packages/shared/models_ml/injury_impact.py:1) | Team injury lists and player availability |
-| **Matchup** | [`matchup.py`](../backend/packages/shared/models_ml/matchup.py:1) | Head-to-head historical performance |
-| **Player Form** | [`player_form.py`](../backend/packages/shared/models_ml/player_form.py:1) | Individual player form metrics |
-
-### Heuristics (3 strategies)
-
-All heuristics inherit from [`BaseHeuristic`](../backend/packages/shared/heuristics/base.py:1):
-
-| Heuristic | File | Description |
-|-----------|------|-------------|
-| **Best Bet** | [`best_bet.py`](../backend/packages/shared/heuristics/best_bet.py:1) | Conservative picks with highest confidence |
-| **YOLO** | [`yolo.py`](../backend/packages/shared/heuristics/yolo.py:1) | High-risk, high-reward selections |
-| **High Risk High Reward** | [`high_risk_high_reward.py`](../backend/packages/shared/heuristics/high_risk_high_reward.py:1) | Balanced approach for adventurous tippers |
-
-The orchestrator runs all 8 models in parallel using `asyncio.gather()`, then each heuristic combines the model outputs into a final prediction with a team, confidence score, and predicted margin.
 
 ---
 
@@ -659,42 +552,7 @@ See [`main.py`](../backend/main.py:1) for the global exception handlers:
 backend/tests/
 ├── conftest.py                         # Shared fixtures
 ├── unit/                               # Unit tests (fast, no external deps)
-│   ├── test_app_health.py
-│   ├── test_app_lifespan.py
-│   ├── test_app_middleware.py
-│   ├── test_app_security.py
-│   ├── test_app_rate_limit.py
-│   ├── test_app_scheduler.py
-│   ├── test_app_cron_base.py
-│   ├── test_app_cron_daily_sync.py
-│   ├── test_app_cron_match_completion.py
-│   ├── test_app_cron_tip_generation.py
-│   ├── test_app_cron_historic_refresh.py
-│   ├── test_app_api_games.py
-│   ├── test_app_api_tips.py
-│   ├── test_app_api_backtest.py
-│   ├── test_app_api_admin.py
-│   ├── test_app_exceptions.py
-│   ├── test_proxy_config.py            # nginx.conf on-disk validation
-│   ├── test_deploy_script.py           # deploy.sh contract tests
-│   ├── test_daily_sync_service.py
-│   ├── test_historic_refresh_service.py
-│   ├── test_match_completion_service.py
-│   ├── test_tip_generation_service.py
-│   ├── test_heuristics.py
-│   ├── test_models.py
-│   ├── test_new_models.py
-│   ├── test_cache.py
-│   ├── test_alerting.py
-│   ├── test_exceptions.py
-│   ├── test_schemas_validation.py
-│   └── ...                             # Client tests (squiggle, weather, …)
-├── integration/                        # Integration tests (DB, Redis, API)
-│   ├── conftest.py
-│   ├── test_api_integration.py
-│   ├── test_cache_integration.py
-│   └── test_db_integration.py
-└── __init__.py
+└── integration/                        # Integration tests (DB, Redis, API)
 ```
 
 ### Running Tests
@@ -796,5 +654,5 @@ cd backend
 | [`scripts/run_model_backtest.py`](../backend/scripts/run_model_backtest.py:1) | Run ML model backtests |
 | [`scripts/run_next_round_predictions.py`](../backend/scripts/run_next_round_predictions.py:1) | Generate next round predictions |
 | [`scripts/show_predictions.py`](../backend/scripts/show_predictions.py:1) | Display stored predictions |
-| [`scripts/migrate_and_seed.py`](../backend/scripts/migrate_and_seed.py:1) | Migrate and seed in one step |
+| [`scripts/migrate_and_seed.py`](../backend/scripts/migrate_and_seed.py:1) | Migrate and seed in one step (accepts `--seed-dir`, `--from-csv`, `--csv-dir`, `--no-seed`, `--skip-migrations`) |
 | [`scripts/_reset_matches.py`](../backend/scripts/_reset_matches.py:1) | Reset match data (development) |
