@@ -196,6 +196,22 @@ class EloModel(BaseModel):
 
         This should be called after new games are completed or synced.
         It recomputes ratings from DB and stores in Redis.
+
+        Performance trade-off (ME-008)
+        -----------------------------
+        The implementation deliberately recomputes the *entire* rating
+        history from scratch on every invocation.  A partial update
+        (e.g. "apply only the new games since the last call") would
+        be much faster but it would mis-rate end-of-season games:
+        Elo is order-sensitive because each new game depends on the
+        cumulative rating that came out of every previous game, so
+        any change in the ordering of past results propagates into
+        every subsequent rating.
+
+        We accept the O(N) cost (where N is the count of completed
+        games for the season) so the cache is always mathematically
+        consistent with the database.  This is fine for the current
+        data scale (a single season is ~200 games).
         """
         async with cls._cache_lock:
             start_time = time.time()
