@@ -25,8 +25,10 @@
           <button
             v-for="h in heuristics"
             :key="h.value"
+            :id="`heuristic-tab-${h.value}`"
             role="tab"
-            :id=`"heuristic-tab-${h.value}`" :aria-selected="selectedHeuristic === h.value" :tabindex="selectedHeuristic === h.value ? 0 : -1"
+            :aria-selected="selectedHeuristic === h.value"
+            :tabindex="selectedHeuristic === h.value ? 0 : -1"
             @click="selectedHeuristic = h.value"
             :class="['heuristic-btn', { active: selectedHeuristic === h.value }]"
           >
