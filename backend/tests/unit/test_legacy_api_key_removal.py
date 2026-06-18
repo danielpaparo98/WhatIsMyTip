@@ -9,7 +9,7 @@ intentionally permissive:
   ``x-api-key``/``X-Api-Key``, missing common alternatives.
 
 Allowing the key in the query string is dangerous because the value
-ends up in nginx access logs, server-side request logs, and browser
+ends up in access logs, server-side request logs, and browser
 history.  The FastAPI path already has a much stricter
 ``app.core.security.verify_api_key`` (header-only) that all routes
 should use.  The legacy helper is dead code in the FaaS-less

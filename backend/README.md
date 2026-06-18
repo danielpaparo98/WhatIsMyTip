@@ -52,9 +52,6 @@ backend/
 ├── tests/
 │   ├── unit/                    # Fast unit tests (no external deps)
 │   └── integration/             # Integration tests (PostgreSQL + Redis via testcontainers)
-├── proxy/                       # nginx reverse proxy (used by App Platform)
-│   ├── nginx.conf               # Forwards /api/... to the FastAPI container
-│   └── Dockerfile               # nginx:1.27-alpine image
 └── scripts/                     # dev.sh, deploy.sh, test_dockerfile.sh, …
 ```
 

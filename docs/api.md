@@ -12,7 +12,7 @@ WhatIsMyTip provides a RESTful API for AFL tipping predictions, backtesting, and
 
 | Environment | URL pattern |
 |-------------|-------------|
-| Production | `https://<your-domain>/api/...` (FastAPI behind the nginx reverse proxy) |
+| Production | `https://<your-domain>/api/...` (FastAPI service, same-origin via App Platform routing) |
 | Local dev | `http://localhost:8000/api/...` |
 | OpenAPI 3 spec | `GET /openapi.json` |
 | Swagger UI | `GET /docs` |

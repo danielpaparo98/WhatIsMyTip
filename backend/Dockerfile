@@ -96,8 +96,8 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health').read()" || exit 1
 
 # Run uvicorn.  --proxy-headers makes it trust X-Forwarded-* headers
-# from the nginx reverse proxy; --forwarded-allow-ips restricts which
+# set by App Platform's edge; --forwarded-allow-ips restricts which
 # upstream IPs are allowed to set them.  Default is the App Platform
 # private network (10.0.0.0/8); override with -e FORWARDED_ALLOW_IPS
-# in environments where the proxy lives in a different subnet.
+# in environments where the trusted-proxy subnet differs.
 CMD ["sh", "-c", "exec uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000} --workers ${WORKERS:-2} --proxy-headers --forwarded-allow-ips ${FORWARDED_ALLOW_IPS:-10.0.0.0/8}"]

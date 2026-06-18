@@ -51,7 +51,6 @@ The FastAPI app is one process; multi-instance deploys coordinate cron execution
 | Scheduler wiring | `backend/app/core/scheduler.py` |
 | Shared business logic, DB, cache, ML, services | `backend/packages/shared/` |
 | Container image | `backend/Dockerfile` |
-| Reverse proxy (in front of the FastAPI container) | `backend/proxy/` |
 
 ---
 
@@ -105,7 +104,6 @@ backend/
 │       ├── weather/                   # Open-Meteo weather client
 │       └── openrouter/                # OpenRouter AI client
 ├── alembic/                           # Database migrations
-├── proxy/                             # nginx reverse proxy (App Platform ingress)
 ├── tests/
 │   ├── unit/                          # Unit tests (fast, no external deps)
 │   └── integration/                   # Integration tests (PostgreSQL + Redis)

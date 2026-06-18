@@ -10,10 +10,10 @@ What we test (and why):
 * ``uvicorn`` is launched with ``--proxy-headers`` (we want the
   trusted-proxy IP detection on) and a non-wildcard
   ``--forwarded-allow-ips`` value (we want the trust boundary
-  closed to only the nginx reverse-proxy subnet).
+  closed to only the App Platform private network).
 * The forwarded-allow-ips value is env-var driven, with a
-  default of ``10.0.0.0/8`` (the App Platform private network
-  used by the nginx sidecar in our deployment).
+  default of ``10.0.0.0/8`` (the App Platform edge lives inside
+  this subnet).
 * The CMD has been escaped correctly (single string) so the shell
   can interpolate ``${...}``.
 """
@@ -94,7 +94,7 @@ class TestUvicornForwardedAllowIps:
         assert not re.search(r"--forwarded-allow-ips\s+['\"]?\*['\"]?", cmd), (
             "uvicorn is launched with `--forwarded-allow-ips '*'` which "
             "trusts X-Forwarded-For from ANY source. Lock it to the "
-            "nginx reverse-proxy subnet instead (FORWARDED_ALLOW_IPS env "
+            "App Platform private subnet instead (FORWARDED_ALLOW_IPS env "
             "var, default 10.0.0.0/8)."
         )
 
@@ -114,8 +114,8 @@ class TestUvicornForwardedAllowIps:
         )
         default_value = match.group(1)
         assert default_value == "10.0.0.0/8", (
-            f"Default FORWARDED_ALLOW_IPS should be '10.0.0.0/8' (the App "
-            f"Platform private network used by the nginx sidecar); got "
+            f"Default FORWARDED_ALLOW_IPS should be '10.0.0.0/8' (the "
+            f"App Platform private network the edge lives inside); got "
             f"{default_value!r}."
         )
 

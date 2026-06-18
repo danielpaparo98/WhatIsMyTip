@@ -240,7 +240,7 @@ ENVIRONMENT=development
 **Frontend**:
 
 ```bash
-# Production points at the FastAPI container behind the nginx reverse proxy:
+# Production points at the FastAPI service on the same hostname via App Platform:
 # API_BASE_URL=https://whatismytip.com/api
 # Local development:
 API_BASE_URL=http://localhost:8000
@@ -287,7 +287,6 @@ whatismytip/
 │   │   └── shared/        # Shared code (crud, services, models, models_ml,
 │   │                      #   heuristics, schemas, squiggle, weather,
 │   │                      #   openrouter, cache, config, db, alerting, etc.)
-│   ├── proxy/             # nginx reverse proxy (App Platform)
 │   ├── alembic/           # Database migrations (env.py + versions/)
 │   ├── tests/             # Unit + integration tests
 │   └── scripts/           # Deployment and utility scripts (deploy.sh, dev.sh)

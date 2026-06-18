@@ -147,74 +147,50 @@ See [docs/migrations.md](migrations.md) for the full migration workflow.
 
 ## Step 8: Create the App Platform App
 
-There are two approaches.
+There are two approaches:
 
-### Option A: Use the canonical `.do/app.yaml` spec (recommended)
+### Option A: Use the existing `.do/app.yaml` spec
 
-The repository ships with [`.do/app.yaml`](../.do/app.yaml) declaring both App Platform components (api service + static site) wired together, with **every backend / frontend env var** the app actually reads already declared.  There is no reverse proxy — App Platform's edge routes `/api/*`, `/health`, `/docs`, `/openapi.json`, and `/redoc` directly to the FastAPI service, and the static site owns everything else.  Secrets are typed as `type: SECRET` with **no inline value** — they are populated separately so they never enter git history.
-
-Apply the spec:
+The repository ships with a [`.do/app.yaml`](../.do/app.yaml) that declares all three App Platform components (proxy, api, static site) wired together. Apply it with:
 
 ```bash
 doctl apps create --spec .do/app.yaml
 ```
 
-This provisions both components in one step.  After it finishes, `doctl apps list` will show the new app — note its `ID` and put it in your `backend/.env` as `DO_APP_ID`.
-
-Now populate the secrets from your gitignored `.env`:
-
-```bash
-# bash / WSL / macOS / Linux
-./scripts/setup-app-secrets.sh --dry-run      # preview what will run
-./scripts/setup-app-secrets.sh                # apply
-```
-
-```powershell
-# Windows PowerShell
-.\scripts\setup-app-secrets.ps1 -DryRun       # preview what will run
-.\scripts\setup-app-secrets.ps1               # apply
-```
-
-The script reads `.env`, validates the required keys, and calls `doctl apps update --env KEY=VALUE` once per secret.  It is idempotent and safe to re-run.  Real values are never echoed to the terminal — only a last-4-chars preview.
-
-> 🔒 **Security notes**
->
-> - `.do/app.yaml` is safe to commit — it contains no real credentials.
-> - `.env` remains gitignored.  Treat the contents as compromised if they ever appear in chat, Slack, or a PR.
-> - Rotate `DATABASE_URL`, `REDIS_URL`, `ADMIN_API_KEY`, `OPENROUTER_API_KEY` after any exposure, then re-run `setup-app-secrets.{sh,ps1}`.
-
-After the secrets are pushed, trigger a redeploy so the api component picks them up:
-
-```bash
-doctl apps create-deployment <app-id> --force-rebuild
-```
+This provisions all three components in one step. After it finishes, `doctl apps list` will show the new app — note its `ID` and put it in your `backend/.env` as `DO_APP_ID`.
 
 ### Option B: Create via the dashboard
 
 1. Go to [DigitalOcean → App Platform](https://cloud.digitalocean.com/apps)
 2. Click **Create App** → **Deploy from Git**
 3. Connect your repository
-4. Add both components (one at a time):
+4. Add three components (one at a time):
 
-**Component 1: `whatismytip-api` (Docker service)**
+**Component 1: `whatismytip-proxy` (Docker)**
+
+- Source directory: `backend/proxy`
+- Dockerfile path: `Dockerfile`
+- HTTP port: 8080
+- Instance size: `basic-xxs`
+- Routes: `/api`
+
+**Component 2: `whatismytip-api` (Docker)**
 
 - Source directory: `backend`
 - Dockerfile path: `Dockerfile`
 - HTTP port: 8000
 - Instance size: `basic-xxs`
 - Health check path: `/health`
-- Routes: `/api`, `/health`, `/docs`, `/openapi.json`, `/redoc`
-- For each env var in `.do/app.yaml` → set the matching key on the component.  Secrets (`DATABASE_URL`, `REDIS_URL`, `ADMIN_API_KEY`, `OPENROUTER_API_KEY`, `ALERT_WEBHOOK_URL`) should be set to **type: SECRET** in the dashboard, not as plain env vars.
+- Env vars: `DATABASE_URL`, `REDIS_URL`, `SQUIGGLE_*`, `OPENROUTER_*`, `ADMIN_API_KEY`, `CORS_ORIGINS`, `RATE_LIMIT_PER_MINUTE`, `ENVIRONMENT`, `CRON_*` (override as needed)
 
-**Component 2: `whatismytip-frontend` (Static Site)**
+**Component 3: `whatismytip-frontend` (Static Site)**
 
 - Source directory: `frontend`
 - Build command: `bun install && bun run generate`
 - Output directory: `.output/public`
-- Route: `/` (default — claims everything not matched by the api)
-- Env vars: `NUXT_PUBLIC_API_BASE=https://whatismytip.com/api` (note the `/api` suffix — the api is same-origin), `NUXT_PUBLIC_UMAMI_HOST`, `NUXT_PUBLIC_UMAMI_WEBSITE_ID`, `NUXT_PUBLIC_SITE_URL`
+- Env vars: `NUXT_PUBLIC_API_BASE=https://whatismytip.com`, `NUXT_PUBLIC_UMAMI_HOST`, `NUXT_PUBLIC_UMAMI_WEBSITE_ID`, `NUXT_PUBLIC_SITE_URL`
 
-5. App Platform's edge terminates TLS and forwards X-Forwarded-* to the api.  No nginx or proxy component is needed.
+5. **Don't** add an ingress rule for `whatismytip-api` — it should only be reached via the proxy over the private network.
 
 ### Verify the App
 
@@ -228,16 +204,6 @@ curl https://<app-url>/health
 # List components and their internal hostnames (you'll see fastapi:8000 etc.)
 doctl apps spec get ${DO_APP_ID}
 ```
-
-The CI guard `frontend/tests/unit/app-yaml.test.ts` (runs as part of `bun run test:unit`) enforces:
-
-- Both components are declared with the expected names (`whatismytip-api`, `whatismytip-frontend`) and **no reverse-proxy component is present**.
-- `/api`, `/health`, `/docs`, `/openapi.json`, and `/` are routed to the right components.
-- Every backend env var the FastAPI app reads (per [`packages/shared/config.py`](../backend/packages/shared/config.py)) is declared.
-- Every frontend env var the Nuxt build reads is declared.
-- Every `type: SECRET` entry has **no inline value**.
-- The committed spec never contains plaintext secret patterns (Postgres / Redis URLs, `AVNS_*`, `sk-or-*`, `ghp_*`, `AKIA*`, 48-char random strings, Slack webhook URLs, etc.).
-- Both `scripts/setup-app-secrets.{sh,ps1}` exist and reference every secret key.
 
 ## Step 9: Deploy the Backend Image
 

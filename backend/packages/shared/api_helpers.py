@@ -73,7 +73,7 @@ def parse_request(args: dict) -> tuple:
 
 # SEC-LO-001: the legacy `verify_api_key` helper was removed.  It
 # accepted the API key from the query string and the request body,
-# which is dangerous because the value ends up in nginx access logs,
+# which is dangerous because the value ends up in access logs,
 # server-side request logs, and browser history.  The header-only
 # `app.core.security.verify_api_key` should be used instead.
 

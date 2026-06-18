@@ -2,7 +2,7 @@
 
 > **Status:** Living document — populated incrementally.  Currently cross-links to existing runbooks; future Phase 7+ work will fill in the full runbook content.
 
-This is the operations runbook for the WhatIsMyTip production stack (single FastAPI container + nginx reverse proxy + managed PostgreSQL + managed Redis on DigitalOcean App Platform).  See [`docs/deployment.md`](deployment.md) for the deploy pipeline; the material here focuses on what to do **after** it's live.
+This is the operations runbook for the WhatIsMyTip production stack (single FastAPI container + managed PostgreSQL + managed Redis on DigitalOcean App Platform).  See [`docs/deployment.md`](deployment.md) for the deploy pipeline; the material here focuses on what to do **after** it's live.
 
 ## Current cross-links
 
