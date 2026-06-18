@@ -351,7 +351,10 @@ const loadAvailableSeasons = async () => {
       selectedSeason.value = availableYears.value[0]
     }
   } catch (e) {
-    console.error('Failed to load available seasons:', e)
+    
+
+    // FX-13: dev-only logging so prod bundles stay quiet.
+ (import.meta.dev) console.error('Failed to load available seasons:', e)
     // Fallback to generated years on error
     const currentYear = new Date().getFullYear()
     availableYears.value = generateFallbackYears(currentYear)
@@ -372,7 +375,7 @@ const loadComparisonData = async () => {
     comparison.value = await api.compareHeuristics(selectedSeason.value)
   } catch (e) {
     error.value = 'Failed to load comparison data'
-    console.error(e)
+    if (import.meta.dev) console.error(e)
   } finally {
     loading.value = false
     syncing.value = false
@@ -388,7 +391,7 @@ const loadTableData = async () => {
     tableData.value = await api.getBacktestTableData(selectedSeason.value)
   } catch (e) {
     tableError.value = 'Failed to load table data'
-    console.error(e)
+    if (import.meta.dev) console.error(e)
   } finally {
     tableLoading.value = false
     syncing.value = false
@@ -435,7 +438,7 @@ const loadChartData = async () => {
     }))
   } catch (e) {
     chartsError.value = 'Failed to load chart data'
-    console.error(e)
+    if (import.meta.dev) console.error(e)
   } finally {
     chartsLoading.value = false
     syncing.value = false
@@ -450,7 +453,7 @@ const loadCurrentSeasonData = async () => {
     currentSeasonData.value = await api.getCurrentSeasonPerformance()
   } catch (e) {
     currentSeasonError.value = 'Failed to load current season data'
-    console.error(e)
+    if (import.meta.dev) console.error(e)
   } finally {
     currentSeasonLoading.value = false
   }

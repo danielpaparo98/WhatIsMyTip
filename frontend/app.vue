@@ -16,7 +16,10 @@
 onErrorCaptured((error, _instance, info) => {
   if (import.meta.dev) {
     // eslint-disable-next-line no-console
-    console.error('[app.vue] onErrorCaptured:', error, info)
+    
+
+    // FX-13: dev-only logging so prod bundles stay quiet.
+ (import.meta.dev) console.error('[app.vue] onErrorCaptured:', error, info)
   }
   // Defer to Nuxt's built-in error overlay / page.
   showError({

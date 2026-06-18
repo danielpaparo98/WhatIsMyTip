@@ -180,7 +180,10 @@ const loadLatestRound = async () => {
   try {
     latestRound.value = await api.getLatestRound()
   } catch (e) {
-    console.error('Failed to load latest round:', e)
+    
+
+    // FX-13: dev-only logging so prod bundles stay quiet.
+ (import.meta.dev) console.error('Failed to load latest round:', e)
   }
 }
 
@@ -200,7 +203,7 @@ const loadGames = async () => {
     gamesWithTips.value = data.games || []
   } catch (e) {
     error.value = 'Failed to load tips'
-    console.error(e)
+    if (import.meta.dev) console.error(e)
   } finally {
     loading.value = false
   }
@@ -225,7 +228,7 @@ const refreshCurrentView = async () => {
       await loadGames()
     }
   } catch (e) {
-    console.error('Auto-refresh failed:', e)
+    if (import.meta.dev) console.error('Auto-refresh failed:', e)
   }
 }
 
@@ -239,7 +242,7 @@ const generateTips = async () => {
     await loadGames()
   } catch (e) {
     error.value = 'Failed to generate tips'
-    console.error(e)
+    if (import.meta.dev) console.error(e)
   } finally {
     generating.value = false
   }
