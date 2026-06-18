@@ -31,6 +31,14 @@ class Settings(BaseSettings):
     environment: str = "development"
     admin_api_key: str = ""  # Set via ADMIN_API_KEY env var
 
+    # Postgres TLS verification.  When True (production default), the
+    # engine built in ``packages.shared.db`` will refuse any connection
+    # whose certificate is not signed by a CA in the system trust
+    # store AND whose hostname does not match.  Set to False ONLY for
+    # local development against a Postgres container with a
+    # self-signed cert.  Env var: DB_SSL_VERIFY.
+    db_ssl_verify: bool = True
+
     # Cron Job Configuration
     cron_enabled: bool = True
     cron_timezone: str = "Australia/Perth"

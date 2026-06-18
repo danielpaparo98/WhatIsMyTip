@@ -1,9 +1,38 @@
+import os
 import ssl as _ssl
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase
 
 from .config import settings
+
+
+# Truthy parser for the DB_SSL_VERIFY env var.  We need to read the
+# env var at call time (not import time) so that tests can ``monkeypatch.setenv``
+# to flip the value, and so that the engine picks up changes made
+# after the ``Settings`` singleton was constructed.
+_TRUTHY = frozenset({"1", "true", "yes", "on"})
+_FALSY = frozenset({"0", "false", "no", "off", ""})
+
+
+def _resolve_db_ssl_verify() -> bool:
+    """Return the effective value of the ``DB_SSL_VERIFY`` env var.
+
+    Reads the env var at call time so tests can ``monkeypatch.setenv``
+    and have the change picked up.  Defaults to ``True`` (production
+    behaviour) when the variable is unset.
+    """
+    raw = os.environ.get("DB_SSL_VERIFY")
+    if raw is None:
+        return True
+    normalized = raw.strip().lower()
+    if normalized in _TRUTHY:
+        return True
+    if normalized in _FALSY:
+        return False
+    # Unknown values fall back to safe (verify ON) to avoid silently
+    # disabling TLS verification in production.
+    return True
 
 _engine = None
 _async_session_factory = None
@@ -19,6 +48,15 @@ def _normalize_async_url(url: str) -> tuple[str, dict]:
     asyncpg does not support ``sslmode`` or ``ssl`` as query parameters in the
     DSN string in some versions.  This helper strips SSL params from the URL
     and returns them as ``connect_args`` for ``create_async_engine`` instead.
+
+    SSL verification is governed by ``settings.db_ssl_verify`` (env var
+    ``DB_SSL_VERIFY``, default ``True``).  When the flag is on — the
+    production default — the returned ``SSLContext`` is built with the
+    system trust store, ``verify_mode=CERT_REQUIRED`` and
+    ``check_hostname=True``, so the engine refuses any peer whose
+    certificate is not signed by a trusted CA.  Setting
+    ``DB_SSL_VERIFY=false`` is an explicit opt-out for local
+    development against a Postgres container with a self-signed cert.
 
     Returns:
         Tuple of (clean_url, connect_args) where connect_args includes ssl ctx
@@ -43,10 +81,22 @@ def _normalize_async_url(url: str) -> tuple[str, dict]:
             ]
             clean_url = base_url + ("?" + "&".join(params) if params else "")
 
-        # Create SSL context for managed database connections
+        # Build the SSL context.  ``create_default_context`` loads the
+        # system trust store, which is the correct baseline for managed
+        # Postgres (DigitalOcean, RDS, etc.).  Verification is on by
+        # default; DB_SSL_VERIFY=false is the explicit local-dev opt-out.
+        #
+        # Note: ``check_hostname`` MUST be cleared before
+        # ``verify_mode=CERT_NONE`` — CPython raises ``ValueError`` if
+        # you set the verify mode to NONE while hostname checking is
+        # still on.  We therefore set ``check_hostname`` first.
         ssl_ctx = _ssl.create_default_context()
-        ssl_ctx.check_hostname = False
-        ssl_ctx.verify_mode = _ssl.CERT_NONE
+        if _resolve_db_ssl_verify():
+            ssl_ctx.verify_mode = _ssl.CERT_REQUIRED
+            ssl_ctx.check_hostname = True
+        else:
+            ssl_ctx.check_hostname = False
+            ssl_ctx.verify_mode = _ssl.CERT_NONE
         connect_args["ssl"] = ssl_ctx
 
         return clean_url, connect_args
