@@ -385,3 +385,98 @@ class TestCloseRedisPool:
         with patch("packages.shared.cache._pool", mock_pool):
             await close_redis_pool(force=True)
         mock_pool.aclose.assert_awaited_once()
+
+
+# ---------------------------------------------------------------------------
+# Connection-pool cold-start degradation (HI-005)
+# ---------------------------------------------------------------------------
+
+
+class TestConnectionFailureGracefulDegradation:
+    """HI-005: ``ConnectionPool.from_url`` raises on a malformed
+    ``REDIS_URL`` (e.g. bad scheme, missing host, bad port).  Before
+    the fix, that raised all the way out and bubbled up as a 500.
+    After the fix, both ``_get_pool`` and ``_get_client`` must
+    degrade to a cache-miss sentinel instead of raising.
+    """
+
+    def test_get_pool_does_not_raise_on_malformed_url(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        """A malformed ``REDIS_URL`` must NOT raise from ``_get_pool``.
+
+        The pool is left as ``None`` so the next caller will retry
+        the construction (e.g. once the env is corrected).
+        """
+        import packages.shared.cache as cache_mod
+        from packages.shared.config import Settings
+
+        # Reset any cached pool from previous tests.
+        monkeypatch.setattr(cache_mod, "_pool", None)
+
+        # Force settings.redis_url to something the parser will reject.
+        bad_settings = Settings(redis_url="not-a-valid-redis-url-at-all")
+        monkeypatch.setattr(cache_mod, "settings", bad_settings)
+
+        # Must not raise.
+        result = cache_mod._get_pool()
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_get_client_returns_none_on_malformed_url(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        """A malformed ``REDIS_URL`` must NOT raise from ``_get_client``.
+
+        Callers rely on a ``None`` return to short-circuit and treat
+        the call as a cache miss.
+        """
+        import packages.shared.cache as cache_mod
+        from packages.shared.config import Settings
+
+        monkeypatch.setattr(cache_mod, "_pool", None)
+
+        bad_settings = Settings(redis_url="http://[::not-an-ipv6-host")
+        monkeypatch.setattr(cache_mod, "settings", bad_settings)
+
+        client = cache_mod._get_client()
+        assert client is None
+
+    @pytest.mark.asyncio
+    async def test_cache_get_returns_none_when_client_unavailable(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        """``RedisCache.get`` degrades to a cache miss when the
+        underlying client cannot be built (malformed URL).
+        """
+        import packages.shared.cache as cache_mod
+        from packages.shared.config import Settings
+
+        monkeypatch.setattr(cache_mod, "_pool", None)
+
+        bad_settings = Settings(redis_url="totally::bogus::url")
+        monkeypatch.setattr(cache_mod, "settings", bad_settings)
+
+        cache = RedisCache(default_ttl=60, prefix="test:")
+        result = await cache.get("any_key")
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_cache_set_returns_none_when_client_unavailable(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        """``RedisCache.set`` degrades to a no-op when the underlying
+        client cannot be built (malformed URL).
+        """
+        import packages.shared.cache as cache_mod
+        from packages.shared.config import Settings
+
+        monkeypatch.setattr(cache_mod, "_pool", None)
+
+        bad_settings = Settings(redis_url="totally::bogus::url")
+        monkeypatch.setattr(cache_mod, "settings", bad_settings)
+
+        cache = RedisCache(default_ttl=60, prefix="test:")
+        # Must not raise.
+        result = await cache.set("any_key", {"value": 1})
+        assert result is None

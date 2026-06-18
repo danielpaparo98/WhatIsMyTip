@@ -433,3 +433,140 @@ class TestBaseJobExecute:
         assert update_call.kwargs["status"] == "failed"
         # Lock released
         lock_crud.release_lock.assert_awaited_once()
+
+
+# ---------------------------------------------------------------------------
+# BaseJob.execute — duration timing (HI-002)
+# ---------------------------------------------------------------------------
+
+
+class TestBaseJobExecuteDurationTiming:
+    """HI-002: ``duration_seconds`` must measure the retry-loop window,
+    not wall time since the top of ``execute()``.
+
+    Before the fix, ``start_monotonic`` was captured at the very top
+    of ``execute()`` — which includes the time to acquire the
+    JobLock and write the JobExecution row.  After the fix, it is
+    captured immediately before ``asyncio.wait_for`` so the recorded
+    duration reflects only the worker's actual runtime.
+
+    These tests use a small wrapper around ``acquire_lock`` that
+    consults ``time.monotonic`` so the recorded duration can be
+    compared against a known pre-work baseline.
+    """
+
+    @staticmethod
+    def _install_fake_monotonic(monkeypatch):
+        """Replace ``time.monotonic`` with a counter that returns a
+        monotonic counter value (incremented by 1s per call by default).
+
+        Tests can then ``await asyncio.sleep`` in a side_effect to
+        simulate pre-work / run duration in deterministic seconds.
+        """
+        counter = {"value": 0.0}
+
+        def _fake_monotonic() -> float:
+            return counter["value"]
+
+        def _bump(seconds: float) -> None:
+            counter["value"] += seconds
+
+        monkeypatch.setattr("app.cron.base.time.monotonic", _fake_monotonic)
+        return _bump
+
+    @pytest.mark.asyncio
+    async def test_duration_excludes_pre_work_lock_delay(
+        self, monkeypatch
+    ):
+        """The recorded duration must drop the lock / execution-row
+        pre-work block.
+
+        Scenario: lock acquisition + execution-row creation consume
+        5s of monotonic time; ``run()`` consumes 1s.
+
+        With the bug: ``duration_seconds`` would be 5 + 1 = 6 (or
+        more, since wall time also includes retries + finalise).
+        With the fix: ``duration_seconds`` is just the 1s of ``run()``.
+        """
+        session = AsyncMock()
+        session.commit = AsyncMock()
+        session.refresh = AsyncMock()
+
+        exec_crud, lock_crud = _patch_crud_on_session_module(
+            monkeypatch, lock_acquired=True
+        )
+
+        # Pre-work: each lock / execution-row call advances the clock
+        # by 5s; total pre-work = 10s (lock + execution row).
+        bump = self._install_fake_monotonic(monkeypatch)
+
+        async def _slow_acquire_lock(*args, **kwargs):
+            bump(5.0)
+            return MagicMock()
+
+        async def _slow_create_execution(*args, **kwargs):
+            bump(5.0)
+            mock = MagicMock()
+            mock.id = 99
+            return mock
+
+        lock_crud.acquire_lock.side_effect = _slow_acquire_lock
+        exec_crud.create_execution.side_effect = _slow_create_execution
+
+        alerting = MagicMock()
+        alerting.send_failure_alert = AsyncMock()
+
+        # Run body advances the clock by 1s.
+        class _MeasuredJob(_StubJob):
+            run_sleep = 1.0
+
+            async def run(self) -> dict:
+                # Use our own monotonic-bump on each call to advance
+                # the fake clock deterministically.
+                import app.cron.base as _base_mod
+
+                # Read the current fake-monotonic value.
+                current = _base_mod.time.monotonic()
+                # We can't easily bump from inside run(), so just
+                # schedule the bump via the test closure.
+                # (run() is sync from our perspective, just set the
+                # post-condition: the run body took ~1s.)
+                return await super().run() if False else {"ok": True}
+
+        # Simpler: bump via a custom run that calls the closure.
+        def _make_measured_job():
+            class _J(_StubJob):
+                pass
+
+            j = _J(_make_session_factory(session), alerting=alerting)
+
+            original_run = j.run
+
+            async def _run_with_bump():
+                result = await original_run()
+                bump(1.0)
+                return result
+
+            j.run = _run_with_bump  # type: ignore[method-assign]
+            return j
+
+        job = _make_measured_job()
+        await job.execute()
+
+        update_call = exec_crud.update_execution.call_args
+        duration_seconds = update_call.kwargs["duration_seconds"]
+        # The pre-work consumed 10s; the run body consumed 1s.  The
+        # fix must drop the pre-work from the recorded duration, so
+        # we should see 1s (the run) — NOT 11s (the whole job).
+        assert duration_seconds < 5, (
+            f"duration_seconds={duration_seconds}; expected the "
+            "pre-work block (10s) to be excluded. If you see ~11s, "
+            "the fix is missing — start_monotonic is still at the "
+            "top of execute()."
+        )
+        # Sanity: the recorded duration is positive and reflects the
+        # 1s of run work, not zero.
+        assert duration_seconds >= 1, (
+            f"duration_seconds={duration_seconds}; expected at least "
+            "1s (the run body)."
+        )

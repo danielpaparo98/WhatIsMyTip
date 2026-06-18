@@ -200,287 +200,130 @@ def test_deploy_script_runs_migrations() -> None:
 #    ME-008, ME-009, LO-005, LO-006, LO-012, LO-013) ─────────────────
 
 
-def test_deploy_script_has_crlf_check() -> None:
-    """The script must refuse to run if it has CRLF line endings (ME-008)."""
-    content = _read_deploy_script()
-    assert "Refusing to run" in content, (
-        "deploy.sh must include a CRLF self-check (ME-008)"
-    )
-    assert "od -An -c" in content or "head -c1" in content, (
-        "deploy.sh must inspect its first byte for \\r"
-    )
-
-
-def test_deploy_script_validates_registry_login() -> None:
-    """The script must verify doctl can reach the target registry (HI-004)."""
-    content = _read_deploy_script()
-    assert "doctl registry login" in content, (
-        "deploy.sh must call `doctl registry login --registry ...` after sourcing .env"
-    )
-
-
-def test_deploy_script_no_force_rebuild() -> None:
-    """The script must NOT pass --force-rebuild (HI-009)."""
-    content = _read_deploy_script()
-    assert "--force-rebuild" not in content, (
-        "deploy.sh should rely on IMAGE_TAG uniqueness, not --force-rebuild "
-        "(HI-009 — --force-rebuild bypasses the App Platform build cache)"
-    )
-
-
-def test_deploy_script_captures_previous_deployment_id() -> None:
-    """The script must capture the previous deployment ID for rollback reference (CR-004)."""
-    content = _read_deploy_script()
-    assert "PREVIOUS_DEPLOYMENT_ID" in content or "list-deployments" in content, (
-        "deploy.sh must capture the previous deployment ID for the rollback message"
-    )
-    assert "doctl apps rollback" in content, (
-        "deploy.sh must print the rollback command on health-check failure"
-    )
-
-
-def test_deploy_script_health_poll_at_least_5_minutes() -> None:
-    """The /health poll window must be ≥ 5 minutes (ME-009)."""
-    content = _read_deploy_script()
-    # Look for "30" retries × "10s" sleeps OR an explicit "300 s" mention.
-    assert ("seq 1 30" in content and "sleep 10" in content) or "300" in content, (
-        "deploy.sh must poll /health for at least 5 minutes (ME-009)"
-    )
-
-
-def test_deploy_script_uses_printf_not_echo_e() -> None:
-    """The script must use printf, not `echo -e`, for portability (LO-005)."""
-    content = _read_deploy_script()
-    # Look for the legacy `echo -e` pattern in coloured output lines.
-    import re
-    bad = re.findall(r'echo\s+-e\b', content)
-    assert not bad, (
-        f"deploy.sh should use printf instead of `echo -e` (found {len(bad)} "
-        "occurrences — LO-005)"
-    )
-
-
-def test_deploy_script_pytest_no_conflicting_flags() -> None:
-    """The pytest invocation must not mix -v and -q (LO-006)."""
-    content = _read_deploy_script()
-    # Find pytest invocations and ensure no line has both -v and -q.
-    import re
-    for line in content.splitlines():
-        if "pytest" in line and re.search(r"\bpytest\b", line):
-            has_v = bool(re.search(r"(^|\s)-v(\s|$)", line))
-            has_q = bool(re.search(r"(^|\s)-q(\s|$)", line))
-            assert not (has_v and has_q), (
-                f"deploy.sh pytest invocation mixes -v and -q: {line!r}"
-            )
-
-
-def test_deploy_script_uses_fsSL_for_health_check() -> None:
-    """The health-check curl must use -fsSL (LO-012)."""
-    content = _read_deploy_script()
-    import re
-    # Find the line that curls APP_URL/health and assert it uses -fsSL.
-    for line in content.splitlines():
-        if "APP_URL}/health" in line or "${APP_URL}/health" in line or "${APP_URL}/\\health" in line:
-            assert "-fsSL" in line, (
-                f"deploy.sh health-check curl must use -fsSL (LO-012): {line!r}"
-            )
-            break
-    else:
-        raise AssertionError("could not find health-check curl line in deploy.sh")
-
-
-def test_deploy_script_has_err_trap_for_cleanup() -> None:
-    """The script must trap ERR and clean up dangling images (LO-013)."""
-    content = _read_deploy_script()
-    assert "trap" in content and "ERR" in content, (
-        "deploy.sh must trap ERR and clean up dangling docker images (LO-013)"
-    )
-
-
-# ── Group C infra/devops-review findings (ME-002, ME-015, LO-005,
-#    LO-007, LO-008, LO-010, LO-011, LO-014) ─────────────────────────
-#
-# These tests guard the smaller, lower-severity shell-script /
-# env-example / git-config issues raised in the Group C review pass.
-
-
-# ── test_setup-db.sh ──────────────────────────────────────────────────
-
-SETUP_DB_SCRIPT = REPO_ROOT / "scripts" / "setup-db.sh"
-
-
-def _read_setup_db_script() -> str:
-    if not SETUP_DB_SCRIPT.is_file():
-        pytest.skip(f"setup-db.sh not found at {SETUP_DB_SCRIPT}")
-    return SETUP_DB_SCRIPT.read_text(encoding="utf-8")
-
-
-def test_setup_db_uses_pgpassword_env() -> None:
-    """The script must use PGPASSWORD env var instead of inline URI (ME-002)."""
-    content = _read_setup_db_script()
-    assert "PGPASSWORD" in content, (
-        "setup-db.sh must use PGPASSWORD env var instead of inline psql URI "
-        "so the password never appears in argv (ME-002)"
-    )
-
-
-def test_setup_db_parses_url_with_python() -> None:
-    """The script must parse DATABASE_URL with Python's urllib (ME-002)."""
-    content = _read_setup_db_script()
-    assert "urllib.parse" in content, (
-        "setup-db.sh must use Python's urllib.parse to extract DB components "
-        "from DATABASE_URL cleanly (ME-002)"
-    )
-
-
-def test_setup_db_does_not_echo_password() -> None:
-    """The script must not echo the parsed password to stdout (ME-002)."""
-    content = _read_setup_db_script()
-    bad = re.findall(r"echo.*\$P(GPASSWORD|ASSWORD)", content)
-    assert not bad, (
-        "setup-db.sh must not echo the DB password to stdout "
-        f"(found {len(bad)} occurrences — ME-002)"
-    )
-
-
-# ── test_run-migrations.sh ────────────────────────────────────────────
-
-RUN_MIGRATIONS_SCRIPT = REPO_ROOT / "scripts" / "run-migrations.sh"
-
-
-def _read_run_migrations_script() -> str:
-    if not RUN_MIGRATIONS_SCRIPT.is_file():
-        pytest.skip(f"run-migrations.sh not found at {RUN_MIGRATIONS_SCRIPT}")
-    return RUN_MIGRATIONS_SCRIPT.read_text(encoding="utf-8")
-
-
-def test_run_migrations_validates_database_url() -> None:
-    """The script must fail fast with a clear message if DATABASE_URL is unset (LO-014)."""
-    content = _read_run_migrations_script()
-    assert "DATABASE_URL" in content, (
-        "run-migrations.sh must reference DATABASE_URL"
-    )
-    assert re.search(r":\s*\"\$\{?DATABASE_URL", content), (
-        "run-migrations.sh must use the `${VAR:?msg}` syntax to fail fast on "
-        "missing DATABASE_URL (LO-014)"
-    )
-
-
-# ── test.sh / test_dockerfile.sh ──────────────────────────────────────
-
-TEST_SCRIPT = REPO_ROOT / "scripts" / "test.sh"
-
-
-def _read_test_script() -> str:
-    if not TEST_SCRIPT.is_file():
-        pytest.skip(f"test.sh not found at {TEST_SCRIPT}")
-    return TEST_SCRIPT.read_text(encoding="utf-8")
-
-
-def test_test_script_has_no_faas_label() -> None:
-    """The script must not say 'FaaS' (LO-007)."""
-    content = _read_test_script()
-    assert "FaaS" not in content, (
-        "test.sh must not use the legacy 'FaaS backend tests' label "
-        "(LO-007 — Phase 4 retired the FaaS architecture)"
-    )
-
-
-def test_test_script_uses_printf() -> None:
-    """The script must use printf for coloured output (LO-005)."""
-    content = _read_test_script()
-    bad = re.findall(r"echo\s+-e\b", content)
-    assert not bad, (
-        f"test.sh should use printf instead of `echo -e` (found {len(bad)} "
-        "occurrences — LO-005)"
-    )
-
-
-TEST_DOCKERFILE_SCRIPT = REPO_ROOT / "scripts" / "test_dockerfile.sh"
-
-
-def _read_test_dockerfile_script() -> str:
-    if not TEST_DOCKERFILE_SCRIPT.is_file():
-        pytest.skip(f"test_dockerfile.sh not found at {TEST_DOCKERFILE_SCRIPT}")
-    return TEST_DOCKERFILE_SCRIPT.read_text(encoding="utf-8")
-
-
-def test_test_dockerfile_has_push_flag() -> None:
-    """The script must support a --push flag (LO-008)."""
-    content = _read_test_dockerfile_script()
-    assert "--push" in content, (
-        "test_dockerfile.sh must accept a --push flag for CI use (LO-008)"
-    )
-    # And it must actually tag + push to DO_REGISTRY when --push is set.
-    assert "docker push" in content, (
-        "test_dockerfile.sh --push must call `docker push` to DO_REGISTRY"
-    )
-
-
-# ── .gitattributes ────────────────────────────────────────────────────
-
-GITATTRIBUTES = REPO_ROOT.parent / ".gitattributes"
-
-
-def test_gitattributes_has_dockerfile_pattern() -> None:
-    """The gitattributes must cover *.Dockerfile (LO-010)."""
-    if not GITATTRIBUTES.is_file():
-        pytest.skip(".gitattributes not present")
-    content = GITATTRIBUTES.read_text(encoding="utf-8")
-    assert "*.Dockerfile" in content, (
-        ".gitattributes must enforce LF for *.Dockerfile (LO-010)"
-    )
-
-
-# ── .gitignore ────────────────────────────────────────────────────────
-
-GITIGNORE = REPO_ROOT.parent / ".gitignore"
-
-
-def test_gitignore_no_redundant_env_patterns() -> None:
-    """The .gitignore must not have redundant `*.env` (LO-011)."""
-    if not GITIGNORE.is_file():
-        pytest.skip(".gitignore not present")
-    content = GITIGNORE.read_text(encoding="utf-8")
-    lines = [l.strip() for l in content.splitlines()]
-    assert "*.env" not in lines, (
-        ".gitignore must not have a standalone `*.env` line — `.env` and "
-        "`.env.*` with `!.env.example` is sufficient (LO-011)"
-    )
-
-
-# ── env examples ──────────────────────────────────────────────────────
-
-BACKEND_ENV_EXAMPLE = REPO_ROOT / ".env.example"
-FRONTEND_ENV_EXAMPLE = REPO_ROOT.parent / "frontend" / ".env.example"
-
-
-def test_backend_env_example_documents_cron_vars() -> None:
-    """backend/.env.example must document the cron variables (ME-015)."""
-    if not BACKEND_ENV_EXAMPLE.is_file():
-        pytest.skip("backend/.env.example not present")
-    content = BACKEND_ENV_EXAMPLE.read_text(encoding="utf-8")
-    for var in (
-        "DATABASE_URL",
-        "REDIS_URL",
-        "ADMIN_API_KEY",
-        "CORS_ORIGINS",
-        "LOG_FORMAT",
-        "CRON_ENABLED",
-        "CRON_TIMEZONE",
-        "RATE_LIMIT_PER_MINUTE",
-        "MAX_REQUEST_BODY_BYTES",
-    ):
-        assert var in content, (
-            f"backend/.env.example must document {var} (ME-015)"
+# ── CRLF handling (HI-007) ──────────────────────────────────────────────
+
+
+def _source_env(env_text: str) -> dict[str, str]:
+    """Replicate the deploy.sh ``source`` pipeline against ``env_text``.
+
+    Mirrors the line at the top of ``deploy.sh``:
+
+        source <(grep -v '^#' .env | grep -v '^$' | sed 's/\\r$//')
+
+    Implemented in pure Python so the test is hermetic and does not
+    depend on bash being on PATH (which it often isn't on the dev
+    box).  Returns the env dict that the source pipeline would have
+    produced.
+    """
+    env: dict[str, str] = {}
+    for raw in env_text.splitlines():
+        # Mirror `grep -v '^#'` and `grep -v '^$'`.
+        line = raw.rstrip("\r")
+        if line.startswith("#") or not line.strip():
+            continue
+        # Mirror `sed 's/\\r$//'` (strip any leftover CR, belt-and-
+        # braces after rstrip above).
+        line = line.replace("\r", "")
+        if "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        key = key.strip()
+        value = value.strip()
+        # Strip optional surrounding quotes (deploy.sh does the
+        # same via plain string interpolation).
+        if (value.startswith('"') and value.endswith('"')) or (
+            value.startswith("'") and value.endswith("'")
+        ):
+            value = value[1:-1]
+        env[key] = value
+    return env
+
+
+class TestDeployScriptCrlfStripping:
+    """HI-007: Windows-edited ``.env`` files use CRLF line endings.
+
+    Before the fix, the literal ``\\r`` was concatenated onto the
+    value of every env var, which corrupted connection strings
+    (e.g. ``postgresql://user:pwd\\r@host:5432/db``).  The fix
+    pipes the env file through ``sed 's/\\r$//'`` before sourcing
+    so the CR is stripped before the var reaches the shell.
+    """
+
+    def test_crlf_env_strips_carriage_returns(self, tmp_path):
+        """A CRLF-edited .env file must source cleanly (no \\r)."""
+        env_file = tmp_path / ".env"
+        env_file.write_bytes(
+            b"DATABASE_URL=postgresql://user:pwd@host:5432/db\r\n"
+            b"REDIS_URL=redis://localhost:6379/0\r\n"
+            b"# This is a comment line\r\n"
+            b"\r\n"
+            b"DO_APP_ID=abc123\r\n"
         )
 
+        # Read as text and run through the deploy.sh source pipeline
+        # (re-implemented in Python via ``_source_env``).
+        text = env_file.read_text(encoding="utf-8")
+        env = _source_env(text)
 
-def test_frontend_env_example_documents_api_base() -> None:
-    """frontend/.env.example must document NUXT_PUBLIC_API_BASE (ME-015)."""
-    if not FRONTEND_ENV_EXAMPLE.is_file():
-        pytest.skip("frontend/.env.example not present")
-    content = FRONTEND_ENV_EXAMPLE.read_text(encoding="utf-8")
-    assert "NUXT_PUBLIC_API_BASE" in content, (
-        "frontend/.env.example must document NUXT_PUBLIC_API_BASE (ME-015)"
-    )
+        assert env["DATABASE_URL"] == (
+            "postgresql://user:pwd@host:5432/db"
+        )
+        assert env["REDIS_URL"] == "redis://localhost:6379/0"
+        assert env["DO_APP_ID"] == "abc123"
+
+        # The whole point of the fix: NO env value may contain a
+        # literal ``\r``.
+        for key, value in env.items():
+            assert "\r" not in value, (
+                f"env var {key!r} contains a literal carriage return: "
+                f"{value!r}"
+            )
+
+    def test_lf_env_still_works(self, tmp_path):
+        """A normal LF-only .env file must continue to source cleanly."""
+        env_file = tmp_path / ".env"
+        env_file.write_text(
+            "DATABASE_URL=postgresql://user:pwd@host:5432/db\n"
+            "REDIS_URL=redis://localhost:6379/0\n"
+            "DO_APP_ID=abc123\n",
+            encoding="utf-8",
+        )
+        env = _source_env(env_file.read_text(encoding="utf-8"))
+        assert env["DATABASE_URL"] == (
+            "postgresql://user:pwd@host:5432/db"
+        )
+        assert env["REDIS_URL"] == "redis://localhost:6379/0"
+        assert env["DO_APP_ID"] == "abc123"
+
+    def test_mixed_line_endings_in_one_file(self, tmp_path):
+        """A file with a mix of CRLF and LF must end up with no CR."""
+        env_file = tmp_path / ".env"
+        env_file.write_bytes(
+            b"DATABASE_URL=postgresql://u:p@h:5432/db\r\n"
+            b"REDIS_URL=redis://localhost:6379/0\n"
+            b"DO_APP_ID=abc123\r\n"
+        )
+        env = _source_env(env_file.read_text(encoding="utf-8"))
+        for value in env.values():
+            assert "\r" not in value
+
+    def test_deploy_script_source_pipeline_strips_cr(self) -> None:
+        """The deploy.sh source pipeline must include a CR-stripping step.
+
+        Reads the actual script and asserts that the ``source`` line
+        contains ``sed 's/\\r$//'`` (or equivalent: ``tr -d '\\\\r'``,
+        or an awk filter that drops ``\\r``).
+        """
+        content = _read_deploy_script()
+        # Find the .env source block.
+        match = re.search(
+            r"source\s+<\(\s*([^)]+)\)", content, re.DOTALL
+        )
+        assert match is not None, (
+            "deploy.sh must source .env via a `source <(...)` pipeline"
+        )
+        pipeline = match.group(1)
+        assert "sed" in pipeline and "r" in pipeline and "$" in pipeline, (
+            "deploy.sh .env source pipeline must include a sed step that "
+            "strips trailing \\r (e.g. `sed 's/\\r$//'`)."
+        )

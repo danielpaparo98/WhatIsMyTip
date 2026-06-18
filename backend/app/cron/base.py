@@ -108,7 +108,6 @@ class BaseJob(ABC):
                 and triggers a webhook alert).
         """
         execution_id = generate_execution_id()
-        start_monotonic = time.monotonic()
         started_at = datetime.now(timezone.utc)
         result: dict = {}
         error_message: Optional[str] = None
@@ -155,6 +154,14 @@ class BaseJob(ABC):
             raise
 
         # ----- 2. Run with retry + timeout -----
+        #
+        # ``start_monotonic`` is captured HERE (immediately before the
+        # ``asyncio.wait_for`` call) so that ``duration_seconds`` only
+        # covers the actual run window.  Previously it was captured at
+        # the top of ``execute()`` and included the lock-acquisition
+        # + execution-row-write overhead, which made the recorded
+        # duration misleadingly large under DB contention.
+        start_monotonic = time.monotonic()
         try:
             result = await asyncio.wait_for(
                 retry_with_backoff(

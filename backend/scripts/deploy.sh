@@ -120,7 +120,14 @@ if [ "$DRY_RUN" -eq 0 ] && [ -f .env ]; then
     note "Loading .env…"
     set -a
     # shellcheck disable=SC1091
-    source <(grep -v '^#' .env | grep -v '^$')
+    # Windows-edited ``.env`` files use CRLF line endings; the
+    # trailing ``\r`` would otherwise be concatenated onto every
+    # value and corrupt connection strings (e.g.
+    # ``postgresql://u:pwd\r@host:5432/db`` refuses to connect).
+    # The pipeline below drops comments and blank lines, then
+    # strips a trailing ``\r`` from each remaining line before
+    # sourcing.
+    source <(grep -v '^#' .env | grep -v '^$' | sed 's/\r$//')
     set +a
 fi
 
