@@ -109,28 +109,36 @@ describe('.do/app.yaml spec', () => {
     expect(spec, 'missing .do/app.yaml').not.toBe('')
   })
 
-  it('declares three components with the expected names', () => {
-    expect(spec).toMatch(/-\s+name:\s*whatismytip-proxy\b/)
+  it('declares the two components with the expected names', () => {
     expect(spec).toMatch(/-\s+name:\s*whatismytip-api\b/)
     expect(spec).toMatch(/-\s+name:\s*whatismytip-frontend\b/)
+    // No reverse proxy is used — the api is exposed directly at /api.
+    expect(spec).not.toMatch(/-\s+name:\s*whatismytip-proxy\b/)
   })
 
-  it('points the proxy at /api and the static site at /', () => {
+  it('routes /api (plus /health and the docs) to the api, and / to the frontend', () => {
     // Tolerate CRLF (Windows) and LF (Unix) line endings.
     expect(spec).toMatch(/-\s+path:\s*\/api\s*(?:\r?\n|$)/)
+    expect(spec).toMatch(/-\s+path:\s*\/health\s*(?:\r?\n|$)/)
+    expect(spec).toMatch(/-\s+path:\s*\/docs\s*(?:\r?\n|$)/)
+    expect(spec).toMatch(/-\s+path:\s*\/openapi\.json\s*(?:\r?\n|$)/)
     expect(spec).toMatch(/-\s+path:\s*\/\s*(?:\r?\n|$)/)
   })
 
-  it('does NOT give the api component a public route', () => {
-    // Find the api service block and assert no `routes:` inside it
+  it('puts all /api* routes inside the api component (not the frontend)', () => {
+    // Find the api service block and assert it contains the /api route.
     const apiBlock = spec.match(
-      /-\s+name:\s*whatismytip-api[\s\S]*?(?=\n\s*-\s+name:|\n\w|\s*$)/,
+      /-\s+name:\s*whatismytip-api[\s\S]*?(?=\n\s*-\s+name:|\nstatic_sites:|\s*$)/,
     )
     expect(apiBlock, 'api service block not found').not.toBeNull()
-    expect(
-      apiBlock![0],
-      'api must not have a public routes: entry — it is internal-only',
-    ).not.toMatch(/routes:\s*\n/)
+    expect(apiBlock![0]).toMatch(/-\s+path:\s*\/api\s*(?:\r?\n|$)/)
+
+    // Find the frontend block and assert it does NOT claim /api.
+    const frontendBlock = spec.match(
+      /-\s+name:\s*whatismytip-frontend[\s\S]*?(?=\n\s*-\s+name:|\s*$)/,
+    )
+    expect(frontendBlock, 'frontend block not found').not.toBeNull()
+    expect(frontendBlock![0]).toMatch(/-\s+path:\s*\/\s*(?:\r?\n|$)/)
   })
 
   it('declares every backend env var the FastAPI app reads', () => {

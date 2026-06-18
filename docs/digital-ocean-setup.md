@@ -151,7 +151,7 @@ There are two approaches.
 
 ### Option A: Use the canonical `.do/app.yaml` spec (recommended)
 
-The repository ships with [`.do/app.yaml`](../.do/app.yaml) declaring all three App Platform components (proxy, api, static site) wired together, with **every backend / frontend env var** the app actually reads already declared.  Secrets are typed as `type: SECRET` with **no inline value** — they are populated separately so they never enter git history.
+The repository ships with [`.do/app.yaml`](../.do/app.yaml) declaring both App Platform components (api service + static site) wired together, with **every backend / frontend env var** the app actually reads already declared.  There is no reverse proxy — App Platform's edge routes `/api/*`, `/health`, `/docs`, `/openapi.json`, and `/redoc` directly to the FastAPI service, and the static site owns everything else.  Secrets are typed as `type: SECRET` with **no inline value** — they are populated separately so they never enter git history.
 
 Apply the spec:
 
@@ -159,7 +159,7 @@ Apply the spec:
 doctl apps create --spec .do/app.yaml
 ```
 
-This provisions all three components in one step.  After it finishes, `doctl apps list` will show the new app — note its `ID` and put it in your `backend/.env` as `DO_APP_ID`.
+This provisions both components in one step.  After it finishes, `doctl apps list` will show the new app — note its `ID` and put it in your `backend/.env` as `DO_APP_ID`.
 
 Now populate the secrets from your gitignored `.env`:
 
@@ -194,33 +194,27 @@ doctl apps create-deployment <app-id> --force-rebuild
 1. Go to [DigitalOcean → App Platform](https://cloud.digitalocean.com/apps)
 2. Click **Create App** → **Deploy from Git**
 3. Connect your repository
-4. Add three components (one at a time):
+4. Add both components (one at a time):
 
-**Component 1: `whatismytip-proxy` (Docker)**
-
-- Source directory: `backend/proxy`
-- Dockerfile path: `Dockerfile`
-- HTTP port: 8080
-- Instance size: `basic-xxs`
-- Routes: `/api`
-
-**Component 2: `whatismytip-api` (Docker)**
+**Component 1: `whatismytip-api` (Docker service)**
 
 - Source directory: `backend`
 - Dockerfile path: `Dockerfile`
 - HTTP port: 8000
 - Instance size: `basic-xxs`
 - Health check path: `/health`
+- Routes: `/api`, `/health`, `/docs`, `/openapi.json`, `/redoc`
 - For each env var in `.do/app.yaml` → set the matching key on the component.  Secrets (`DATABASE_URL`, `REDIS_URL`, `ADMIN_API_KEY`, `OPENROUTER_API_KEY`, `ALERT_WEBHOOK_URL`) should be set to **type: SECRET** in the dashboard, not as plain env vars.
 
-**Component 3: `whatismytip-frontend` (Static Site)**
+**Component 2: `whatismytip-frontend` (Static Site)**
 
 - Source directory: `frontend`
 - Build command: `bun install && bun run generate`
 - Output directory: `.output/public`
-- Env vars: `NUXT_PUBLIC_API_BASE=https://whatismytip.com`, `NUXT_PUBLIC_UMAMI_HOST`, `NUXT_PUBLIC_UMAMI_WEBSITE_ID`, `NUXT_PUBLIC_SITE_URL`
+- Route: `/` (default — claims everything not matched by the api)
+- Env vars: `NUXT_PUBLIC_API_BASE=https://whatismytip.com/api` (note the `/api` suffix — the api is same-origin), `NUXT_PUBLIC_UMAMI_HOST`, `NUXT_PUBLIC_UMAMI_WEBSITE_ID`, `NUXT_PUBLIC_SITE_URL`
 
-5. **Don't** add an ingress rule for `whatismytip-api` — it should only be reached via the proxy over the private network.
+5. App Platform's edge terminates TLS and forwards X-Forwarded-* to the api.  No nginx or proxy component is needed.
 
 ### Verify the App
 
@@ -237,8 +231,8 @@ doctl apps spec get ${DO_APP_ID}
 
 The CI guard `frontend/tests/unit/app-yaml.test.ts` (runs as part of `bun run test:unit`) enforces:
 
-- All three components are declared with the expected names.
-- The api component has no public `routes:` entry.
+- Both components are declared with the expected names (`whatismytip-api`, `whatismytip-frontend`) and **no reverse-proxy component is present**.
+- `/api`, `/health`, `/docs`, `/openapi.json`, and `/` are routed to the right components.
 - Every backend env var the FastAPI app reads (per [`packages/shared/config.py`](../backend/packages/shared/config.py)) is declared.
 - Every frontend env var the Nuxt build reads is declared.
 - Every `type: SECRET` entry has **no inline value**.
