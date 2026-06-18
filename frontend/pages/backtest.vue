@@ -230,17 +230,23 @@
 const api = useApi()
 const { formatHeuristic } = useFormatters()
 
-// Page-specific SEO
-useHead({
+// FX-05 / FX-20: page-specific SEO + canonical URL
+useSeoMeta({
   title: 'Backtesting',
-  meta: [
-    { name: 'description', content: 'View historical performance and accuracy of our AFL prediction heuristics. Analyze year-to-date profit, accuracy rates, and betting performance across multiple seasons.' },
-    { name: 'keywords', content: 'AFL backtesting, AFL prediction accuracy, AFL betting performance, AFL tipping results, AFL profit analysis, AFL historical performance' },
-    { property: 'og:title', content: 'Backtesting | AFL Prediction Performance & Accuracy' },
-    { property: 'og:description', content: 'View historical performance and accuracy of our AFL prediction heuristics. Analyze year-to-date profit and accuracy rates.' },
-    { property: 'og:url', content: 'https://whatismytip.com/backtest' },
-    { name: 'twitter:title', content: 'Backtesting | AFL Prediction Performance & Accuracy' },
-    { name: 'twitter:description', content: 'View historical performance and accuracy of our AFL prediction heuristics. Analyze year-to-date profit and accuracy rates.' }
+  description: 'View historical performance and accuracy of our AFL prediction heuristics. Analyze year-to-date profit, accuracy rates, and betting performance across multiple seasons.',
+  keywords: 'AFL backtesting, AFL prediction accuracy, AFL betting performance, AFL tipping results, AFL profit analysis, AFL historical performance',
+  ogTitle: 'Backtesting | AFL Prediction Performance & Accuracy',
+  ogDescription: 'View historical performance and accuracy of our AFL prediction heuristics. Analyze year-to-date profit and accuracy rates.',
+  ogType: 'website',
+  ogUrl: 'https://whatismytip.com/backtest',
+  twitterTitle: 'Backtesting | AFL Prediction Performance & Accuracy',
+  twitterDescription: 'View historical performance and accuracy of our AFL prediction heuristics. Analyze year-to-date profit and accuracy rates.',
+  twitterCard: 'summary_large_image',
+})
+
+useHead({
+  link: [
+    { rel: 'canonical', href: 'https://whatismytip.com/backtest' }
   ],
   script: [
     {

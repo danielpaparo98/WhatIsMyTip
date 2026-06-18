@@ -159,11 +159,53 @@ const getHeuristicClass = (heuristic: string): string => {
   return classes[heuristic] || ''
 }
 
-// Set page meta
-useHead({
+// FX-05 / FX-20: per-game SEO + canonical URL.  Title + meta change once
+// the game detail payload arrives; canonical is set up-front so it
+// appears in the SSR HTML head regardless of fetch timing.
+const canonicalBase = useRuntimeConfig().public.siteUrl
+const canonicalUrl = computed(() =>
+  gameDetail.value
+    ? `${canonicalBase}/game/${gameDetail.value.game.slug}`
+    : `${canonicalBase}/game/${route.params.slug as string}`
+)
+
+useSeoMeta({
   title: () => gameDetail.value
+    ? `${gameDetail.value.game.home_team} vs ${gameDetail.value.game.away_team} | WhatIsMyTip`
+    : 'Game Details | WhatIsMyTip',
+  description: () => {
+    const g = gameDetail.value?.game
+    if (!g) return 'AFL game preview, tips, model predictions, weather and match analysis from WhatIsMyTip.'
+    const completed = g.completed ? 'final' : 'upcoming'
+    return `${g.home_team} vs ${g.away_team} (${completed}, Round ${g.round_id}, ${g.season}) — AI tips, model predictions, weather and talking points.`
+  },
+  ogTitle: () => gameDetail.value
     ? `${gameDetail.value.game.home_team} vs ${gameDetail.value.game.away_team}`
-    : 'Game Details'
+    : 'Game Details',
+  ogDescription: () => {
+    const g = gameDetail.value?.game
+    return g
+      ? `AI-powered tips, predictions and analysis for ${g.home_team} vs ${g.away_team}.`
+      : 'AFL game details, tips and analysis.'
+  },
+  ogType: 'website',
+  ogUrl: canonicalUrl,
+  twitterTitle: () => gameDetail.value
+    ? `${gameDetail.value.game.home_team} vs ${gameDetail.value.game.away_team}`
+    : 'Game Details',
+  twitterDescription: () => {
+    const g = gameDetail.value?.game
+    return g
+      ? `AI-powered tips, predictions and analysis for ${g.home_team} vs ${g.away_team}.`
+      : 'AFL game details, tips and analysis.'
+  },
+  twitterCard: 'summary_large_image',
+})
+
+useHead({
+  link: [
+    { rel: 'canonical', href: canonicalUrl }
+  ]
 })
 </script>
 

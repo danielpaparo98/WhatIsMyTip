@@ -111,17 +111,23 @@ const api = useApi()
 const { getLogoUrl } = useTeamLogos()
 const { formatHeuristic, formatDate: formatDateUtil } = useFormatters()
 
-// Page-specific SEO
-useHead({
+// FX-05 / FX-20: page-specific SEO + canonical URL
+useSeoMeta({
   title: 'AFL Tips & Predictions',
-  meta: [
-    { name: 'description', content: 'Get AI-powered AFL tips and predictions for the current round. Expert footy tipping advice with smart heuristics, betting tips, and round predictions backed by machine learning models.' },
-    { name: 'keywords', content: 'AFL tips, AFL predictions, AFL betting tips, AFL footy tips, AFL round predictions, AFL betting advice, footy tipping, AFL betting' },
-    { property: 'og:title', content: 'AFL Tips & Predictions | AI-Powered Footy Tipping' },
-    { property: 'og:description', content: 'Get AI-powered AFL tips and predictions for the current round. Expert footy tipping advice with smart heuristics.' },
-    { property: 'og:url', content: 'https://whatismytip.com' },
-    { name: 'twitter:title', content: 'AFL Tips & Predictions | AI-Powered Footy Tipping' },
-    { name: 'twitter:description', content: 'Get AI-powered AFL tips and predictions for the current round. Expert footy tipping advice with smart heuristics.' }
+  description: 'Get AI-powered AFL tips and predictions for the current round. Expert footy tipping advice with smart heuristics, betting tips, and round predictions backed by machine learning models.',
+  keywords: 'AFL tips, AFL predictions, AFL betting tips, AFL footy tips, AFL round predictions, AFL betting advice, footy tipping, AFL betting',
+  ogTitle: 'AFL Tips & Predictions | AI-Powered Footy Tipping',
+  ogDescription: 'Get AI-powered AFL tips and predictions for the current round. Expert footy tipping advice with smart heuristics.',
+  ogType: 'website',
+  ogUrl: 'https://whatismytip.com',
+  twitterTitle: 'AFL Tips & Predictions | AI-Powered Footy Tipping',
+  twitterDescription: 'Get AI-powered AFL tips and predictions for the current round. Expert footy tipping advice with smart heuristics.',
+  twitterCard: 'summary_large_image',
+})
+
+useHead({
+  link: [
+    { rel: 'canonical', href: 'https://whatismytip.com' }
   ],
   script: [
     {
