@@ -147,17 +147,47 @@ See [docs/migrations.md](migrations.md) for the full migration workflow.
 
 ## Step 8: Create the App Platform App
 
-There are two approaches:
+There are two approaches.
 
-### Option A: Use the existing `.do/app.yaml` spec
+### Option A: Use the canonical `.do/app.yaml` spec (recommended)
 
-The repository ships with a [`.do/app.yaml`](../.do/app.yaml) that declares all three App Platform components (proxy, api, static site) wired together. Apply it with:
+The repository ships with [`.do/app.yaml`](../.do/app.yaml) declaring all three App Platform components (proxy, api, static site) wired together, with **every backend / frontend env var** the app actually reads already declared.  Secrets are typed as `type: SECRET` with **no inline value** — they are populated separately so they never enter git history.
+
+Apply the spec:
 
 ```bash
 doctl apps create --spec .do/app.yaml
 ```
 
-This provisions all three components in one step. After it finishes, `doctl apps list` will show the new app — note its `ID` and put it in your `backend/.env` as `DO_APP_ID`.
+This provisions all three components in one step.  After it finishes, `doctl apps list` will show the new app — note its `ID` and put it in your `backend/.env` as `DO_APP_ID`.
+
+Now populate the secrets from your gitignored `.env`:
+
+```bash
+# bash / WSL / macOS / Linux
+./scripts/setup-app-secrets.sh --dry-run      # preview what will run
+./scripts/setup-app-secrets.sh                # apply
+```
+
+```powershell
+# Windows PowerShell
+.\scripts\setup-app-secrets.ps1 -DryRun       # preview what will run
+.\scripts\setup-app-secrets.ps1               # apply
+```
+
+The script reads `.env`, validates the required keys, and calls `doctl apps update --env KEY=VALUE` once per secret.  It is idempotent and safe to re-run.  Real values are never echoed to the terminal — only a last-4-chars preview.
+
+> 🔒 **Security notes**
+>
+> - `.do/app.yaml` is safe to commit — it contains no real credentials.
+> - `.env` remains gitignored.  Treat the contents as compromised if they ever appear in chat, Slack, or a PR.
+> - Rotate `DATABASE_URL`, `REDIS_URL`, `ADMIN_API_KEY`, `OPENROUTER_API_KEY` after any exposure, then re-run `setup-app-secrets.{sh,ps1}`.
+
+After the secrets are pushed, trigger a redeploy so the api component picks them up:
+
+```bash
+doctl apps create-deployment <app-id> --force-rebuild
+```
 
 ### Option B: Create via the dashboard
 
@@ -181,7 +211,7 @@ This provisions all three components in one step. After it finishes, `doctl apps
 - HTTP port: 8000
 - Instance size: `basic-xxs`
 - Health check path: `/health`
-- Env vars: `DATABASE_URL`, `REDIS_URL`, `SQUIGGLE_*`, `OPENROUTER_*`, `ADMIN_API_KEY`, `CORS_ORIGINS`, `RATE_LIMIT_PER_MINUTE`, `ENVIRONMENT`, `CRON_*` (override as needed)
+- For each env var in `.do/app.yaml` → set the matching key on the component.  Secrets (`DATABASE_URL`, `REDIS_URL`, `ADMIN_API_KEY`, `OPENROUTER_API_KEY`, `ALERT_WEBHOOK_URL`) should be set to **type: SECRET** in the dashboard, not as plain env vars.
 
 **Component 3: `whatismytip-frontend` (Static Site)**
 
@@ -204,6 +234,16 @@ curl https://<app-url>/health
 # List components and their internal hostnames (you'll see fastapi:8000 etc.)
 doctl apps spec get ${DO_APP_ID}
 ```
+
+The CI guard `frontend/tests/unit/app-yaml.test.ts` (runs as part of `bun run test:unit`) enforces:
+
+- All three components are declared with the expected names.
+- The api component has no public `routes:` entry.
+- Every backend env var the FastAPI app reads (per [`packages/shared/config.py`](../backend/packages/shared/config.py)) is declared.
+- Every frontend env var the Nuxt build reads is declared.
+- Every `type: SECRET` entry has **no inline value**.
+- The committed spec never contains plaintext secret patterns (Postgres / Redis URLs, `AVNS_*`, `sk-or-*`, `ghp_*`, `AKIA*`, 48-char random strings, Slack webhook URLs, etc.).
+- Both `scripts/setup-app-secrets.{sh,ps1}` exist and reference every secret key.
 
 ## Step 9: Deploy the Backend Image
 
