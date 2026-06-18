@@ -148,10 +148,19 @@ useHead({
   ]
 })
 
+import type { GameWithTip, GamesWithTipsResponse } from '~/composables/useApi'
+
+interface LatestRoundInfo {
+  is_current_year: boolean
+  round_id: number
+  season: number
+  game_count: number
+}
+
 const loading = ref(true)
 const error = ref<string | null>(null)
-const gamesWithTips = ref<any[]>([])
-const latestRound = ref<any>(null)
+const gamesWithTips = ref<GameWithTip[]>([])
+const latestRound = ref<LatestRoundInfo | null>(null)
 const selectedHeuristic = ref<string>('best_bet')
 const generating = ref(false)
 const AUTO_REFRESH_MS = 5 * 60 * 1000
@@ -197,7 +206,7 @@ const loadGames = async () => {
   }
 }
 
-const hasRoundChanged = (nextRound: any) => {
+const hasRoundChanged = (nextRound: LatestRoundInfo | null) => {
   if (!latestRound.value) return true
   return (
     latestRound.value.season !== nextRound?.season ||
@@ -238,13 +247,13 @@ const generateTips = async () => {
 
 
 // FX-07: keyboard navigation for the heuristic tablist (ArrowLeft/Right/Home/End)
-const focusHeuristicTab = (value) => {
+const focusHeuristicTab = (value: string) => {
   nextTick(() => {
     const el = document.getElementById(`heuristic-tab-${value}`)
     if (el && typeof el.focus === 'function') el.focus()
   })
 }
-const onHeuristicKeydown = (event) => {
+const onHeuristicKeydown = (event: KeyboardEvent) => {
   const handled = ['ArrowLeft', 'ArrowRight', 'Home', 'End']
   if (!handled.includes(event.key)) return
   event.preventDefault()
@@ -254,8 +263,8 @@ const onHeuristicKeydown = (event) => {
   else if (event.key === 'ArrowLeft') nextIdx = (idx - 1 + heuristics.length) % heuristics.length
   else if (event.key === 'Home') nextIdx = 0
   else if (event.key === 'End') nextIdx = heuristics.length - 1
-  selectedHeuristic.value = heuristics[nextIdx].value
-  focusHeuristicTab(heuristics[nextIdx].value)
+  const next = heuristics[nextIdx]; if (next) selectedHeuristic.value = next.value
+  if (next) focusHeuristicTab(next.value)
 }
 const formatDate = formatDateUtil
 

@@ -267,6 +267,49 @@ useHead({
   ]
 })
 
+
+// FX-12: type the backtest API responses
+interface ComparisonStats {
+  overall_accuracy: number
+  total_profit: number
+  total_tips: number
+  total_rounds: number
+}
+interface ComparisonResponse {
+  comparison: Record<string, ComparisonStats>
+  season: number
+}
+interface RoundStat {
+  round_id: number
+  tips_made: number
+  tips_correct: number
+  accuracy: number
+  profit: number
+}
+interface HeuristicTableData {
+  heuristic: string
+  total_accuracy: number
+  total_profit: number
+  rounds: RoundStat[]
+}
+interface BacktestTableResponse {
+  heuristics: HeuristicTableData[]
+}
+interface CurrentSeasonHeuristic {
+  heuristic: string
+  total_profit: number
+  total_accuracy: number
+  rounds_played: number
+  avg_profit_per_round: number
+  projected_annual_profit: number
+}
+interface CurrentSeasonResponse {
+  season: number
+  rounds_completed: number
+  total_rounds: number
+  heuristics: CurrentSeasonHeuristic[]
+}
+
 const loading = ref(false)
 const seasonsLoading = ref(true)
 const tableLoading = ref(false)
@@ -277,10 +320,10 @@ const error = ref<string | null>(null)
 const tableError = ref<string | null>(null)
 const chartsError = ref<string | null>(null)
 const currentSeasonError = ref<string | null>(null)
-const comparison = ref<any>(null)
-const tableData = ref<any>(null)
-const chartData = ref<any>(null)
-const currentSeasonData = ref<any>(null)
+const comparison = ref<ComparisonResponse | null>(null)
+const tableData = ref<BacktestTableResponse | null>(null)
+const chartData = ref<{ heuristic: string; rounds: { round_id: number; profit: number; accuracy: number }[] }[] | null>(null)
+const currentSeasonData = ref<CurrentSeasonResponse | null>(null)
 const viewMode = ref<'summary' | 'table' | 'charts'>('summary')
 const selectedSeason = ref(new Date().getFullYear() - 1)
 const availableYears = ref<number[]>([])
@@ -382,9 +425,9 @@ const loadChartData = async () => {
   try {
     const tableResponse = await api.getBacktestTableData(selectedSeason.value)
     // Transform table data into chart-friendly format
-    chartData.value = tableResponse.heuristics.map((h: any) => ({
+    chartData.value = tableResponse.heuristics.map((h: HeuristicTableData) => ({
       heuristic: h.heuristic,
-      rounds: h.rounds.map((r: any) => ({
+      rounds: h.rounds.map((r: RoundStat) => ({
         round_id: r.round_id,
         profit: r.profit,
         accuracy: r.accuracy
