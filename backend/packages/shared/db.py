@@ -57,14 +57,21 @@ def _normalize_async_url(url: str) -> tuple[str, dict]:
 def get_engine():
     """Get or create the async engine (singleton pattern for FaaS cold starts).
 
-    Uses conservative pool settings suitable for serverless/FaaS environments:
-    - pool_size=2: Each invocation can use 2 concurrent connections
-    - max_overflow=3: Allow up to 3 extra connections during brief spikes
+    Pool settings (ME-005) are read from ``Settings`` so they can be
+    tuned per environment without code changes:
+
+    - ``db_pool_size``  : persistent connections kept in the pool
+      (default 5)
+    - ``db_max_overflow``: extra connections allowed during spikes
+      (default 10)
+    - ``db_pool_timeout``: seconds to wait for a free connection
+      before raising ``TimeoutError`` (default 30)
     - pool_pre_ping=True: Verify connections before use
     - pool_recycle=300: Recycle connections every 5 minutes
 
-    With 8 functions × (pool_size=2 + max_overflow=3) = 40 max possible
-    connections, ensure the managed database is sized accordingly.
+    The defaults are conservative for a single-tenant FaaS workload
+    but can be raised via ``DB_POOL_SIZE`` / ``DB_MAX_OVERFLOW`` /
+    ``DB_POOL_TIMEOUT`` env vars in heavier deployments.
     """
     global _engine
     if _engine is None:
@@ -73,8 +80,9 @@ def get_engine():
             db_url,
             connect_args=connect_args,
             echo=settings.environment == "development",
-            pool_size=2,
-            max_overflow=3,
+            pool_size=settings.db_pool_size,
+            max_overflow=settings.db_max_overflow,
+            pool_timeout=settings.db_pool_timeout,
             pool_pre_ping=True,
             pool_recycle=300,
         )

@@ -31,8 +31,22 @@ class Settings(BaseSettings):
     environment: str = "development"
     admin_api_key: str = ""  # Set via ADMIN_API_KEY env var
 
-    # Cron Job Configuration
     cron_enabled: bool = True
+    cron_timezone: str = "Australia/Perth"
+
+    # Database connection pool configuration (ME-005).
+    # All three values are read from environment variables:
+    #   DB_POOL_SIZE       (default 5)
+    #   DB_MAX_OVERFLOW    (default 10)
+    #   DB_POOL_TIMEOUT    (default 30 seconds)
+    # Defaults are larger than the historic hard-coded values
+    # (2 + 3 = 5) so the app can absorb a brief traffic spike
+    # without saturating the pool.
+    db_pool_size: int = 5
+    db_max_overflow: int = 10
+    db_pool_timeout: int = 30
+
+    # --- Phase 3 in-process APScheduler cron expressions ---
     cron_timezone: str = "Australia/Perth"
 
     # --- Phase 3 in-process APScheduler cron expressions ---
