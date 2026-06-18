@@ -26,34 +26,70 @@ logger = logging.getLogger(__name__)
 _pool: Optional[ConnectionPool] = None
 
 
-def _get_pool() -> ConnectionPool:
-    """Get or create the Redis connection pool (lazy singleton)."""
+def _get_pool() -> Optional[ConnectionPool]:
+    """Get or create the Redis connection pool (lazy singleton).
+
+    Returns ``None`` (and logs a warning) when the configured
+    ``REDIS_URL`` cannot be parsed by
+    :func:`redis.asyncio.ConnectionPool.from_url` (e.g. a typo, an
+    invalid scheme, a missing host).  Returning ``None`` lets every
+    caller — ``_get_client``, ``RedisCache.{get,set,delete,clear}``,
+    ``invalidate_cache_pattern`` — short-circuit and degrade to a
+    cache-miss / no-op, instead of letting the construction error
+    bubble up as a 500.
+
+    The ``_pool`` global is also cleared on failure so the next call
+    retries the construction (e.g. once the environment variable is
+    corrected).
+    """
     global _pool
-    if _pool is None:
+    if _pool is not None:
+        return _pool
+    try:
         _pool = ConnectionPool.from_url(
             settings.redis_url,
             decode_responses=True,
             max_connections=10,
         )
+    except Exception as exc:  # ValueError, redis.exceptions.*, etc.
+        logger.warning(
+            "Cache disabled: cannot build Redis pool from REDIS_URL "
+            "(%s): %s",
+            settings.redis_url,
+            exc,
+        )
+        _pool = None
     return _pool
 
 
-def _get_client() -> redis.Redis:
+def _get_client() -> Optional[redis.Redis]:
     """Get a Redis client from the shared connection pool.
 
-    On first connection failure, resets the pool so the next call recreates it.
-    This prevents stale pool objects from blocking all subsequent requests.
+    Returns ``None`` (without raising) when the pool cannot be built
+    because the configured ``REDIS_URL`` is malformed.  Callers are
+    expected to handle a ``None`` return by treating the operation as
+    a cache miss.
+
+    On a transient connection failure (a stale pool whose underlying
+    sockets are dead), the pool is reset so the next call rebuilds
+    it.
     """
     global _pool
-    client = redis.Redis(connection_pool=_get_pool())
-    # Warm the connection to detect stale pools early
+    pool = _get_pool()
+    if pool is None:
+        return None
     try:
+        client = redis.Redis(connection_pool=pool)
+        # Warm the connection to detect stale pools early.
         client.connection_pool  # noqa: B018 — test that the pool exists
-    except Exception:
+        return client
+    except Exception as exc:
+        logger.warning(
+            "Cache client unavailable; resetting pool: %s", exc
+        )
         if _pool is not None:
             _pool = None
-        client = redis.Redis(connection_pool=_get_pool())
-    return client
+        return None
 
 
 class RedisCache:
@@ -74,9 +110,15 @@ class RedisCache:
         return f"{self.prefix}{key}"
 
     async def get(self, key: str) -> Optional[Any]:
-        """Get a value from the cache if it exists and hasn't expired."""
+        """Get a value from the cache if it exists and hasn't expired.
+
+        Returns ``None`` (cache miss) when the Redis client cannot be
+        built — e.g. a malformed ``REDIS_URL`` during a cold start.
+        """
         client = _get_client()
         full_key = self._prefixed_key(key)
+        if client is None:
+            return None
         try:
             raw = await client.get(full_key)
             if raw is None:
@@ -96,6 +138,8 @@ class RedisCache:
             ttl: Time-to-live in seconds (uses default_ttl if None)
         """
         client = _get_client()
+        if client is None:
+            return
         full_key = self._prefixed_key(key)
         ttl = ttl if ttl is not None else self.default_ttl
         try:
@@ -106,6 +150,8 @@ class RedisCache:
     async def delete(self, key: str) -> bool:
         """Delete a key from the cache. Returns True if key existed."""
         client = _get_client()
+        if client is None:
+            return False
         full_key = self._prefixed_key(key)
         try:
             result = await client.delete(full_key)
@@ -117,6 +163,8 @@ class RedisCache:
     async def clear(self) -> None:
         """Clear all entries with this cache's prefix."""
         client = _get_client()
+        if client is None:
+            return
         try:
             async for key in client.scan_iter(match=f"{self.prefix}*"):
                 await client.delete(key)
@@ -255,6 +303,16 @@ async def invalidate_cache_pattern(cache: RedisCache, pattern: str) -> int:
     start_time = time.time()
     client = _get_client()
     keys_deleted = 0
+
+    # Graceful degradation: if the Redis client is unavailable
+    # (e.g. malformed REDIS_URL on cold start), there is nothing to
+    # invalidate.  Returning 0 keeps callers correct (no keys
+    # deleted) without raising.
+    if client is None:
+        logger.debug(
+            f"CACHE INVALIDATE skipped (no client): pattern='{pattern}'"
+        )
+        return keys_deleted
 
     try:
         async for key in client.scan_iter(match=f"{cache.prefix}*{pattern}*"):
