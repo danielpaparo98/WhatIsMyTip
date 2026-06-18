@@ -106,8 +106,12 @@ class SquiggleClient:
 
     def __init__(self):
         self.base_url = settings.squiggle_api_base
+        # SEC-LO-007: explicit `verify=True` so a future change to
+        # httpx's default (or a deployment env that strips the CA
+        # bundle) cannot silently disable TLS verification.
         self.client = httpx.AsyncClient(
             timeout=30.0,
+            verify=True,
             headers={"User-Agent": f"WhatIsMyTip - {settings.squiggle_contact_email}"}
         )
 

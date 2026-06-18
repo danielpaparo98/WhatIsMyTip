@@ -197,7 +197,12 @@ class AlertingService:
         }
 
         try:
-            async with httpx.AsyncClient(timeout=settings.alert_timeout_seconds) as client:
+            # SEC-LO-007: explicit `verify=True` so a future change
+            # to httpx's default (or a deployment env that strips the
+            # CA bundle) cannot silently disable TLS verification.
+            async with httpx.AsyncClient(
+                timeout=settings.alert_timeout_seconds, verify=True
+            ) as client:
                 response = await client.post(
                     self._webhook_url,
                     json=payload,
