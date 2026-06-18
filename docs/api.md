@@ -29,7 +29,21 @@ http://localhost:8000/api/...
 
 ## Authentication
 
-The API is currently public with rate limiting. Admin endpoints require an `X-API-Key` header that matches `ADMIN_API_KEY` (env var). No authentication is required for basic operations.
+The API is **public by default** with rate limiting. Admin endpoints require an
+`X-API-Key` header that matches `ADMIN_API_KEY` (env var). No authentication is
+required for basic read operations.
+
+> **Auth posture summary** — see [`docs/security-model.md`](security-model.md) for the full
+> matrix.  The only authenticated route group is `/api/admin/*` and `POST /api/backtest/run`.
+> Everything else is public.
+
+### `/api/tips/generate` is intentionally public
+
+`POST /api/tips/generate` is **deliberately public** (and rate-limited to 10 requests/minute
+per IP) so that any caller can trigger tip generation for a season/round that has no tips
+yet.  See [`docs/security-model.md`](security-model.md#authorization) for the rationale.
+This is **not** an oversight — admin job triggers and backtest runs remain
+`X-API-Key`-gated.
 
 ## Rate Limiting
 

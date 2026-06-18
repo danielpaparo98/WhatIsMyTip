@@ -1,5 +1,19 @@
 # backend Code Review — Comprehensive Comparison vs Original Backend
 
+> ⚠️ **HISTORICAL / SUPERSEDED**
+>
+> This document reviews the **FaaS-era** backend (DigitalOcean Functions,
+> April–June 2026) against the original FastAPI monolith.  The FaaS code was
+> removed in Phase 5 of `feature/fastapi-reimplementation`; the current
+> backend is a single FastAPI container on DigitalOcean App Platform.
+> **All findings in this document have been resolved in the FastAPI
+> reimplementation.**  For the current source of truth, see:
+> - [`docs/backend.md`](backend.md) — current architecture
+> - [`docs/FULL-REVIEW.md`](FULL-REVIEW.md) — the original monolith review (also closed)
+> - [`docs/FAAS-EVALUATION.md`](FAAS-EVALUATION.md) — the FaaS go/no-go evaluation
+>
+> **Retained for historical reference only.**
+
 **Date**: 2026-06-13
 **Scope**: `backend/` DigitalOcean Functions implementation vs the original `backend/` FastAPI monolith.
 **Audience**: Maintainers evaluating production-readiness, planning a cutover, or planning further work.

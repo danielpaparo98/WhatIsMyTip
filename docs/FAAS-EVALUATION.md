@@ -1,8 +1,23 @@
 # FaaS Architecture Evaluation — WhatIsMyTip on DigitalOcean Functions
 
+> ⚠️ **HISTORICAL / SUPERSEDED — DO NOT USE FOR CURRENT DECISIONS**
+>
+> The FaaS architecture was **retired in Phase 5** of `feature/fastapi-reimplementation`
+> (merged 2026-06-16).  The current backend is a single FastAPI container on DigitalOcean
+> App Platform with an in-process APScheduler.  Every finding in this evaluation is **closed**.
+>
+> For current architecture, see:
+> - [`docs/backend.md`](backend.md) — current architecture (source of truth)
+> - [`docs/deployment.md`](deployment.md) — current production deploy flow
+> - [`docs/BACKEND-FAAS-CODE-REVIEW.md`](BACKEND-FAAS-CODE-REVIEW.md) — companion FaaS code review (also closed)
+> - [`docs/FULL-REVIEW.md`](FULL-REVIEW.md) — the original monolith review (also closed)
+>
+> **Retained for historical reference only.**
+
 **Date**: 2026-06-08
 **Scope**: Backend FaaS architecture review — platform constraints, operational risks, cost analysis, and go/no-go recommendation
-**Verdict**: **⚠️ Conditional Go** — FaaS approach is viable for API functions but has critical issues with long-running cron jobs that must be resolved before production deployment.
+**Verdict (at time of writing)**: **⚠️ Conditional Go** — FaaS approach is viable for API functions but has critical issues with long-running cron jobs that must be resolved before production deployment.
+**Verdict (current)**: ❌ **No-Go** — superseded by the FastAPI container architecture (see links above).
 
 > **Resolution Status (2026-06-16):** The FaaS architecture was **superseded** by the FastAPI
 > reimplementation in Phases 1–5 of the `feature/fastapi-reimplementation` branch. Every

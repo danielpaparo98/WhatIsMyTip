@@ -1,5 +1,11 @@
 # WhatIsMyTip: FaaS + PostgreSQL Migration Plan
 
+> **DESIGN HISTORY — superseded by current implementation.**  The FaaS+PostgreSQL migration
+> described here was **completed and superseded** by the FastAPI monolith migration.  The
+> consolidated PostgreSQL schema is now in
+> [`backend/alembic/versions/2026_05_28_1613-0001_consolidated_postgresql_schema.py`](../backend/alembic/versions/2026_05_28_1613-0001_consolidated_postgresql_schema.py).
+> See [`docs/migrations.md`](../docs/migrations.md).
+>
 > **⚠️ HISTORICAL DOCUMENT** — This plan was written during the `backend-faas` era.
 > The directory has since been renamed to `backend/`. Paths like `backend-faas/...` should be read as `backend/...` today.
 

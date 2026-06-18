@@ -258,46 +258,9 @@ See [docs/api.md](docs/api.md) for detailed API documentation including:
 
 ## Project Structure
 
-```
-whatismytip/
-├── frontend/              # Nuxt 4 frontend
-│   ├── app.vue
-│   ├── nuxt.config.ts
-│   ├── package.json
-│   ├── assets/
-│   │   └── css/main.css   # Design system
-│   ├── components/        # Vue components
-│   ├── composables/       # Vue composables
-│   └── pages/             # Page routes
-├── backend/               # FastAPI backend (single Python process)
-│   ├── main.py            # FastAPI app entry point
-│   ├── Dockerfile         # Multi-stage container image
-│   ├── docker-compose.yml # Local dev (PostgreSQL + Redis)
-│   ├── pyproject.toml     # Python project configuration and dependencies
-│   ├── app/               # FastAPI app (routers, middleware, scheduler)
-│   │   ├── api/           # HTTP routers (games, tips, backtest, admin, health)
-│   │   ├── core/          # Lifespan, middleware, scheduler, security, rate limit
-│   │   └── cron/          # Job classes bound to the in-process APScheduler
-│   ├── packages/
-│   │   └── shared/        # Shared code (crud, services, models, models_ml,
-│   │                      #   heuristics, schemas, squiggle, weather,
-│   │                      #   openrouter, cache, config, db, alerting, etc.)
-│   ├── proxy/             # nginx reverse proxy (App Platform)
-│   ├── alembic/           # Database migrations (env.py + versions/)
-│   ├── tests/             # Unit + integration tests
-│   └── scripts/           # Deployment and utility scripts (deploy.sh, dev.sh)
-├── docs/                  # Documentation
-│   ├── backend.md         # Backend architecture (FastAPI monolith)
-│   ├── frontend.md        # Frontend documentation
-│   ├── deployment.md      # Deployment guide
-│   ├── development.md     # Development guide
-│   ├── api.md             # API reference
-│   ├── FULL-REVIEW.md     # Original 2026-04 code review (now closed — see Resolution Status)
-│   └── FAAS-EVALUATION.md # FaaS-era evaluation (now closed — see Resolution Status)
-├── CONTRIBUTING.md        # Contributing guidelines
-├── README.md
-└── LICENSE
-```
+Two top-level apps (`backend/` FastAPI + `frontend/` Nuxt 4) plus `docs/`
+and `plans/`.  See [`docs/backend.md`](docs/backend.md) and
+[`docs/frontend.md`](docs/frontend.md) for the full file trees.
 
 ## Documentation
 

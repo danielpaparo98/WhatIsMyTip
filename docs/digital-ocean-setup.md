@@ -1,5 +1,18 @@
 # DigitalOcean Setup Guide
 
+> ⚠️ **HISTORICAL / SUPPLEMENTARY**
+>
+> This guide is retained for the **initial DigitalOcean account setup** (Steps 1–7: provisioning
+> managed PostgreSQL, managed Redis, the container registry, env-var wiring, and the first
+> `alembic upgrade head`).  The **current production deployment workflow** — building the
+> container, pushing it to the DO registry, and triggering the App Platform rollout — lives in
+> [`docs/deployment.md`](deployment.md).  After your account and databases are provisioned, follow
+> `deployment.md` for everything else.
+>
+> For the **FaaS-era background** of why the platform shifted to containers, see
+> [`docs/FAAS-EVALUATION.md`](FAAS-EVALUATION.md) and
+> [`docs/BACKEND-FAAS-CODE-REVIEW.md`](BACKEND-FAAS-CODE-REVIEW.md) (both closed / historical).
+
 This guide walks you through setting up WhatIsMyTip.com on DigitalOcean using App Platform (containers), managed PostgreSQL, and managed Redis. The FaaS architecture is no longer used — see the deployment guide for the full container-based flow.
 
 ## Prerequisites
@@ -253,12 +266,12 @@ After deployment, trigger the data sync jobs to populate the database:
 
 ```bash
 # Trigger daily sync (fetches games from Squiggle API)
-curl -X POST -H "X-Admin-API-Key: $ADMIN_API_KEY" \
-  https://whatismytip.com/api/admin/jobs/daily-sync/trigger
+curl -X POST -H "X-API-Key: $ADMIN_API_KEY" \
+  https://whatismytip.com/api/admin/daily-sync/trigger
 
 # Trigger tip generation
-curl -X POST -H "X-Admin-API-Key: $ADMIN_API_KEY" \
-  https://whatismytip.com/api/admin/jobs/tip-generation/trigger
+curl -X POST -H "X-API-Key: $ADMIN_API_KEY" \
+  https://whatismytip.com/api/admin/tip-generation/trigger
 ```
 
 ## Scheduled Jobs (in-process APScheduler)
@@ -304,8 +317,8 @@ doctl apps logs ${DO_APP_ID}
 
 ```bash
 # Check job status via admin API
-curl -H "X-Admin-API-Key: $ADMIN_API_KEY" \
-  https://whatismytip.com/api/admin/jobs/status
+curl -H "X-API-Key: $ADMIN_API_KEY" \
+  https://whatismytip.com/api/admin/metrics
 ```
 
 ### Databases
