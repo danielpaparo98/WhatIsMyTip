@@ -1,5 +1,13 @@
 name: Deploy Backend
 
+# CI concurrency guard (HI-010): prevent two `main` deploys racing.
+# With `cancel-in-progress: false` the second push waits for the
+# first to finish, so we always deploy sequentially and the
+# `IMAGE_TAG` of the live revision is always knowable.
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false
+
 on:
   push:
     branches: [main, dev]
@@ -9,6 +17,7 @@ on:
 
 jobs:
   test:
+    name: Run unit tests + lint + type check
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -25,8 +34,12 @@ jobs:
       - name: Install dependencies
         run: uv sync --extra dev
 
-      - name: Run tests
-        run: uv run pytest tests/unit/ -v --tb=short
+      # The unit suite excludes integration tests by design (they
+      # require a live PostgreSQL + Redis).  We use ``-q`` to keep
+      # the CI log short and ``--ignore`` any DB-dependent tests
+      # (e.g. anything marked ``@pytest.mark.integration``).
+      - name: Run unit tests
+        run: uv run pytest tests/unit/ -v --tb=short -m "not integration"
 
       - name: Run linter
         run: uv run ruff check .
@@ -34,13 +47,39 @@ jobs:
       - name: Run type checker
         run: uv run mypy packages/ --ignore-missing-imports
 
-  deploy:
-    needs: test
+  docker-smoke:
+    name: Docker build smoke test
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main'
+    needs: test
     defaults:
       run:
         working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build the FastAPI image
+        # Builds the multi-stage Dockerfile and discards the result —
+        # the real push is done by ``backend/scripts/deploy.sh`` on
+        # the deploy job.  This is a fast smoke test to catch
+        # Dockerfile / dependency issues before they hit production.
+        run: docker build -t whatismytip-api:ci-smoke -f Dockerfile .
+
+  deploy:
+    name: Container deploy to App Platform
+    needs: [test, docker-smoke]
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    environment:
+      name: production
+      url: https://whatismytip.com
+    defaults:
+      run:
+        working-directory: backend
+    env:
+      DO_REGISTRY: registry.digitalocean.com/whatismytip
+      IMAGE_TAG: ${{ github.sha }}
+      SKIP_TESTS: "1"   # tests already ran in the test job
+      SKIP_MIGRATE: "1" # migrations run as their own one-off workflow
     steps:
       - uses: actions/checkout@v4
 
@@ -49,25 +88,35 @@ jobs:
         with:
           token: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
 
-      - name: Install uv
-        uses: astral-sh/setup-uv@v4
+      - name: Install Docker
+        uses: docker/setup-buildx-action@v3
 
-      # NOTE: Environment variables (DATABASE_URL, REDIS_URL, OPENAI_API_KEY, etc.)
-      # must be configured at the namespace level via the DigitalOcean dashboard
-      # or using `doctl serverless namespaces env-vars`. They are NOT set by this
-      # workflow to avoid exposing secrets in CI logs. If a new env var is added,
-      # update the namespace configuration accordingly.
-      #
-      # To set namespace env vars from CI:
-      #   doctl serverless namespaces env-vars set --database-url="${{ secrets.DATABASE_URL }}" ...
-      # See: https://docs.digitalocean.com/products/functions/how-to/use-environment-variables/
-
-      - name: Run migrations
+      # NOTE (ME-013): DATABASE_URL / REDIS_URL / OPENROUTER_API_KEY
+      # / CORS_ORIGINS / LOG_FORMAT / etc. are NOT injected here.
+      # They live on the App Platform service spec (via the App
+      # Platform UI or `doctl apps update --env ...`) and are bound
+      # to the running container, not the deploy script.
+      - name: Run deploy.sh (build + push + trigger App Platform)
         env:
-          DATABASE_URL: ${{ secrets.DATABASE_URL }}
-        run: |
-          uv sync
-          uv run alembic upgrade head
+          DO_APP_ID: ${{ secrets.DO_APP_ID }}
+          APP_URL: https://whatismytip.com
+        run: bash ./scripts/deploy.sh
 
-      - name: Deploy functions
-        run: doctl serverless deploy .
+      # CR-004: smoke step now FAILS the workflow on health-check
+      # miss.  The previous version always `exit 0` which masked
+      # broken deploys.  deploy.sh still polls /health internally
+      # (with a 5-minute window); this is a backstop.
+      - name: Smoke test the new deployment
+        run: |
+          for i in $(seq 1 20); do
+            if curl -fsSL https://whatismytip.com/health; then
+              echo "✅ /health OK"
+              exit 0
+            fi
+            sleep 6
+          done
+          echo "❌ /health did not return 2xx within 120s" >&2
+          echo "Manual rollback required:" >&2
+          echo "  doctl apps list-deployments ${{ secrets.DO_APP_ID }}" >&2
+          echo "  doctl apps rollback ${{ secrets.DO_APP_ID }} --deployment-id <previous-id>" >&2
+          exit 1

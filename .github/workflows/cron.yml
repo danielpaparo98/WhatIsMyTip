@@ -1,68 +1,75 @@
 name: Scheduled Jobs (cron)
 
 # ── Purpose ────────────────────────────────────────────────────────────────
-# The App Platform "functions" component (which now hosts the backend
-# after commit 38214b9) does NOT support the OpenWhisk-style
-# `triggers:` block inside project.yml. The previous build rejected
-# the project with "Invalid key 'triggers' found in 'action' clause".
+# The FastAPI app (Phase 4+ reimplementation) runs the four scheduled
+# jobs *in-process* via APScheduler (see app/core/scheduler.py), so
+# GitHub Actions is no longer the primary firing mechanism.  This
+# workflow remains as a **manual / fallback trigger** — invoking the
+# public admin trigger endpoints via the public ingress with the
+# admin API key.
 #
-# To preserve the same firing cadence, this workflow hits the admin
-# HTTP trigger endpoints via the public ingress with the admin API key.
-# The four schedules here mirror the four `triggers:` blocks that used
-# to live in backend/project.yml (now removed).
+# Use cases:
+#   - Manual backfill / re-run after a long downtime
+#   - Fallback if the App Platform container is restarting and you
+#     want to force a job without waiting for the next tick
 #
-# Equivalent AWST -> UTC mapping (Australia/Perth does not observe DST):
-#   Function            AWST                 UTC                   cron
-#   ══════════════       ═══════             ═══════              ════════════
-#   daily-sync          N/A                  N/A                  */15 * * * *
-#   match-completion    N/A                  N/A                  5,20,35,50 * * * *
-#   tip-generation      03:00 daily          19:00 daily          0 19 * * *
-#   historic-refresh    04:00 Sunday         20:00 Sat            0 20 * * 6
+# Schedule is intentionally empty — the real schedule is inside the
+# container.  The workflow only fires on workflow_dispatch.
+#
+# ME-014: requires `production` environment approval (a human must
+# approve before the job runs).  The triggering actor's note is
+# logged to stdout for audit.
 # ─────────────────────────────────────────────────────────────────────────
 
 on:
-  schedule:
-    # daily-sync — every 15 minutes
-    - cron: "*/15 * * * *"
-    # match-completion — 4x per hour, offset by 5 min from daily-sync
-    - cron: "5,20,35,50 * * * *"
-    # tip-generation — 19:00 UTC = 03:00 AWST
-    - cron: "0 19 * * *"
-    # historic-refresh — 20:00 UTC Saturday = 04:00 AWST Sunday
-    - cron: "0 20 * * 6"
-  workflow_dispatch:  # allow manual trigger for testing
+  workflow_dispatch:
+    inputs:
+      job:
+        description: Which job to trigger
+        required: true
+        type: choice
+        options:
+          - daily-sync
+          - match-completion
+          - tip-generation
+          - historic-refresh
+      user_note:
+        description: Why are you triggering this? (free text, logged for audit)
+        required: true
+        type: string
 
 jobs:
   trigger:
-    name: Invoke cron function
+    name: Invoke admin trigger endpoint
     runs-on: ubuntu-latest
-    timeout-minutes: 15   # matches the largest function timeout (tip-gen)
+    timeout-minutes: 15
+    environment: production   # ME-014: manual approval gate
     steps:
-      - name: Pick which job fired this run
-        id: detect
+      - name: Log the trigger
+        env:
+          ACTOR: ${{ github.actor }}
+          JOB: ${{ inputs.job }}
+          NOTE: ${{ inputs.user_note }}
         run: |
-          MIN=$(date -u +%M)
-          HOUR=$(date -u +%H)
-          DOW=$(date -u +%u)   # 1=Mon … 7=Sun
-          JOB="daily-sync"
-          if [[ "$HOUR" == "19" && "$MIN" == "0" ]]; then
-            JOB="tip-generation"
-          elif [[ "$DOW" == "6" && "$HOUR" == "20" && "$MIN" == "0" ]]; then
-            JOB="historic-refresh"
-          elif [[ "$MIN" == "5" || "$MIN" == "20" || "$MIN" == "35" || "$MIN" == "50" ]]; then
-            JOB="match-completion"
-          fi
-          echo "job=$JOB"  >> "$GITHUB_OUTPUT"
-          echo "Triggering $JOB at $(date -u)"
+          printf '[%s] triggering cron job "%s" by %s — note: %s\n' \
+            "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            "${JOB}" \
+            "${ACTOR}" \
+            "${NOTE}"
 
       - name: Invoke the admin trigger endpoint
         env:
           ADMIN_API_KEY: ${{ secrets.ADMIN_API_KEY }}
-          JOB: ${{ steps.detect.outputs.job }}
+          JOB: ${{ inputs.job }}
+          NOTE: ${{ inputs.user_note }}
         run: |
           URL="https://whatismytip.com/api/admin/${JOB}/trigger"
           echo "POST $URL"
+          # Pass the note as a request header so the FastAPI app can
+          # log it for audit.
           curl --fail-with-body --show-error --silent --retry 3 --retry-delay 10 \
             -X POST \
-            -H "X-Admin-API-Key: ${ADMIN_API_KEY}" \
+            -H "X-API-Key: ${ADMIN_API_KEY}" \
+            -H "X-Trigger-Note: ${NOTE}" \
+            -H "X-Triggered-By: ${ACTOR}" \
             "${URL}"

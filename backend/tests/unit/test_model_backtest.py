@@ -563,109 +563,53 @@ class TestRunModelBacktest:
         # Should complete without error (predictions list will be empty)
         assert result == []
 
-
-# ---------------------------------------------------------------------------
-# TestModelCompareAPIEndpoint
-# ---------------------------------------------------------------------------
-
-class TestModelCompareAPIEndpoint:
-    """Tests for the GET /model-compare API route."""
-
     @pytest.mark.asyncio
-    async def test_model_compare_missing_season(self):
-        """GET /model-compare without season param returns 400."""
-        from packages.api.backtest import main
+    async def test_model_predict_error_is_logged(self, service):
+        """ME-006: a failing model.predict() must call logger.exception
+        so silent regressions are no longer possible."""
+        mock_db = AsyncMock()
 
-        mock_session = AsyncMock()
+        games_result = MagicMock()
+        game1 = _FakeGame(1, 1, 2025, "Brisbane", "Collingwood", 100, 80)
+        games_result.scalars.return_value.all.return_value = [game1]
 
-        with patch("packages.api.backtest._get_session_factory") as mock_factory, \
-             patch("packages.api.backtest.close_redis_pool", new_callable=AsyncMock):
+        existing_result = MagicMock()
+        existing_result.all.return_value = []
 
-            mock_factory.return_value.return_value.__aenter__ = AsyncMock(
-                return_value=mock_session
-            )
-            mock_factory.return_value.return_value.__aexit__ = AsyncMock(
-                return_value=None
-            )
+        call_count = 0
 
-            result = await main({
-                "__ow_method": "GET",
-                "__ow_path": "/model-compare",
-                "__ow_query": "",
-            })
+        def mock_execute(stmt):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return games_result
+            return existing_result
 
-        assert result["statusCode"] == 400
-        assert "season" in result["body"]["error"].lower()
+        mock_db.execute = AsyncMock(side_effect=mock_execute)
 
-    @pytest.mark.asyncio
-    async def test_model_compare_with_season(self):
-        """GET /model-compare?season=2025 returns comparison data."""
-        from packages.api.backtest import main
+        # Make model.predict raise an error
+        service.orchestrator.models[0].predict = AsyncMock(
+            side_effect=Exception("DB connection failed")
+        )
 
-        mock_session = AsyncMock()
-        mock_comparison = [
-            {"model_name": "elo", "season": 2025, "total_tips": 10,
-             "total_correct": 7, "overall_accuracy": 0.7,
-             "total_profit": 40.0, "avg_margin": 12.0},
-            {"model_name": "form", "season": 2025, "total_tips": 10,
-             "total_correct": 5, "overall_accuracy": 0.5,
-             "total_profit": 0.0, "avg_margin": 8.0},
-        ]
+        service.compare_models = AsyncMock(return_value=[])
 
-        with patch("packages.api.backtest._get_session_factory") as mock_factory, \
-             patch("packages.api.backtest.BacktestService") as mock_service_cls, \
-             patch("packages.api.backtest.close_redis_pool", new_callable=AsyncMock):
+        with patch("packages.shared.services.backtest.ModelPredictionCRUD"), \
+             patch("packages.shared.services.backtest.logger") as mock_logger:
+            result = await service.run_model_backtest(mock_db, 2025)
 
-            mock_factory.return_value.return_value.__aenter__ = AsyncMock(
-                return_value=mock_session
-            )
-            mock_factory.return_value.return_value.__aexit__ = AsyncMock(
-                return_value=None
-            )
-            mock_service_cls.return_value.compare_models = AsyncMock(
-                return_value=mock_comparison
-            )
+        # Backtest should still complete (predictions list is empty)
+        assert result == []
+        # ME-006: the swallowed exception must be logged via
+        # ``logger.exception`` so operators see why the prediction
+        # was skipped.
+        assert mock_logger.exception.call_count >= 1, (
+            "ME-006: a swallowed prediction error must be logged "
+            "via logger.exception so silent regressions are visible."
+        )
 
-            result = await main({
-                "__ow_method": "GET",
-                "__ow_path": "/model-compare",
-                "__ow_query": "season=2025",
-            })
 
-        assert result["statusCode"] == 200
-        assert result["body"]["season"] == 2025
-        assert "comparison" in result["body"]
-        assert "best_overall" in result["body"]
-        assert result["body"]["best_overall"]["model_name"] == "elo"
-        assert result["body"]["best_overall"]["accuracy"] == 0.7
 
-    @pytest.mark.asyncio
-    async def test_model_compare_empty_results(self):
-        """GET /model-compare with no models returns empty comparison."""
-        from packages.api.backtest import main
-
-        mock_session = AsyncMock()
-
-        with patch("packages.api.backtest._get_session_factory") as mock_factory, \
-             patch("packages.api.backtest.BacktestService") as mock_service_cls, \
-             patch("packages.api.backtest.close_redis_pool", new_callable=AsyncMock):
-
-            mock_factory.return_value.return_value.__aenter__ = AsyncMock(
-                return_value=mock_session
-            )
-            mock_factory.return_value.return_value.__aexit__ = AsyncMock(
-                return_value=None
-            )
-            mock_service_cls.return_value.compare_models = AsyncMock(
-                return_value=[]
-            )
-
-            result = await main({
-                "__ow_method": "GET",
-                "__ow_path": "/model-compare",
-                "__ow_query": "season=2025",
-            })
-
-        assert result["statusCode"] == 200
-        assert result["body"]["comparison"] == []
-        assert result["body"]["best_overall"]["model_name"] is None
+# (FaaS-era TestModelCompareAPIEndpoint removed in Phase 5 � replaced by
+# test_app_api_backtest.py, which exercises the same coverage through
+# the FastAPI TestClient.)

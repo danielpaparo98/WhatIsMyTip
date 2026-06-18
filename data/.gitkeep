@@ -1,0 +1,3 @@
+# Keep this directory in git even when empty so first-time scrapers
+# have a place to write.  Generated CSVs and scrape.log are gitignored
+# by the patterns in /../.gitignore (data/, data/**/*.csv, data/**/*.log).

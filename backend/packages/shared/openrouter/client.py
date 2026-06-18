@@ -12,11 +12,26 @@ class OpenRouterClient:
     """Client for interacting with OpenRouter API."""
 
     def __init__(self):
-        self.client = AsyncOpenAI(
-            api_key=settings.openrouter_api_key,
-            base_url=settings.openrouter_base_url,
-            timeout=30.0,
-        )
+        # SEC-ME-003: avoid constructing the OpenAI SDK with an empty
+        # key.  The SDK's failure mode is non-obvious (it raises from
+        # inside the request loop rather than at construction time)
+        # which makes debugging hard.  When the key is missing we
+        # leave ``self.client = None`` and rely on the existing
+        # fallback paths in ``generate_explanation`` /
+        # ``generate_match_analysis``.
+        api_key = (settings.openrouter_api_key or "").strip()
+        if api_key:
+            self.client = AsyncOpenAI(
+                api_key=api_key,
+                base_url=settings.openrouter_base_url,
+                timeout=30.0,
+            )
+        else:
+            logger.warning(
+                "OpenRouter API key not configured; AI explanations will "
+                "fall back to deterministic templates."
+            )
+            self.client = None
         self.model = settings.openrouter_model
 
     async def generate_explanation(

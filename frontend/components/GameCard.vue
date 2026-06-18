@@ -2,20 +2,20 @@
   <div class="game-card">
     <div class="game-header">
       <span class="round">R{{ roundId }}</span>
-      <span class="date">{{ formatDate(date) }}</span>
+      <span class="date">{{ date ? formatDate(date) : 'TBD' }}</span>
     </div>
     <div class="game-body">
       <div class="team home">
-        <img :src="getLogoUrl(homeTeam)" :alt="homeTeam + ' logo'" class="team-logo" loading="lazy" width="56" height="56" />
+<img :src="getLogoUrl(homeTeam ?? 'TBD')" :alt="`${homeTeam ?? 'TBD'} logo`" class="team-logo" loading="lazy" decoding="async" width="56" height="56" />
         <span v-if="homeScore !== null" class="score">{{ homeScore }}</span>
       </div>
       <div class="vs">VS</div>
       <div class="team away">
-        <img :src="getLogoUrl(awayTeam)" :alt="awayTeam + ' logo'" class="team-logo" loading="lazy" width="56" height="56" />
+<img :src="getLogoUrl(awayTeam ?? 'TBD')" :alt="`${awayTeam ?? 'TBD'} logo`" class="team-logo" loading="lazy" decoding="async" width="56" height="56" />
         <span v-if="awayScore !== null" class="score">{{ awayScore }}</span>
       </div>
     </div>
-    <p class="venue">{{ venue }}</p>
+    <p class="venue">{{ venue ?? 'TBD' }}</p>
   </div>
 </template>
 
@@ -25,10 +25,10 @@ import { useFormatters } from '~/composables/useFormatters'
 
 interface Props {
   roundId: number
-  date: string
-  homeTeam: string
-  awayTeam: string
-  venue: string
+  date: string | null
+  homeTeam: string | null
+  awayTeam: string | null
+  venue: string | null
   homeScore?: number | null
   awayScore?: number | null
 }

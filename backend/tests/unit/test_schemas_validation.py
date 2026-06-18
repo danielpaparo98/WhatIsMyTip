@@ -375,3 +375,76 @@ class TestValidateRequestWithAdminModels:
         assert model is not None
         assert model.season == 2025
         assert model.heuristics == ["best_bet"]
+
+
+# ---------------------------------------------------------------------------
+# GameResponse (nullable team / venue fields)
+# ---------------------------------------------------------------------------
+
+
+class TestGameResponse:
+    """Tests for GameResponse — the response model for the games API.
+
+    The 2026 season contains stub game rows from the Squiggle
+    future-fixture feed where home_team/away_team/venue are NULL in
+    Postgres.  GameResponse must accept these as nullables so the
+    /api/games endpoint does not 500 on a not-yet-scheduled fixture.
+    """
+
+    def _valid_payload(self, **overrides):
+        from datetime import datetime, timezone
+
+        payload = {
+            "id": 1,
+            "slug": "abc123def4",
+            "squiggle_id": 12345,
+            "round_id": 1,
+            "season": 2026,
+            "home_team": "Brisbane",
+            "away_team": "Collingwood",
+            "home_score": None,
+            "away_score": None,
+            "venue": "Gabba",
+            "date": datetime(2026, 1, 1, 18, 0, tzinfo=timezone.utc),
+            "completed": False,
+        }
+        payload.update(overrides)
+        return payload
+
+    def test_accepts_none_for_home_team(self):
+        from packages.shared.schemas.games import GameResponse
+        resp = GameResponse.model_validate(
+            self._valid_payload(home_team=None)
+        )
+        assert resp.home_team is None
+        assert resp.away_team == "Collingwood"
+
+    def test_accepts_none_for_away_team(self):
+        from packages.shared.schemas.games import GameResponse
+        resp = GameResponse.model_validate(
+            self._valid_payload(away_team=None)
+        )
+        assert resp.away_team is None
+
+    def test_accepts_none_for_venue(self):
+        from packages.shared.schemas.games import GameResponse
+        resp = GameResponse.model_validate(
+            self._valid_payload(venue=None)
+        )
+        assert resp.venue is None
+
+    def test_accepts_none_for_all_three(self):
+        from packages.shared.schemas.games import GameResponse
+        resp = GameResponse.model_validate(
+            self._valid_payload(home_team=None, away_team=None, venue=None)
+        )
+        assert resp.home_team is None
+        assert resp.away_team is None
+        assert resp.venue is None
+
+    def test_still_accepts_string_values(self):
+        from packages.shared.schemas.games import GameResponse
+        resp = GameResponse.model_validate(self._valid_payload())
+        assert resp.home_team == "Brisbane"
+        assert resp.away_team == "Collingwood"
+        assert resp.venue == "Gabba"

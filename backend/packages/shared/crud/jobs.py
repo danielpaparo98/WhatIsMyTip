@@ -3,9 +3,10 @@
 from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 
-from sqlalchemy import and_, func, select, text
+from sqlalchemy import and_, delete, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ..config import settings
 from ..models import JobExecution, JobLock
 
 
@@ -196,27 +197,22 @@ class JobExecutionCRUD:
         self,
         days_to_keep: int = 30
     ) -> int:
-        """Delete old job execution records."""
+        """Delete job execution records older than ``days_to_keep``.
+
+        Implementation: a SINGLE ``DELETE ... WHERE started_at <
+        cutoff`` statement.  The previous implementation ran an N+1
+        loop (one SELECT for ids, then one SELECT + one ORM
+        ``session.delete()`` per id), which timed out on
+        ``job_executions`` tables with a few thousand rows.
+        """
         cutoff_date = datetime.now(timezone.utc) - timedelta(days=days_to_keep)
 
         result = await self.db.execute(
-            select(JobExecution.id).where(JobExecution.started_at < cutoff_date)
+            delete(JobExecution).where(JobExecution.started_at < cutoff_date)
         )
-        old_ids = [row[0] for row in result.all()]
+        await self.db.commit()
 
-        if old_ids:
-            await self.db.execute(
-                select(JobExecution).where(JobExecution.id.in_(old_ids))
-            )
-
-            for execution_id in old_ids:
-                execution = await self.get_execution(execution_id)
-                if execution:
-                    await self.db.delete(execution)
-
-            await self.db.commit()
-
-        return len(old_ids)
+        return result.rowcount or 0
 
 
 class JobLockCRUD:
@@ -229,7 +225,7 @@ class JobLockCRUD:
         self,
         job_name: str,
         locked_by: str,
-        expires_seconds: int = 3600
+        expires_seconds: int | None = None,
     ) -> Optional[JobLock]:
         """Acquire a job lock atomically using INSERT ... ON CONFLICT.
 
@@ -237,9 +233,45 @@ class JobLockCRUD:
         preventing race conditions where two concurrent invocations
         could both acquire the same lock.
 
+        SEC-ME-009: the caller-supplied ``expires_seconds`` is
+        **clamped to ``settings.job_lock_expire_seconds``** (default
+        300 s / 5 minutes).  This is a hard ceiling: a stuck in-process
+        job that holds the lock for hours blocks every subsequent run
+        of the same job, and operator intervention is the only
+        resolution.  Callers that want a shorter window can pass
+        ``expires_seconds=60`` etc.; the ceiling is only an upper
+        bound.
+
+        Before the INSERT, the method opportunistically cleans up any
+        lock rows that have been expired for more than 24 hours
+        (ME-004).  This keeps the ``job_locks`` table from growing
+        without bound when long-running jobs crash and never call
+        ``release_lock``.  The cleanup call is wrapped in
+        ``try/except`` so a failure here never blocks the lock
+        acquisition path.
+
         Returns:
             JobLock if lock was acquired, None if already locked
         """
+        # SEC-ME-009: clamp caller-supplied expires_seconds to the
+        # configured ceiling so a stuck in-process job cannot block
+        # every subsequent run of the same job for hours.
+        ceiling = settings.job_lock_expire_seconds
+        if expires_seconds is None or expires_seconds > ceiling:
+            expires_seconds = ceiling
+
+        # Opportunistic stale-lock cleanup (ME-004).  We do this
+        # *before* the atomic INSERT so a newly-acquired lock is not
+        # inadvertently removed by a subsequent cleanup.  Failures
+        # are swallowed because the primary purpose of this call is
+        # to acquire the lock.
+        try:
+            await self.cleanup_expired_locks(min_age_seconds=24 * 3600)
+        except Exception:
+            # The cleanup is best-effort; log via the application
+            # logger if available but never block the acquire path.
+            pass
+
         now = datetime.now(timezone.utc)
         expires_at = now + timedelta(seconds=expires_seconds)
 
@@ -324,12 +356,24 @@ class JobLockCRUD:
 
         return True
 
-    async def cleanup_expired_locks(self) -> int:
-        """Delete expired job locks."""
+    async def cleanup_expired_locks(self, min_age_seconds: int = 0) -> int:
+        """Delete expired job locks.
+
+        ``min_age_seconds`` is the minimum time a lock must have been
+        expired before it is considered stale.  A value of ``0`` (the
+        default) deletes every expired lock.  When called from
+        ``acquire_lock`` (ME-004) we pass ``24 * 3600`` so freshly-
+        expired locks are not yanked out from under a job that is
+        still running but exceeded its TTL by a few seconds.
+
+        Returns:
+            Number of locks removed.
+        """
         now = datetime.now(timezone.utc)
+        cutoff = now - timedelta(seconds=min_age_seconds)
 
         result = await self.db.execute(
-            select(JobLock).where(JobLock.expires_at < now)
+            select(JobLock).where(JobLock.expires_at < cutoff)
         )
         expired_locks = list(result.scalars().all())
 

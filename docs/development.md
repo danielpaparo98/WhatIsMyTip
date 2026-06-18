@@ -2,7 +2,7 @@
 
 ## Overview
 
-This guide covers setting up and working with the WhatIsMyTip development environment. The backend is a **serverless FaaS application** running on DigitalOcean Functions — there is no persistent server process to run locally. Instead, you develop against local PostgreSQL + Redis (via Docker), run unit tests, and deploy functions using `doctl`.
+This guide covers setting up and working with the WhatIsMyTip development environment. The backend is a **single FastAPI Python process** that runs locally with `uvicorn`, talks to local PostgreSQL + Redis (via Docker), and is deployed to DigitalOcean App Platform as a container.
 
 ## Prerequisites
 
@@ -86,7 +86,7 @@ The frontend will be available at `http://localhost:3000`
 
 ### Backend Setup
 
-The FaaS backend does **not** use `uvicorn` or a persistent server. Development is done via Docker services + unit tests.
+The FastAPI backend runs locally with `uvicorn main:app --reload` (which auto-reloads on code change). Tests run against Docker services — see [Quick Start](#quick-start) below.
 
 1. **Install Python dependencies**:
    ```bash
@@ -134,6 +134,199 @@ uv run pytest tests/unit/ -v
 
 ---
 
+## Local Development with Docker (full stack)
+
+Phase 6 introduces a single `docker compose` workflow that brings up the
+**entire stack** (Postgres + Redis + FastAPI + Nuxt frontend) on your
+local machine so you can exercise every endpoint and every heuristic
+against a real database.  This is the recommended way to develop and
+manually test the application end-to-end.
+
+### Prerequisites
+
+- **Docker Desktop** (Windows / macOS) **or Podman** (Linux / macOS)
+  - Docker: <https://www.docker.com/products/docker-desktop/>
+  - Podman: <https://podman.io/docs/installation>
+- **Git** (already installed)
+- *(Optional)* `curl` and `psql` for poking at the running services
+
+The dev script ([`scripts/dev.sh`](../scripts/dev.sh:1) /
+[`scripts/dev.ps1`](../scripts/dev.ps1:1)) auto-detects Docker first,
+then Podman, then errors out cleanly.  Override with
+`WIMT_RUNTIME=docker` / `WIMT_RUNTIME=podman` (or `$env:WIMT_RUNTIME` on
+PowerShell) when you have both installed.
+
+### Quick start
+
+```bash
+# macOS / Linux / WSL
+git clone https://github.com/danielpaparo98/WhatIsMyTip.git
+cd WhatIsMyTip
+git checkout feature/local-docker-stack    # this branch
+./scripts/dev.sh up
+# Open http://localhost:3000  (frontend)
+# Open http://localhost:8000  (API)
+# Open http://localhost:8000/docs  (Swagger UI)
+```
+
+```powershell
+# Windows + PowerShell
+git clone https://github.com/danielpaparo98/WhatIsMyTip.git
+cd WhatIsMyTip
+git checkout feature/local-docker-stack    # this branch
+.\scripts\dev.ps1 up
+# Open http://localhost:3000  (frontend)
+# Open http://localhost:8000  (API)
+# Open http://localhost:8000/docs  (Swagger UI)
+```
+
+The first `up` builds the `whatismytip-api:local` image from
+[`backend/Dockerfile`](../backend/Dockerfile:1) and pulls `postgres:16-alpine`,
+`redis:7-alpine`, and `oven/bun:1.1`.  Subsequent ups are seconds-fast.
+
+### What you get
+
+| Service     | Port  | Notes |
+|-------------|-------|-------|
+| `postgres`  | 5432  | `wimt / wimt_dev_password` (dev only) |
+| `redis`     | 6379  | No password |
+| `api`       | 8000  | FastAPI + Uvicorn (`--reload` for hot-reload) |
+| `frontend`  | 3000  | Nuxt 4 dev server (HMR) |
+| `init-data` | n/a   | One-shot: runs migrations + CSV load, then exits 0 |
+
+The `init-data` service runs **before** `api` starts (via
+`service_completed_successfully`), so the API never serves traffic
+against an unmigrated database.  The init container is bind-mounted
+against `./data/` at the project root, so dropping CSVs there and
+restarting the init container is enough to seed real data.
+
+### Common commands
+
+```bash
+# Bash (macOS / Linux / WSL)
+./scripts/dev.sh up --logs       # start + follow logs
+./scripts/dev.sh down            # stop (volumes preserved)
+./scripts/dev.sh reset           # stop AND delete the database volume
+./scripts/dev.sh logs api        # tail logs of a specific service
+./scripts/dev.sh ps              # show running containers
+./scripts/dev.sh shell api       # bash into the api container
+./scripts/dev.sh psql            # psql shell
+./scripts/dev.sh redis           # redis-cli shell
+./scripts/dev.sh config          # validate docker-compose.yml
+```
+
+```powershell
+# PowerShell (Windows)
+.\scripts\dev.ps1 up -Up -Logs
+.\scripts\dev.ps1 down
+.\scripts\dev.ps1 reset
+.\scripts\dev.ps1 logs api
+.\scripts\dev.ps1 ps
+.\scripts\dev.ps1 shell api
+.\scripts\dev.ps1 psql
+.\scripts\dev.ps1 redis
+.\scripts\dev.ps1 config
+```
+
+### Generating real CSV data with `make-data.sh`
+
+The fastest way to populate `./data/` with real AFL data is to run the Phase-7 wrapper:
+
+```bash
+# Bash / macOS / Linux / WSL
+./scripts/make-data.sh        # default: 2020-2025 (10-30 min)
+
+# PowerShell / Windows
+.\scripts\make-data.ps1
+```
+
+The script calls [`backend/scripts/scrape_to_csv.py`](../backend/scripts/scrape_to_csv.py:1) under the hood,
+pipes its output to `./data/scrape.log`, and prints a per-CSV row-count
+summary at the end.  See [`docs/data-loading.md`](data-loading.md) for the full
+scope decision, data sources, and 'when to re-scrape' guidance.
+
+Override the default seasons via the `SEASONS` env var:
+
+```bash
+SEASONS="2024 2025" ./scripts/make-data.sh      # just 2 seasons, ~3 min
+```
+
+### Loading real CSV data
+
+The `init-data` service bind-mounts `./data/` (at the project root) to
+`/data` in the container, then runs:
+
+```bash
+python scripts/migrate_and_seed.py --from-csv --csv-dir=/data --no-seed --verbose
+```
+
+To load real data, drop the CSVs that
+[`scrape_to_csv.py`](../backend/scripts/scrape_to_csv.py:1) produces
+into `./data/` and re-run the init step:
+
+```bash
+docker compose run --rm init-data          # bash
+# or simply reset and bring the stack back up
+./scripts/dev.sh reset && ./scripts/dev.sh up
+```
+
+`scripts/migrate_and_seed.py` accepts three new flags for the Docker
+flow:
+
+- `--from-csv` — load CSVs from `--csv-dir` (or auto-discovered
+  location) instead of running the synthetic seeder.
+- `--csv-dir PATH` — explicit CSV directory (defaults to auto-discovery
+  via `find_csv_seed_dir()`).
+- `--skip-migrations` — skip `alembic upgrade head` (used when the
+  schema is already up to date).
+- `--no-seed` — skip the synthetic `seed_data.py` run.
+
+### Disabling the in-process cron jobs
+
+The FastAPI app runs four APScheduler cron jobs in-process (see
+[Scheduled Jobs](#scheduled-jobs-in-process-apscheduler) below).  For
+local dev these are usually noise — set `CRON_ENABLED=false` in the
+`api` service environment to silence them.  It is set to `false` by
+default in [`docker-compose.yml`](../docker-compose.yml:1).  To
+exercise the cron paths, set `CRON_ENABLED=true` and restart the api
+container.
+
+### Hot-reload
+
+- **Backend:** `api` bind-mounts `./backend` and runs
+  `uvicorn main:app --reload`.  Edits to anything under `backend/`
+  trigger an automatic restart.
+- **Frontend:** `frontend` bind-mounts `./frontend` and runs
+  `bun run dev --host 0.0.0.0`.  Nuxt HMR is enabled by default.
+
+### Smoke test (CI-friendly)
+
+A pure-Python + bash smoke test lives at
+[`scripts/smoke_local.sh`](../scripts/smoke_local.sh:1) (and
+[`scripts/smoke_local.ps1`](../scripts/smoke_local.ps1:1) for Windows).
+It validates the compose file without bringing the stack up:
+
+```bash
+./scripts/smoke_local.sh
+# (optionally also bring the stack up and check /health)
+./scripts/smoke_local.sh --up --health
+```
+
+If no container runtime is detected, the smoke test falls back to
+validating the YAML structure with Python (handy in CI sandboxes).
+
+### Troubleshooting
+
+| Symptom | Fix |
+|---------|-----|
+| `Cannot connect to Docker daemon` | Start Docker Desktop (or `podman machine init && podman machine start`). |
+| Port 5432 / 6379 / 8000 / 3000 already in use | Stop the conflicting process or edit the `ports:` mapping in `docker-compose.yml`. |
+| `init-data` keeps restarting | Inspect `docker compose logs init-data` — usually a CSV parse error or a stale `data/` directory. |
+| Frontend can't reach the API | Check `NUXT_PUBLIC_API_BASE=http://localhost:8000` (set in compose).  The browser hits the host's localhost, NOT the container network. |
+| Want a fresh database | `./scripts/dev.sh reset` (or `.\scripts\dev.ps1 reset`). |
+
+---
+
 ## Testing Functions Locally
 
 ### Unit Tests
@@ -147,7 +340,7 @@ cd backend
 uv run pytest tests/unit/ -v
 
 # Run specific test file
-uv run pytest tests/unit/test_cron_tip_generation.py -v
+uv run pytest tests/unit/test_app_cron_tip_generation.py -v
 
 # Run with coverage
 uv run pytest tests/unit/ --cov
@@ -176,48 +369,47 @@ To test functions end-to-end, deploy to your DO Functions namespace:
 
 ```bash
 cd backend
-doctl serverless deploy . --env .env
+./scripts/deploy.sh          # Build image, push to DO Container Registry, trigger App Platform deploy
 
-# Then test using the deployed function URLs:
-curl https://faas.syd1.digitaloceanspaces.com/<namespace>/api/games/health
-curl https://faas.syd1.digitaloceanspaces.com/<namespace>/api/games
+# Then test against the deployed URL (deploy.sh polls /health before returning):
+curl https://whatismytip.com/api/games
+curl https://whatismytip.com/health
 ```
 
 ---
 
-## Scheduled Functions (Cron Jobs)
+## Scheduled Jobs (in-process APScheduler)
 
-Scheduled functions are deployed as DO Functions with cron triggers — they are **not** run locally via a daemon. Schedules are defined in [`project.yml`](../backend/project.yml:1) and managed by the DigitalOcean Functions platform.
+The 4 scheduled jobs run **in-process** via APScheduler inside the FastAPI container. They are
+not separate FaaS handlers — they live in [`backend/app/cron/`](../backend/app/cron/) and are
+registered in [`backend/app/core/scheduler.py`](../backend/app/core/scheduler.py:1). Schedules
+are read from [`packages/shared/config.py`](../backend/packages/shared/config.py:1).
 
-### Function Schedules
+### Job Schedules (Australia/Perth timezone)
 
-| Function | Schedule (UTC) | AWST |
-|----------|----------------|------|
-| `daily-sync` | `*/15 * * * *` | Every 15 minutes |
-| `match-completion` | `5,20,35,50 * * * *` | 4× per hour |
-| `tip-generation` | `0 19 * * *` | 3:00 AM daily |
-| `historic-refresh` | `0 20 * * 6` | 4:00 AM Saturday |
+| Job | Default Schedule | Env var |
+|-----|------------------|---------|
+| `daily-sync` | `*/15 * * * *` | `DAILY_SYNC_CRON` |
+| `match-completion` | `5,20,35,50 * * * *` | `MATCH_COMPLETION_CRON` |
+| `tip-generation` | `0 3 * * *` | `TIP_GENERATION_CRON` |
+| `historic-refresh` | `0 4 * * 0` | `HISTORIC_REFRESH_CRON` |
 
 ### Manual Job Triggering
 
-Trigger cron functions via the admin API (requires `ADMIN_API_KEY`):
+Trigger jobs via the FastAPI admin API (requires `X-Admin-API-Key` header matching `ADMIN_API_KEY`):
 
 ```bash
-# Trigger daily game sync
+# Production
 curl -X POST -H "X-Admin-API-Key: $ADMIN_API_KEY" \
-  https://faas.syd1.digitaloceanspaces.com/<namespace>/api/admin/jobs/daily-sync/trigger
-
-# Trigger match completion detection
+  https://whatismytip.com/api/admin/daily-sync/trigger
 curl -X POST -H "X-Admin-API-Key: $ADMIN_API_KEY" \
-  https://faas.syd1.digitaloceanspaces.com/<namespace>/api/admin/jobs/match-completion/trigger
-
-# Trigger tip generation
+  https://whatismytip.com/api/admin/match-completion/trigger
 curl -X POST -H "X-Admin-API-Key: $ADMIN_API_KEY" \
-  https://faas.syd1.digitaloceanspaces.com/<namespace>/api/admin/jobs/tip-generation/trigger
-
-# Check job status
+  https://whatismytip.com/api/admin/tip-generation/trigger
+curl -X POST -H "X-Admin-API-Key: $ADMIN_API_KEY" \
+  https://whatismytip.com/api/admin/historic-refresh/trigger
 curl -H "X-Admin-API-Key: $ADMIN_API_KEY" \
-  https://faas.syd1.digitaloceanspaces.com/<namespace>/api/admin/jobs/status
+  https://whatismytip.com/api/admin/metrics
 ```
 
 ### Testing Scheduled Functions
@@ -600,6 +792,40 @@ API_BASE_URL=http://localhost:8000
 # Production:
 # API_BASE_URL=https://faas.syd1.digitaloceanspaces.com/<namespace>
 ```
+
+---
+
+## Common Tasks Cheat Sheet
+
+Quick recipes for the things you do most often.
+
+| Task | Command (run from `backend/`) |
+|------|-------------------------------|
+| Start local Postgres + Redis | `./scripts/dev.sh` |
+| Apply migrations | `uv run alembic upgrade head` |
+| Roll back one migration | `uv run alembic downgrade -1` |
+| Generate a new migration | `uv run alembic revision --autogenerate -m "msg"` |
+| Run all unit tests | `uv run pytest tests/unit/ -v` |
+| Run a single test file | `uv run pytest tests/unit/test_app_api_games.py -v` |
+| Run with coverage | `uv run pytest tests/unit/ --cov` |
+| Run API with hot-reload | `uv run uvicorn main:app --reload` |
+| Lint (ruff) | `uv run ruff check .` |
+| Format (ruff) | `uv run ruff format .` |
+| Type-check (mypy) | `uv run mypy packages/` |
+| Build the Docker image | `docker build -t whatismytip-api -f Dockerfile .` |
+| Smoke-test the image build | `./scripts/test_dockerfile.sh` |
+| Trigger a cron job manually | `curl -X POST -H "X-API-Key: $ADMIN_API_KEY" http://localhost:8000/api/admin/<job>/trigger` |
+| See job metrics | `curl -H "X-API-Key: $ADMIN_API_KEY" http://localhost:8000/api/admin/metrics` |
+| Load real CSV data | `./scripts/make-data.sh` (Bash) / `.\scripts\make-data.ps1` (PowerShell) |
+
+| Task (frontend) | Command (run from `frontend/`) |
+|------|-------------------------------|
+| Install deps | `bun install` |
+| Start dev server | `bun run dev` |
+| Lint | `bun run lint` |
+| Type-check | `bun run typecheck` |
+| Run unit tests | `bun run test` |
+| Build static site | `bun run generate` |
 
 ---
 

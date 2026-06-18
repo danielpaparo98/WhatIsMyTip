@@ -190,3 +190,132 @@ class TestMatchAnalysisModel:
 
     def test_match_analysis_tablename(self):
         assert MatchAnalysis.__tablename__ == "match_analyses"
+
+
+# ---------------------------------------------------------------------------
+# EloModel cleanup (HI-001)
+# ---------------------------------------------------------------------------
+
+
+class TestEloModelCleanup:
+    """Regression tests for the HI-001 EloModel cleanup.
+
+    The fix removes:
+
+    1. The dead ``_update_ratings`` and ``_get_team_ratings``
+       instance methods (never called anywhere).
+    2. The ``__import__("datetime").timedelta(...)`` runtime-import
+       trick inside ``predict``.
+    3. The ``.replace(tzinfo=None)`` call on a tz-aware datetime
+       (which was a no-op pretending to be defensive code).
+
+    These tests pin the post-fix behaviour: ``predict`` no longer
+    relies on the runtime import, the point-in-time backtest path
+    still works, and the dead methods are gone.
+    """
+
+    def test_no_runtime_datetime_import_in_predict_source(self):
+        """``predict`` must NOT use ``__import__('datetime')``."""
+        import inspect
+
+        from packages.shared.models_ml.elo import EloModel
+
+        src = inspect.getsource(EloModel.predict)
+        assert "__import__" not in src, (
+            "EloModel.predict still uses __import__(\"datetime\"); "
+            "import timedelta at module top instead."
+        )
+
+    def test_no_replace_tzinfo_none_on_now_in_predict_source(self):
+        """``predict`` must NOT strip tzinfo from ``datetime.now()``.
+
+        The pre-fix code did ``now.replace(tzinfo=None)`` on a
+        tz-aware datetime produced by ``datetime.now(timezone.utc)`` -
+        a no-op pretending to be defensive code.  The fix still uses
+        ``.replace(tzinfo=None)`` on the game date (which is
+        genuinely tz-aware in some rows), but never on the freshly-
+        built ``now`` sentinel.
+        """
+        import inspect
+        import re
+
+        from packages.shared.models_ml.elo import EloModel
+
+        src = inspect.getsource(EloModel.predict)
+        # Look for the pattern ``now.replace(tzinfo=None)``.
+        assert not re.search(
+            r"\bnow[a-zA-Z_]*\.replace\(tzinfo=None\)", src
+        ), (
+            "EloModel.predict still calls .replace(tzinfo=None) on "
+            "a freshly-built 'now' datetime; normalise the comparison "
+            "value to naive UTC once at the top instead."
+        )
+
+    def test_dead_methods_removed(self):
+        """The dead ``_update_ratings`` / ``_get_team_ratings`` methods
+        must be gone.
+        """
+        from packages.shared.models_ml.elo import EloModel
+
+        assert not hasattr(EloModel, "_update_ratings"), (
+            "_update_ratings is dead code and should be removed."
+        )
+        # _get_team_ratings only existed on instances; check via
+        # ``vars()`` to avoid materialising an instance-level name
+        # collision (in case a future refactor re-adds it as a
+        # class-level attribute).
+        assert "_get_team_ratings" not in vars(EloModel), (
+            "_get_team_ratings is dead code and should be removed."
+        )
+
+    def test_compute_ratings_from_games_pure_function(self):
+        """The shared computation helper remains available for the
+        point-in-time backtest path.
+        """
+        from packages.shared.models_ml.elo import EloModel
+
+        # No I/O — feeds in two ``Game``-shaped objects and a starting
+        # ratings dict; expects an updated ratings dict back.
+        class _FakeGame:
+            def __init__(self, home, away, h_score, a_score):
+                self.home_team = home
+                self.away_team = away
+                self.home_score = h_score
+                self.away_score = a_score
+
+        ratings: dict = {}
+        result = EloModel._compute_ratings_from_games(
+            [_FakeGame("Brisbane", "Collingwood", 80, 60)],
+            ratings,
+        )
+        assert "Brisbane" in result and "Collingwood" in result
+        # Brisbane won, so their rating should go up, Collingwood's down.
+        assert result["Brisbane"] > 1500.0
+        assert result["Collingwood"] < 1500.0
+
+    def test_module_uses_top_level_timedelta_import(self):
+        """The module must import ``timedelta`` at the top, not via
+        ``__import__`` at runtime.
+        """
+        import ast
+        import inspect
+
+        from packages.shared.models_ml import elo as elo_module
+
+        source = inspect.getsource(elo_module)
+        tree = ast.parse(source)
+        # Find module-level imports.
+        top_imports: list[str] = []
+        for node in tree.body:
+            if isinstance(node, ast.ImportFrom):
+                for n in node.names:
+                    top_imports.append(n.name)
+            elif isinstance(node, ast.Import):
+                for n in node.names:
+                    top_imports.append(n.name)
+
+        # The module path doesn't matter — we just want at least one
+        # ``from datetime import ...`` that mentions ``timedelta``.
+        assert any(name == "timedelta" for name in top_imports), (
+            "elo.py should import `timedelta` from datetime at module top."
+        )

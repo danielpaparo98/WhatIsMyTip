@@ -1,5 +1,12 @@
 # Architecture Review: Digital Ocean Functions (FaaS) Migration
 
+> **DESIGN HISTORY — superseded by current implementation.**  This plan reviews the
+> DigitalOcean Functions (FaaS) architecture, which was **retired in Phase 5** of
+> `feature/fastapi-reimplementation` (merged 2026-06-16).  Current architecture is the
+> single-FastAPI-container setup documented in [`docs/backend.md`](../docs/backend.md).
+> See [`docs/FAAS-EVALUATION.md`](../docs/FAAS-EVALUATION.md) and
+> [`docs/BACKEND-FAAS-CODE-REVIEW.md`](../docs/BACKEND-FAAS-CODE-REVIEW.md) (both closed).
+>
 > **⚠️ HISTORICAL DOCUMENT** — This plan was written during the `backend-faas` era.
 > The directory has since been renamed to `backend/`. Paths like `backend-faas/...` should be read as `backend/...` today.
 

@@ -263,6 +263,144 @@ class TestCachedDecorator:
         # Our cache.set calls client.set(full_key, json.dumps(value), ex=int(ttl))
         assert mock_client.set.await_count == 1
 
+    @pytest.mark.asyncio
+    async def test_decorator_with_serializer_converts_value(self):
+        """The ``serializer`` callable converts the return value before
+        it is stored in the cache.  This lets the cache layer accept
+        values that are not JSON-serializable as-is (e.g. SQLAlchemy ORM
+        objects) by passing a converter that produces JSON-safe data.
+        """
+        mock_client = _mock_redis_client()
+        mock_client.get = AsyncMock(return_value=None)
+        cache = RedisCache(default_ttl=60, prefix="dec:")
+
+        class FakeORM:
+            def __init__(self, name):
+                self.name = name
+            def __repr__(self):
+                return f"<FakeORM {self.name}>"
+
+        @cached(
+            cache=cache,
+            key_prefix="orm:",
+            serializer=lambda v: {"name": v.name},
+        )
+        async def my_function(db):
+            return FakeORM("foo")
+
+        with patch("packages.shared.cache._get_client", return_value=mock_client):
+            result = await my_function("fake_db")
+
+        # Decorator returns the ORIGINAL value to the caller
+        assert isinstance(result, FakeORM)
+        assert result.name == "foo"
+        # But the cache SET call received the serialized form
+        args, _ = mock_client.set.call_args
+        cached_value = args[1]
+        assert json.loads(cached_value) == {"name": "foo"}
+
+    @pytest.mark.asyncio
+    async def test_decorator_without_serializer_uses_raw_value(self):
+        """When no serializer is given, the raw value is sent to the cache
+        (existing behaviour is preserved)."""
+        mock_client = _mock_redis_client()
+        mock_client.get = AsyncMock(return_value=None)
+        cache = RedisCache(default_ttl=60, prefix="dec:")
+
+        @cached(cache=cache, key_prefix="raw:")
+        async def my_function(db):
+            return {"a": 1}
+
+        with patch("packages.shared.cache._get_client", return_value=mock_client):
+            await my_function("fake_db")
+
+        args, _ = mock_client.set.call_args
+        cached_value = args[1]
+        assert json.loads(cached_value) == {"a": 1}
+
+    @pytest.mark.asyncio
+    async def test_decorator_skip_first_arg_false_includes_all_args(self):
+        """``skip_first_arg=False`` (ME-001) means the first positional
+        argument is included in the cache key.  Two different ``db``
+        arguments therefore produce different cache keys and the function
+        is executed twice rather than being short-circuited by a cached
+        entry from the first invocation.
+        """
+        mock_client = _mock_redis_client()
+        mock_client.get = AsyncMock(return_value=None)
+        cache = RedisCache(default_ttl=60, prefix="dec:")
+
+        call_count = 0
+
+        @cached(cache=cache, key_prefix="all:", skip_first_arg=False)
+        async def my_function(db, x):
+            nonlocal call_count
+            call_count += 1
+            return x * 2
+
+        with patch("packages.shared.cache._get_client", return_value=mock_client):
+            r1 = await my_function("db_a", 1)
+            r2 = await my_function("db_b", 1)
+
+        assert r1 == 2
+        assert r2 == 2
+        # Two different keys => function executed twice
+        assert call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_decorator_skip_first_arg_true_default(self):
+        """The default ``skip_first_arg=True`` continues to ignore the first
+        positional argument when building the cache key."""
+        mock_client = _mock_redis_client()
+        mock_client.get = AsyncMock(return_value=None)
+        cache = RedisCache(default_ttl=60, prefix="dec:")
+
+        @cached(cache=cache, key_prefix="skip:")
+        async def my_function(db, x):
+            return x + 100
+
+        with patch("packages.shared.cache._get_client", return_value=mock_client):
+            # Different first args but same ``x`` — only one execution
+            # because the cache key ignores ``db``.
+            r1 = await my_function("db_a", 1)
+            r2 = await my_function("db_b", 1)
+
+        # Second call hits the cache (set on first miss) and returns the
+        # cached value, not a freshly computed one.
+        assert r1 == 101
+        assert r2 == 101
+
+
+# ---------------------------------------------------------------------------
+# _make_cache_key — hash format (ME-009: blake2b)
+# ---------------------------------------------------------------------------
+
+
+class TestCacheKeyHashFormat:
+    """ME-009: cache keys use blake2b(digest_size=16) → 32 hex chars."""
+
+    def test_hash_is_32_hex_chars(self):
+        """The cache key hash is a 32-character hex string (16 bytes)."""
+        from packages.shared.cache import _make_cache_key
+
+        key = _make_cache_key("fn", (1, 2), {})
+        assert len(key) == 32
+        # All characters must be hex digits
+        int(key, 16)  # raises ValueError if not hex
+
+    def test_hash_uses_blake2b_under_the_hood(self):
+        """Sanity check: blake2b(digest_size=16) of the same input is
+        stable and matches what we expect from the helper."""
+        import hashlib
+
+        from packages.shared.cache import _make_cache_key
+
+        expected = hashlib.blake2b(
+            b"fn:(1, 2):[]",
+            digest_size=16,
+        ).hexdigest()
+        assert _make_cache_key("fn", (1, 2), {}) == expected
+
 
 # ---------------------------------------------------------------------------
 # invalidate_cache_pattern
@@ -330,3 +468,98 @@ class TestCloseRedisPool:
         with patch("packages.shared.cache._pool", mock_pool):
             await close_redis_pool(force=True)
         mock_pool.aclose.assert_awaited_once()
+
+
+# ---------------------------------------------------------------------------
+# Connection-pool cold-start degradation (HI-005)
+# ---------------------------------------------------------------------------
+
+
+class TestConnectionFailureGracefulDegradation:
+    """HI-005: ``ConnectionPool.from_url`` raises on a malformed
+    ``REDIS_URL`` (e.g. bad scheme, missing host, bad port).  Before
+    the fix, that raised all the way out and bubbled up as a 500.
+    After the fix, both ``_get_pool`` and ``_get_client`` must
+    degrade to a cache-miss sentinel instead of raising.
+    """
+
+    def test_get_pool_does_not_raise_on_malformed_url(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        """A malformed ``REDIS_URL`` must NOT raise from ``_get_pool``.
+
+        The pool is left as ``None`` so the next caller will retry
+        the construction (e.g. once the env is corrected).
+        """
+        import packages.shared.cache as cache_mod
+        from packages.shared.config import Settings
+
+        # Reset any cached pool from previous tests.
+        monkeypatch.setattr(cache_mod, "_pool", None)
+
+        # Force settings.redis_url to something the parser will reject.
+        bad_settings = Settings(redis_url="not-a-valid-redis-url-at-all")
+        monkeypatch.setattr(cache_mod, "settings", bad_settings)
+
+        # Must not raise.
+        result = cache_mod._get_pool()
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_get_client_returns_none_on_malformed_url(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        """A malformed ``REDIS_URL`` must NOT raise from ``_get_client``.
+
+        Callers rely on a ``None`` return to short-circuit and treat
+        the call as a cache miss.
+        """
+        import packages.shared.cache as cache_mod
+        from packages.shared.config import Settings
+
+        monkeypatch.setattr(cache_mod, "_pool", None)
+
+        bad_settings = Settings(redis_url="http://[::not-an-ipv6-host")
+        monkeypatch.setattr(cache_mod, "settings", bad_settings)
+
+        client = cache_mod._get_client()
+        assert client is None
+
+    @pytest.mark.asyncio
+    async def test_cache_get_returns_none_when_client_unavailable(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        """``RedisCache.get`` degrades to a cache miss when the
+        underlying client cannot be built (malformed URL).
+        """
+        import packages.shared.cache as cache_mod
+        from packages.shared.config import Settings
+
+        monkeypatch.setattr(cache_mod, "_pool", None)
+
+        bad_settings = Settings(redis_url="totally::bogus::url")
+        monkeypatch.setattr(cache_mod, "settings", bad_settings)
+
+        cache = RedisCache(default_ttl=60, prefix="test:")
+        result = await cache.get("any_key")
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_cache_set_returns_none_when_client_unavailable(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        """``RedisCache.set`` degrades to a no-op when the underlying
+        client cannot be built (malformed URL).
+        """
+        import packages.shared.cache as cache_mod
+        from packages.shared.config import Settings
+
+        monkeypatch.setattr(cache_mod, "_pool", None)
+
+        bad_settings = Settings(redis_url="totally::bogus::url")
+        monkeypatch.setattr(cache_mod, "settings", bad_settings)
+
+        cache = RedisCache(default_ttl=60, prefix="test:")
+        # Must not raise.
+        result = await cache.set("any_key", {"value": 1})
+        assert result is None

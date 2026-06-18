@@ -230,17 +230,23 @@
 const api = useApi()
 const { formatHeuristic } = useFormatters()
 
-// Page-specific SEO
-useHead({
+// FX-05 / FX-20: page-specific SEO + canonical URL
+useSeoMeta({
   title: 'Backtesting',
-  meta: [
-    { name: 'description', content: 'View historical performance and accuracy of our AFL prediction heuristics. Analyze year-to-date profit, accuracy rates, and betting performance across multiple seasons.' },
-    { name: 'keywords', content: 'AFL backtesting, AFL prediction accuracy, AFL betting performance, AFL tipping results, AFL profit analysis, AFL historical performance' },
-    { property: 'og:title', content: 'Backtesting | AFL Prediction Performance & Accuracy' },
-    { property: 'og:description', content: 'View historical performance and accuracy of our AFL prediction heuristics. Analyze year-to-date profit and accuracy rates.' },
-    { property: 'og:url', content: 'https://whatismytip.com/backtest' },
-    { name: 'twitter:title', content: 'Backtesting | AFL Prediction Performance & Accuracy' },
-    { name: 'twitter:description', content: 'View historical performance and accuracy of our AFL prediction heuristics. Analyze year-to-date profit and accuracy rates.' }
+  description: 'View historical performance and accuracy of our AFL prediction heuristics. Analyze year-to-date profit, accuracy rates, and betting performance across multiple seasons.',
+  keywords: 'AFL backtesting, AFL prediction accuracy, AFL betting performance, AFL tipping results, AFL profit analysis, AFL historical performance',
+  ogTitle: 'Backtesting | AFL Prediction Performance & Accuracy',
+  ogDescription: 'View historical performance and accuracy of our AFL prediction heuristics. Analyze year-to-date profit and accuracy rates.',
+  ogType: 'website',
+  ogUrl: 'https://whatismytip.com/backtest',
+  twitterTitle: 'Backtesting | AFL Prediction Performance & Accuracy',
+  twitterDescription: 'View historical performance and accuracy of our AFL prediction heuristics. Analyze year-to-date profit and accuracy rates.',
+  twitterCard: 'summary_large_image',
+})
+
+useHead({
+  link: [
+    { rel: 'canonical', href: 'https://whatismytip.com/backtest' }
   ],
   script: [
     {
@@ -261,6 +267,49 @@ useHead({
   ]
 })
 
+
+// FX-12: type the backtest API responses
+interface ComparisonStats {
+  overall_accuracy: number
+  total_profit: number
+  total_tips: number
+  total_rounds: number
+}
+interface ComparisonResponse {
+  comparison: Record<string, ComparisonStats>
+  season: number
+}
+interface RoundStat {
+  round_id: number
+  tips_made: number
+  tips_correct: number
+  accuracy: number
+  profit: number
+}
+interface HeuristicTableData {
+  heuristic: string
+  total_accuracy: number
+  total_profit: number
+  rounds: RoundStat[]
+}
+interface BacktestTableResponse {
+  heuristics: HeuristicTableData[]
+}
+interface CurrentSeasonHeuristic {
+  heuristic: string
+  total_profit: number
+  total_accuracy: number
+  rounds_played: number
+  avg_profit_per_round: number
+  projected_annual_profit: number
+}
+interface CurrentSeasonResponse {
+  season: number
+  rounds_completed: number
+  total_rounds: number
+  heuristics: CurrentSeasonHeuristic[]
+}
+
 const loading = ref(false)
 const seasonsLoading = ref(true)
 const tableLoading = ref(false)
@@ -271,10 +320,10 @@ const error = ref<string | null>(null)
 const tableError = ref<string | null>(null)
 const chartsError = ref<string | null>(null)
 const currentSeasonError = ref<string | null>(null)
-const comparison = ref<any>(null)
-const tableData = ref<any>(null)
-const chartData = ref<any>(null)
-const currentSeasonData = ref<any>(null)
+const comparison = ref<ComparisonResponse | null>(null)
+const tableData = ref<BacktestTableResponse | null>(null)
+const chartData = ref<{ heuristic: string; rounds: { round_id: number; profit: number; accuracy: number }[] }[] | null>(null)
+const currentSeasonData = ref<CurrentSeasonResponse | null>(null)
 const viewMode = ref<'summary' | 'table' | 'charts'>('summary')
 const selectedSeason = ref(new Date().getFullYear() - 1)
 const availableYears = ref<number[]>([])
@@ -302,7 +351,9 @@ const loadAvailableSeasons = async () => {
       selectedSeason.value = availableYears.value[0]
     }
   } catch (e) {
-    console.error('Failed to load available seasons:', e)
+    
+
+    if (import.meta.dev) console.error('Failed to load available seasons:', e)
     // Fallback to generated years on error
     const currentYear = new Date().getFullYear()
     availableYears.value = generateFallbackYears(currentYear)
@@ -323,7 +374,7 @@ const loadComparisonData = async () => {
     comparison.value = await api.compareHeuristics(selectedSeason.value)
   } catch (e) {
     error.value = 'Failed to load comparison data'
-    console.error(e)
+    if (import.meta.dev) console.error(e)
   } finally {
     loading.value = false
     syncing.value = false
@@ -339,7 +390,7 @@ const loadTableData = async () => {
     tableData.value = await api.getBacktestTableData(selectedSeason.value)
   } catch (e) {
     tableError.value = 'Failed to load table data'
-    console.error(e)
+    if (import.meta.dev) console.error(e)
   } finally {
     tableLoading.value = false
     syncing.value = false
@@ -376,9 +427,9 @@ const loadChartData = async () => {
   try {
     const tableResponse = await api.getBacktestTableData(selectedSeason.value)
     // Transform table data into chart-friendly format
-    chartData.value = tableResponse.heuristics.map((h: any) => ({
+    chartData.value = tableResponse.heuristics.map((h: HeuristicTableData) => ({
       heuristic: h.heuristic,
-      rounds: h.rounds.map((r: any) => ({
+      rounds: h.rounds.map((r: RoundStat) => ({
         round_id: r.round_id,
         profit: r.profit,
         accuracy: r.accuracy
@@ -386,7 +437,7 @@ const loadChartData = async () => {
     }))
   } catch (e) {
     chartsError.value = 'Failed to load chart data'
-    console.error(e)
+    if (import.meta.dev) console.error(e)
   } finally {
     chartsLoading.value = false
     syncing.value = false
@@ -401,7 +452,7 @@ const loadCurrentSeasonData = async () => {
     currentSeasonData.value = await api.getCurrentSeasonPerformance()
   } catch (e) {
     currentSeasonError.value = 'Failed to load current season data'
-    console.error(e)
+    if (import.meta.dev) console.error(e)
   } finally {
     currentSeasonLoading.value = false
   }

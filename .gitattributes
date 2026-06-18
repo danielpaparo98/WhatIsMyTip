@@ -1,0 +1,26 @@
+# ──────────────────────────────────────────────────────────────────────
+# .gitattributes — enforce consistent line endings across platforms.
+#
+# This file prevents CRLF issues that broke the deploy.sh on Windows
+# (the bash interpreter can't parse CRLF line endings — `do\r` is
+# a syntax error).  The default is LF; only Windows-native files
+# explicitly opt in to CRLF.
+# ──────────────────────────────────────────────────────────────────────
+
+# Default: LF
+*                 text=auto eol=lf
+
+# Explicit LF for code-ish files (defensive — covers cases where a
+# user has `core.autocrlf=input` and pastes from a CRLF source).
+*.sh              text eol=lf
+*.py              text eol=lf
+*.yml             text eol=lf
+*.yaml            text eol=lf
+*.json            text eol=lf
+*.md              text eol=lf
+*.ts              text eol=lf
+*.vue             text eol=lf
+Dockerfile        text eol=lf
+*.Dockerfile      text eol=lf
+.dockerignore     text eol=lf
+.gitignore        text eol=lf

@@ -64,6 +64,35 @@ def read_csv(filepath: str) -> List[dict]:
         reader = csv.DictReader(f)
         return list(reader)
 
+def discover_csv_dir(candidates: List[str]) -> Optional[str]:
+    """Return the first candidate directory that exists and contains CSVs.
+
+    Args:
+        candidates: Ordered list of directory paths to check.  Earlier
+            entries win.
+
+    Returns:
+        Absolute path string of the first match, or ``None`` if none of
+        the candidates exist or contain at least one ``.csv`` file.
+
+    This helper is used by the local Docker init container (and the
+    ``migrate_and_seed.py --from-csv`` flow) to find a user's seed
+    directory without hard-coding a single path.  The caller passes a
+    list of well-known locations (project-root ``data/``,
+    ``backend/seed_data/``, ``backend/data/``) and the first one that
+    actually contains CSVs wins.
+    """
+    for path in candidates:
+        if not path:
+            continue
+        if not os.path.isdir(path):
+            continue
+        # Must contain at least one *.csv file
+        for entry in os.listdir(path):
+            if entry.lower().endswith(".csv"):
+                return path
+    return None
+
 
 # ---------------------------------------------------------------------------
 # Seed functions
@@ -763,6 +792,92 @@ async def load_csv_data(
     return all_counts
 
 
+def dry_run_summary(
+    input_dir: str,
+    seasons: Optional[List[int]] = None,
+) -> Dict[str, object]:
+    """Inspect CSVs in *input_dir* and return per-table row counts.
+
+    Does NOT open a database connection - useful for smoke-testing
+    scraped data, CI checks, and developer workflows without Postgres.
+
+    Args:
+        input_dir: Directory containing CSVs (or per-season subdirs).
+        seasons: Optional explicit list of seasons.  When *None* the
+            function auto-discovers per-season subdirectories.
+
+    Returns:
+        Dict with keys ``seasons`` (list[int]), ``match_details`` (int),
+        ``players`` (int), ``player_match_stats`` (int),
+        ``match_weather`` (int), ``injuries`` (int).  Zero for tables
+        that have no CSV on disk.
+    """
+    summary: Dict[str, object] = {
+        "seasons": list(seasons) if seasons else [],
+        "match_details": 0,
+        "players": 0,
+        "player_match_stats": 0,
+        "match_weather": 0,
+        "injuries": 0,
+    }
+
+    if not os.path.isdir(input_dir):
+        return summary
+
+    # Auto-discover per-season subdirs if seasons not provided
+    if not seasons:
+        for entry in os.listdir(input_dir):
+            full = os.path.join(input_dir, entry)
+            if os.path.isdir(full) and entry.isdigit():
+                summary["seasons"].append(int(entry))
+        summary["seasons"].sort()
+        seasons = summary["seasons"]  # type: ignore[assignment]
+
+    # Injuries live at the top level (not per-season)
+    injuries_rows = read_csv(os.path.join(input_dir, "injuries.csv"))
+    summary["injuries"] = len(injuries_rows)
+
+    # Per-season CSVs: when seasons are provided, the scraper puts each
+    # season's CSVs in {input_dir}/{season}/ subdirs (as produced by
+    # scrape_to_csv --season 2024 2025).  For a single-season run, the
+    # CSVs are written to the top level instead.  We try the per-season
+    # subdir first and fall back to the top level if it does not exist.
+    per_table = (
+        ("match_details.csv", "match_details"),
+        ("players.csv", "players"),
+        ("player_match_stats.csv", "player_match_stats"),
+        ("match_weather.csv", "match_weather"),
+    )
+
+    if seasons:
+        any_subdir_found = False
+        for season in seasons:
+            season_dir = os.path.join(input_dir, str(season))
+            if not os.path.isdir(season_dir):
+                continue
+            any_subdir_found = True
+            for csv_name, summary_key in per_table:
+                summary[summary_key] += len(  # type: ignore[operator]
+                    read_csv(os.path.join(season_dir, csv_name))
+                )
+        if not any_subdir_found:
+            # Single-season run with CSVs at the top level
+            for csv_name, summary_key in per_table:
+                summary[summary_key] = len(  # type: ignore[assignment]
+                    read_csv(os.path.join(input_dir, csv_name))
+                )
+    else:
+        # No seasons provided -> top-level layout
+        for csv_name, summary_key in per_table:
+            summary[summary_key] = len(  # type: ignore[assignment]
+                read_csv(os.path.join(input_dir, csv_name))
+            )
+
+    return summary
+
+
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Load verified CSV data into the database"
@@ -804,6 +919,15 @@ def main() -> None:
         action="store_true",
         help="Print progress to stdout",
     )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help=(
+            "Inspect CSVs and print a row-count summary, then exit.  "
+            "No database connection is opened.  Useful for smoke-testing "
+            "scraped data and CI checks."
+        ),
+    )
     args = parser.parse_args()
 
     use_subdirs = False
@@ -817,6 +941,24 @@ def main() -> None:
         seasons = None
 
     tables = set(args.tables) if args.tables else None
+
+    if args.dry_run:
+        summary = dry_run_summary(
+            input_dir=os.path.abspath(args.input_dir),
+            seasons=seasons if not use_subdirs else seasons,
+        )
+        print("DRY RUN - no database changes will be made")
+        print(f"  input_dir: {os.path.abspath(args.input_dir)}")
+        print(f"  seasons:   {summary['seasons']}")
+        for table in (
+            "match_details",
+            "players",
+            "player_match_stats",
+            "match_weather",
+            "injuries",
+        ):
+            print(f"  {table:<20s} {summary[table]} rows")
+        return
 
     asyncio.run(
         load_csv_data(

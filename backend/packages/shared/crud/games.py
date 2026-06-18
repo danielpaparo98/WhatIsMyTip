@@ -4,11 +4,70 @@ from typing import Any, Dict, List, Optional, Tuple
 from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..cache import cached, medium_cache, short_cache
+from ..cache import (
+    RedisCache,
+    _make_cache_key,
+    cached,
+    medium_cache,
+    short_cache,
+)
 from ..models import Game, Tip
+from ..schemas.games import GameResponse
 from ..squiggle import SquiggleClient
 from ..squiggle.utils import parse_squiggle_complete
 from ..utils import generate_slug
+
+
+async def _delete_cached_key(
+    cache: RedisCache, func_id: str, args: tuple, kwargs: Optional[dict] = None
+) -> bool:
+    """Delete a single cached entry by rebuilding the deterministic
+    cache key used by the ``@cached`` decorator.  This is the
+    targeted equivalent of a SCAN-based pattern invalidate: it touches
+    exactly one Redis key instead of walking the whole keyspace.
+    """
+    if kwargs is None:
+        kwargs = {}
+    cache_key = _make_cache_key(func_id, args, kwargs)
+    return await cache.delete(cache_key)
+
+
+async def _invalidate_game_cache(game: "Game") -> None:
+    """Targeted cache invalidation for the keys this game contributes to.
+
+    Replaces the previous blanket ``invalidate_cache_pattern`` calls in
+    ``create_or_update`` (ME-002).  A SCAN-based pattern delete had two
+    problems:
+
+    1. It walked the entire cache for every game write.
+    2. The patterns it scanned for (``game_by_id:`` etc.) don't
+       actually appear in the Redis keys because the @cached decorator
+       hashes its arguments; the previous code was therefore a silent
+       no-op for the very entries it was meant to clear.
+
+    The targeted version rebuilds the same hashed keys the decorator
+    would have produced and ``DELETE``s only those.
+    """
+    await _delete_cached_key(short_cache, "game_by_id:get_by_id", (game.id,))
+    await _delete_cached_key(short_cache, "game_by_slug:get_by_slug", (game.slug,))
+    await _delete_cached_key(
+        short_cache,
+        "games_by_round:get_by_round",
+        (game.season, game.round_id, None),
+    )
+    # ``get_upcoming`` returns a list covering every upcoming game so
+    # any single game write forces a refresh of all callers' cached
+    # lists.  We still use targeted deletes here to avoid the SCAN;
+    # the only args variation callers use is ``limit`` so we cover the
+    # most common shapes.
+    await _delete_cached_key(short_cache, "upcoming_games:get_upcoming", (None,))
+    await _delete_cached_key(short_cache, "upcoming_games:get_upcoming", (10,))
+    await _delete_cached_key(short_cache, "upcoming_games:get_upcoming", (50,))
+    await _delete_cached_key(
+        medium_cache,
+        "games_by_season:get_by_season",
+        (game.season, None),
+    )
 
 
 class GameCRUD:
@@ -39,36 +98,77 @@ class GameCRUD:
     @staticmethod
     @cached(cache=short_cache, key_prefix="games_by_round:")
     async def get_by_round(
-        db: AsyncSession, season: int, round_id: int
+        db: AsyncSession,
+        season: int,
+        round_id: int,
+        limit: Optional[int] = None,
     ) -> List[Game]:
-        """Get all games for a specific round and season."""
-        result = await db.execute(
+        """Get all games for a specific round and season.
+
+        ``limit`` bounds the returned list (and the SQL ``LIMIT`` clause).
+        ``None`` means no client-side limit; callers that pass ``limit``
+        should still expect the underlying query to be bounded.
+        """
+        stmt = (
             select(Game)
             .where(Game.season == season, Game.round_id == round_id)
             .order_by(Game.date)
         )
+        if limit is not None:
+            stmt = stmt.limit(limit)
+        result = await db.execute(stmt)
         return list(result.scalars().all())
 
     @staticmethod
     @cached(cache=short_cache, key_prefix="upcoming_games:")
-    async def get_upcoming(db: AsyncSession) -> List[Game]:
-        """Get all upcoming (not completed) games."""
-        result = await db.execute(
+    async def get_upcoming(
+        db: AsyncSession, limit: Optional[int] = None
+    ) -> List[Game]:
+        """Get all upcoming (not completed) games.
+
+        ``limit`` bounds the returned list (and the SQL ``LIMIT`` clause).
+        """
+        stmt = (
             select(Game)
             .where(not Game.completed)
             .order_by(Game.date)
         )
+        if limit is not None:
+            stmt = stmt.limit(limit)
+        result = await db.execute(stmt)
         return list(result.scalars().all())
 
     @staticmethod
-    @cached(cache=medium_cache, key_prefix="games_by_season:")
-    async def get_by_season(db: AsyncSession, season: int) -> List[Game]:
-        """Get all games for a season."""
-        result = await db.execute(
+    @cached(
+        cache=medium_cache,
+        key_prefix="games_by_season:",
+        serializer=lambda games: [
+            GameResponse.model_validate(g).model_dump(mode="json")
+            for g in games
+        ],
+    )
+    async def get_by_season(
+        db: AsyncSession, season: int, limit: Optional[int] = None
+    ) -> List[Game]:
+        """Get all games for a season.
+
+        ``limit`` bounds the returned list (and the SQL ``LIMIT`` clause)
+        so a single call cannot scan an entire season.
+
+        The ``@cached`` decorator passes a ``serializer`` so the live
+        SQLAlchemy ``Game`` ORM instances are converted to JSON-safe
+        ``GameResponse`` dicts before being stored in Redis.  The caller
+        still receives the original ``List[Game]`` objects; only the
+        cached value is the serialized form.
+        """
+        stmt = (
             select(Game)
             .where(Game.season == season)
             .order_by(Game.date)
         )
+        if limit is not None:
+            stmt = stmt.limit(limit)
+        result = await db.execute(stmt)
         return list(result.scalars().all())
 
     @staticmethod
@@ -100,8 +200,6 @@ class GameCRUD:
             - game: The Game object
             - squiggle_id: The Squiggle game ID
         """
-        from ..cache import invalidate_cache_pattern
-
         # Check if game exists by squiggle_id
         game = await GameCRUD.get_by_squiggle_id(db, game_data["id"])
 
@@ -173,12 +271,12 @@ class GameCRUD:
         await db.commit()
         await db.refresh(game)
 
-        # Invalidate cache for game-related queries
-        await invalidate_cache_pattern(short_cache, "game_by_id:")
-        await invalidate_cache_pattern(short_cache, "game_by_slug:")
-        await invalidate_cache_pattern(short_cache, "games_by_round:")
-        await invalidate_cache_pattern(short_cache, "upcoming_games:")
-        await invalidate_cache_pattern(medium_cache, "games_by_season:")
+        # Targeted cache invalidation: rebuild the same hashed keys the
+        # @cached decorator would have produced and DELETE them.  This
+        # replaces the old blanket ``invalidate_cache_pattern`` calls
+        # (ME-002) which triggered a Redis SCAN over the whole keyspace
+        # and didn't even match the (hashed) keys it was meant to clear.
+        await _invalidate_game_cache(game)
 
         return {
             "action": action,

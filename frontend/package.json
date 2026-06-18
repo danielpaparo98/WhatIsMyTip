@@ -6,22 +6,28 @@
   "packageManager": "bun@1.x",
   "scripts": {
     "dev": "node node_modules/@nuxt/cli/bin/nuxi.mjs dev",
-    "build": "nuxt build",
+    "build": "nuxt generate",
     "generate": "nuxt generate",
     "preview": "nuxt preview",
     "lint": "eslint .",
-    "typecheck": "nuxt typecheck"
+    "typecheck": "nuxt typecheck",
+    "test:unit": "vitest run",
+    "test:unit:watch": "vitest"
   },
   "dependencies": {
-    "@nuxtjs/tailwindcss": "^6.12.0",
-    "chart.js": "^4.5.1",
-    "nuxt": "^4.0.0",
-    "vue-chartjs": "^5.3.3"
+    "@nuxtjs/tailwindcss": "6.14.0",
+    "chart.js": "4.5.1",
+    "nuxt": "4.4.2",
+    "vue-chartjs": "5.3.3"
   },
   "devDependencies": {
     "@nuxt/eslint": "^0.7.0",
     "@playwright/test": "^1.58.2",
     "@tailwindcss/forms": "^0.5.9",
-    "typescript": "^5.7.0"
+    "@types/node": "^25.9.3",
+    "@vue/test-utils": "^2.4.11",
+    "happy-dom": "^20.10.6",
+    "typescript": "^5.7.0",
+    "vitest": "4.1.9"
   }
 }

@@ -5,12 +5,15 @@ from sqlalchemy import and_, case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..crud import ModelPredictionCRUD
+from ..logger import get_logger
 from ..models import Game, ModelPrediction, Tip
 from ..orchestrator import ModelOrchestrator
 from ..schemas.backtest import (
     CurrentSeasonHeuristicPerformance,
     CurrentSeasonResponse,
 )
+
+logger = get_logger(__name__)
 
 # Stake amount per game for profit calculation
 STAKE_PER_GAME = 10.0
@@ -570,9 +573,16 @@ class BacktestService:
                             confidence=confidence,
                             margin=margin,
                         )
-                    except Exception:
-                        # Skip failed predictions rather than aborting the whole backtest
-                        pass
+                    except Exception as exc:  # noqa: BLE001 - best-effort per game
+                        # Skip failed predictions rather than aborting
+                        # the whole backtest, but log the failure (ME-006)
+                        # so silent regressions are no longer possible.
+                        logger.exception(
+                            'Model %s failed for game %s: %s',
+                            model.get_name(),
+                            getattr(game, 'id', '<unknown>'),
+                            exc,
+                        )
 
         # Return comparison results
         return await self.compare_models(db, season)

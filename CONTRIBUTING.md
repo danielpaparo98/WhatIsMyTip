@@ -79,15 +79,16 @@ This project adheres to a code of conduct that all contributors are expected to 
 
 ### Submitting Code
 
-#### Prerequisites
+We follow **TDD** (write the failing test first) + **gitmoji** commit prefixes + a `feature/` (or `fix/`, `chore/`, …) branch naming convention.  The toolchain is **bun** (frontend) and **uv** (backend).  See [`docs/development.md`](docs/development.md) for the local setup walkthrough.
 
-- Fork the repository
-- Create a feature branch from `main`
-- Make your changes
-- Test thoroughly
-- Commit with conventional commit messages
-- Push to your fork
-- Create a Pull Request
+#### Quick start
+
+1. Create a branch: `git checkout -b feature/your-feature-name` (or `fix/`, `chore/`, `refactor/`, `docs/`, `test/`)
+2. **Write the failing test first** (TDD).  Run the existing suite to confirm red: `cd backend && uv run pytest tests/unit/ -v` (or `cd frontend && bun run test`).
+3. Implement the change until the test passes.  Run the full suite + linter.
+4. Commit with a gitmoji prefix: `git commit -m "✨ feat(api): add new endpoint"`.
+5. Push: `git push origin feature/your-feature-name`.
+6. Open a PR against `dev` (not `main`).
 
 #### Development Setup
 
@@ -106,15 +107,17 @@ Use descriptive branch names:
 
 #### Commit Messages
 
-Use conventional commit messages:
+Use **gitmoji** commit messages (emoji + conventional commit scope):
 
-- `feat: add new ML model`
-- `fix: resolve database connection issue`
-- `docs: update API documentation`
-- `refactor: improve code structure`
-- `test: add unit tests`
-- `style: format code`
-- `chore: update dependencies`
+- `✨ feat: add new ML model`
+- `🐛 fix: resolve database connection issue`
+- `📝 docs: update API documentation`
+- `♻️ refactor: improve code structure`
+- `✅ test: add unit tests`
+- `🎨 style: format code`
+- `🔧 chore: update dependencies`
+
+The full gitmoji catalogue is at <https://gitmoji.dev/>.  When in doubt, match the prefix to the closest gitmoji entry.
 
 #### Pull Request Process
 
@@ -245,20 +248,25 @@ git push origin feature/your-feature-name
 
 ### Backend (`backend/`)
 
-- **packages/api/**: HTTP-triggered functions (`games`, `tips`, `backtest`, `admin`)
-- **packages/cron/**: Scheduled functions (`daily-sync`, `match-completion`, `tip-generation`, `historic-refresh`)
-- **packages/shared/**: Shared code used across all functions
+- **main.py** — FastAPI app entry point
+- **app/** — FastAPI application code
+  - `app/api/` — HTTP routers (`games`, `tips`, `backtest`, `admin`, `health`)
+  - `app/core/` — Lifespan, middleware, scheduler, security, rate limit
+  - `app/cron/` — Job classes bound to the in-process APScheduler
+- **packages/shared/**: Shared business logic (DB models, services, ML)
   - `crud/` — Database operations
   - `services/` — Business logic
   - `models/` — Database models
   - `models_ml/` — Machine learning models (8 models)
   - `heuristics/` — Prediction strategies (BestBet, YOLO, HighRiskHighReward)
   - `schemas/` — Pydantic validation schemas
-  - `squiggle/`, `afl_data/`, `weather/`, `openrouter/` — External data clients
+  - `squiggle/`, `weather/`, `openrouter/` — External data clients
   - `cache.py`, `config.py`, `db.py`, `alerting.py` — Infrastructure modules
+- **proxy/**: nginx reverse proxy (used by App Platform)
 - **alembic/**: Database migrations
 - **tests/**: Unit (`tests/unit/`) and integration (`tests/integration/`) tests
 - **scripts/**: Deployment and utility scripts (`deploy.sh`, `dev.sh`)
+- **Dockerfile** — Multi-stage container image for the FastAPI app
 
 ### Documentation (`docs/`)
 
@@ -285,10 +293,11 @@ git push origin feature/your-feature-name
 - Follow PEP 8 style guide
 - Use type hints for all functions
 - Follow ruff rules
-- Import from `packages.shared.*` (not `app.*`)
-- Use the FaaS entry-point contract: `main(args) -> {"statusCode", "headers", "body"}`
-- Always close Redis pools and dispose SQLAlchemy engines in finally blocks
-- Implement proper error handling
+- Import from `packages.shared.*` (for shared models / services) and `app.*` (for the FastAPI app)
+- Always close Redis pools and dispose SQLAlchemy engines in the lifespan shutdown handler
+- Raise `BackendServiceError` (from `app.core.exceptions`) for expected error paths
+- Implement proper error handling at the router level
+- Write Pydantic request/response models — no raw `dict` returns
 
 ### Documentation
 
@@ -358,72 +367,83 @@ async def test_example():
 
 ### Adding a New Cron Job
 
-Create a new function under `backend/packages/cron/`:
+Add a new job to the in-process APScheduler:
 
-1. **Create the function directory**: `backend/packages/cron/my-new-job/`
-
-2. **Implement the entry point** in `backend/packages/cron/my-new-job/__init__.py`:
+1. **Create the job class** at `backend/app/cron/my_new_job.py`, inheriting from
+   [`BaseJob`](backend/app/cron/base.py:1):
 
 ```python
-"""DigitalOcean Scheduled Function: My New Job."""
-from packages.shared.config import settings
-from packages.shared.db import factory
-from packages.shared.crud.jobs import JobLockCRUD, JobExecutionCRUD
+"""My new job."""
+
+from __future__ import annotations
+from app.cron.base import BaseJob
 
 
-async def main(args: dict) -> dict:
-    """Scheduled function entry point."""
-    async with factory() as session:
-        # Your job logic here
+class MyNewJob(BaseJob):
+    """Job docstring."""
+
+    JOB_NAME = "my-new-job"
+    LOCKED_BY = "api-my-new-job"
+
+    async def _execute(self, session) -> dict:
+        # Your job logic here. Raise TransientJobError for retryable failures.
         ...
-    return {"statusCode": 200, "body": '{"status": "ok"}'}
+        return {"status": "ok"}
 ```
 
-3. **Register the function** in `backend/project.yml` under the `packages` section with the appropriate `schedule` (cron) trigger.
+2. **Register the job** in [`backend/app/core/scheduler.py`](backend/app/core/scheduler.py:1):
 
-4. **Add config** (schedule, timeout, lock expiry) in [`backend/packages/shared/config.py`](backend/packages/shared/config.py:1).
+```python
+scheduler.add_job(
+    MyNewJob(session_factory).execute,
+    CronTrigger.from_crontab(settings.my_new_job_cron, timezone=settings.cron_timezone),
+    id="my-new-job",
+    name="My new job",
+    replace_existing=True,
+    max_instances=1,
+    coalesce=True,
+)
+```
 
-5. **Write tests** in `backend/tests/unit/test_cron_my_new_job.py`.
+3. **Add config** (cron expression, enabled flag) in
+   [`backend/packages/shared/config.py`](backend/packages/shared/config.py:1).
+
+4. **Write tests** in `backend/tests/unit/test_app_cron_my_new_job.py`.
 
 ### Adding a New API Endpoint
 
-Create a new HTTP function under `backend/packages/api/`:
+Add a new router under `backend/app/api/`:
 
-1. **Create the function directory**: `backend/packages/api/my-feature/`
-
-2. **Implement the entry point** in `backend/packages/api/my-feature/__init__.py`:
+1. **Create the router file** at `backend/app/api/my_feature.py`:
 
 ```python
-"""DigitalOcean Function: My Feature API."""
-from packages.shared.api_helpers import parse_request, segments, response
-from packages.shared.db import factory
+"""My feature API."""
+from fastapi import APIRouter, Depends, Query
+from sqlalchemy.ext.asyncio import AsyncSession
+from app.core.db_deps import get_session
+
+router = APIRouter()
 
 
-async def main(args: dict) -> dict:
-    """DO Function entry point."""
-    method, path, query, body = parse_request(args)
-    segs = segments(path)
-    had_error = False
-
-    async with factory() as session:
-        try:
-            # Route by method + path segments
-            if method == "GET" and segs == []:
-                return await _handle_list(session, query)
-            # Add more routes...
-        except Exception:
-            had_error = True
-            raise
-        finally:
-            from packages.shared.cache import close_redis_pool
-            await close_redis_pool(force=had_error)
-
-    return response(404, {"error": "Not found"})
+@router.get("")
+async def list_items(
+    season: int | None = Query(None, ge=2010, le=2030),
+    session: AsyncSession = Depends(get_session),
+) -> list[dict]:
+    # Your handler here. Use Pydantic models for the response.
+    return []
 ```
 
-3. **Register the function** in `backend/project.yml` under the `packages` section with an `http` trigger (web: true).
+2. **Mount the router** in [`backend/main.py`](backend/main.py:1):
 
-4. **Write tests** in `backend/tests/unit/test_api_my_feature.py`.
+```python
+from app.api.my_feature import router as my_feature_router
+
+app.include_router(my_feature_router, prefix="/api/my-feature", tags=["my-feature"])
+```
+
+3. **Write tests** in `backend/tests/unit/test_app_api_my_feature.py` (use FastAPI's
+   `TestClient` and mock the DB session).
 
 ### Database Changes
 

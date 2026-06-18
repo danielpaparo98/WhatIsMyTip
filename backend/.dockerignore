@@ -1,0 +1,75 @@
+# ──────────────────────────────────────────────────────────────────────
+# .dockerignore — exclude everything not needed in the runtime image.
+#
+# Without this, `COPY . ./` ships the entire repo (including tests,
+# .venv, .env, logs, .git) into the runtime image.  Keep this in sync
+# with `backend/Dockerfile` so test/debug files never end up in prod.
+# ──────────────────────────────────────────────────────────────────────
+
+# Build / cache
+.git/
+.gitignore
+.gitattributes
+.venv/
+venv/
+env/
+.python-version
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.cache/
+
+# Test / debug code
+tests/
+scripts/_*.py
+scripts/_*_test*.py
+list_routes.py
+_f*.py
+
+# Local config
+.env
+.env.*
+!.env.example
+backend/config_test.txt
+backend/deploy_test.txt
+backend/final_full.txt
+backend/final_test.txt
+backend/proxy_test.txt
+backend/routes*.txt
+backend/test_output.txt
+
+# Build artifacts
+dist/
+build/
+.output/
+.nuxt/
+*.log
+logs/
+backend/logs/
+
+# Data / fixtures
+data/
+seed_data/
+*.db
+*.sqlite
+*.sqlite3
+backend/data/
+
+# Frontend
+node_modules/
+frontend/
+
+# Docs
+docs/
+README.md
+LICENSE
+
+# This file
+.dockerignore
+Dockerfile

@@ -16,6 +16,32 @@ from .tip_generation import TipGenerationService
 logger = get_logger(__name__)
 
 
+def derive_default_seasons(current_season: int | None = None) -> List[int]:
+    """Return the default 16-year season window for a historic refresh.
+
+    SEC-LO-003: the previous hard-coded ``range(2010, 2026)`` silently
+    skipped the most-recent season every January 1st.  Deriving from
+    ``settings.current_season`` means the cron job always covers the
+    most-recent 16 AFL seasons automatically.  Operators can still
+    override the range by passing ``seasons=`` to the service
+    constructor or by setting ``HISTORIC_REFRESH_SEASONS`` (which the
+    ``refresh_from_string`` path takes as input).
+
+    Args:
+        current_season: The reference season (exclusive upper bound).
+            When ``None``, the value of ``settings.current_season`` is
+            used.
+
+    Returns:
+        A list of 16 consecutive seasons, ``[current - 16, current)``.
+    """
+    from ..config import settings
+
+    if current_season is None:
+        current_season = settings.current_season
+    return list(range(current_season - 16, current_season))
+
+
 class HistoricDataRefreshService:
     """Service for refreshing historical data from Squiggle API.
 
@@ -39,13 +65,18 @@ class HistoricDataRefreshService:
 
         Args:
             db_session: Database session
-            seasons: List of season years to refresh (defaults to 2010-2025)
+            seasons: List of season years to refresh.  When ``None``,
+                defaults to a 16-year window derived from
+                ``settings.current_season`` (SEC-LO-003).
             round_id: Optional round number to refresh (for partial refresh)
             regenerate_tips: Whether to regenerate existing tips (default: False)
             job_execution_id: Optional job execution ID for tracking
         """
         self.db = db_session
-        self.seasons = seasons or list(range(2010, 2026))
+        # SEC-LO-003: derive the default window from
+        # ``settings.current_season`` so we always cover the most
+        # recent 16 AFL seasons without operator intervention.
+        self.seasons = seasons or derive_default_seasons()
         self.round_id = round_id
         self.regenerate_tips = regenerate_tips
         self.job_execution_id = job_execution_id

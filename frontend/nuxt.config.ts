@@ -37,12 +37,15 @@ export default defineNuxtConfig({
       link: [
         // TODO: Create favicon.ico and uncomment the following line
         // { rel: 'icon', type: 'image/x-icon', href: '/favicon.ico' },
+        // FX-19: preconnect / dns-prefetch the API origin so the first fetch is faster
+        { rel: 'preconnect', href: 'https://api.whatismytip.com' },
+        { rel: 'dns-prefetch', href: 'https://api.whatismytip.com' },
         { rel: 'canonical', href: 'https://whatismytip.com' }
       ],
       script: [
         {
-          src: process.env.UMAMI_HOST ? `${process.env.UMAMI_HOST}/script.js` : '',
-          'data-website-id': process.env.UMAMI_WEBSITE_ID || '',
+          src: process.env.NUXT_PUBLIC_UMAMI_HOST ? `${process.env.NUXT_PUBLIC_UMAMI_HOST}/script.js` : '',
+          'data-website-id': process.env.NUXT_PUBLIC_UMAMI_WEBSITE_ID || '',
           defer: true,
           key: 'umami-analytics'
         },
@@ -78,23 +81,26 @@ export default defineNuxtConfig({
   
   runtimeConfig: {
     public: {
-      // Legacy single-backend URL (used when FaaS URLs are not set)
-      apiBase: process.env.API_BASE_URL || 'http://localhost:8000',
-      umamiHost: process.env.UMAMI_HOST || '',
-      umamiWebsiteId: process.env.UMAMI_WEBSITE_ID || '',
-      siteUrl: process.env.SITE_URL || 'https://whatismytip.com',
+      // Single FastAPI backend base URL (Phase 4: no more per-function
+      // FaaS URLs — the FastAPI app exposes a single base URL and the
+      // backend's /api/... routers handle the rest).  Set via
+      // NUXT_PUBLIC_API_BASE at build time.
+      //
+      // All client-side env vars use the NUXT_PUBLIC_* prefix so they
+      // are exposed to the browser by Nuxt's runtime config.  See
+      // frontend/.env.example for the canonical list.  Fix CR-002/003.
+      apiBase: process.env.NUXT_PUBLIC_API_BASE || 'http://localhost:8000',
+      umamiHost: process.env.NUXT_PUBLIC_UMAMI_HOST || '',
+      umamiWebsiteId: process.env.NUXT_PUBLIC_UMAMI_WEBSITE_ID || '',
+      siteUrl: process.env.NUXT_PUBLIC_SITE_URL || 'https://whatismytip.com',
       buyMeACoffeeUrl: process.env.NUXT_PUBLIC_BUY_ME_A_COFFEE_URL || '',
-      // FaaS function URLs — set these to enable FaaS routing mode.
-      // When any FaaS URL is configured, API calls are routed to the
-      // correct function instead of the monolithic apiBase.
-      // Example: https://faas.sfo3.digitalocean.com/{namespace}/api/games
-      gamesFnUrl: process.env.NUXT_PUBLIC_GAMES_FN_URL || '',
-      tipsFnUrl: process.env.NUXT_PUBLIC_TIPS_FN_URL || '',
-      backtestFnUrl: process.env.NUXT_PUBLIC_BACKTEST_FN_URL || '',
-      adminFnUrl: process.env.NUXT_PUBLIC_ADMIN_FN_URL || '',
     }
   },
   
+  // NOTE: `nitro.preset = 'static'` means the build must run `nuxt generate`
+  // (pre-render every route to HTML) — NOT `nuxt build` (SSR/Node server).
+  // The `package.json` `build` script is therefore wired to `nuxt generate`
+  // so `bun run build` actually produces the static site.  See Fix CR-001.
   nitro: {
     preset: 'static'
   }

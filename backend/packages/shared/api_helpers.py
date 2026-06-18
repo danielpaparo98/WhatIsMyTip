@@ -71,37 +71,11 @@ def parse_request(args: dict) -> tuple:
     return method, path, query, body, headers
 
 
-def verify_api_key(headers: dict, query: dict | None = None, body: dict | None = None) -> bool:
-    """Verify the API key from request headers, query params, or body.
-
-    Uses secrets.compare_digest() for timing-attack resistance.
-
-    Args:
-        headers: Request headers dict.
-        query: Optional query parameters dict.
-        body: Optional request body dict.
-
-    Returns:
-        True if the API key matches the configured ADMIN_API_KEY.
-    """
-    api_key: Optional[str] = None
-
-    # Check headers (case-insensitive via lower() comparison)
-    if headers:
-        api_key = headers.get("x-api-key") or headers.get("X-Api-Key")
-
-    # Check query params
-    if not api_key and query:
-        api_key = query.get("api_key")
-
-    # Check body
-    if not api_key and body:
-        api_key = body.get("api_key")
-
-    if not api_key or not settings.admin_api_key:
-        return False
-
-    return secrets.compare_digest(api_key, settings.admin_api_key)
+# SEC-LO-001: the legacy `verify_api_key` helper was removed.  It
+# accepted the API key from the query string and the request body,
+# which is dangerous because the value ends up in nginx access logs,
+# server-side request logs, and browser history.  The header-only
+# `app.core.security.verify_api_key` should be used instead.
 
 
 def _resolve_cors_origin(request_args: dict | None = None) -> str:
@@ -111,18 +85,18 @@ def _resolve_cors_origin(request_args: dict | None = None) -> str:
     origins list. Returns the matching origin or '*' if no match / no
     configured origins.
     """
+    allowed_origins = settings.cors_origins
     if not request_args:
-        return settings.cors_origins[0] if settings.cors_origins else "*"
+        return allowed_origins[0] if allowed_origins else "*"
 
     headers = request_args.get("__ow_headers", {}) or {}
     request_origin = headers.get("origin") or headers.get("Origin", "")
 
     if request_origin:
-        allowed = settings.cors_origins_list
-        if allowed and request_origin in allowed:
+        if allowed_origins and request_origin in allowed_origins:
             return request_origin
 
-    return settings.cors_origins[0] if settings.cors_origins else "*"
+    return allowed_origins[0] if allowed_origins else "*"
 
 
 def response(
@@ -139,8 +113,14 @@ def response(
         data: Response body data (used when no error).
         error: Error message string.
         request_args: Original DO Function args (used for CORS origin matching).
-        allowed_methods: CORS Allow-Methods value. Defaults to
-            ``["GET", "POST", "OPTIONS"]`` for backward compatibility.
+        allowed_methods: CORS Allow-Methods value.  When ``None`` (the
+            default), the response advertises ``["OPTIONS"]`` only —
+            preflight only, no actual data operations.  SEC-LO-001
+            removes the legacy ``["GET", "POST", "OPTIONS"]`` wildcard
+            default so a misconfigured route that forgets to pass an
+            explicit list is safe by default: the browser will reject
+            non-OPTIONS methods via the
+            ``Access-Control-Allow-Methods`` header.
     """
     body = {}
     if error:
@@ -149,7 +129,9 @@ def response(
         body = data
 
     origin = _resolve_cors_origin(request_args)
-    methods = ", ".join(allowed_methods or ["GET", "POST", "OPTIONS"])
+    # SEC-LO-001: default to preflight-only.  Callers that serve data
+    # must opt in explicitly with ``allowed_methods=["GET", "POST", ...]``.
+    methods = ", ".join(allowed_methods or ["OPTIONS"])
 
     headers = {
         "Content-Type": "application/json",

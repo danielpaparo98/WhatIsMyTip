@@ -61,7 +61,10 @@ class WeatherClient:
     }
 
     def __init__(self) -> None:
-        self.client = httpx.AsyncClient(timeout=30.0)
+        # SEC-LO-007: explicit `verify=True` so a future change to
+        # httpx's default (or a deployment env that strips the CA
+        # bundle) cannot silently disable TLS verification.
+        self.client = httpx.AsyncClient(timeout=30.0, verify=True)
 
     async def close(self) -> None:
         """Close the underlying HTTP client."""

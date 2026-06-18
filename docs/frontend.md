@@ -9,6 +9,7 @@ The WhatIsMyTip frontend is a Nuxt 4 application with a monochrome bold typograp
 ```
 frontend/
 ├── app.vue                    # Root component
+├── error.vue                  # Error boundary
 ├── nuxt.config.ts             # Nuxt configuration
 ├── package.json               # Node dependencies
 ├── assets/
@@ -18,13 +19,28 @@ frontend/
 │   ├── Header.vue             # Site header with navigation
 │   ├── Footer.vue             # Site footer
 │   ├── GameCard.vue           # Game display component
-│   └── TipCard.vue            # Tip display component
+│   ├── TipCard.vue            # Tip display component
+│   ├── MatchAnalysisCard.vue  # Pre-game analysis breakdown
+│   ├── WeatherCard.vue        # Match-day weather widget
+│   ├── AccuracyChart.vue      # Heuristic accuracy over time
+│   ├── ProfitChart.vue        # Per-bet profit curve
+│   └── CumulativeProfitChart.vue  # Bankroll growth curve
 ├── composables/               # Vue composables
-│   └── useApi.ts              # API communication composable
-└── pages/                     # Page routes
-    ├── index.vue              # Home page with tips
-    ├── about.vue              # About page
-    └── backtest.vue           # Backtesting results page
+│   ├── useApi.ts              # API communication composable
+│   ├── useChartTheme.ts       # Shared chart.js theme/options
+│   ├── useFormatters.ts       # Currency / percentage / date helpers
+│   └── useTeamLogos.ts        # Resolve team logo paths
+├── layouts/
+│   └── default.vue            # Default page layout
+├── pages/                     # Page routes
+│   ├── index.vue              # Home page with tips
+│   ├── about.vue              # About page
+│   ├── backtest.vue           # Backtesting results page
+│   └── game/
+│       └── [slug].vue         # Per-game detail page
+├── public/                    # Static assets (team logos, robots.txt, sitemap.xml)
+└── tests/                     # Playwright end-to-end tests
+    └── game-detail-flow.spec.ts
 ```
 
 ## Dependencies
@@ -35,10 +51,13 @@ This project uses **bun** for JavaScript/TypeScript dependency management. The d
 
 - **nuxt** (^4.0.0) - Full-stack Vue.js framework with SSR
 - **@nuxtjs/tailwindcss** (^6.12.0) - Tailwind CSS integration
+- **chart.js** (^4.5.1) - Chart rendering engine
+- **vue-chartjs** (^5.3.3) - Vue 3 wrapper around chart.js
 
 ### Development Dependencies
 
 - **@nuxt/eslint** (^0.7.0) - ESLint integration
+- **@playwright/test** (^1.58.2) - End-to-end browser tests
 - **typescript** (^5.7.0) - TypeScript support
 - **@tailwindcss/forms** (^0.5.9) - Form styling utilities
 
@@ -78,11 +97,11 @@ The frontend uses environment variables for configuration:
 # Local development
 API_BASE_URL=http://localhost:8000
 
-# Production (DigitalOcean Functions gateway)
-API_BASE_URL=https://faas.syd1.digitaloceanspaces.com/<namespace>
+# Production (FastAPI container behind nginx)
+API_BASE_URL=https://whatismytip.com/api
 ```
 
-The backend API is served by DigitalOcean Functions. In production, `API_BASE_URL` should point to the DO Functions gateway URL (e.g., `https://faas.syd1.digitaloceanspaces.com/<namespace>`).
+The backend API is served by a single FastAPI container behind an nginx reverse proxy. In production, `API_BASE_URL` should point at the public domain (e.g., `https://whatismytip.com/api`).
 
 ## Design System
 
@@ -211,7 +230,7 @@ The frontend communicates with the backend API using the `useApi` composable.
 
 ### Base URL
 
-Default: `http://localhost:8000` (development) or `https://faas.syd1.digitaloceanspaces.com/<namespace>` (production)
+Default: `http://localhost:8000` (development) or `https://whatismytip.com/api` (production)
 
 Configured via the `API_BASE_URL` environment variable. In production, this points to the DO Functions gateway URL.
 

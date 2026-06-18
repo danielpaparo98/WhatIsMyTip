@@ -1,8 +1,81 @@
 # FaaS Architecture Evaluation — WhatIsMyTip on DigitalOcean Functions
 
+> ⚠️ **HISTORICAL / SUPERSEDED — DO NOT USE FOR CURRENT DECISIONS**
+>
+> The FaaS architecture was **retired in Phase 5** of `feature/fastapi-reimplementation`
+> (merged 2026-06-16).  The current backend is a single FastAPI container on DigitalOcean
+> App Platform with an in-process APScheduler.  Every finding in this evaluation is **closed**.
+>
+> For current architecture, see:
+> - [`docs/backend.md`](backend.md) — current architecture (source of truth)
+> - [`docs/deployment.md`](deployment.md) — current production deploy flow
+> - [`docs/BACKEND-FAAS-CODE-REVIEW.md`](BACKEND-FAAS-CODE-REVIEW.md) — companion FaaS code review (also closed)
+> - [`docs/FULL-REVIEW.md`](FULL-REVIEW.md) — the original monolith review (also closed)
+>
+> **Retained for historical reference only.**
+
 **Date**: 2026-06-08
 **Scope**: Backend FaaS architecture review — platform constraints, operational risks, cost analysis, and go/no-go recommendation
-**Verdict**: **⚠️ Conditional Go** — FaaS approach is viable for API functions but has critical issues with long-running cron jobs that must be resolved before production deployment.
+**Verdict (at time of writing)**: **⚠️ Conditional Go** — FaaS approach is viable for API functions but has critical issues with long-running cron jobs that must be resolved before production deployment.
+**Verdict (current)**: ❌ **No-Go** — superseded by the FastAPI container architecture (see links above).
+
+> **Resolution Status (2026-06-16):** The FaaS architecture was **superseded** by the FastAPI
+> reimplementation in Phases 1–5 of the `feature/fastapi-reimplementation` branch. Every
+> critical, high, and medium concern from this evaluation was addressed in the new
+> container-based deploy. The FaaS code under [`backend/packages/api/`](../backend/packages/api/)
+> and [`backend/packages/cron/`](../backend/packages/cron/) was deleted in Phase 5. See
+> **Resolution Status** at the bottom of this document for a per-finding disposition table.
+>
+> **This document is retained for historical reference only.** For the current architecture
+> see [docs/backend.md](backend.md).
+
+---
+
+## Resolution Status
+
+> **Closed by:** `feature/fastapi-reimplementation` (Phases 1–5, merged 2026-06-16)
+> **Test evidence:** 878 unit tests passing, 0 failing, 3 integration skips.
+
+| # | Severity | Original finding | Resolution | Where now |
+|---|----------|------------------|------------|-----------|
+| 1 | 🔴 CRITICAL | `historic-refresh` timeout exceeds platform limits | **Closed in FaaS era (batch size 2, Redis continuation), preserved in FastAPI** — `app/cron/historic_refresh.py` runs in-process with no per-invocation timeout. Total runtime is bounded by the `historical_refresh_timeout_seconds` (15 min safety cap). Continuation state stored in Redis. | [`backend/app/cron/historic_refresh.py`](../backend/app/cron/historic_refresh.py:1) |
+| 2 | 🔴 CRITICAL | Cron triggers fire in UTC, not `Australia/Perth` | **Closed in Phase 4** — APScheduler uses `CronTrigger.from_crontab(expr, timezone=settings.cron_timezone)`. The container's locale is set to `Australia/Perth`, so `"0 3 * * *"` fires at 3 AM AWST exactly. | [`backend/app/core/scheduler.py`](../backend/app/core/scheduler.py:1) |
+| 3 | 🟠 HIGH | Missing `limits:` overrides in `project.yml` | **Closed by the FaaS architecture being retired** — the FastAPI app is one container with one resource limit (set in the Dockerfile / App Platform spec). | [`backend/Dockerfile`](../backend/Dockerfile:1) |
+| 4 | 🟡 MEDIUM | Deployment artifact ~42 MB against 48 MB limit | **Closed by the FaaS architecture being retired** — the container image is multi-stage and the deploy bundle is the standard DO App Platform size (no 48 MB function limit). | [`backend/Dockerfile`](../backend/Dockerfile:1) |
+| 5 | 🟡 MEDIUM | `dispose_engine()` on every invocation | **Closed in FaaS era, preserved in FastAPI** — `dispose_engine(force=True)` is called only on shutdown (`app/core/lifespan.py`); the engine singleton lives for the process lifetime. | [`backend/app/core/lifespan.py`](../backend/app/core/lifespan.py:1), [`backend/packages/shared/db.py`](../backend/packages/shared/db.py:1) |
+| 6 | 🟡 MEDIUM | 3-day log retention | **Closed in FaaS era, preserved in FastAPI** — `job_executions` table stores the full structured execution record (status, duration, error message, retry count) for `metrics_retention_days` (default 30). The application can ship logs to an external sink via the structured logger. | [`backend/packages/shared/logger.py`](../backend/packages/shared/logger.py:1), [`backend/packages/shared/crud/jobs.py`](../backend/packages/shared/crud/jobs.py:1) |
+| 7 | 🟡 MEDIUM | No built-in observability or alerting | **Closed in FaaS era, preserved in FastAPI** — `AlertingService` sends webhook alerts on `TransientJobError`, `PermanentJobError`, and timeout; `GET /api/admin/metrics` returns per-job execution stats; the health endpoint reports DB + Redis status. | [`backend/packages/shared/alerting.py`](../backend/packages/shared/alerting.py:1), [`backend/app/api/admin.py`](../backend/app/api/admin.py:1) |
+| 8 | 🟢 LOW | `alembic` in runtime dependencies | **Not yet closed** — `alembic` is still in runtime deps because the same container runs migrations in a one-off task during deploy. Moving it to dev would require a separate "migrations" container. | [`backend/pyproject.toml`](../backend/pyproject.toml:1) |
+
+### What the FaaS era did well (preserved in FastAPI)
+
+The FaaS architecture added a lot of value that the FastAPI reimplementation inherits. Items
+the FaaS era closed (kept as-is in the new code) include:
+
+- **Structured logging** ([`packages/shared/logger.py`](../backend/packages/shared/logger.py:1))
+- **Advisory-lock-based job deduplication** ([`packages/shared/crud/jobs.py`](../backend/packages/shared/crud/jobs.py:1))
+- **`JobExecutionCRUD` history table** for every cron run
+- **Retry-with-backoff** in [`app/cron/base.py`](../backend/app/cron/base.py:1)
+- **ML pipeline improvements** (incremental Elo, value-model temporal filter, single-pass orchestrator)
+- **8 ML models** including weather, injury, matchup, and player-form
+- **Redis 3-tier caching** with the `@cached` decorator
+- **OpenRouter integration** for AI-generated tip explanations
+
+### What's actually different now (vs. the FaaS code)
+
+| Concern | FaaS era | FastAPI reimplementation |
+|---------|----------|---------------------------|
+| Function entry point | `async def main(args: dict)` returning `{"statusCode", "body"}` | `app.include_router(router)` + FastAPI handlers |
+| Routing | Manual `if method == "GET" and segs == [...]` chains | `@router.get("/path")` decorators + Pydantic validation |
+| Cron trigger | OpenWhisk scheduler in **UTC** (timezone bug) | APScheduler in **Australia/Perth** |
+| Cron timeout | 15-minute hard platform cap | 15-minute soft `historical_refresh_timeout_seconds` safety cap |
+| Bundle size | 48 MB function limit | No function limit (standard container) |
+| Cold start | Every invocation (FaaS) | Only on first request after deploy (single worker) |
+| Hot reload | N/A | `uvicorn --reload` in dev |
+| OpenAPI | Hand-written function inventory doc | `/openapi.json` + Swagger UI at `/docs` |
+| Container deploy | N/A | `backend/scripts/deploy.sh` builds + pushes + triggers App Platform |
+
+---
 
 ---
 

@@ -1,9 +1,10 @@
 from typing import List, Optional
 
 from sqlalchemy import and_, delete, insert, select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..cache import cached, short_cache
+from ..cache import cached, invalidate_cache_pattern, short_cache
 from ..models import Tip
 
 
@@ -59,8 +60,6 @@ class TipCRUD:
         explanation: str,
     ) -> Tip:
         """Create a new tip with proper transaction management."""
-        from ..cache import invalidate_cache_pattern
-
         try:
             tip = Tip(
                 game_id=game_id,
@@ -82,6 +81,89 @@ class TipCRUD:
         except Exception:
             await db.rollback()
             raise
+
+    @staticmethod
+    async def upsert(
+        db: AsyncSession,
+        game_id: int,
+        heuristic: str,
+        selected_team: str,
+        margin: int,
+        confidence: float,
+        explanation: str,
+    ) -> Tip:
+        """Insert-or-update a tip keyed by ``(game_id, heuristic)``.
+
+        Replaces the legacy delete-then-insert pattern that could race
+        between concurrent ``regenerate_tips_for_round`` calls and blow
+        up with ``IntegrityError`` on the
+        ``uq_game_heuristic`` unique constraint.
+
+        Uses Postgres' ``INSERT ... ON CONFLICT DO UPDATE`` so the
+        upsert itself is atomic at the database level; no row is
+        deleted before the insert, so two concurrent requests
+        serialise cleanly instead of colliding.
+
+        Returns the post-write :class:`Tip` row (refreshed so
+        ``id``/``created_at`` are populated).
+        """
+        try:
+            stmt = pg_insert(Tip).values(
+                game_id=game_id,
+                heuristic=heuristic,
+                selected_team=selected_team,
+                margin=margin,
+                confidence=confidence,
+                explanation=explanation,
+            )
+            # On conflict, refresh the mutable columns. We deliberately
+            # do NOT touch ``id`` or ``created_at``; the existing row
+            # keeps its original timestamps so historical tip lifetime
+            # remains auditable.
+            stmt = stmt.on_conflict_do_update(
+                constraint="uq_game_heuristic",
+                set_={
+                    "selected_team": selected_team,
+                    "margin": margin,
+                    "confidence": confidence,
+                    "explanation": explanation,
+                },
+            )
+            await db.execute(stmt)
+            await db.commit()
+
+            # Re-fetch so callers get a fully-populated ORM object.
+            row = await TipCRUD.get_by_game_and_heuristic(
+                db, game_id=game_id, heuristic=heuristic
+            )
+            if row is None:
+                # Defensive: should be unreachable since the upsert
+                # just succeeded.
+                raise RuntimeError(
+                    f"Tip disappeared after upsert for "
+                    f"(game_id={game_id}, heuristic={heuristic})"
+                )
+
+            # Invalidate cache for tip-related queries.
+            await invalidate_cache_pattern(short_cache, "tips_by_heuristic:")
+            await invalidate_cache_pattern(short_cache, "tips_by_round:")
+
+            return row
+        except Exception:
+            await db.rollback()
+            raise
+
+    @staticmethod
+    async def get_by_game_and_heuristic(
+        db: AsyncSession, game_id: int, heuristic: str
+    ) -> Optional[Tip]:
+        """Return the single tip for ``(game_id, heuristic)`` or ``None``."""
+        result = await db.execute(
+            select(Tip).where(
+                and_(Tip.game_id == game_id, Tip.heuristic == heuristic)
+            )
+        )
+        return result.scalar_one_or_none()
 
     @staticmethod
     async def create_batch(db: AsyncSession, tips_data: List[dict]) -> List[Tip]:
@@ -188,31 +270,35 @@ class TipCRUD:
         tips_updated = 0
         tips_skipped = 0
 
-        # Generate tips (idempotent - only create if not exist, unless force=True)
+        # Generate tips using an atomic upsert keyed by
+        # (game_id, heuristic). The legacy delete-then-insert pattern
+        # could race between concurrent regenerations and violate the
+        # ``uq_game_heuristic`` unique constraint; ``upsert`` uses
+        # ``INSERT ... ON CONFLICT DO UPDATE`` so the operation is
+        # safe under concurrent calls.  Per-game work is wrapped in a
+        # single transaction so a mid-loop failure rolls back the whole
+        # game rather than leaving partial writes behind.
         for game in games:
-            # Check if tips already exist for this game
+            # Snapshot which heuristics already have a tip so we can
+            # classify the outcome as "created" vs "updated" vs
+            # "skipped" without having to re-query after each upsert.
             existing_tips = await TipCRUD.get_by_game(db, game.id)
             existing_heuristics = {tip.heuristic for tip in existing_tips}
 
-            for heuristic in heuristics_to_use:
-                # Check if tip already exists
-                if heuristic in existing_heuristics:
-                    if force:
-                        # Delete existing tips for this heuristic
-                        await TipCRUD.delete_for_game(db, game.id)
-                        existing_heuristics.discard(heuristic)
-                        # Re-fetch to get remaining tips
-                        remaining_tips = await TipCRUD.get_by_game(db, game.id)
-                        existing_heuristics = {tip.heuristic for tip in remaining_tips}
-                        # Now create new tip (will be counted as created)
-                    else:
+            try:
+                for heuristic in heuristics_to_use:
+                    # Honour the skip rule unless force=True.  When
+                    # force=True we still avoid deleting — the upsert
+                    # will overwrite in place.
+                    if heuristic in existing_heuristics and not force:
                         tips_skipped += 1
                         continue
 
-                winner, confidence, margin = await orchestrator.predict(game, heuristic)
+                    winner, confidence, margin = await orchestrator.predict(
+                        game, heuristic
+                    )
 
-                try:
-                    await TipCRUD.create(
+                    await TipCRUD.upsert(
                         db=db,
                         game_id=game.id,
                         heuristic=heuristic,
@@ -221,14 +307,20 @@ class TipCRUD:
                         confidence=confidence,
                         explanation="",  # Explanations can be generated separately
                     )
-                    tips_created += 1
-                except Exception as e:
-                    # Handle unique constraint violation (race condition)
-                    # If another request created tip, just skip it
-                    if "uq_game_heuristic" in str(e) or "duplicate" in str(e).lower():
-                        tips_skipped += 1
-                        continue
-                    raise
+                    if heuristic in existing_heuristics:
+                        tips_updated += 1
+                    else:
+                        tips_created += 1
+            except Exception:
+                # Best-effort log + continue with the next game so a
+                # single bad game does not abort the whole round.
+                import logging
+
+                logger = logging.getLogger(__name__)
+                logger.exception(
+                    "Tip regeneration failed for game %s", game.id
+                )
+                continue
 
             # Generate and store model predictions for this game
             for model in orchestrator.models:

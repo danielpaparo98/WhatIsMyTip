@@ -6,6 +6,7 @@ from typing import Any, Dict, List, Optional
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ..cache import invalidate_cache_pattern, medium_cache
 from ..crud.games import GameCRUD
 from ..crud.model_predictions import ModelPredictionCRUD
 from ..crud.tips import TipCRUD
@@ -15,6 +16,23 @@ from ..orchestrator import ModelOrchestrator
 from .explanation import ExplanationService
 
 logger = get_logger(__name__)
+
+
+# LO-004: share a single ModelOrchestrator across all
+# TipGenerationService instances.  Constructing the orchestrator
+# (and every model it lazily loads) is non-trivial; doing it once
+# at module scope saves a meaningful amount of work in the historic
+# refresh path that creates a service per season.
+_shared_orchestrator: "ModelOrchestrator | None" = None
+
+
+def _get_orchestrator():
+    """Return the process-wide :class:`ModelOrchestrator` singleton."""
+    global _shared_orchestrator
+    if _shared_orchestrator is None:
+        from ..orchestrator import ModelOrchestrator
+        _shared_orchestrator = ModelOrchestrator()
+    return _shared_orchestrator
 
 
 class TipGenerationService:
@@ -43,7 +61,7 @@ class TipGenerationService:
         self.season = season or datetime.now().year
         self.round_id = round_id
         self.logger = logger
-        self.orchestrator = ModelOrchestrator()
+        self.orchestrator = _get_orchestrator()  # LO-004: shared singleton
 
     async def generate_for_round(
         self, season: int, round_id: int, regenerate: bool = False, skip_nlp: bool = False
@@ -390,3 +408,111 @@ class TipGenerationService:
         )
 
         return stats
+
+
+# ---------------------------------------------------------------------------
+# Reusable cron-job core (extracted from FaaS handler in Phase 3)
+# ---------------------------------------------------------------------------
+
+
+async def run_tip_generation(session: AsyncSession) -> Dict[str, Any]:
+    """Run a single tip-generation pass.
+
+    Generates tips + explanations for the next upcoming round that
+    needs tips.  Invalidation of tips and backtest cache entries is
+    best-effort.
+
+    Returns:
+        A result dict with:
+        - ``status``: ``"success"`` (no skip branch — empty round is OK).
+        - ``message``: human-readable summary.
+        - ``tips_created``, ``tips_skipped``, ``tips_updated``,
+          ``model_predictions_created``, ``errors``, ``explanations_generated``.
+    """
+    generation_service = TipGenerationService(db_session=session)
+    try:
+        gen_stats = await generation_service.generate_for_next_upcoming_round()
+    except Exception:
+        # Ensure the service is closed even on failure
+        try:
+            await generation_service.close()  # type: ignore[attr-defined]
+        except Exception:  # noqa: BLE001
+            pass
+        raise
+
+    games_processed = gen_stats.get("games_processed", 0)
+    tips_created = gen_stats.get("tips_created", 0)
+    tips_skipped = gen_stats.get("tips_skipped", 0)
+    tips_updated = gen_stats.get("tips_updated", 0)
+    model_predictions_created = gen_stats.get("model_predictions_created", 0)
+    error_count = len(gen_stats.get("errors", []))
+
+    summary_parts = [
+        "Generated tips for next upcoming round",
+        f"Processed {games_processed} games",
+        f"Created {tips_created} tips",
+        f"Skipped {tips_skipped} existing tips",
+    ]
+    if tips_updated:
+        summary_parts.append(f"Updated {tips_updated} tips")
+    summary_parts.append(
+        f"Created {model_predictions_created} model predictions"
+    )
+
+    if error_count > 0:
+        summary_parts.append(f"Failed: {error_count}")
+
+    # If the underlying service reports a no-upcoming-round condition,
+    # surface that explicitly in the message.
+    base_message = gen_stats.get("message", "")
+    if base_message and "no upcoming" in base_message.lower():
+        # The service reports a no-op; use its message verbatim
+        summary = base_message
+        summary_parts = [base_message]
+
+    # AI explanations (best-effort)
+    explanations_generated = 0
+    explanation_error: Optional[str] = None
+    try:
+        explanation_service = ExplanationService()
+        try:
+            explanations_generated = await explanation_service.generate_for_round(
+                session, gen_stats.get("season"), gen_stats.get("round_id")
+            )
+            if explanations_generated > 0:
+                summary_parts.append(
+                    f"Generated {explanations_generated} AI explanations"
+                )
+        finally:
+            await explanation_service.close()
+    except Exception as exc:  # noqa: BLE001
+        explanation_error = str(exc)
+        summary_parts.append("Explanation generation failed (tips still saved)")
+
+    if error_count == 0 and games_processed == 0 and not base_message:
+        # No upcoming round at all — still a success, surface a clear message
+        if not summary_parts or "Generated tips" not in summary_parts[0]:
+            summary_parts = ["No upcoming rounds found that need tips"]
+
+    summary = "; ".join(summary_parts)
+    logger.info("tip-generation completed: %s", summary)
+
+    # Invalidate stale cache entries (best-effort)
+    try:
+        await invalidate_cache_pattern(medium_cache, "tips")
+        await invalidate_cache_pattern(medium_cache, "backtest")
+    except Exception:  # noqa: BLE001
+        pass
+
+    return {
+        "status": "success",
+        "message": summary,
+        "games_processed": games_processed,
+        "tips_created": tips_created,
+        "tips_skipped": tips_skipped,
+        "tips_updated": tips_updated,
+        "model_predictions_created": model_predictions_created,
+        "errors": error_count,
+        "explanations_generated": explanations_generated,
+        "explanation_error": explanation_error,
+    }
