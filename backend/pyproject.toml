@@ -18,6 +18,11 @@ dependencies = [
     "tzdata>=2024.1",
     "beautifulsoup4>=4.12",
     "lxml>=5.0",
+    # SEC-LO-008: defusedxml protects against XML-borne attacks
+    # (billion laughs, quadratic blowup, XXE) when parsing
+    # untrusted XML.  Prefer it over lxml.etree.fromstring for any
+    # external input.
+    "defusedxml>=0.7.1",
     "apscheduler>=3.11.2",
     # Runtime DB tooling.  ``scripts/migrate_and_seed.py`` (run by the
     # ``init-data`` compose service) imports ``alembic`` and uses
