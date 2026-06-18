@@ -30,6 +30,19 @@
 #   # tear it all down (including the database volume):
 #   docker compose down -v
 #
+# SECURITY (SEC-LO-009)
+# ---------------------
+# The ``api`` service ships with a **dev-only** ``ADMIN_API_KEY``
+# default of ``dev_admin_key_change_me`` (clearly marked as a
+# placeholder).  This is **ONLY** intended for local development
+# under ``ENVIRONMENT=development``; the FastAPI lifespan code
+# refuses to start when ``ADMIN_API_KEY`` is unset and
+# ``ENVIRONMENT != development``, so accidentally pointing this
+# compose file at a production deployment without setting a real
+# secret fails closed at boot rather than running with a known
+# admin key.  See ``app/core/lifespan.py`` for the check and
+# ``docs/security.md`` for the full policy.
+#
 # Notes
 # -----
 #   * The user is on Windows + PowerShell; bind-mounts use relative
@@ -130,6 +143,12 @@ services:
       DATABASE_URL: postgresql+asyncpg://wimt:wimt_dev_password@postgres:5432/whatismytip
       REDIS_URL: redis://redis:6379/0
       CORS_ORIGINS: http://localhost:3000,http://localhost:8000
+      # SEC-LO-009: dev-only default.  The FastAPI lifespan
+      # (``app.core.lifespan``) refuses to start the app when this
+      # env var is empty AND ``ENVIRONMENT`` is not ``development``,
+      # so this placeholder cannot accidentally be used in a
+      # production deployment.  See docker-compose.yml header note
+      # for the full policy.
       ADMIN_API_KEY: dev_admin_key_change_me
       ENVIRONMENT: development
       # Disable the in-process APScheduler cron jobs during local dev
