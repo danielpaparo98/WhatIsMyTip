@@ -11,6 +11,7 @@ Three middlewares are exported:
 from __future__ import annotations
 
 import json
+import secrets
 import uuid
 from typing import Awaitable, Callable
 
@@ -25,13 +26,45 @@ from packages.shared.config import settings
 # Security headers
 # ---------------------------------------------------------------------------
 
-# CSP allows the Nuxt frontend's inline <style> tags.
-_DEFAULT_CSP = (
+
+def generate_csp_nonce() -> str:
+    """Return a fresh, URL-safe CSP nonce for per-request inline-style hardening.
+
+    Returns:
+        A 32-character URL-safe base64 string (``[A-Za-z0-9_-]+``) that
+        is safe to embed in a ``Content-Security-Policy`` header source
+        list.  Two calls always return distinct values.
+
+    Note:
+        SEC-ME-006 adds this helper as **structural** support for a
+        future Nuxt-side change.  The current ``_DEFAULT_CSP_TEMPLATE``
+        still ships ``'unsafe-inline'`` for ``style-src`` so the existing
+        Nuxt build (which emits inline ``<style>`` blocks at build time)
+        continues to work without coordination.  When the Nuxt side is
+        updated to read a nonce from the response header / request
+        state, the inline policy can be replaced with
+        ``style-src 'self' 'nonce-{nonce}'`` in one line.  The template
+        below includes a ``{nonce}`` placeholder for that change.
+    """
+    return secrets.token_urlsafe(24)
+
+
+# CSP allows the Nuxt frontend's inline <style> tags.  The ``{nonce}``
+# placeholder is currently replaced with a sentinel by ``_DEFAULT_CSP``
+# below; future SEC-ME-006 work can switch to a per-request nonce in
+# the SecurityHeadersMiddleware ``send_with_headers`` closure without
+# touching this template.
+_DEFAULT_CSP_TEMPLATE = (
     "default-src 'self'; "
-    "img-src 'self' data: https:; "
-    "style-src 'self' 'unsafe-inline'; "
+    "img-src 'self' data:; "  # SEC-ME-006: dropped the ``https:`` wildcard
+    "style-src 'self' 'unsafe-inline' 'nonce-{nonce}'; "
     "script-src 'self'"
 )
+
+# The actual CSP sent today: we use a stable sentinel for ``{nonce}`` so
+# the current static policy is still parsable, but the template above
+# preserves the placeholder for the future per-request swap.
+_DEFAULT_CSP = _DEFAULT_CSP_TEMPLATE.format(nonce="__future__")
 
 _SECURITY_HEADERS: dict[str, str] = {
     "X-Content-Type-Options": "nosniff",
