@@ -1,19 +1,29 @@
-// TypeScript interfaces for game detail response
+// TypeScript interfaces mirroring the backend Pydantic schemas in
+// `backend/packages/shared/schemas/`.  Field-for-field alignment is
+// important so the frontend can safely render null values without
+// crashing (e.g. TBD fixtures with no home_team).  See CR-006 from
+// Phase 2b.  When the Pydantic schema changes, this file must change
+// to match — keep them in sync.
+
+/** Mirrors `GameResponse` in backend/.../schemas/games.py. */
 export interface Game {
   id: number
   slug: string
   squiggle_id: number
   round_id: number
   season: number
-  home_team: string
-  away_team: string
+  // home_team / away_team / venue are nullable in Postgres to support
+  // stub future-fixture rows from the Squiggle feed.
+  home_team: string | null
+  away_team: string | null
   home_score: number | null
   away_score: number | null
-  venue: string
-  date: string
+  venue: string | null
+  date: string | null
   completed: boolean
 }
 
+/** Mirrors `TipResponse` in backend/.../schemas/tips.py. */
 export interface Tip {
   id: number
   game_id: number
@@ -25,6 +35,7 @@ export interface Tip {
   created_at: string
 }
 
+/** Mirrors `ModelPrediction` in backend/.../schemas/games.py. */
 export interface ModelPrediction {
   model_name: string
   winner: string
@@ -32,6 +43,7 @@ export interface ModelPrediction {
   margin: number
 }
 
+/** Mirrors `MatchAnalysisResponse` in backend/.../schemas/match_analysis.py. */
 export interface MatchAnalysis {
   id: number
   game_id: number
@@ -39,17 +51,19 @@ export interface MatchAnalysis {
   created_at: string
 }
 
+/** Mirrors `WeatherResponse` in backend/.../schemas/games.py. */
 export interface Weather {
-  temperature: number
-  precipitation: number
-  wind_speed: number
-  wind_gusts: number
-  wind_direction: number
-  humidity: number
-  weather_code: number
-  data_type: 'historical' | 'forecast'
+  temperature: number | null
+  precipitation: number | null
+  wind_speed: number | null
+  wind_gusts: number | null
+  wind_direction: number | null
+  humidity: number | null
+  weather_code: number | null
+  data_type: string | null
 }
 
+/** Mirrors `GameDetailResponse` in backend/.../schemas/games.py. */
 export interface GameDetailResponse {
   game: Game
   tips: Tip[]
@@ -58,18 +72,23 @@ export interface GameDetailResponse {
   weather: Weather | null
 }
 
+/**
+ * Mirrors the inline shape returned by `/api/tips/games-with-tips`
+ * (a `GameResponse` flattened with its best-bet `tip` and any
+ * `model_predictions`).  See backend/.../api/tips.py.
+ */
 export interface GameWithTip {
   id: number
   slug: string
   squiggle_id: number
   round_id: number
   season: number
-  home_team: string
-  away_team: string
+  home_team: string | null
+  away_team: string | null
   home_score: number | null
   away_score: number | null
-  venue: string
-  date: string
+  venue: string | null
+  date: string | null
   completed: boolean
   tip: Tip | null
   model_predictions: ModelPrediction[]

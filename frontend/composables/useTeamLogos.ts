@@ -35,7 +35,14 @@ const TEAM_LOGOS: Record<string, string> = {
 }
 
 export function useTeamLogos() {
-  const getLogoUrl = (teamName: string): string => {
+  /**
+   * Resolve a team name to its public logo URL.
+   * Accepts `null`/`undefined` and returns an empty string so callers
+   * can safely bind the result to `<img :src="…">` without a runtime
+   * TypeError.
+   */
+  const getLogoUrl = (teamName: string | null | undefined): string => {
+    if (!teamName) return ''
     const filename = TEAM_LOGOS[teamName] || ''
     return filename ? `/logos/${filename}` : ''
   }
