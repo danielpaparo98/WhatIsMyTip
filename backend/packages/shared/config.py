@@ -51,6 +51,21 @@ class Settings(BaseSettings):
     cron_enabled: bool = True
     cron_timezone: str = "Australia/Perth"
 
+    # Database connection pool configuration (ME-005).
+    # All three values are read from environment variables:
+    #   DB_POOL_SIZE       (default 5)
+    #   DB_MAX_OVERFLOW    (default 10)
+    #   DB_POOL_TIMEOUT    (default 30 seconds)
+    # Defaults are larger than the historic hard-coded values
+    # (2 + 3 = 5) so the app can absorb a brief traffic spike
+    # without saturating the pool.
+    db_pool_size: int = 5
+    db_max_overflow: int = 10
+    db_pool_timeout: int = 30
+
+    # --- Phase 3 in-process APScheduler cron expressions ---
+    cron_timezone: str = "Australia/Perth"
+
     # --- Phase 3 in-process APScheduler cron expressions ---
     # The FastAPI app uses these directly via ``app.core.scheduler``.
     # The values are in AWST (the scheduler's timezone).
@@ -63,6 +78,13 @@ class Settings(BaseSettings):
     current_season: int = Field(default_factory=_default_season)
     daily_sync_enabled: bool = True
     daily_sync_timeout_seconds: int = 3600  # 1 hour
+
+    # Off-season daily-sync run window (hours, 24h clock) (LO-008).
+    # During the AFL off-season the once-daily sync still runs but
+    # only between these two hours so the production noise is
+    # bounded.  Defaults to 02:00-04:00 local time.
+    daily_sync_off_season_start_hour: int = 2
+    daily_sync_off_season_end_hour: int = 4
 
     # Match Completion Detector
     match_completion_buffer_minutes: int = 60  # 1 hour buffer

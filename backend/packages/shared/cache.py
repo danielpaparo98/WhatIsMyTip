@@ -189,13 +189,19 @@ def _make_cache_key(func_id: str, args: tuple, kwargs: dict) -> str:
     Filters out non-serializable arguments (e.g. AsyncSession objects)
     that should not be part of the cache key.
 
+    The hash algorithm is :func:`hashlib.blake2b` with a 16-byte digest
+    (32 hex characters).  blake2b is used instead of MD5 because it is
+    cryptographically stronger while still being very fast; MD5's
+    collision resistance is no longer considered safe and there is no
+    reason to keep using it for non-security cache keys.
+
     Args:
         func_id: Function identifier (prefix + name).
         args: Positional arguments (already excluding self/db session).
         kwargs: Keyword arguments.
 
     Returns:
-        MD5 hex digest string for use as a cache key.
+        32-character hex digest string for use as a cache key.
     """
     # Filter out non-serializable positional args (sessions, None)
     filtered_args = tuple(a for a in args if not isinstance(a, (AsyncSession, type(None))))
@@ -207,7 +213,7 @@ def _make_cache_key(func_id: str, args: tuple, kwargs: dict) -> str:
 
     # Build a deterministic string representation
     key_data = f"{func_id}:{filtered_args}:{sorted(filtered_kwargs.items())}"
-    return hashlib.md5(key_data.encode()).hexdigest()
+    return hashlib.blake2b(key_data.encode(), digest_size=16).hexdigest()
 
 
 def cached(
@@ -215,6 +221,7 @@ def cached(
     key_prefix: str = "",
     ttl: Optional[float] = None,
     serializer: Optional[Callable[[Any], Any]] = None,
+    skip_first_arg: bool = True,
 ):
     """
     Decorator for caching async function results in Redis.
@@ -229,6 +236,14 @@ def cached(
             SQLAlchemy ORM instances or any other value that is not
             directly JSON-serializable.  The caller still receives the
             ORIGINAL return value; only the cached copy is serialized.
+        skip_first_arg: When ``True`` (default) the first positional
+            argument is excluded from the cache key.  This matches the
+            common pattern of a decorated method whose first arg is
+            ``self`` or a database session — both of which are either
+            non-deterministic (memory addresses of sessions) or constant
+            for the lifetime of a request.  Set to ``False`` for module
+            level functions where every argument should influence the
+            key.
 
     Example:
         @cached(
@@ -243,9 +258,11 @@ def cached(
     def decorator(func: Callable) -> Callable:
         @wraps(func)
         async def async_wrapper(*args, **kwargs):
-            # Build cache key from function name and arguments
-            # Skip first arg (typically db session) to avoid non-deterministic memory addresses
-            cache_args = args[1:] if args else ()
+            # Build cache key from function name and arguments.
+            # ``skip_first_arg`` controls whether the first positional
+            # argument participates in the key.  The default of ``True``
+            # matches the historic behaviour (skip ``self`` / ``db``).
+            cache_args = args[1:] if skip_first_arg and args else args
             cache_key = _make_cache_key(f"{key_prefix}{func.__name__}", cache_args, kwargs)
 
             # Try to get from cache

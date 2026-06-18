@@ -563,7 +563,53 @@ class TestRunModelBacktest:
         # Should complete without error (predictions list will be empty)
         assert result == []
 
+    @pytest.mark.asyncio
+    async def test_model_predict_error_is_logged(self, service):
+        """ME-006: a failing model.predict() must call logger.exception
+        so silent regressions are no longer possible."""
+        mock_db = AsyncMock()
 
-# (FaaS-era TestModelCompareAPIEndpoint removed in Phase 5 — replaced by
+        games_result = MagicMock()
+        game1 = _FakeGame(1, 1, 2025, "Brisbane", "Collingwood", 100, 80)
+        games_result.scalars.return_value.all.return_value = [game1]
+
+        existing_result = MagicMock()
+        existing_result.all.return_value = []
+
+        call_count = 0
+
+        def mock_execute(stmt):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return games_result
+            return existing_result
+
+        mock_db.execute = AsyncMock(side_effect=mock_execute)
+
+        # Make model.predict raise an error
+        service.orchestrator.models[0].predict = AsyncMock(
+            side_effect=Exception("DB connection failed")
+        )
+
+        service.compare_models = AsyncMock(return_value=[])
+
+        with patch("packages.shared.services.backtest.ModelPredictionCRUD"), \
+             patch("packages.shared.services.backtest.logger") as mock_logger:
+            result = await service.run_model_backtest(mock_db, 2025)
+
+        # Backtest should still complete (predictions list is empty)
+        assert result == []
+        # ME-006: the swallowed exception must be logged via
+        # ``logger.exception`` so operators see why the prediction
+        # was skipped.
+        assert mock_logger.exception.call_count >= 1, (
+            "ME-006: a swallowed prediction error must be logged "
+            "via logger.exception so silent regressions are visible."
+        )
+
+
+
+# (FaaS-era TestModelCompareAPIEndpoint removed in Phase 5 ï¿½ replaced by
 # test_app_api_backtest.py, which exercises the same coverage through
 # the FastAPI TestClient.)

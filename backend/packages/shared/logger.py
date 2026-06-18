@@ -21,6 +21,15 @@ from .config import settings
 class JsonFormatter(logging.Formatter):
     """Emit each log record as a single-line JSON object.
 
+    Note (LO-002)
+    ------------
+    This formatter does NOT redact PII.  The application is expected
+    to scrub sensitive fields (``email``, ``password``, ``token``,
+    etc.) before passing them to ``logger.*`` so they never reach
+    the log stream.  A future hardening pass may apply a
+    configurable allow-list of fields to mask here.
+
+
     Standard fields: ``timestamp``, ``level``, ``logger``, ``message``.
     Any ``extra`` fields passed to the log call are merged into the object.
     """

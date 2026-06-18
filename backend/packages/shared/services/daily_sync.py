@@ -19,17 +19,19 @@ from ..cache import invalidate_cache_pattern, medium_cache
 from ..config import settings
 from ..logger import get_logger
 from ..models_ml.elo import EloModel
-from .game_sync import GameSyncService
 from ..squiggle import SquiggleClient
+from .game_sync import GameSyncService
 
 logger = get_logger(__name__)
 
 
 # AFL off-season months (October through February)
 _OFF_SEASON_MONTHS = {10, 11, 12, 1, 2}
-# Off-season 2-4 AM window is when the once-daily sync still runs
-_OFF_SEASON_RUN_START_HOUR = 2
-_OFF_SEASON_RUN_END_HOUR = 4
+# Off-season hour bounds are now configurable via Settings
+# (LO-008).  The local module-level aliases below keep the rest of
+# the file readable.
+_OFF_SEASON_RUN_START_HOUR = settings.daily_sync_off_season_start_hour
+_OFF_SEASON_RUN_END_HOUR = settings.daily_sync_off_season_end_hour
 
 
 def _is_off_season_skip(now: datetime) -> bool:

@@ -506,7 +506,11 @@ def main() -> None:
         "--seed-dir",
         type=str,
         default=None,
-        help=f"Directory containing CSV seed files (default: {_DEFAULT_SEED_DIR})",
+        help=(
+            "Directory containing CSV seed files.  Precedence: CLI > "
+            "SEED_DIR env var > built-in default.  When omitted, the "
+            f"default is {_DEFAULT_SEED_DIR}."
+        ),
     )
     parser.add_argument(
         "--clear",
@@ -557,7 +561,13 @@ def main() -> None:
     raw_url = _resolve_database_url(args)
     sync_url = _to_sync_url(raw_url)
     async_url = _to_async_url(raw_url)
-    seed_dir = Path(args.seed_dir) if args.seed_dir else _DEFAULT_SEED_DIR
+    # ME-010: CLI > SEED_DIR env var > built-in default.
+    if args.seed_dir:
+        seed_dir = Path(args.seed_dir)
+    elif os.environ.get("SEED_DIR"):
+        seed_dir = Path(os.environ["SEED_DIR"])
+    else:
+        seed_dir = _DEFAULT_SEED_DIR
 
     # --- Migrations ---
     if not args.skip_migrations:

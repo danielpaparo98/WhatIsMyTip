@@ -232,9 +232,29 @@ class JobLockCRUD:
         preventing race conditions where two concurrent invocations
         could both acquire the same lock.
 
+        Before the INSERT, the method opportunistically cleans up any
+        lock rows that have been expired for more than 24 hours
+        (ME-004).  This keeps the ``job_locks`` table from growing
+        without bound when long-running jobs crash and never call
+        ``release_lock``.  The cleanup call is wrapped in
+        ``try/except`` so a failure here never blocks the lock
+        acquisition path.
+
         Returns:
             JobLock if lock was acquired, None if already locked
         """
+        # Opportunistic stale-lock cleanup (ME-004).  We do this
+        # *before* the atomic INSERT so a newly-acquired lock is not
+        # inadvertently removed by a subsequent cleanup.  Failures
+        # are swallowed because the primary purpose of this call is
+        # to acquire the lock.
+        try:
+            await self.cleanup_expired_locks(min_age_seconds=24 * 3600)
+        except Exception:
+            # The cleanup is best-effort; log via the application
+            # logger if available but never block the acquire path.
+            pass
+
         now = datetime.now(timezone.utc)
         expires_at = now + timedelta(seconds=expires_seconds)
 
@@ -319,12 +339,24 @@ class JobLockCRUD:
 
         return True
 
-    async def cleanup_expired_locks(self) -> int:
-        """Delete expired job locks."""
+    async def cleanup_expired_locks(self, min_age_seconds: int = 0) -> int:
+        """Delete expired job locks.
+
+        ``min_age_seconds`` is the minimum time a lock must have been
+        expired before it is considered stale.  A value of ``0`` (the
+        default) deletes every expired lock.  When called from
+        ``acquire_lock`` (ME-004) we pass ``24 * 3600`` so freshly-
+        expired locks are not yanked out from under a job that is
+        still running but exceeded its TTL by a few seconds.
+
+        Returns:
+            Number of locks removed.
+        """
         now = datetime.now(timezone.utc)
+        cutoff = now - timedelta(seconds=min_age_seconds)
 
         result = await self.db.execute(
-            select(JobLock).where(JobLock.expires_at < now)
+            select(JobLock).where(JobLock.expires_at < cutoff)
         )
         expired_locks = list(result.scalars().all())
 

@@ -139,7 +139,18 @@ class EloModel(BaseModel):
         """Initialize the ratings cache — tries Redis first, then DB."""
         async with cls._cache_lock:
             # Try Redis first
-            ratings = await cls._load_ratings_from_redis()
+            try:
+                ratings = await cls._load_ratings_from_redis()
+            except Exception as exc:  # noqa: BLE001 - best-effort
+                # Redis load failure must not block cache init (LO-001).
+                # Fall through to DB recompute so the application still
+                # has ratings to use.
+                logger.warning(
+                    "EloModel._initialize_cache: Redis load failed, "
+                    "falling back to DB recompute: %s",
+                    exc,
+                )
+                ratings = None
             if ratings is not None:
                 return
 
@@ -197,6 +208,22 @@ class EloModel(BaseModel):
 
         This should be called after new games are completed or synced.
         It recomputes ratings from DB and stores in Redis.
+
+        Performance trade-off (ME-008)
+        -----------------------------
+        The implementation deliberately recomputes the *entire* rating
+        history from scratch on every invocation.  A partial update
+        (e.g. "apply only the new games since the last call") would
+        be much faster but it would mis-rate end-of-season games:
+        Elo is order-sensitive because each new game depends on the
+        cumulative rating that came out of every previous game, so
+        any change in the ordering of past results propagates into
+        every subsequent rating.
+
+        We accept the O(N) cost (where N is the count of completed
+        games for the season) so the cache is always mathematically
+        consistent with the database.  This is fine for the current
+        data scale (a single season is ~200 games).
         """
         async with cls._cache_lock:
             start_time = time.time()
