@@ -200,8 +200,6 @@ class GameCRUD:
             - game: The Game object
             - squiggle_id: The Squiggle game ID
         """
-        from ..cache import invalidate_cache_pattern
-
         # Check if game exists by squiggle_id
         game = await GameCRUD.get_by_squiggle_id(db, game_data["id"])
 

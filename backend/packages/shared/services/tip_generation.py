@@ -30,8 +30,8 @@ def _get_orchestrator():
     """Return the process-wide :class:`ModelOrchestrator` singleton."""
     global _shared_orchestrator
     if _shared_orchestrator is None:
-        from ..orchestrator import ModelOrchestrator as _MO
-        _shared_orchestrator = _MO()
+        from ..orchestrator import ModelOrchestrator
+        _shared_orchestrator = ModelOrchestrator()
     return _shared_orchestrator
 
 
@@ -448,7 +448,7 @@ async def run_tip_generation(session: AsyncSession) -> Dict[str, Any]:
     error_count = len(gen_stats.get("errors", []))
 
     summary_parts = [
-        f"Generated tips for next upcoming round",
+        "Generated tips for next upcoming round",
         f"Processed {games_processed} games",
         f"Created {tips_created} tips",
         f"Skipped {tips_skipped} existing tips",

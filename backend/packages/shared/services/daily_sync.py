@@ -19,8 +19,8 @@ from ..cache import invalidate_cache_pattern, medium_cache
 from ..config import settings
 from ..logger import get_logger
 from ..models_ml.elo import EloModel
-from .game_sync import GameSyncService
 from ..squiggle import SquiggleClient
+from .game_sync import GameSyncService
 
 logger = get_logger(__name__)
 

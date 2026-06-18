@@ -28,7 +28,7 @@ class JsonFormatter(logging.Formatter):
     etc.) before passing them to ``logger.*`` so they never reach
     the log stream.  A future hardening pass may apply a
     configurable allow-list of fields to mask here.
-    
+
 
     Standard fields: ``timestamp``, ``level``, ``logger``, ``message``.
     Any ``extra`` fields passed to the log call are merged into the object.

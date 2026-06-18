@@ -141,8 +141,13 @@ class TestGetGameBySlug:
         assert body["venue"] == "Gabba"
 
     def test_get_game_by_slug_returns_404_when_missing(self, client):
-        """Unknown slug → 404 ``not_found`` with the contract error code."""
-        resp = client.get("/api/games/does-not-exist")
+        """Unknown slug → 404 ``not_found`` with the contract error code.
+
+        Slug must be ≤ 12 chars per LO-005 (was 128). Use a short one
+        so the request reaches the handler instead of being rejected
+        by FastAPI path validation.
+        """
+        resp = client.get("/api/games/noexist01")
         assert resp.status_code == 404
         body = resp.json()
         assert body["code"] == "not_found"
@@ -205,16 +210,25 @@ class TestGetGameDetail:
         assert body["weather"] is None
 
     def test_get_game_detail_returns_404_when_missing(self, client):
-        """Unknown slug → 404 with the contract error code."""
-        resp = client.get("/api/games/does-not-exist/detail")
+        """Unknown slug → 404 with the contract error code.
+
+        Slug must be ≤ 12 chars per LO-005 (was 128). Use a short one
+        so the request reaches the handler instead of being rejected
+        by FastAPI path validation.
+        """
+        resp = client.get("/api/games/noexist01/detail")
         assert resp.status_code == 404
         body = resp.json()
         assert body["code"] == "not_found"
         assert "request_id" in body
 
-    def test_get_game_detail_path_param_max_length_is_128(self, client):
-        """Slugs longer than 128 chars are rejected with 422 by Path validation."""
-        too_long = "x" * 129
+    def test_get_game_detail_path_param_max_length_is_12(self, client):
+        """Slugs longer than 12 chars are rejected with 422 by Path validation.
+
+        Tightened from 128 → 12 in LO-005 to harden the public API
+        against pathological-path DoS.
+        """
+        too_long = "x" * 13
         resp = client.get(f"/api/games/{too_long}/detail")
         assert resp.status_code == 422
 
