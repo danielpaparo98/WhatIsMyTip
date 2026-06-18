@@ -289,7 +289,21 @@ def get_request_id(request: Request) -> str:
     """FastAPI dependency that returns the current request's ID.
 
     Returns the value set by :class:`RequestIDMiddleware` on
-    ``request.state.request_id``.  Falls back to a placeholder string in
-    test contexts where middleware isn't installed.
+    ``request.state.request_id``.  When the middleware isn't installed
+    (e.g. in unit tests that exercise a route handler directly), a
+    fresh UUID4 is generated so downstream logging / response
+    headers always carry a unique identifier — the previous
+    ``"test-request-id"`` placeholder collided across every test in
+    a single run, making it impossible to correlate logs back to a
+    specific request.
     """
-    return getattr(request.state, "request_id", "test-request-id")
+    rid = getattr(request.state, "request_id", None)
+    if rid is None:
+        rid = str(uuid.uuid4())
+        # Stash it on the state so any later access (within the same
+        # request) returns the same value rather than minting a new one.
+        try:
+            request.state.request_id = rid
+        except (AttributeError, TypeError):
+            pass
+    return rid
