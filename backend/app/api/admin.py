@@ -20,8 +20,10 @@ Routes (mounted at ``/api/admin``):
 
 from __future__ import annotations
 
+import json
+import logging
 import platform
-from typing import Annotated, Optional
+from typing import Annotated, Any, Optional
 
 from fastapi import APIRouter, Body, Depends, Path
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -29,6 +31,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.db_deps import get_db
 from app.core.exceptions import http_error
 from app.core.security import require_admin_key
+from packages.shared.cache import short_cache
 from packages.shared.config import settings
 from packages.shared.crud.jobs import JobExecutionCRUD
 from packages.shared.models_ml.elo import EloModel
@@ -47,6 +50,14 @@ from packages.shared.services.match_completion import (
 )
 from packages.shared.services.tip_generation import TipGenerationService
 from packages.shared.squiggle import SquiggleClient
+
+logger = logging.getLogger(__name__)
+
+# Cache TTL for the per-job admin metrics.  30s is short enough that
+# the dashboard feels fresh after a job run, long enough to absorb
+# the dashboard's natural polling cadence.
+_METRICS_CACHE_TTL_S = 30.0
+_METRICS_CACHE_KEY_PREFIX = "admin_metrics:"
 
 # Allow-list of valid job names for the ``POST /{job_name}/trigger``
 # endpoint.  Anything else returns 422.
@@ -332,15 +343,56 @@ async def historic_refresh_progress(
 async def metrics(
     db: AsyncSession = Depends(get_db),
 ):
-    """Return per-job execution metrics + system info + alerting flag."""
+    """Return per-job execution metrics + system info + alerting flag.
+
+    Each per-job metrics dict is cached in Redis for 30s under
+    ``admin_metrics:<job_name>``.  Without the cache, this endpoint
+    issues 7 SQL queries per job per request (28 queries total for
+    the 4 known jobs), which does not scale.  With the cache, a
+    repeat request within the TTL window only pays the cost of the
+    cache hit + the system-info dict.
+
+    A new composite index ``ix_job_executions_job_name_started_at``
+    on ``job_executions`` backs the last-run / last-success /
+    last-failure ORDER BY ... LIMIT 1 lookups, so even cache-miss
+    requests stay fast once the table grows past a few thousand rows.
+    """
     job_names = sorted(ALLOWED_JOB_NAMES)
     execution_crud = JobExecutionCRUD(db)
 
-    metrics_payload: dict = {}
+    metrics_payload: dict[str, dict[str, Any]] = {}
     for job_name in job_names:
-        metrics_payload[job_name] = await execution_crud.get_job_metrics(
-            job_name
-        )
+        cache_key = f"{_METRICS_CACHE_KEY_PREFIX}{job_name}"
+        cached_value: Optional[dict[str, Any]] = None
+
+        # Try the cache first.  ``short_cache.get`` returns ``None``
+        # for both a miss and a disabled Redis (see HI-005), so we
+        # treat both as "fall through to the CRUD".
+        try:
+            cached_value = await short_cache.get(cache_key)
+        except Exception as exc:  # defensive: never let the cache break us
+            logger.warning(
+                "admin metrics cache read failed for %s: %s", job_name, exc
+            )
+            cached_value = None
+
+        if cached_value is not None:
+            metrics_payload[job_name] = cached_value
+            continue
+
+        fresh = await execution_crud.get_job_metrics(job_name)
+        metrics_payload[job_name] = fresh
+
+        # Best-effort write.  Failures are logged but never bubble up
+        # — the response is still correct.
+        try:
+            await short_cache.set(
+                cache_key, fresh, ttl=_METRICS_CACHE_TTL_S
+            )
+        except Exception as exc:
+            logger.warning(
+                "admin metrics cache write failed for %s: %s", job_name, exc
+            )
 
     system_info = {
         "python_version": platform.python_version(),
