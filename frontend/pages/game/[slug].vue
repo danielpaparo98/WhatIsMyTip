@@ -28,7 +28,7 @@
 
           <div class="teams">
             <div class="team home">
-              <img :src="getLogoUrl(gameDetail.game.home_team)" :alt="gameDetail.game.home_team + ' logo'" class="team-logo" loading="lazy" width="80" height="80" />
+              <img :src="getLogoUrl(gameDetail.game.home_team)" :alt="gameDetail.game.home_team + ' logo'" class="team-logo" loading="lazy" decoding="async" width="80" height="80" />
               <span class="team-name">{{ gameDetail.game.home_team }}</span>
               <span v-if="gameDetail.game.home_score !== null" class="score">{{ gameDetail.game.home_score }}</span>
             </div>
@@ -36,7 +36,7 @@
             <div class="vs">VS</div>
             
             <div class="team away">
-              <img :src="getLogoUrl(gameDetail.game.away_team)" :alt="gameDetail.game.away_team + ' logo'" class="team-logo" loading="lazy" width="80" height="80" />
+              <img :src="getLogoUrl(gameDetail.game.away_team)" :alt="gameDetail.game.away_team + ' logo'" class="team-logo" loading="lazy" decoding="async" width="80" height="80" />
               <span class="team-name">{{ gameDetail.game.away_team }}</span>
               <span v-if="gameDetail.game.away_score !== null" class="score">{{ gameDetail.game.away_score }}</span>
             </div>

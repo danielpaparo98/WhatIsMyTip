@@ -60,11 +60,11 @@
               <div class="match-info">
                 <div class="teams">
                   <div class="team home">
-                    <img :src="getLogoUrl(game.home_team)" :alt="game.home_team + ' logo'" class="team-logo" loading="lazy" width="40" height="40" />
+                    <img :src="getLogoUrl(game.home_team)" :alt="game.home_team + ' logo'" class="team-logo" loading="lazy" decoding="async" width="40" height="40" />
                   </div>
                   <span class="vs">VS</span>
                   <div class="team away">
-                    <img :src="getLogoUrl(game.away_team)" :alt="game.away_team + ' logo'" class="team-logo" loading="lazy" width="40" height="40" />
+                    <img :src="getLogoUrl(game.away_team)" :alt="game.away_team + ' logo'" class="team-logo" loading="lazy" decoding="async" width="40" height="40" />
                   </div>
                 </div>
                 <div class="match-details">
