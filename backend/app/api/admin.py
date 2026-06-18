@@ -20,7 +20,6 @@ Routes (mounted at ``/api/admin``):
 
 from __future__ import annotations
 
-import json
 import logging
 import platform
 from typing import Annotated, Any, Optional

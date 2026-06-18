@@ -127,37 +127,43 @@ async def games_with_tips(
 
     Both ``season`` and ``round`` are required; FastAPI returns 422
     automatically when they are missing.
+
+    Concurrency: the read-only contract here does not need a row lock.
+    The ``SELECT ... FOR UPDATE`` that previously wrapped the games
+    query was decorative — on the autocommit-style session the
+    FastAPI dependency provides, the lock had no real effect and
+    the surrounding ``async with db.begin():`` block actually slowed
+    concurrent reads down.  Postgres' MVCC already gives us a
+    consistent read snapshot, so we just ``SELECT`` and return.
+
+    The single-process App Platform deployment does not need this
+    endpoint to coordinate writes either; tip generation is gated
+    by the JobLockCRUD path in the cron layer.
     """
-    # Lock games for this round to prevent concurrent tip generation.
-    async with db.begin():
-        stmt = (
-            select(Game)
-            .where(
-                Game.season == season,
-                Game.round_id == round_id,
+    stmt = select(Game).where(
+        Game.season == season,
+        Game.round_id == round_id,
+    )
+    games_result = await db.execute(stmt)
+    games = list(games_result.scalars().all())
+
+    if not games:
+        return {"games": [], "count": 0}
+
+    game_ids = [g.id for g in games]
+
+    if heuristic:
+        result = await db.execute(
+            select(Tip).where(
+                Tip.game_id.in_(game_ids),
+                Tip.heuristic == heuristic,
             )
-            .with_for_update()
         )
-        games_result = await db.execute(stmt)
-        games = list(games_result.scalars().all())
-
-        if not games:
-            return {"games": [], "count": 0}
-
-        game_ids = [g.id for g in games]
-
-        if heuristic:
-            result = await db.execute(
-                select(Tip).where(
-                    Tip.game_id.in_(game_ids),
-                    Tip.heuristic == heuristic,
-                )
-            )
-        else:
-            result = await db.execute(
-                select(Tip).where(Tip.game_id.in_(game_ids))
-            )
-        tips = list(result.scalars().all())
+    else:
+        result = await db.execute(
+            select(Tip).where(Tip.game_id.in_(game_ids))
+        )
+    tips = list(result.scalars().all())
 
     tips_by_game = {tip.game_id: tip for tip in tips}
     predictions_by_game = await ModelPredictionCRUD.get_by_games(db, game_ids)
