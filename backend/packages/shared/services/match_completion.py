@@ -89,10 +89,28 @@ class MatchCompletionDetectorService:
 
             self.logger.info(f"Found {len(recently_finished_games)} games to check for completion")
 
-            # Fetch all games from Squiggle API for current season
-            # We fetch all games to ensure we have the latest data
+            # Fetch games from Squiggle API for current season, narrowed
+            # to a date window that covers the recent games we're
+            # checking (ME-003).  Without the window we'd re-download
+            # the full ~200-game season every 15 minutes.
             current_year = datetime.now().year
-            games_data = await self.client.get_games(year=current_year)
+            now = datetime.now(timezone.utc)
+            # Use the oldest recent game date minus a small slack as the
+            # lower bound, and ``now`` as the upper bound.  Falls back
+            # to a 4-hour window if no recent games have a date.
+            window_start = (now - timedelta(hours=4)).date().isoformat()
+            for g in recently_finished_games:
+                g_date = getattr(g, "date", None)
+                if g_date is not None:
+                    window_start = (g_date - timedelta(days=1)).date().isoformat()
+                    break
+            window_end = now.date().isoformat()
+
+            games_data = await self.client.get_games(
+                year=current_year,
+                start_date=window_start,
+                end_date=window_end,
+            )
 
             # Create a mapping of squiggle_id to game data
             games_by_squiggle_id = {game_data["id"]: game_data for game_data in games_data}

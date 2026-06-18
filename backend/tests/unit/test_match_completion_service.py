@@ -129,7 +129,100 @@ class TestRunMatchCompletion:
         # 'elo_cache_updated' should be False
         assert result["elo_cache_updated"] is False
 
+    async def test_error_count_in_result(self, monkeypatch):
+        session = _make_session()
+        stats = {
+            "games_checked": 5,
+            "games_completed": 1,
+            "games_already_completed": 1,
+            "games_not_ready": 2,
+            "errors": ["game X failed"],
+        }
+        _patch_detector(monkeypatch, stats)
+        _patch_elo(monkeypatch)
+        _patch_invalidate(monkeypatch)
+
+        result = await run_match_completion(session)
+
+        assert result["errors"] == 1
+        assert "Failed: 1" in result["message"]
+
+
+# ---------------------------------------------------------------------------
+# ME-003: Date-window filter on ``MatchCompletionDetectorService``.
+# ---------------------------------------------------------------------------
+
+
+class TestDateWindowFilter:
+    """ME-003: ``MatchCompletionDetectorService.detect_and_process_completed_matches``
+    must call ``client.get_games`` with a date-window filter — NOT
+    the bare ``year=current_year`` call that re-downloads the entire
+    AFL season every 15 minutes.
+    """
+
     @pytest.mark.asyncio
+    async def test_get_games_uses_date_window_filter(self, monkeypatch):
+        from types import SimpleNamespace
+        from packages.shared.services.match_completion import (
+            MatchCompletionDetectorService,
+        )
+
+        session = AsyncMock()
+        # Build a SquiggleClient mock with an AsyncMock get_games.
+        client = MagicMock()
+        client.get_games = AsyncMock(return_value=[])
+        client.close = AsyncMock()
+        detector = MatchCompletionDetectorService(
+            squiggle_client=client,
+            db_session=session,
+            buffer_minutes=60,
+        )
+        # Return one recent game so the detector actually reaches the
+        # Squiggle fetch.
+        recent_game = SimpleNamespace(
+            id=1, squiggle_id=9001, home_team="Home", away_team="Away",
+        )
+        monkeypatch.setattr(
+            "packages.shared.services.match_completion.GameCRUD.get_recently_finished_games",
+            AsyncMock(return_value=[recent_game]),
+        )
+        # Stub update_game_completion to a no-op.
+        async def _noop(db, *, game_id, squiggle_data):
+            return SimpleNamespace(
+                id=game_id, home_score=50, away_score=40,
+            )
+        monkeypatch.setattr(
+            "packages.shared.services.match_completion.GameCRUD.update_game_completion",
+            _noop,
+        )
+
+        await detector.detect_and_process_completed_matches()
+
+        # The detector MUST have called get_games exactly once.
+        assert client.get_games.await_count == 1
+
+        call = client.get_games.await_args
+        call_kwargs = call.kwargs or {}
+
+        # ME-003 acceptance: the call must narrow the Squiggle fetch
+        # with a date filter (start_date / end_date) or a status
+        # filter (complete=) — anything other than the bare year=
+        # regression.
+        narrowing_keys = {
+            "start_date", "end_date",
+            "from_date", "to_date", "since", "until",
+            "complete",
+        }
+        assert call_kwargs.keys() & narrowing_keys, (
+            "ME-003: detector must narrow the Squiggle fetch with a "
+            "date filter instead of the bare year= call.  Got: "
+            f"{call_kwargs} (args={call.args})"
+        )
+        # Pure-year regression is the bug we are guarding against.
+        assert not (set(call_kwargs.keys()) == {"year"}), (
+            "ME-003: passing only year= to get_games is exactly the "
+            "regression we are guarding against."
+        )
     async def test_error_count_in_result(self, monkeypatch):
         session = _make_session()
         stats = {
