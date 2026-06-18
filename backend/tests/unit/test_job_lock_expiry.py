@@ -103,9 +103,9 @@ class TestAcquireLockCeiling:
 
         # Inspect the call we recorded.  We need to find the
         # ``acquire_lock`` execute call and read the bind params.
-        # The crud runs two execute() calls; the first is the INSERT.
-        first_call = crud.db.execute.call_args_list[0]
-        bind = first_call.args[1] if len(first_call.args) > 1 else first_call.kwargs
+        # The crud may run multiple execute() calls (cleanup_expired_locks + INSERT); the last is the INSERT.
+        last_call = crud.db.execute.call_args_list[-1]
+        bind = last_call.args[1] if len(last_call.args) > 1 else last_call.kwargs
         assert bind["expires_at"], "expected an expires_at bind param"
 
         # The clamped expiry should be at most (now + 300 s).
@@ -138,8 +138,8 @@ class TestAcquireLockCeiling:
             expires_seconds=30,
         )
 
-        first_call = crud.db.execute.call_args_list[0]
-        bind = first_call.args[1] if len(first_call.args) > 1 else first_call.kwargs
+        last_call = crud.db.execute.call_args_list[-1]
+        bind = last_call.args[1] if len(last_call.args) > 1 else last_call.kwargs
         now = datetime.now(timezone.utc)
         expires_at: datetime = bind["expires_at"]
         if expires_at.tzinfo is None:
