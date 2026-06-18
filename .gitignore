@@ -92,3 +92,8 @@ frontend/generate.txt
 frontend/nuxt_help.txt
 frontend/nuxt_prepare.txt
 frontend/typecheck.txt
+
+# Windows TEMP symlink accidentally created in repo root
+# (a folder literally named `%TEMP%` exists at repo root as a symlink to
+# the user's %TEMP% env var — should never be tracked)
+%TEMP%/
