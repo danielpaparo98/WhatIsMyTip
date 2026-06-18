@@ -155,6 +155,34 @@ def test_nginx_conf_keeps_proxy_headers() -> None:
         )
 
 
+def test_nginx_conf_overwrites_x_forwarded_for_with_remote_addr() -> None:
+    """SEC-ME-008: ``X-Forwarded-For`` must be set to ``$remote_addr``
+    (overwrite), not ``$proxy_add_x_forwarded_for`` (append).
+
+    With ``$proxy_add_x_forwarded_for`` an attacker can spoof their
+    source IP by prepending a fake entry to the header, which would
+    let them bypass the per-IP rate limiter.  Overwriting with
+    ``$remote_addr`` forces the upstream to see the real socket
+    address — the only value we can trust.
+    """
+    conf = _read_nginx_conf()
+    # The exact line we expect.
+    assert re.search(
+        r"proxy_set_header\s+X-Forwarded-For\s+\$remote_addr\s*;",
+        conf,
+    ), (
+        "SEC-ME-008: nginx.conf must set `proxy_set_header "
+        "X-Forwarded-For $remote_addr;` (overwrite, not append) so "
+        "clients cannot spoof their source IP and bypass the rate "
+        "limiter."
+    )
+    # And the old, append-based directive must be gone.
+    assert "proxy_add_x_forwarded_for" not in conf, (
+        "SEC-ME-008: nginx.conf must NOT use `$proxy_add_x_forwarded_for` "
+        "— that appends client-supplied values, allowing IP spoofing."
+    )
+
+
 # ── Path-resolution logic (no rewrite) ──────────────────────────────────
 
 
