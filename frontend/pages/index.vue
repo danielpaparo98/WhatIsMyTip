@@ -21,12 +21,12 @@
         </div>
 
         <!-- Heuristic Selector -->
-        <div class="heuristic-selector" role="tablist" aria-label="Heuristic filter">
+        <div class="heuristic-selector" role="tablist" aria-label="Heuristic filter" @keydown="onHeuristicKeydown">
           <button
             v-for="h in heuristics"
             :key="h.value"
             role="tab"
-            :aria-selected="selectedHeuristic === h.value"
+            :id=`"heuristic-tab-${h.value}`" :aria-selected="selectedHeuristic === h.value" :tabindex="selectedHeuristic === h.value ? 0 : -1"
             @click="selectedHeuristic = h.value"
             :class="['heuristic-btn', { active: selectedHeuristic === h.value }]"
           >
@@ -236,6 +236,27 @@ const generateTips = async () => {
   }
 }
 
+
+// FX-07: keyboard navigation for the heuristic tablist (ArrowLeft/Right/Home/End)
+const focusHeuristicTab = (value) => {
+  nextTick(() => {
+    const el = document.getElementById(`heuristic-tab-${value}`)
+    if (el && typeof el.focus === 'function') el.focus()
+  })
+}
+const onHeuristicKeydown = (event) => {
+  const handled = ['ArrowLeft', 'ArrowRight', 'Home', 'End']
+  if (!handled.includes(event.key)) return
+  event.preventDefault()
+  const idx = heuristics.findIndex((h) => h.value === selectedHeuristic.value)
+  let nextIdx = idx
+  if (event.key === 'ArrowRight') nextIdx = (idx + 1) % heuristics.length
+  else if (event.key === 'ArrowLeft') nextIdx = (idx - 1 + heuristics.length) % heuristics.length
+  else if (event.key === 'Home') nextIdx = 0
+  else if (event.key === 'End') nextIdx = heuristics.length - 1
+  selectedHeuristic.value = heuristics[nextIdx].value
+  focusHeuristicTab(heuristics[nextIdx].value)
+}
 const formatDate = formatDateUtil
 
 // Reload games when heuristic changes
