@@ -1,5 +1,15 @@
 # WhatIsMyTip Deployment Guide
 
+> ## ⚠️ Stale `.do/app.yaml` — needs rewrite (TODO)
+>
+> **[`.do/app.yaml`](../.do/app.yaml) is still in the FaaS-era format** (it declares a `functions` component for OpenWhisk, references `whatismytip-backend` at port 8080, and includes the OpenWhisk-required `/api/api/` path-prefix workaround). Phase 4 migrated the app to a single FastAPI container, so the spec is no longer accurate and would fail a fresh deploy.
+>
+> **TODO:** rewrite `.do/app.yaml` to declare the FastAPI `service` (the container built from [`backend/Dockerfile`](../backend/Dockerfile:1)) + the `proxy` service (from [`backend/proxy/Dockerfile`](../backend/proxy/Dockerfile:1)) + the `static_sites` component (the Nuxt frontend), with secrets in `RUN_AND_BUILD_TIME` `SECRET` envs, not plaintext values. Until that rewrite lands, **the recommended deploy path is the [`scripts/deploy.sh`](../backend/scripts/deploy.sh:1) helper** (it builds + pushes the FastAPI image to the DO Container Registry, then calls `doctl apps create-deployment` to trigger the rollout).
+>
+> **Also stale:** [`.do/frontend.yaml`](../.do/frontend.yaml) is marked DEPRECATED in its own header — it should be removed once `app.yaml` is rewritten.
+>
+> See [plans/infra-devops-review.md](../plans/infra-devops-review.md) for the full audit and [docs/operations.md](operations.md) for runtime/deployment operations.
+
 ## Overview
 
 This guide covers deploying WhatIsMyTip.com to DigitalOcean App Platform. The deployment consists of:
