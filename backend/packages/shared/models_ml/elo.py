@@ -138,7 +138,18 @@ class EloModel(BaseModel):
         """Initialize the ratings cache — tries Redis first, then DB."""
         async with cls._cache_lock:
             # Try Redis first
-            ratings = await cls._load_ratings_from_redis()
+            try:
+                ratings = await cls._load_ratings_from_redis()
+            except Exception as exc:  # noqa: BLE001 - best-effort
+                # Redis load failure must not block cache init (LO-001).
+                # Fall through to DB recompute so the application still
+                # has ratings to use.
+                logger.warning(
+                    "EloModel._initialize_cache: Redis load failed, "
+                    "falling back to DB recompute: %s",
+                    exc,
+                )
+                ratings = None
             if ratings is not None:
                 return
 

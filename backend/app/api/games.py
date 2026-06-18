@@ -174,7 +174,7 @@ async def list_games(
 
 @router.get("/{slug}")
 async def get_game(
-    slug: Annotated[str, Path(min_length=1, max_length=128)],
+    slug: Annotated[str, Path(min_length=1, max_length=12)],  # LO-005: the slug column is VARCHAR(12); the explicit max_length rejects over-long slugs at the routing layer.
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
     """Return a single game by its public slug identifier.
@@ -194,7 +194,7 @@ async def get_game(
 
 @router.get("/{slug}/detail")
 async def get_game_detail(
-    slug: Annotated[str, Path(min_length=1, max_length=128)],
+    slug: Annotated[str, Path(min_length=1, max_length=12)],  # LO-005: the slug column is VARCHAR(12); the explicit max_length rejects over-long slugs at the routing layer.
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
     """Return a game with all related data: tips, model predictions,

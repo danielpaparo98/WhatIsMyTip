@@ -28,6 +28,11 @@ config = context.config
 # Set the database URL from settings.
 # Convert async URL to sync URL for migrations:
 #   postgresql+asyncpg://... → postgresql://...
+#
+# LO-006: the ``+asyncpg`` driver suffix is stripped from the URL
+# passed to Alembic.  Alembic uses the synchronous psycopg2 driver so
+# the asyncpg URL form would be rejected.  The strip is intentional
+# and required.
 database_url = settings.database_url.replace("+asyncpg", "")
 config.set_main_option("sqlalchemy.url", database_url)
 

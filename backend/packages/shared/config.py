@@ -62,6 +62,13 @@ class Settings(BaseSettings):
     daily_sync_enabled: bool = True
     daily_sync_timeout_seconds: int = 3600  # 1 hour
 
+    # Off-season daily-sync run window (hours, 24h clock) (LO-008).
+    # During the AFL off-season the once-daily sync still runs but
+    # only between these two hours so the production noise is
+    # bounded.  Defaults to 02:00-04:00 local time.
+    daily_sync_off_season_start_hour: int = 2
+    daily_sync_off_season_end_hour: int = 4
+
     # Match Completion Detector
     match_completion_buffer_minutes: int = 60  # 1 hour buffer
     match_completion_check_enabled: bool = True  # Enable/disable the job

@@ -50,6 +50,12 @@ _HEURISTIC_PATTERN = r"^(best_bet|high_risk_high_reward|yolo)$"
 
 # Per-route rate limiter for ``POST /generate``: 10 req/min per client
 # IP (BACKEND-FAAS-CODE-REVIEW §3.5 + api.md:50).
+#
+# LO-003: this rate limiter is in-memory and is only enforced across
+# the current FastAPI process.  At the current scale (single-region
+# single-replica) that is acceptable; if we ever scale horizontally
+# we must move the limiter to a shared store (e.g. Redis, which the
+# app already uses for cache).
 _post_generate_limiter = Limiter(key_func=get_remote_address)
 
 

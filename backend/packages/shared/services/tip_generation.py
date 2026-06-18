@@ -18,6 +18,23 @@ from .explanation import ExplanationService
 logger = get_logger(__name__)
 
 
+# LO-004: share a single ModelOrchestrator across all
+# TipGenerationService instances.  Constructing the orchestrator
+# (and every model it lazily loads) is non-trivial; doing it once
+# at module scope saves a meaningful amount of work in the historic
+# refresh path that creates a service per season.
+_shared_orchestrator: "ModelOrchestrator | None" = None
+
+
+def _get_orchestrator():
+    """Return the process-wide :class:`ModelOrchestrator` singleton."""
+    global _shared_orchestrator
+    if _shared_orchestrator is None:
+        from ..orchestrator import ModelOrchestrator as _MO
+        _shared_orchestrator = _MO()
+    return _shared_orchestrator
+
+
 class TipGenerationService:
     """Service for generating tips using ML models and heuristics.
 
@@ -44,7 +61,7 @@ class TipGenerationService:
         self.season = season or datetime.now().year
         self.round_id = round_id
         self.logger = logger
-        self.orchestrator = ModelOrchestrator()
+        self.orchestrator = _get_orchestrator()  # LO-004: shared singleton
 
     async def generate_for_round(
         self, season: int, round_id: int, regenerate: bool = False, skip_nlp: bool = False
