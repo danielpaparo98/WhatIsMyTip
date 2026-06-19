@@ -125,8 +125,8 @@ describe('.do/app.yaml spec', () => {
     expect(spec).toMatch(/-\s+path:\s*\/\s*(?:\r?\n|$)/)
   })
 
-  it('declares a github source spec on every component (doctl requires it)', () => {
-    // App Platform needs an explicit `github:` (or `image:`) block on
+  it('declares a source spec (github: OR image:) on every component', () => {
+    // App Platform needs an explicit `github:` or `image:` block on
     // every component, otherwise doctl rejects the spec with
     // "service ... missing source spec (image, git, github, gitlab
     // or bitbucket)".
@@ -139,9 +139,21 @@ describe('.do/app.yaml spec', () => {
     expect(apiBlock, 'api service block not found').not.toBeNull()
     expect(frontendBlock, 'frontend block not found').not.toBeNull()
     for (const [name, block] of [['api', apiBlock![0]], ['frontend', frontendBlock![0]]]) {
-      expect(block, `${name} needs a github: source block`).toMatch(/\bgithub:\s*\n/)
-      expect(block, `${name} github block needs a 'repo:'`).toMatch(/\brepo:\s*\S/)
-      expect(block, `${name} github block needs a 'branch:'`).toMatch(/\bbranch:\s*\S/)
+      const hasGithub = /\bgithub:\s*\n/.test(block)
+      const hasImage = /^\s*image:\s*\n/m.test(block)
+      expect(
+        hasGithub || hasImage,
+        `${name} needs either a github: block (with repo: + branch:) or an image: block`,
+      ).toBe(true)
+      if (hasGithub) {
+        expect(block, `${name} github block needs a 'repo:'`).toMatch(/\brepo:\s*\S/)
+        expect(block, `${name} github block needs a 'branch:'`).toMatch(/\bbranch:\s*\S/)
+      }
+      if (hasImage) {
+        expect(block, `${name} image block needs a 'registry_type:'`).toMatch(/\bregistry_type:\s*\S/)
+        expect(block, `${name} image block needs a 'repository:'`).toMatch(/\brepository:\s*\S/)
+        expect(block, `${name} image block needs a 'tag:'`).toMatch(/\btag:\s*\S/)
+      }
     }
   })
 
