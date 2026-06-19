@@ -1,10 +1,13 @@
 import os
 import ssl as _ssl
+import logging
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase
 
 from .config import settings
+
+logger = logging.getLogger(__name__)
 
 
 # Truthy parser for the DB_SSL_VERIFY env var.  We need to read the
@@ -64,7 +67,11 @@ def _normalize_async_url(url: str) -> tuple[str, dict]:
     """
     connect_args: dict = {}
 
+    # DIAGNOSTIC LOGGING: Check if URL has async driver
+    logger.info(f"DIAGNOSTIC _normalize_async_url: Input URL = {url}")
+    
     if "+asyncpg" not in url:
+        logger.warning(f"DIAGNOSTIC _normalize_async_url: URL does NOT have +asyncpg prefix! This will cause async issues.")
         return url, connect_args
 
     # Detect if SSL is requested
@@ -98,9 +105,13 @@ def _normalize_async_url(url: str) -> tuple[str, dict]:
             ssl_ctx.check_hostname = False
             ssl_ctx.verify_mode = _ssl.CERT_NONE
         connect_args["ssl"] = ssl_ctx
+        
+        logger.info(f"DIAGNOSTIC _normalize_async_url: Returning clean_url = {clean_url}")
+        logger.info(f"DIAGNOSTIC _normalize_async_url: connect_args has SSL? {'ssl' in connect_args}")
 
         return clean_url, connect_args
 
+    logger.info(f"DIAGNOSTIC _normalize_async_url: No SSL needed, returning original URL = {url}")
     return url, connect_args
 
 
@@ -125,17 +136,32 @@ def get_engine():
     """
     global _engine
     if _engine is None:
+        # DIAGNOSTIC LOGGING: Log the original database URL and driver
+        logger.info(f"DIAGNOSTIC: Original DATABASE_URL = {settings.database_url}")
+        logger.info(f"DIAGNOSTIC: Has +asyncpg prefix? {'+asyncpg' in settings.database_url}")
+        logger.info(f"DIAGNOSTIC: Has +psycopg prefix? {'+psycopg' in settings.database_url}")
+        
         db_url, connect_args = _normalize_async_url(settings.database_url)
-        _engine = create_async_engine(
-            db_url,
-            connect_args=connect_args,
-            echo=settings.environment == "development",
-            pool_size=settings.db_pool_size,
-            max_overflow=settings.db_max_overflow,
-            pool_timeout=settings.db_pool_timeout,
-            pool_pre_ping=True,
-            pool_recycle=300,
-        )
+        
+        # DIAGNOSTIC LOGGING: Log the normalized URL
+        logger.info(f"DIAGNOSTIC: Normalized db_url = {db_url}")
+        logger.info(f"DIAGNOSTIC: connect_args = {connect_args}")
+        
+        try:
+            _engine = create_async_engine(
+                db_url,
+                connect_args=connect_args,
+                echo=settings.environment == "development",
+                pool_size=settings.db_pool_size,
+                max_overflow=settings.db_max_overflow,
+                pool_timeout=settings.db_pool_timeout,
+                pool_pre_ping=True,
+                pool_recycle=300,
+            )
+            logger.info(f"DIAGNOSTIC: Engine created successfully with driver: {_engine.driver}")
+        except Exception as e:
+            logger.error(f"DIAGNOSTIC: Engine creation failed with error: {e}", exc_info=True)
+            raise
     return _engine
 
 
