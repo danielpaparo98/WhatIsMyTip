@@ -96,3 +96,4 @@ frontend/typecheck.txt
 # (a folder literally named `%TEMP%` exists at repo root as a symlink to
 # the user's %TEMP% env var — should never be tracked)
 %TEMP%/
+.do/app.yaml.secrets
