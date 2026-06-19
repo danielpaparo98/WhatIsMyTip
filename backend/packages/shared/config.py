@@ -128,8 +128,39 @@ class Settings(BaseSettings):
     # Alerting Configuration
     alert_enabled: bool = False
     alert_webhook_url: Optional[str] = None
-    alert_email_recipients: List[str] = []
+    alert_email_recipients: Union[str, List[str]] = []
     alert_timeout_seconds: int = 10  # webhook timeout
+
+    @field_validator("alert_email_recipients", mode="before")
+    @classmethod
+    def _parse_alert_email_recipients(cls, v: Union[str, List[str]]) -> List[str]:
+        """Parse alert_email_recipients from environment variable.
+
+        Handles empty strings, invalid JSON, and CSV formats gracefully.
+        Returns an empty list for empty/invalid inputs.
+        """
+        import json
+        
+        if isinstance(v, str):
+            # Handle empty string or whitespace
+            if not v.strip():
+                return []
+            # Try to parse as JSON array
+            try:
+                result = json.loads(v)
+                if isinstance(result, list):
+                    return result
+                else:
+                    return []
+            except json.JSONDecodeError:
+                # Fall back to CSV parsing like cors_origins
+                return [email.strip() for email in v.split(",") if email.strip()]
+        
+        # If it's already a list, ensure all elements are strings
+        if isinstance(v, list):
+            return [str(item) for item in v]
+        
+        return []
 
     # Monitoring Configuration
     metrics_enabled: bool = True
