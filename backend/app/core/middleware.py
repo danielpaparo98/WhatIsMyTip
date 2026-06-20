@@ -78,7 +78,12 @@ _DEFAULT_CSP_TEMPLATE = (
     "default-src 'self'; "
     "img-src 'self' data:; "  # SEC-ME-006: dropped the ``https:`` wildcard
     "style-src 'self' 'unsafe-inline' 'nonce-{nonce}'; "
-    "script-src 'self'"
+    "script-src 'self'; "
+    "connect-src 'self'; "
+    "object-src 'none'; "
+    "base-uri 'self'; "
+    "form-action 'self'; "
+    "frame-ancestors 'none'"
 )
 
 # The actual CSP sent today: we use a stable sentinel for ``{nonce}`` so

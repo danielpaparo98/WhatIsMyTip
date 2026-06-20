@@ -1,10 +1,43 @@
 import os
 import ssl as _ssl
+import logging
+from urllib.parse import urlparse, urlunparse
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase
 
 from .config import settings
+
+logger = logging.getLogger(__name__)
+
+
+def _redact_url(url: str) -> str:
+    """Mask credentials in a database/Redis URL for safe logging.
+
+    Replaces the password component of the DSN with ``***`` so that
+    connection strings can be logged without leaking secrets.  If the
+    URL has no credentials, it is returned unchanged.
+
+    Examples:
+        >>> _redact_url("postgresql+asyncpg://user:secret@host:5432/db")
+        'postgresql+asyncpg://user:***@host:5432/db'
+        >>> _redact_url("postgresql+asyncpg://localhost/db")
+        'postgresql+asyncpg://localhost/db'
+    """
+    if not url:
+        return "<empty>"
+    try:
+        parsed = urlparse(url)
+        if parsed.password:
+            masked_netloc = f"{parsed.username}:***@{parsed.hostname}"
+            if parsed.port:
+                masked_netloc += f":{parsed.port}"
+            return urlunparse(parsed._replace(netloc=masked_netloc))
+    except Exception:
+        # If parsing fails, return a generic placeholder rather than
+        # risk leaking the raw URL.
+        return "<redacted-url>"
+    return url
 
 
 # Truthy parser for the DB_SSL_VERIFY env var.  We need to read the
@@ -65,6 +98,7 @@ def _normalize_async_url(url: str) -> tuple[str, dict]:
     connect_args: dict = {}
 
     if "+asyncpg" not in url:
+        logger.warning("DATABASE_URL is missing the +asyncpg driver suffix")
         return url, connect_args
 
     # Detect if SSL is requested
@@ -99,8 +133,10 @@ def _normalize_async_url(url: str) -> tuple[str, dict]:
             ssl_ctx.verify_mode = _ssl.CERT_NONE
         connect_args["ssl"] = ssl_ctx
 
+        logger.debug("SSL context configured for database connection")
         return clean_url, connect_args
 
+    logger.debug("No SSL parameters detected in database URL")
     return url, connect_args
 
 
@@ -126,16 +162,26 @@ def get_engine():
     global _engine
     if _engine is None:
         db_url, connect_args = _normalize_async_url(settings.database_url)
-        _engine = create_async_engine(
-            db_url,
-            connect_args=connect_args,
-            echo=settings.environment == "development",
-            pool_size=settings.db_pool_size,
-            max_overflow=settings.db_max_overflow,
-            pool_timeout=settings.db_pool_timeout,
-            pool_pre_ping=True,
-            pool_recycle=300,
-        )
+
+        try:
+            _engine = create_async_engine(
+                db_url,
+                connect_args=connect_args,
+                echo=settings.environment == "development",
+                pool_size=settings.db_pool_size,
+                max_overflow=settings.db_max_overflow,
+                pool_timeout=settings.db_pool_timeout,
+                pool_pre_ping=True,
+                pool_recycle=300,
+            )
+            logger.info(
+                "Database engine created (driver=%s, url=%s)",
+                _engine.driver,
+                _redact_url(db_url),
+            )
+        except Exception as e:
+            logger.error("Database engine creation failed: %s", e, exc_info=True)
+            raise
     return _engine
 
 

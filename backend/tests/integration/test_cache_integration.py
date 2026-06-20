@@ -18,10 +18,13 @@ import pytest
 
 from packages.shared.cache import close_redis_pool, long_cache, medium_cache, short_cache
 
-# Skip entire module if no Redis available
+# Skip entire module if no REDIS_URL configured.
+# The integration conftest.py sets up an ephemeral Redis for CI;
+# without it these tests cannot run.
+_DSN = os.environ.get("REDIS_URL", "")
 pytestmark = pytest.mark.skipif(
-    "not config.getoption('--run-integration', default=False)",
-    reason="Integration tests require --run-integration flag and running Redis",
+    not _DSN,
+    reason="Integration tests require REDIS_URL pointing at a live Redis",
 )
 
 
