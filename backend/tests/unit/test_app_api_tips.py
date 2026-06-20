@@ -283,6 +283,59 @@ class TestGamesWithTips:
         assert body["count"] == 1
         assert body["games"][0]["slug"] == "abc123def4"
 
+    def test_games_with_tips_orders_games_by_date(self):
+        """games-with-tips must SELECT games ordered by match date.
+
+        Regression: the homepage rendered a round's games jumbled because
+        the endpoint query had no ``ORDER BY`` clause, so games came back
+        in arbitrary physical-storage order.  The fix mirrors
+        ``GameCRUD.get_by_round`` and orders ascending by ``date``.
+
+        We assert on the emitted SQL (captured from the first
+        ``db.execute`` call) rather than on the mocked result list,
+        because the mock returns whatever order it is handed regardless
+        of the query.
+        """
+        from sqlalchemy.dialects import postgresql
+
+        mock_session = AsyncMock(spec=AsyncSession)
+        mock_game = _make_game_mock()
+
+        games_result = MagicMock()
+        games_result.scalars.return_value.all.return_value = [mock_game]
+        tips_result = MagicMock()
+        tips_result.scalars.return_value.all.return_value = []
+
+        mock_session.execute = AsyncMock(
+            side_effect=[games_result, tips_result, tips_result]
+        )
+
+        app = _build_app_with_tips_router()
+        _override_db(app, mock_session)
+
+        with patch("app.api.tips.ModelPredictionCRUD") as mock_pred_crud:
+            mock_pred_crud.get_by_games = AsyncMock(return_value={})
+            client = TestClient(app)
+            resp = client.get(
+                "/api/tips/games-with-tips?season=2025&round=1"
+            )
+
+        assert resp.status_code == 200
+
+        # The first db.execute call carries the games SELECT statement.
+        first_stmt = mock_session.execute.call_args_list[0].args[0]
+        compiled = first_stmt.compile(
+            dialect=postgresql.dialect(),
+            compile_kwargs={"literal_binds": True},
+        )
+        sql = str(compiled).upper()
+        assert "ORDER BY" in sql, (
+            f"games-with-tips query must ORDER BY date; got SQL: {sql!r}"
+        )
+        assert "GAMES.DATE" in sql, (
+            f"games-with-tips query must ORDER BY games.date; got SQL: {sql!r}"
+        )
+
 
 # ---------------------------------------------------------------------------
 # GET /{heuristic}
