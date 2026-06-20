@@ -8,13 +8,17 @@
         <h2>Our Approach</h2>
         <div class="content">
           <p>
-            WhatIsMyTip combines multiple machine learning and financial models with heuristic strategies
-            to generate footy tips. Our system analyzes historical data, team form, home advantage,
-            and value opportunities to provide informed predictions.
+            WhatIsMyTip combines eight machine learning and statistical models with three heuristic
+            strategies to generate footy tips. Our system analyzes historical results, team and player
+            form, head-to-head matchups, home advantage, injuries, weather, and value opportunities to
+            provide informed predictions.
           </p>
           <p>
-            We use OpenRouter's gptoss-120b model to generate human-readable explanations for each tip,
-            helping you understand the reasoning behind our predictions.
+            We use a large language model via
+            <a href="https://openrouter.ai" target="_blank" rel="noopener">OpenRouter</a>
+            to generate human-readable explanations for each tip, helping you understand the reasoning
+            behind our predictions. The model is configurable, so we can swap in newer options as they
+            become available.
           </p>
     </div>
   </section>
@@ -66,6 +70,59 @@
               <li>Best for finding upset opportunities</li>
             </ul>
           </div>
+          <div class="model-card">
+            <h3>Weather Impact</h3>
+            <p>
+              Weather can dramatically change how a game of AFL is played. This model classifies the
+              forecast into tiers — from clear conditions to heavy rain and wind — then compares each
+              team's historical win rate in similar conditions to predict who copes best.
+            </p>
+            <ul>
+              <li>Uses match-day weather forecasts</li>
+              <li>Accounts for rain, wind and temperature</li>
+              <li>Best for games played in extreme conditions</li>
+            </ul>
+          </div>
+          <div class="model-card">
+            <h3>Injury Impact</h3>
+            <p>
+              Missing key players can swing a result. This model pulls each team's current injury list,
+              weighs every absent player's importance using their recent statistics, and penalizes the
+              side carrying the heavier injury burden.
+            </p>
+            <ul>
+              <li>Quantifies the value of injured players</li>
+              <li>Updates as injury lists change</li>
+              <li>Best when star players are ruled out</li>
+            </ul>
+          </div>
+          <div class="model-card">
+            <h3>Matchup</h3>
+            <p>
+              Some teams just have another's number. This model studies the head-to-head history between
+              the two teams, blending overall matchup results with how each side performs at the venue —
+              all weighted so recent meetings count for more.
+            </p>
+            <ul>
+              <li>Combines head-to-head history (60%) with venue record (40%)</li>
+              <li>Applies time decay to favour recent clashes</li>
+              <li>Best for long-standing rivalries</li>
+            </ul>
+          </div>
+          <div class="model-card">
+            <h3>Player Form</h3>
+            <p>
+              Rather than looking at team results, this model dives into individual performances. It
+              aggregates advanced stats — score involvements, contested possessions, metres gained and
+              pressure acts — over each team's last few games to gauge who is genuinely playing the
+              better football right now.
+            </p>
+            <ul>
+              <li>Measures team quality from player-level data</li>
+              <li>Focuses on advanced performance metrics</li>
+              <li>Best for spotting teams in peak form</li>
+            </ul>
+          </div>
     </div>
   </section>
 
@@ -100,9 +157,7 @@
         <h2>Data Source</h2>
         <div class="content">
           <p>
-            All match data is sourced from <a href="https://squiggle.com.au" target="_blank" rel="noopener">Squiggle</a>,
-            an excellent resource for AFL statistics and historical data. We're grateful for their
-            public API which makes this project possible.
+            Match fixtures, results and team data come from the <a href="https://squiggle.com.au" target="_blank" rel="noopener">Squiggle</a> API — an excellent resource for AFL statistics that makes this project possible. Historical player statistics and injury lists are sourced from AFL Tables and FootyWire, and match-day weather forecasts come from Open-Meteo.
           </p>
     </div>
   </section>
@@ -123,7 +178,7 @@
 useSeoMeta({
   title: 'About',
   description: 'Learn about WhatIsMyTip\'s AI-powered AFL tipping system. Discover our machine learning models, heuristics, and how we generate accurate AFL predictions and betting tips.',
-  keywords: 'AFL tipping models, AFL prediction algorithms, machine learning AFL, AFL betting models, Elo ratings AFL, AFL form analysis, AFL home advantage',
+  keywords: 'AFL tipping models, AFL prediction algorithms, machine learning AFL, AFL betting models, Elo ratings AFL, AFL form analysis, AFL home advantage, AFL injury impact, AFL weather predictions, AFL head-to-head predictions, AFL player form',
   ogTitle: 'About | WhatIsMyTip - AI-Powered AFL Tipping',
   ogDescription: 'Learn about WhatIsMyTip\'s AI-powered AFL tipping system. Discover our machine learning models and heuristics.',
   ogType: 'website',
