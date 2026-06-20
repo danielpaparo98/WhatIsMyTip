@@ -168,3 +168,60 @@ class TestDockerfileEnvVarInventory:
             "(The shell ${FORWARDED_ALLOW_IPS:-...} still works without "
             "this, but a missing ENV is a UX regression.)"
         )
+
+
+class TestDockerfileManagedPostgresCA:
+    """The DigitalOcean managed-Postgres CA must be bundled into the
+    image so the backend can verify the DB TLS certificate when
+    ``DB_SSL_VERIFY=true``.
+
+    ``packages/shared/db.py`` builds the async engine's SSL context with
+    ``ssl.create_default_context()``, which loads the Debian system
+    trust store.  Bundling the public CA into the image's trust store is
+    therefore sufficient — no code change to ``db.py`` is required.
+    These tests pin that the public CA certificate is (1) committed
+    in-repo with no private key, and (2) COPYed into the image trust
+    store with ``update-ca-certificates``.
+    """
+
+    CA_REL = "certs/do-managed-postgres-ca.crt"
+    CA_FILE = REPO_ROOT / "certs" / "do-managed-postgres-ca.crt"
+
+    def test_ca_file_is_committed_and_is_a_public_cert(self):
+        """The committed CA file exists, is a PEM CERTIFICATE, and
+        contains NO private key (managed-DB CA certificates are public
+        assets — a private key would be a secret leak)."""
+        if not self.CA_FILE.is_file():
+            pytest.skip(f"CA cert not found at {self.CA_FILE}")
+        text = self.CA_FILE.read_text(encoding="utf-8")
+        assert "BEGIN CERTIFICATE" in text, (
+            f"{self.CA_REL} should be a PEM certificate"
+        )
+        assert "PRIVATE KEY" not in text, (
+            f"{self.CA_REL} must not contain a private key — managed "
+            "DB CA certificates are public assets, never secrets."
+        )
+
+    def test_dockerfile_copies_ca_into_trust_store(self):
+        """The Dockerfile must COPY the public CA into the Debian
+        ``/usr/local/share/ca-certificates/`` directory."""
+        dockerfile = _read_dockerfile()
+        assert re.search(
+            r"COPY\s+certs/do-managed-postgres-ca\.crt\s+"
+            r"/usr/local/share/ca-certificates/do-managed-postgres-ca\.crt",
+            dockerfile,
+        ), (
+            "Dockerfile must COPY certs/do-managed-postgres-ca.crt into "
+            "/usr/local/share/ca-certificates/ so the bundled DO CA is "
+            "trusted by ssl.create_default_context()."
+        )
+
+    def test_dockerfile_runs_update_ca_certificates(self):
+        """``update-ca-certificates`` must run (as root, before the
+        ``USER`` switch) so the COPYed CA is loaded into the trust
+        store."""
+        dockerfile = _read_dockerfile()
+        assert re.search(r"RUN\s+update-ca-certificates", dockerfile), (
+            "Dockerfile must run `update-ca-certificates` after COPYing "
+            "the CA so it is added to /etc/ssl/certs."
+        )

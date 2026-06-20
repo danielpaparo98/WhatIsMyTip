@@ -34,8 +34,19 @@ WORKDIR /app
 
 # Install system dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
     curl \
     && rm -rf /var/lib/apt/lists/*
+
+# Trust the DigitalOcean managed-Postgres CA so the backend can verify
+# the DB TLS certificate (DB_SSL_VERIFY=true).  This is a PUBLIC CA
+# certificate (no private key) shipped in-repo under certs/; adding it
+# to the Debian system trust store makes Python's
+# ssl.create_default_context() (used by the async engine in
+# packages/shared/db.py) trust it automatically.  Must run as root and
+# before the USER switch to appuser.
+COPY certs/do-managed-postgres-ca.crt /usr/local/share/ca-certificates/do-managed-postgres-ca.crt
+RUN update-ca-certificates
 
 # Install uv (Python package installer) for fast dependency management
 COPY --from=ghcr.io/astral-sh/uv:0.5.11 /uv /uvx /usr/local/bin/
