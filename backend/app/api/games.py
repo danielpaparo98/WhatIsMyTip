@@ -54,6 +54,12 @@ router = APIRouter()
 # ---------------------------------------------------------------------------
 
 
+# Extra no-trailing-slash alias so the DigitalOcean App Platform ingress
+# (which trims the matched `/api` prefix) resolves `/api/games` directly
+# rather than 307-redirecting to `/games/` (whose Location would drop the
+# `/api` prefix and route to the frontend).  Hidden from OpenAPI to avoid
+# a duplicate operationId; the `/` form below stays the documented path.
+@router.get("", response_model=None, include_in_schema=False)
 @router.get("/", response_model=None)
 async def list_games(
     db: Annotated[AsyncSession, Depends(get_db)],

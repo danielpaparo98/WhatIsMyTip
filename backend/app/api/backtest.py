@@ -64,6 +64,10 @@ class BacktestRunRequest(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+# No-trailing-slash alias — see the comment on `list_games` in games.py.
+# Lets the ingress-trimmed `/api/backtest` resolve without a redirect that
+# drops the `/api` prefix.  Hidden from OpenAPI (duplicate operationId).
+@router.get("", include_in_schema=False)
 @router.get("/")
 async def get_backtest_results():
     """Deprecated endpoint — always returns an empty result list.

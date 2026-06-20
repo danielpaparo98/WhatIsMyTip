@@ -64,6 +64,10 @@ _post_generate_limiter = Limiter(key_func=get_remote_address)
 # ---------------------------------------------------------------------------
 
 
+# No-trailing-slash alias — see the comment on `list_games` in games.py.
+# Lets the ingress-trimmed `/api/tips` resolve without a redirect that
+# drops the `/api` prefix.  Hidden from OpenAPI (duplicate operationId).
+@router.get("", include_in_schema=False)
 @router.get("/")
 async def list_tips(
     db: Annotated[AsyncSession, Depends(get_db)],
