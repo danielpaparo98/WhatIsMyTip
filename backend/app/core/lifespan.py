@@ -28,17 +28,24 @@ logger = logging.getLogger(__name__)
 
 
 def _validate_production_security() -> None:
-    """Refuse to start the app in production with a missing admin key.
+    """Refuse to start the app in production with missing critical config.
 
-    In any other environment (development, test, staging, etc.) we
-    emit a WARNING and let the app boot — empty ``ADMIN_API_KEY`` is
-    the local-dev default in ``.env.example``.
+    This is a **defense-in-depth** check that supplements the
+    ``model_validator`` in :class:`packages.shared.config.Settings`.
+    The validator catches misconfiguration at ``Settings()`` construction
+    time, but this function provides a second gate at lifespan startup
+    in case the environment changed between import and run.
 
-    In production we fail fast: every ``/api/admin/**`` endpoint
-    would otherwise respond 403 to every caller, which is silent and
-    invisible in the health check (the app looks "up").  A misconfig
-    of this kind should take the instance out of the load-balancer
-    rotation immediately.
+    Validated in production only:
+
+    - ``DATABASE_URL`` must not be the localhost default (the app would
+      silently connect to a non-existent local DB and serve ``"degraded"``
+      health responses forever).
+    - ``ADMIN_API_KEY`` must be set (every admin endpoint would 403).
+
+    In non-production environments (development, test, staging) we emit
+    a WARNING and let the app boot — localhost defaults and empty keys
+    are the local-dev defaults in ``.env.example``.
     """
     if settings.environment != "production":
         if not settings.admin_api_key:
@@ -50,13 +57,24 @@ def _validate_production_security() -> None:
             )
         return
 
-    # Production: refuse to start if the admin key is missing.
-    if not settings.admin_api_key:
-        msg = (
-            "Refusing to start: ADMIN_API_KEY is empty in production. "
-            "Set ADMIN_API_KEY in the App Platform spec to a high-entropy "
-            "secret before deploying."
+    # Production checks — refuse to start.
+    errors: list[str] = []
+
+    _LOCALHOST_DEFAULT = "postgresql+asyncpg://localhost/whatismytip"
+    if not settings.database_url or settings.database_url == _LOCALHOST_DEFAULT:
+        errors.append(
+            "DATABASE_URL is unset or pointing at localhost. "
+            "Set DATABASE_URL to the production Postgres DSN."
         )
+
+    if not settings.admin_api_key:
+        errors.append(
+            "ADMIN_API_KEY is empty. Generate one with "
+            "`python -c \"import secrets; print(secrets.token_urlsafe(48))\"`."
+        )
+
+    if errors:
+        msg = "Refusing to start in production: " + "; ".join(errors)
         logger.critical(msg)
         raise RuntimeError(msg)
 
