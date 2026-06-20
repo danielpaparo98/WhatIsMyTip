@@ -130,7 +130,7 @@ class GameCRUD:
         """
         stmt = (
             select(Game)
-            .where(not Game.completed)
+            .where(~Game.completed)
             .order_by(Game.date)
         )
         if limit is not None:
@@ -429,7 +429,7 @@ class GameCRUD:
             select(Game)
             .where(
                 and_(
-                    not Game.completed,
+                    ~Game.completed,
                     Game.date.isnot(None),
                     Game.date < cutoff_time
                 )
