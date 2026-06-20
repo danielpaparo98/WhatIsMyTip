@@ -18,10 +18,13 @@ from sqlalchemy import text
 
 from packages.shared.db import _get_session_factory, dispose_engine, get_engine
 
-# Skip entire module if no DB available
+# Skip entire module if no DATABASE_URL configured.
+# The integration conftest.py sets up an ephemeral Postgres for CI;
+# without it these tests cannot run.
+_DSN = os.environ.get("DATABASE_URL", "")
 pytestmark = pytest.mark.skipif(
-    "not config.getoption('--run-integration', default=False)",
-    reason="Integration tests require --run-integration flag and running PostgreSQL",
+    not _DSN or "localhost" in _DSN,
+    reason="Integration tests require DATABASE_URL pointing at a live Postgres",
 )
 
 

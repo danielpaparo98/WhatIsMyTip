@@ -120,14 +120,41 @@ def _patch_scheduler(monkeypatch):
     return scheduler
 
 
-def _build_settings(monkeypatch, *, environment: str, admin_api_key: str) -> Settings:
+def _build_settings(
+    monkeypatch,
+    *,
+    environment: str,
+    admin_api_key: str,
+    bypass_validation: bool = False,
+) -> Settings:
     """Construct a fresh ``Settings`` instance with the requested
     environment + admin_api_key.  We use ``model_construct`` to skip
     pydantic's full validation pass — those settings are otherwise
     well-formed — and we patch the env vars the test wants.
+
+    When ``bypass_validation`` is True (the default for production
+    tests that intentionally pass invalid values to exercise the
+    lifespan guard), we use ``model_construct`` to bypass the
+    production config validator in ``Settings``.
     """
     monkeypatch.setenv("ENVIRONMENT", environment)
     monkeypatch.setenv("ADMIN_API_KEY", admin_api_key)
+    monkeypatch.setenv(
+        "DATABASE_URL",
+        "postgresql+asyncpg://test:test@db.example.com:25060/whatismytip"
+        if environment == "production"
+        else "postgresql+asyncpg://localhost/whatismytip",
+    )
+    if bypass_validation:
+        return Settings.model_construct(
+            environment=environment,
+            admin_api_key=admin_api_key,
+            database_url=(
+                "postgresql+asyncpg://test:test@db.example.com:25060/whatismytip"
+                if environment == "production"
+                else "postgresql+asyncpg://localhost/whatismytip"
+            ),
+        )
     return Settings()
 
 
@@ -157,7 +184,10 @@ class TestRefuseToStartOnEmptyAdminKeyInProduction:
         _patch_shared(monkeypatch)
         _patch_scheduler(monkeypatch)
         settings = _build_settings(
-            monkeypatch, environment="production", admin_api_key=""
+            monkeypatch,
+            environment="production",
+            admin_api_key="",
+            bypass_validation=True,  # test the lifespan guard, not config
         )
         _patch_lifespan_settings(monkeypatch, settings)
 
@@ -191,7 +221,9 @@ class TestRefuseToStartOnEmptyAdminKeyInProduction:
         _patch_shared(monkeypatch)
         _patch_scheduler(monkeypatch)
         settings = _build_settings(
-            monkeypatch, environment="production", admin_api_key="not-empty-secret"
+            monkeypatch,
+            environment="production",
+            admin_api_key="a" * 48,  # sufficiently long for production
         )
         _patch_lifespan_settings(monkeypatch, settings)
 

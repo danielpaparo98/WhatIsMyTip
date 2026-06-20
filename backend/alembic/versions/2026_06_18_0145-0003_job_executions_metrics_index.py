@@ -10,7 +10,7 @@ The DESC on ``started_at`` lets the planner do an index-only scan
 for ``ORDER BY started_at DESC LIMIT 1`` (last-run / last-success /
 last-failure lookups), which is the dominant access pattern.
 
-Revision ID: 0003_metrics_index
+Revision ID: 0003_job_executions_metrics_index
 Revises: 0002_weather_players_injuries
 Create Date: 2026-06-18 01:45:00.000000
 
@@ -21,7 +21,7 @@ from alembic import op
 
 
 # revision identifiers, used by Alembic.
-revision: str = "0003_metrics_index"
+revision: str = "0003_job_executions_metrics_index"
 down_revision: Union[str, Sequence[str], None] = (
     "0002_weather_players_injuries"
 )

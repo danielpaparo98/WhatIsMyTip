@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import List, Optional, Union
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -49,7 +49,6 @@ class Settings(BaseSettings):
 
     # Cron Job Configuration
     cron_enabled: bool = True
-    cron_timezone: str = "Australia/Perth"
 
     # Database connection pool configuration (ME-005).
     # All three values are read from environment variables:
@@ -190,6 +189,63 @@ class Settings(BaseSettings):
         if isinstance(v, str):
             return [origin.strip() for origin in v.split(",") if origin.strip()]
         return [str(origin).strip() for origin in v if str(origin).strip()]
+
+    @model_validator(mode="after")
+    def _validate_production_config(self) -> "Settings":
+        """Fail fast on production-incompatible configuration.
+
+        In production we refuse to start if any of these critical
+        settings are missing or hold a development default:
+
+        - ``database_url`` must not be the ``localhost`` default and
+          must include the ``+asyncpg`` driver suffix.
+        - ``admin_api_key`` must be set and at least 32 characters.
+
+        In non-production environments (development, test, staging) the
+        check is skipped so local workflows remain friction-free.
+
+        This runs at ``Settings()`` construction time, so the app never
+        even gets to the lifespan hook with a broken config.
+        """
+        if self.environment != "production":
+            return self
+
+        _LOCALHOST_DEFAULTS = (
+            "postgresql+asyncpg://localhost/whatismytip",
+            "postgresql://localhost/whatismytip",
+        )
+
+        errors: list[str] = []
+
+        # DATABASE_URL — the single most common deployment blocker.
+        if not self.database_url or self.database_url in _LOCALHOST_DEFAULTS:
+            errors.append(
+                "DATABASE_URL is unset or still pointing at localhost in "
+                "production. Set DATABASE_URL to the managed Postgres DSN "
+                "(e.g. postgresql+asyncpg://user:pass@host:25060/dbname)."
+            )
+        elif "+asyncpg" not in self.database_url:
+            errors.append(
+                "DATABASE_URL must use the +asyncpg driver "
+                f"(got: {self.database_url.split('+')[0] if '+' in self.database_url else self.database_url})."
+            )
+
+        # ADMIN_API_KEY — must be high-entropy in production.
+        if not self.admin_api_key:
+            errors.append(
+                "ADMIN_API_KEY is empty in production. Generate one with "
+                "`python -c \"import secrets; print(secrets.token_urlsafe(48))\"`."
+            )
+        elif len(self.admin_api_key) < 32:
+            errors.append(
+                f"ADMIN_API_KEY is only {len(self.admin_api_key)} characters "
+                "(minimum 32 required for production)."
+            )
+
+        if errors:
+            raise ValueError("; ".join(errors))
+
+        return self
 
 
 settings = Settings()

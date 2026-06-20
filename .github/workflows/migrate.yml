@@ -1,0 +1,68 @@
+name: Database Migrations
+
+# Runs Alembic migrations against the production database as a
+# discrete step BEFORE the app deployment.  This prevents the
+# "migrations run as their own one-off workflow" promise in
+# deploy.yml from being broken.
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: 'Alembic revision target (default: head)'
+        required: false
+        default: 'head'
+  workflow_run:
+    workflows: ["Deploy Backend"]
+    types: [completed]
+    branches: [main]
+
+jobs:
+  migrate:
+    name: Run Alembic migrations
+    runs-on: ubuntu-latest
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'workflow_run' &&
+       github.event.workflow_run.conclusion == 'success')
+    environment:
+      name: production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Install dependencies
+        run: uv sync --frozen --no-dev --no-install-project && uv sync --frozen --no-dev
+
+      - name: Verify DATABASE_URL is set
+        run: |
+          if [ -z "${{ secrets.DATABASE_URL }}" ]; then
+            echo "ERROR: DATABASE_URL secret is not set"
+            exit 1
+          fi
+          echo "DATABASE_URL is configured"
+
+      - name: Show current migration state
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: uv run alembic current
+
+      - name: Run migrations
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: uv run alembic upgrade ${{ github.event.inputs.target || 'head' }}
+
+      - name: Verify migration completed
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          CURRENT=$(uv run alembic current 2>/dev/null | grep -oP '^\S+' || echo "unknown")
+          echo "Migration completed. Current revision: $CURRENT"

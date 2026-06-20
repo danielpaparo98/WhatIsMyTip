@@ -16,11 +16,18 @@
 FROM python:3.12-slim
 
 # Set environment variables for Python and the application
+# Set to "true" to run alembic migrations on container startup.
+# Defaults to "false" — docker-compose runs migrations via the
+# init-data container, and CI/CD runs them as a separate step.
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PORT=8000 \
     WORKERS=2 \
-    FORWARDED_ALLOW_IPS=10.0.0.0/8
+    FORWARDED_ALLOW_IPS=10.0.0.0/8 \
+    RUN_MIGRATIONS_ON_START=false
+
+# Explicit ENV declaration for docker inspect visibility
+ENV FORWARDED_ALLOW_IPS=10.0.0.0/8
 
 # Set working directory
 WORKDIR /app
@@ -62,27 +69,12 @@ ENV PATH="/app/.venv/bin:$PATH"
 # Expose the application port
 EXPOSE 8000
 
-# Health check to verify the application is running
+# Health check using curl (installed in base image).  curl -f fails
+# on HTTP errors (4xx/5xx) which is what we want for liveness checks.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health').read()" || exit 1
+    CMD curl -f http://localhost:8000/health || exit 1
 
-# Create a startup script that runs migrations then starts the app
-RUN echo '#!/bin/sh\n\
-set -e\n\
-\n\
-# Run database migrations\n\
-if [ -n "$DATABASE_URL" ]; then\n\
-    echo "Running database migrations..."\n\
-    alembic upgrade head\n\
-    echo "Migrations completed successfully!"\n\
-else\n\
-    echo "Warning: DATABASE_URL not set, skipping migrations"\n\
-fi\n\
-\n\
-# Start the FastAPI application\n\
-echo "Starting FastAPI application..."\n\
-exec uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000} --workers ${WORKERS:-2} --proxy-headers --forwarded-allow-ips ${FORWARDED_ALLOW_IPS:-10.0.0.0/8}\n\
-' > /app/start.sh && chmod +x /app/start.sh
-
-# Set the startup script as the entrypoint
-CMD ["/app/start.sh"]
+# Shell-form CMD with conditional migration handling.
+# Migrations are gated by RUN_MIGRATIONS_ON_START (default false) to
+# prevent race conditions with docker-compose init-data or CI/CD.
+CMD ["sh", "-c", "if [ '${RUN_MIGRATIONS_ON_START:-false}' = 'true' ] && [ -n '${DATABASE_URL:-}' ]; then echo 'Running migrations...' && alembic upgrade head || exit 1; fi && exec uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000} --workers ${WORKERS:-2} --proxy-headers --forwarded-allow-ips ${FORWARDED_ALLOW_IPS:-10.0.0.0/8}"]

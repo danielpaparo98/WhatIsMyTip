@@ -73,6 +73,11 @@ services:
     # Hardening
     security_opt:
       - "no-new-privileges:true"
+    cap_drop:
+      - ALL
+    mem_limit: 512m
+    cpus: 1.0
+    shm_size: 128m
     # No `ports:` — postgres is reachable only via backend_net.
     # To connect from the host (psql, TablePlus, etc.) for local
     # debugging, run `docker compose port postgres 5432` after
@@ -93,6 +98,10 @@ services:
       - backend_net
     security_opt:
       - "no-new-privileges:true"
+    cap_drop:
+      - ALL
+    mem_limit: 256m
+    cpus: 0.5
     # No `ports:` — see postgres above.
 
   # One-shot init container: runs Alembic migrations, then (optionally)
@@ -144,6 +153,10 @@ services:
     container_name: wimt-api
     ports:
       - "8000:8000"
+    mem_limit: 1g
+    cpus: 2.0
+    cap_drop:
+      - ALL
     environment:
       # DATABASE_URL comes from .env when present, with a sensible
       # default for the compose network.
@@ -202,6 +215,16 @@ services:
     working_dir: /app
     ports:
       - "3000:3000"
+    mem_limit: 512m
+    cpus: 1.0
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /app/node_modules
+      - /app/.nuxt
+      - /app/.output
     environment:
       NUXT_PUBLIC_API_BASE: http://localhost:8000
       NODE_ENV: development
