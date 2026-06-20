@@ -9,12 +9,28 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from pydantic import BaseModel as PydanticBaseModel
+
 from packages.shared.cache import (
     RedisCache,
     cached,
     close_redis_pool,
     invalidate_cache_pattern,
 )
+from packages.shared.models import Tip
+
+
+class _SampleTipModel(PydanticBaseModel):
+    """A plain Pydantic v2 model used to prove ``BaseModel`` caching.
+
+    Defined at module scope (not inside a test) so the cache layer can
+    reconstruct it from its fully-qualified import path on GET.
+    """
+
+    heuristic: str
+    selected_team: str
+    margin: int
+    confidence: float
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -27,6 +43,35 @@ def _mock_redis_client():
     client.set = AsyncMock(return_value=True)
     client.delete = AsyncMock(return_value=1)
     client.scan_iter = MagicMock(return_value=[])
+    client.aclose = AsyncMock()
+    return client
+
+
+def _in_memory_redis_client():
+    """A fake ``redis.asyncio`` client backed by a plain dict.
+
+    Unlike :func:`_mock_redis_client` (which only records calls), this
+    one actually persists whatever ``set`` receives and hands it back on
+    ``get`` — so a SET → GET round-trip exercises the cache layer's real
+    (de)serialization end-to-end without a running Redis.
+    """
+    store: dict = {}
+
+    async def _get(key):
+        return store.get(key)
+
+    async def _set(key, value, ex=None):
+        store[key] = value
+        return True
+
+    async def _delete(key):
+        return 1 if store.pop(key, None) is not None else 0
+
+    client = AsyncMock()
+    client.get = AsyncMock(side_effect=_get)
+    client.set = AsyncMock(side_effect=_set)
+    client.delete = AsyncMock(side_effect=_delete)
+    client.scan_iter = MagicMock(return_value=iter([]))
     client.aclose = AsyncMock()
     return client
 
@@ -563,3 +608,110 @@ class TestConnectionFailureGracefulDegradation:
         # Must not raise.
         result = await cache.set("any_key", {"value": 1})
         assert result is None
+
+
+# ---------------------------------------------------------------------------
+# Pydantic / ORM model serialization (regression: "Object of type Tip is
+# not JSON serializable" on cache SET)
+# ---------------------------------------------------------------------------
+
+
+class TestModelSerialization:
+    """Regression: caching a Pydantic ``BaseModel`` (or a SQLAlchemy ORM
+    model such as ``Tip``) used to raise
+    ``Object of type Tip is not JSON serializable`` inside
+    :meth:`RedisCache.set`, because the stdlib ``json`` encoder cannot
+    encode model objects.  These tests prove model values round-trip
+    through SET → GET faithfully, and that plain JSON-native values are
+    unaffected.
+    """
+
+    @pytest.mark.asyncio
+    async def test_set_get_roundtrips_pydantic_basemodel(self):
+        """A single Pydantic ``BaseModel`` survives SET → GET as an equal
+        model instance (no serialization error, faithful restore)."""
+        client = _in_memory_redis_client()
+        cache = RedisCache(default_ttl=60, prefix="test:")
+        original = _SampleTipModel(
+            heuristic="best_bet",
+            selected_team="Richmond",
+            margin=12,
+            confidence=0.82,
+        )
+        with patch("packages.shared.cache._get_client", return_value=client):
+            await cache.set("tip:1", original)
+            retrieved = await cache.get("tip:1")
+
+        assert isinstance(retrieved, _SampleTipModel)
+        assert retrieved == original
+        assert retrieved.selected_team == "Richmond"
+
+    @pytest.mark.asyncio
+    async def test_set_get_roundtrips_list_of_pydantic_models(self):
+        """A list of Pydantic models round-trips as a list of equal
+        model instances."""
+        client = _in_memory_redis_client()
+        cache = RedisCache(default_ttl=60, prefix="test:")
+        originals = [
+            _SampleTipModel(
+                heuristic="best_bet", selected_team="A", margin=1, confidence=0.5
+            ),
+            _SampleTipModel(
+                heuristic="yolo", selected_team="B", margin=2, confidence=0.9
+            ),
+        ]
+        with patch("packages.shared.cache._get_client", return_value=client):
+            await cache.set("tips:list", originals)
+            retrieved = await cache.get("tips:list")
+
+        assert isinstance(retrieved, list)
+        assert len(retrieved) == 2
+        assert all(isinstance(r, _SampleTipModel) for r in retrieved)
+        assert retrieved == originals
+
+    @pytest.mark.asyncio
+    async def test_set_get_roundtrips_tip_sqlalchemy_orm_model(self):
+        """The real production bug: ``Tip`` is a SQLAlchemy ORM model
+        returned from the ``@cached`` tips CRUD.  It must round-trip
+        through the cache without raising and restore its column data."""
+        client = _in_memory_redis_client()
+        cache = RedisCache(default_ttl=60, prefix="test:")
+        original = Tip(
+            id=42,
+            game_id=7,
+            heuristic="best_bet",
+            selected_team="Richmond",
+            margin=12,
+            confidence=0.82,
+            explanation="Strong recent form",
+        )
+        with patch("packages.shared.cache._get_client", return_value=client):
+            await cache.set("tip:orm:7", original)
+            retrieved = await cache.get("tip:orm:7")
+
+        assert isinstance(retrieved, Tip)
+        assert retrieved.id == 42
+        assert retrieved.game_id == 7
+        assert retrieved.heuristic == "best_bet"
+        assert retrieved.selected_team == "Richmond"
+        assert retrieved.margin == 12
+        assert retrieved.confidence == 0.82
+        assert retrieved.explanation == "Strong recent form"
+
+    @pytest.mark.asyncio
+    async def test_plain_values_still_roundtrip_unchanged(self):
+        """Plain JSON-native values (str/int/dict/list) must continue to
+        round-trip exactly as before — the fix must not change their
+        stored/returned shape."""
+        client = _in_memory_redis_client()
+        cache = RedisCache(default_ttl=60, prefix="test:")
+        with patch("packages.shared.cache._get_client", return_value=client):
+            await cache.set("s", "hello")
+            await cache.set("n", 42)
+            await cache.set("d", {"a": 1, "b": [2, 3]})
+            await cache.set("l", ["x", "y"])
+
+            assert await cache.get("s") == "hello"
+            assert await cache.get("n") == 42
+            assert await cache.get("d") == {"a": 1, "b": [2, 3]}
+            assert await cache.get("l") == ["x", "y"]

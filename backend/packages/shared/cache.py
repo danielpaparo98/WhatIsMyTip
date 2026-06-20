@@ -7,13 +7,16 @@ to handle FaaS cold starts gracefully.
 """
 
 import hashlib
+import importlib
 import json
 import logging
 import time
+from datetime import date, datetime
 from functools import wraps
 from typing import Any, Callable, Optional, TypeVar
 
 import redis.asyncio as redis
+from pydantic import BaseModel
 from redis.asyncio import ConnectionPool
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -92,6 +95,123 @@ def _get_client() -> Optional[redis.Redis]:
         return None
 
 
+# ---------------------------------------------------------------------------
+# Value (de)serialization for non-JSON-native types
+# ---------------------------------------------------------------------------
+#
+# ``RedisCache`` stores values via ``json.dumps`` / ``json.loads``.  The
+# stdlib JSON encoder cannot encode Pydantic ``BaseModel`` instances or
+# SQLAlchemy ORM instances (e.g. ``Tip``), which previously made every
+# ``set`` of such a value fail with
+# ``Object of type Tip is not JSON serializable`` (the SET was swallowed
+# by the error handler, so the value simply never got cached).
+#
+# To fix this generically — without changing any call site or the public
+# cache API — ``set`` normalizes the value to a JSON-safe form first, and
+# ``get`` restores it.  Recognized model objects are wrapped in a small
+# typed envelope so they can be reconstructed on read; every plain
+# JSON-native value (scalars, strings, plain dicts/lists) passes through
+# unchanged, preserving the existing behaviour.
+
+_CACHE_ENVELOPE_KEY = "__wimt_cached_object__"
+
+
+def _resolve_class(module_name: str, qualname: str) -> Optional[type]:
+    """Import and return the class identified by ``module_name.qualname``.
+
+    Returns ``None`` when the class cannot be imported (e.g. it has been
+    removed or renamed since the value was cached) so callers can degrade
+    gracefully to the raw payload instead of raising.
+    """
+    try:
+        module = importlib.import_module(module_name)
+    except Exception:
+        return None
+    obj: Any = module
+    for part in qualname.split("."):
+        obj = getattr(obj, part, None)
+        if obj is None:
+            return None
+    return obj if isinstance(obj, type) else None
+
+
+def _to_cacheable(value: Any) -> Any:
+    """Recursively convert ``value`` into a JSON-serializable structure.
+
+    * Pydantic ``BaseModel`` instances are dumped with
+      ``model_dump(mode="json")`` and wrapped in an envelope.
+    * SQLAlchemy ORM instances (declarative classes expose ``__mapper__``)
+      are converted to a ``{column: value}`` dict and wrapped in an
+      envelope; ``datetime``/``date`` column values become ISO-8601
+      strings so the whole structure is JSON-safe.
+    * ``list`` / ``tuple`` / ``dict`` containers are converted
+      element-wise (so a list of models is handled too).
+    * Everything else (scalars, strings, ``None``) is returned unchanged.
+    """
+    # Pydantic v2 model.
+    if isinstance(value, BaseModel):
+        cls = type(value)
+        return {
+            _CACHE_ENVELOPE_KEY: "pydantic",
+            "module": cls.__module__,
+            "qualname": cls.__qualname__,
+            "data": value.model_dump(mode="json"),
+        }
+
+    # SQLAlchemy ORM instance (declarative-mapped classes carry __mapper__).
+    mapper = getattr(type(value), "__mapper__", None)
+    if mapper is not None:
+        cls = type(value)
+        data = {}
+        for column in mapper.columns:
+            data[column.key] = _to_cacheable(getattr(value, column.key))
+        return {
+            _CACHE_ENVELOPE_KEY: "sqlalchemy",
+            "module": cls.__module__,
+            "qualname": cls.__qualname__,
+            "data": data,
+        }
+
+    if isinstance(value, (datetime, date)):
+        return value.isoformat()
+    if isinstance(value, list):
+        return [_to_cacheable(v) for v in value]
+    if isinstance(value, tuple):
+        return [_to_cacheable(v) for v in value]
+    if isinstance(value, dict):
+        return {key: _to_cacheable(val) for key, val in value.items()}
+    return value
+
+
+def _from_cacheable(value: Any) -> Any:
+    """Inverse of :func:`_to_cacheable`.
+
+    Reconstructs enveloped Pydantic / SQLAlchemy ORM instances; leaves
+    plain dicts, lists and scalars untouched (so existing scalar / string
+    / list caching is unchanged).  If a model class can no longer be
+    imported, the raw payload is returned instead of raising.
+    """
+    if isinstance(value, dict):
+        tag = value.get(_CACHE_ENVELOPE_KEY)
+        if tag in ("pydantic", "sqlalchemy"):
+            cls = _resolve_class(value.get("module", ""), value.get("qualname", ""))
+            data = _from_cacheable(value.get("data", {}))
+            if cls is None:
+                return data
+            try:
+                if tag == "pydantic" and issubclass(cls, BaseModel):
+                    return cls.model_validate(data)
+                # SQLAlchemy: build a transient (session-free) instance
+                # carrying the cached column values.
+                return cls(**data)
+            except Exception:
+                return data
+        return {key: _from_cacheable(val) for key, val in value.items()}
+    if isinstance(value, list):
+        return [_from_cacheable(v) for v in value]
+    return value
+
+
 class RedisCache:
     """
     Redis-backed cache with TTL support.
@@ -123,7 +243,7 @@ class RedisCache:
             raw = await client.get(full_key)
             if raw is None:
                 return None
-            return json.loads(raw)
+            return _from_cacheable(json.loads(raw))
         except (redis.RedisError, json.JSONDecodeError) as e:
             logger.warning(f"Cache GET error for key '{key}': {e}")
             return None
@@ -134,7 +254,10 @@ class RedisCache:
 
         Args:
             key: Cache key
-            value: Value to cache (must be JSON-serializable)
+            value: Value to cache. Plain JSON-native values are stored
+                as-is; Pydantic ``BaseModel`` and SQLAlchemy ORM
+                instances (and lists thereof) are normalized to a
+                JSON-safe form and faithfully restored on :meth:`get`.
             ttl: Time-to-live in seconds (uses default_ttl if None)
         """
         client = _get_client()
@@ -143,7 +266,7 @@ class RedisCache:
         full_key = self._prefixed_key(key)
         ttl = ttl if ttl is not None else self.default_ttl
         try:
-            await client.set(full_key, json.dumps(value), ex=int(ttl))
+            await client.set(full_key, json.dumps(_to_cacheable(value)), ex=int(ttl))
         except (redis.RedisError, json.JSONDecodeError, TypeError) as e:
             logger.warning(f"Cache SET error for key '{key}': {e}")
 
@@ -232,10 +355,14 @@ def cached(
         ttl: Override default TTL for this function.
         serializer: Optional callable that converts the function's return
             value into a JSON-serializable form before it is stored in
-            the cache.  Use this for functions that return live
-            SQLAlchemy ORM instances or any other value that is not
-            directly JSON-serializable.  The caller still receives the
-            ORIGINAL return value; only the cached copy is serialized.
+            the cache.  This is rarely needed now: :meth:`RedisCache.set`
+            already normalizes Pydantic ``BaseModel`` and SQLAlchemy ORM
+            instances (and lists thereof) to a JSON-safe form and
+            restores them on :meth:`RedisCache.get`.  Keep a serializer
+            only when you want a *custom* cached representation that
+            differs from the original return value.  The caller always
+            receives the ORIGINAL return value; only the cached copy is
+            transformed.
         skip_first_arg: When ``True`` (default) the first positional
             argument is excluded from the cache key.  This matches the
             common pattern of a decorated method whose first arg is
@@ -282,11 +409,11 @@ def cached(
             func_time = time.time() - func_start
 
             # Convert the return value to a JSON-safe form before storing.
-            # Without a serializer, callers that return SQLAlchemy ORM
-            # instances would trigger RedisCache.set's "Object of type X is
-            # not JSON serializable" warning on every call.  The caller
+            # RedisCache.set already handles Pydantic / SQLAlchemy ORM
+            # instances natively, so most callers need no ``serializer``;
+            # it remains for custom cached representations.  The caller
             # still receives ``result`` (the live objects); only the
-            # cached copy is the serialized form.
+            # cached copy is transformed.
             cacheable = serializer(result) if serializer is not None else result
 
             set_start = time.time()
