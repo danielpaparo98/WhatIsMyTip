@@ -167,7 +167,25 @@ from app.api.tips import router as tips_router
 from app.api.backtest import router as backtest_router
 from app.api.admin import router as admin_router
 
+# NOTE — DigitalOcean App Platform ingress path-prefix routing trims the
+# matched prefix before the request reaches this service: a public
+# ``GET /api/games`` is forwarded here as ``GET /games`` (the platform
+# exposes no ``preserve_path_prefix``/``rewrite`` for this app, so the
+# frontend's ``/api/*`` contract is preserved at the edge and the prefix
+# is stripped on the way in).  To honour the public ``/api/*`` surface
+# while also serving local ``uvicorn main:app`` (no trimming ingress)
+# and the test harness unchanged, every router is mounted TWICE:
+#
+#   * ``/api/<name>`` — the documented, public path (kept in OpenAPI).
+#   * ``/<name>``     — the trimmed path the production ingress forwards,
+#                       mounted with ``include_in_schema=False`` so it is
+#                       functional but hidden from the docs (avoids
+#                       duplicate operationIds).  See ``.do/app.yaml``.
 app.include_router(games_router, prefix="/api/games", tags=["games"])
+app.include_router(games_router, prefix="/games", tags=["games"], include_in_schema=False)
 app.include_router(tips_router, prefix="/api/tips", tags=["tips"])
+app.include_router(tips_router, prefix="/tips", tags=["tips"], include_in_schema=False)
 app.include_router(backtest_router, prefix="/api/backtest", tags=["backtest"])
+app.include_router(backtest_router, prefix="/backtest", tags=["backtest"], include_in_schema=False)
 app.include_router(admin_router, prefix="/api/admin", tags=["admin"])
+app.include_router(admin_router, prefix="/admin", tags=["admin"], include_in_schema=False)
