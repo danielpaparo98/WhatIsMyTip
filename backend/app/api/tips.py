@@ -150,9 +150,19 @@ async def games_with_tips(
     endpoint to coordinate writes either; tip generation is gated
     by the JobLockCRUD path in the cron layer.
     """
-    stmt = select(Game).where(
-        Game.season == season,
-        Game.round_id == round_id,
+    # Order by match date (ascending) so the homepage renders games in
+    # chronological order.  ``Game.id`` is a deterministic tiebreaker for
+    # games that share a kick-off time (mirrors ``GameCRUD.get_by_round``).
+    # Without ORDER BY, Postgres returns rows in physical-storage order,
+    # which made a round's games appear jumbled.  NULL dates (TBD
+    # fixtures) sort last under the default ASC ordering.
+    stmt = (
+        select(Game)
+        .where(
+            Game.season == season,
+            Game.round_id == round_id,
+        )
+        .order_by(Game.date.asc(), Game.id.asc())
     )
     games_result = await db.execute(stmt)
     games = list(games_result.scalars().all())
