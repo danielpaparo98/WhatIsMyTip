@@ -131,8 +131,7 @@ behaviour regressions.
   - `backend/tests/unit/test_app_api_tips.py:343` (`TestGenerateTips`)
     now asserts missing/wrong/valid keys instead of the old
     "endpoint is open" contract.
-- **Docs:** `docs/api.md:163` and
-  `plans/integration-test-endpoint-inventory.md:48,157` updated.
+- **Docs:** `docs/api.md:163` updated.
 - **Sweep delta:** section-3 and section-4 cases now return the
   *expected* status (422 for validation, 200/422/500 for rate-limited)
   instead of short-circuiting to 401.

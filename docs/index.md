@@ -20,14 +20,10 @@ Landing page for the [`docs/`](../README.md) directory. Start here.
 
 | Doc | Why historical |
 |-----|----------------|
-| [`FAAS-EVALUATION.md`](FAAS-EVALUATION.md) | FaaS-era evaluation (pre-Phase 4). All concerns addressed; see the Resolution Status section. |
-| [`FULL-REVIEW.md`](FULL-REVIEW.md) | Original 2026-04 full code review. All findings closed. |
-| [`BACKEND-FAAS-CODE-REVIEW.md`](BACKEND-FAAS-CODE-REVIEW.md) | Backend FaaS code review (pre-FastAPI). Findings are all closed. |
 | [`digital-ocean-setup.md`](digital-ocean-setup.md) | One-time DO setup walkthrough. Superseded by `deployment.md`. |
 
 ## Project meta
 
 - [`../README.md`](../README.md) — project overview
 - [`../CONTRIBUTING.md`](../CONTRIBUTING.md) — how to contribute (TDD + gitmoji + `feature/` branching + bun/uv toolchain)
-- [`../plans/`](../plans/) — design docs and review reports (current work in progress)
 - [`../backend/README.md`](../backend/README.md) — backend-specific quick start
