@@ -57,7 +57,7 @@ class GameDetailResponse(BaseModel):
     game: GameResponse
     tips: List['TipResponse']  # All tips for all heuristics
     model_predictions: List[ModelPrediction]  # On-demand predictions from all 4 models
-    match_analysis: Optional['MatchAnalysisResponse'] = None  # AI-generated casual talking points
+    match_analysis: Optional['MatchAnalysisResponse'] = None  # AI-generated balanced talking points
     weather: Optional[WeatherResponse] = None  # Weather conditions at match venue
 
 

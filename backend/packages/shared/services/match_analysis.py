@@ -7,6 +7,7 @@ from ..logger import get_logger
 from ..models import Game
 from ..openrouter.client import OpenRouterClient
 from ..orchestrator import ModelOrchestrator
+from .match_context import build_match_context
 
 logger = get_logger(__name__)
 
@@ -56,13 +57,21 @@ class MatchAnalysisService:
                 "date": str(game.date) if game.date else "TBD",
             }
 
+            # Gather the full match context (ELO, form, weather, injuries, H2H)
+            # so the talking points give a genuinely balanced read on the game.
+            match_context = await build_match_context(db, game)
+
             # Generate analysis
             analysis_text = await self.client.generate_match_analysis(
-                game_dict, model_predictions if model_predictions else None
+                game_dict,
+                model_predictions if model_predictions else None,
+                match_context=match_context,
             )
 
             if analysis_text:
-                await MatchAnalysisCRUD.create(db, game.id, analysis_text)
+                # create_or_update overwrites a stale analysis when this is a
+                # regeneration, so richer rewrites are actually persisted.
+                await MatchAnalysisCRUD.create_or_update(db, game.id, analysis_text)
                 logger.info(f"Generated match analysis for game {game.id}")
 
             return analysis_text
