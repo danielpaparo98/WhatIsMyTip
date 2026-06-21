@@ -75,7 +75,7 @@ class TestConstants:
             assert team in TEAM_VENUES, f"Missing venue for {team}"
 
     def test_heuristics(self):
-        assert set(HEURISTICS) == {"best_bet", "yolo", "high_risk_high_reward"}
+        assert set(HEURISTICS) == {"best_bet", "yolo", "weighted_tip"}
 
     def test_model_names(self):
         assert set(MODEL_NAMES) == {"elo", "form", "home_advantage", "value"}

@@ -131,7 +131,7 @@ class TestRouterPaths:
         assert "/games-with-tips" in paths
         assert "/generate" in paths
         # The {heuristic} catch-all path is the URL pattern; the
-        # ``best_bet``/``yolo``/``high_risk_high_reward`` values are
+        # ``best_bet``/``yolo``/``weighted_tip`` values are
         # validated against the heuristic allow-list by the path
         # pattern at request time.
         assert "/{heuristic}" in paths

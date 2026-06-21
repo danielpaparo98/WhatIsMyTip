@@ -48,7 +48,7 @@ class Tip(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     game_id = Column(Integer, index=True)
-    heuristic = Column(String(50), index=True)  # best_bet, yolo, high_risk_high_reward
+    heuristic = Column(String(50), index=True)  # best_bet, yolo, weighted_tip
     selected_team = Column(String(100))
     margin = Column(Integer)
     confidence = Column(Float)

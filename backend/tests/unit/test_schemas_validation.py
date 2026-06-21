@@ -221,9 +221,9 @@ class TestTipGenerateRequest:
     def test_heuristics_accepts_valid_list(self):
         req = TipGenerateRequest.model_validate({
             "season": 2025,
-            "heuristics": ["best_bet", "high_risk_high_reward", "yolo"],
+            "heuristics": ["best_bet", "weighted_tip", "yolo"],
         })
-        assert req.heuristics == ["best_bet", "high_risk_high_reward", "yolo"]
+        assert req.heuristics == ["best_bet", "weighted_tip", "yolo"]
 
     def test_heuristics_accepts_any_string_list(self):
         """Schema accepts any string list — business logic validates against allowed set."""

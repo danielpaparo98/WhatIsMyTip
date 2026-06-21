@@ -4,7 +4,7 @@ from typing import Any, Dict, List, Tuple
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .heuristics import BaseHeuristic, BestBetHeuristic, HighRiskHighRewardHeuristic, YOLOHeuristic
+from .heuristics import BaseHeuristic, BestBetHeuristic, WeightedTipHeuristic, YOLOHeuristic
 from .logger import get_logger
 from .models import Game
 from .models_ml import (
@@ -42,7 +42,7 @@ class ModelOrchestrator:
         self.heuristics: Dict[str, BaseHeuristic] = {
             "best_bet": BestBetHeuristic(self.models),
             "yolo": YOLOHeuristic(self.models),
-            "high_risk_high_reward": HighRiskHighRewardHeuristic(self.models),
+            "weighted_tip": WeightedTipHeuristic(self.models),
         }
 
     async def predict(
@@ -52,7 +52,7 @@ class ModelOrchestrator:
 
         Args:
             game: Game to predict
-            heuristic: Heuristic to apply (best_bet, yolo, high_risk_high_reward)
+            heuristic: Heuristic to apply (best_bet, yolo, weighted_tip)
             db: Database session to use for queries
 
         Returns:
