@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll } from 'vitest'
 import { existsSync, readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, resolve } from 'node:path'
+import { useTeamLogos } from '../../composables/useTeamLogos'
 
 // CR-005 from Phase 2b: cross-reference every key in TEAM_LOGOS against
 // the actual files served from /public/logos.  The previous version
@@ -101,5 +102,45 @@ describe('TEAM_LOGOS mapping', () => {
     for (const k of forbiddenKeys) {
       expect(TEAM_LOGOS, `Unexpected alias as key: ${k}`).not.toHaveProperty(k)
     }
+  })
+})
+
+describe('getLogoUrl alias resolution', () => {
+  const { getLogoUrl } = useTeamLogos()
+
+  // These raw Squiggle forms previously rendered broken logos because
+  // they did not match a TEAM_LOGOS key. After adding the alias
+  // normaliser they must all resolve to a real /logos/*.png URL.
+  const cases: Array<[string, string]> = [
+    ['Western Bulldogs', '/logos/Bulldogs.png'],
+    ['Footscray', '/logos/Bulldogs.png'],
+    ['GWS', '/logos/Giants.png'],
+    ['Greater Western Sydney', '/logos/Giants.png'],
+    ['Gold Coast', '/logos/GoldCoast.png'],
+    ['North Melbourne', '/logos/NorthMelbourne.png'],
+    ['Port Adelaide', '/logos/PortAdelaide.png'],
+    ['St Kilda', '/logos/StKilda.png'],
+    ['West Coast', '/logos/WestCoast.png'],
+    ['Brisbane Lions', '/logos/Brisbane.png'],
+    ['Sydney Swans', '/logos/Sydney.png'],
+  ]
+
+  it.each(cases)('resolves alias "%s" to %s', (alias, expected) => {
+    expect(getLogoUrl(alias)).toBe(expected)
+  })
+
+  it('resolves canonical names directly', () => {
+    expect(getLogoUrl('Bulldogs')).toBe('/logos/Bulldogs.png')
+    expect(getLogoUrl('Collingwood')).toBe('/logos/Collingwood.png')
+  })
+
+  it('returns empty string for null/undefined/empty', () => {
+    expect(getLogoUrl(null)).toBe('')
+    expect(getLogoUrl(undefined)).toBe('')
+    expect(getLogoUrl('')).toBe('')
+  })
+
+  it('returns empty string for an unknown team', () => {
+    expect(getLogoUrl('Tasmania Devils')).toBe('')
   })
 })
