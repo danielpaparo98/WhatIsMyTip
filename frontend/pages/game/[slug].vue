@@ -103,7 +103,7 @@
         </div>
       </section>
 
-      <!-- Match Analysis / BBQ Talking Points -->
+      <!-- Match Analysis / Talking Points -->
       <section v-if="gameDetail.match_analysis" class="match-analysis-section">
         <h2 class="section-title">Match Analysis</h2>
         <MatchAnalysisCard :analysis="gameDetail.match_analysis" />

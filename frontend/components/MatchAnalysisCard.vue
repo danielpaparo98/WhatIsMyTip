@@ -3,8 +3,8 @@
     <div class="card-header">
       <span class="header-icon">🗣️</span>
       <div class="header-text">
-        <h3 class="header-title">BBQ Talking Points</h3>
-        <p class="header-subtitle">Casual chat to blend in at the footy</p>
+        <h3 class="header-title">Talking Points</h3>
+        <p class="header-subtitle">A balanced read on the matchup</p>
       </div>
     </div>
     <div class="talking-points">
