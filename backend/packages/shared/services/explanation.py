@@ -7,6 +7,7 @@ from ..logger import get_logger
 from ..models import Game, Tip
 from ..openrouter import OpenRouterClient
 from ..orchestrator import ModelOrchestrator
+from .match_context import build_match_context
 
 logger = get_logger(__name__)
 
@@ -57,12 +58,17 @@ class ExplanationService:
             "date": game.date.isoformat(),
         }
 
+        # Gather the full match context (ELO, form, weather, injuries, H2H)
+        # so the explanation can interpret the result rather than restate it.
+        match_context = await build_match_context(db, game)
+
         # Generate explanation via OpenRouter
         explanation = await self.client.generate_explanation(
             game=game_dict,
             prediction=prediction,
             heuristic=tip.heuristic,
             model_predictions=model_predictions if model_predictions else None,
+            match_context=match_context,
         )
 
         # Update the tip in the database

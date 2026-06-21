@@ -15,6 +15,7 @@ from ..models import Game, Tip
 from ..schemas.games import GameResponse
 from ..squiggle import SquiggleClient
 from ..squiggle.utils import parse_squiggle_complete
+from ..teams import canonical_team
 from ..utils import generate_slug
 
 
@@ -210,18 +211,30 @@ class GameCRUD:
         home_score_val = game_data.get("hscore")
         away_score_val = game_data.get("ascore")
 
+        # Canonicalise team names (compact form) so logos, the ELO cache
+        # and model queries all agree regardless of the source's naming
+        # (Squiggle sends "Western Bulldogs", "GWS", "Gold Coast" ...).
+        home_team_raw = game_data.get("hteam")
+        away_team_raw = game_data.get("ateam")
+        home_team_val = (
+            canonical_team(home_team_raw) if home_team_raw else home_team_raw
+        )
+        away_team_val = (
+            canonical_team(away_team_raw) if away_team_raw else away_team_raw
+        )
+
         action = "skipped"
         now = datetime.now(timezone.utc)
 
         if game:
             # Check if any data actually changed
             changed = False
-            if game_data.get("hteam") is not None and game.home_team != game_data["hteam"]:
+            if home_team_val is not None and game.home_team != home_team_val:
                 changed = True
-                game.home_team = game_data["hteam"]
-            if game_data.get("ateam") is not None and game.away_team != game_data["ateam"]:
+                game.home_team = home_team_val
+            if away_team_val is not None and game.away_team != away_team_val:
                 changed = True
-                game.away_team = game_data["ateam"]
+                game.away_team = away_team_val
             if home_score_val is not None and game.home_score != home_score_val:
                 changed = True
                 game.home_score = home_score_val
@@ -256,8 +269,8 @@ class GameCRUD:
                 squiggle_id=game_data["id"],
                 round_id=game_data.get("round", 0),
                 season=game_data.get("year", 0),
-                home_team=game_data.get("hteam", ""),
-                away_team=game_data.get("ateam", ""),
+                home_team=home_team_val or "",
+                away_team=away_team_val or "",
                 home_score=home_score_val,
                 away_score=away_score_val,
                 venue=game_data.get("venue", ""),

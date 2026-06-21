@@ -164,7 +164,7 @@ class MatchAnalysis(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     game_id = Column(Integer, ForeignKey("games.id"), unique=True, nullable=False, index=True)
-    analysis_text = Column(Text, nullable=False)  # The casual talking points
+    analysis_text = Column(Text, nullable=False)  # Balanced talking points for the match
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     game = relationship("Game", backref="match_analysis")

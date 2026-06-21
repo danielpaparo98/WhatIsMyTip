@@ -26,8 +26,7 @@ $ cd backend && uv run pytest tests/integration -k "test_api_" -v --tb=short
 
 ## What this suite covers
 
-Every route from [`plans/integration-test-endpoint-inventory.md`](../../plans/integration-test-endpoint-inventory.md:54)
-— **all 21** — has at least one passing test.  Per the inventory's "test
+Every route — **all 21** — has at least one passing test.  Per the suite's "test
 ordering", coverage spans:
 
 * **Liveness** (no auth, no DB): `/health`, `/openapi.json`, `/docs`, `/redoc`

@@ -8,10 +8,6 @@
 > container, pushing it to the DO registry, and triggering the App Platform rollout — lives in
 > [`docs/deployment.md`](deployment.md).  After your account and databases are provisioned, follow
 > `deployment.md` for everything else.
->
-> For the **FaaS-era background** of why the platform shifted to containers, see
-> [`docs/FAAS-EVALUATION.md`](FAAS-EVALUATION.md) and
-> [`docs/BACKEND-FAAS-CODE-REVIEW.md`](BACKEND-FAAS-CODE-REVIEW.md) (both closed / historical).
 
 This guide walks you through setting up WhatIsMyTip.com on DigitalOcean using App Platform (containers), managed PostgreSQL, and managed Redis. The FaaS architecture is no longer used — see the deployment guide for the full container-based flow.
 
