@@ -111,3 +111,89 @@ def test_every_down_revision_resolves_to_a_known_revision():
         assert down in known, (
             f"migration {rev} has unknown down_revision {down!r}"
         )
+
+
+_MIG_0005 = "2026_06_21_1208-0005_model_versions_coefficients"
+
+
+def test_migration_0005_registers_revision_ids():
+    """The weighted-tip migration must declare the expected revision ids."""
+    mod = _load_module(_MIG_0005)
+    assert mod.revision == "0005_model_versions_coefficients"
+    assert mod.down_revision == "0004_canonical_team_names"
+
+
+def test_migration_0005_chains_off_0004():
+    """0005 must chain directly off 0004 (the previous head)."""
+    revisions = _all_migrations()
+    assert revisions.get("0005_model_versions_coefficients") == (
+        "0004_canonical_team_names"
+    )
+
+
+def test_migration_0005_upgrade_creates_both_tables():
+    """The upgrade must create ``model_versions`` and ``model_coefficients``
+    with their key columns, the FK, the unique constraints and indexes.
+    """
+    src = _read_source(_MIG_0005, "upgrade")
+    assert '"model_versions"' in src
+    assert '"model_coefficients"' in src
+    # Key columns on model_versions.
+    assert "model_name" in src
+    assert "intercept" in src
+    assert "metrics" in src
+    assert "is_active" in src
+    assert "trained_at" in src
+    assert "training_rows" in src
+    # Unique (model_name, version).
+    assert "uq_model_versions_name_version" in src
+    assert "ix_model_versions_model_active" in src
+    # model_coefficients FK + unique + index.
+    assert "model_version_id" in src
+    assert "feature_name" in src
+    assert "uq_model_coefficients_version_feature" in src
+    assert "ix_model_coefficients_version" in src
+    # ON DELETE CASCADE on the FK.
+    assert "CASCADE" in src or "cascade" in src.lower()
+
+
+def test_migration_0005_heuristic_constants_resolve():
+    """The migration's old/new heuristic constants must map to the exact
+    literals used elsewhere in the codebase.
+
+    ``inspect.getsource`` on individual ``upgrade``/``downgrade`` bodies
+    is not a reliable place to assert the literal values (it may or may
+    not include the module-level constant definitions depending on the
+    function), so we assert the values directly on the loaded module.
+    """
+    mod = _load_module(_MIG_0005)
+    assert mod._OLD_HEURISTIC == "high_risk_high_reward"
+    assert mod._NEW_HEURISTIC == "weighted_tip"
+
+
+def test_migration_0005_upgrade_renames_heuristic_value():
+    """The upgrade must issue UPDATE statements that rename the heuristic
+    value in both ``tips`` and ``backtest_results``.
+    """
+    src = _read_source(_MIG_0005, "upgrade")
+    # The rename uses the module-level old/new constants + UPDATE on both tables.
+    assert "_OLD_HEURISTIC" in src
+    assert "_NEW_HEURISTIC" in src
+    assert "UPDATE tips" in src
+    assert "UPDATE backtest_results" in src
+
+
+def test_migration_0005_downgrade_reverses_everything():
+    """The downgrade must revert the heuristic rename and drop both tables,
+    child (model_coefficients) before parent (model_versions).
+    """
+    src = _read_source(_MIG_0005, "downgrade")
+    # Reversed data rename via the same constants.
+    assert "_OLD_HEURISTIC" in src
+    assert "_NEW_HEURISTIC" in src
+    assert "UPDATE tips" in src
+    assert "UPDATE backtest_results" in src
+    # Both tables dropped, child before parent.
+    assert 'op.drop_table("model_coefficients")' in src
+    assert 'op.drop_table("model_versions")' in src
+    assert src.index("drop_table") < src.index("model_versions")
