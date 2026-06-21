@@ -160,3 +160,70 @@ class TestTargetedCacheInvalidation:
 
         # Critical assertion: no blanket pattern invalidation.
         assert pattern_invalidate_mock.await_count == 0
+
+
+# ---------------------------------------------------------------------------
+# Team-name canonicalisation (logo fix)
+# ---------------------------------------------------------------------------
+
+
+class TestTeamNameCanonicalisation:
+    """``create_or_update_with_tracking`` must store the compact canonical
+    team form regardless of the alias Squiggle sends, so logos, the ELO
+    cache and model queries all agree.  Regression guard for the
+    production bug where 7 of 18 logos rendered broken because the live
+    sync stored "Western Bulldogs" / "GWS" / "Gold Coast" verbatim."""
+
+    @pytest.mark.asyncio
+    async def test_create_path_canonicalises_compound_team_names(self):
+        db = AsyncMock(spec=AsyncSession)
+        game_data = {
+            "id": 9001,
+            "year": 2026,
+            "round": 1,
+            "hteam": "Western Bulldogs",
+            "ateam": "GWS",
+            "hscore": 100,
+            "ascore": 90,
+            "venue": "MCG",
+            "date": "2026-03-15T10:00:00Z",
+            "complete": 100,
+        }
+
+        with patch.object(GameCRUD, "get_by_squiggle_id", AsyncMock(return_value=None)), \
+                patch.object(GameCRUD, "_generate_unique_slug", AsyncMock(return_value="abc-12345")), \
+                patch.object(short_cache, "delete", AsyncMock(return_value=True)), \
+                patch.object(medium_cache, "delete", AsyncMock(return_value=True)):
+            result = await GameCRUD.create_or_update_with_tracking(db, game_data)
+
+        game = result["game"]
+        assert game.home_team == "Bulldogs"
+        assert game.away_team == "Giants"
+
+    @pytest.mark.asyncio
+    async def test_update_path_canonicalises_compound_team_names(self):
+        db = AsyncMock(spec=AsyncSession)
+        # Existing game holds the raw alias from a previous sync.
+        existing = _make_game()
+        existing.home_team = "Gold Coast"
+        existing.away_team = "North Melbourne"
+        game_data = {
+            "id": 42,
+            "year": 2025,
+            "round": 1,
+            "hteam": "Gold Coast",
+            "ateam": "North Melbourne",
+            "hscore": 50,
+            "ascore": 40,
+            "venue": "MCG",
+            "date": "2025-03-15T10:00:00Z",
+            "complete": 100,
+        }
+
+        with patch.object(GameCRUD, "get_by_squiggle_id", AsyncMock(return_value=existing)), \
+                patch.object(short_cache, "delete", AsyncMock(return_value=True)), \
+                patch.object(medium_cache, "delete", AsyncMock(return_value=True)):
+            await GameCRUD.create_or_update_with_tracking(db, game_data)
+
+        assert existing.home_team == "GoldCoast"
+        assert existing.away_team == "NorthMelbourne"

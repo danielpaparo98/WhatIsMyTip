@@ -34,18 +34,50 @@ const TEAM_LOGOS: Record<string, string> = {
   WestCoast: 'WestCoast.png',
 }
 
+// Alias → canonical team name (mirrors backend/packages/shared/teams.py).
+// Belt-and-suspenders normaliser so a stray non-canonical name (e.g. the
+// raw Squiggle "Western Bulldogs" / "GWS" forms) still resolves to a logo
+// even if the backend ever drifts.
+const TEAM_ALIASES: Record<string, string> = {
+  'adelaide crows': 'Adelaide',
+  'brisbane lions': 'Brisbane',
+  'fremantle dockers': 'Fremantle',
+  gws: 'Giants',
+  'greater western sydney': 'Giants',
+  'gws giants': 'Giants',
+  'gold coast': 'GoldCoast',
+  'gold coast suns': 'GoldCoast',
+  'north melbourne': 'NorthMelbourne',
+  kangaroos: 'NorthMelbourne',
+  'port adelaide': 'PortAdelaide',
+  'port power': 'PortAdelaide',
+  'st kilda': 'StKilda',
+  'sydney swans': 'Sydney',
+  'west coast': 'WestCoast',
+  'west coast eagles': 'WestCoast',
+  'western bulldogs': 'Bulldogs',
+  footscray: 'Bulldogs',
+}
+
+function normalizeTeam(name: string): string {
+  const key = name.trim().toLowerCase()
+  return TEAM_ALIASES[key] ?? name.trim()
+}
+
 export function useTeamLogos() {
   /**
    * Resolve a team name to its public logo URL.
    * Accepts `null`/`undefined` and returns an empty string so callers
    * can safely bind the result to `<img :src="…">` without a runtime
-   * TypeError.
+   * TypeError.  Non-canonical aliases are normalised first so every
+   * known AFL team renders its logo.
    */
   const getLogoUrl = (teamName: string | null | undefined): string => {
     if (!teamName) return ''
-    const filename = TEAM_LOGOS[teamName] || ''
+    const canonical = normalizeTeam(teamName)
+    const filename = TEAM_LOGOS[canonical] || ''
     return filename ? `/logos/${filename}` : ''
   }
 
-  return { getLogoUrl, TEAM_LOGOS }
+  return { getLogoUrl, TEAM_LOGOS, normalizeTeam }
 }
