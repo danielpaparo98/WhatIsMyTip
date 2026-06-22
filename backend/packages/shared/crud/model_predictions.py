@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..cache import cached, short_cache
 from ..models import ModelPrediction
+from ..teams import canonical_team
 
 
 class ModelPredictionCRUD:
@@ -61,6 +62,8 @@ class ModelPredictionCRUD:
         from ..cache import invalidate_cache_pattern
 
         try:
+            # Canonicalise so the backtest join never breaks on a stored alias.
+            winner = canonical_team(winner)
             prediction = ModelPrediction(
                 game_id=game_id,
                 model_name=model_name,
@@ -95,6 +98,15 @@ class ModelPredictionCRUD:
         from ..cache import invalidate_cache_pattern
 
         try:
+            # Canonicalise team names so the backtest join never breaks
+            # on a stored alias. Operates on shallow copies to avoid
+            # mutating the caller's dicts.
+            predictions_data = [
+                {**d, "winner": canonical_team(d["winner"])}
+                if "winner" in d
+                else d
+                for d in predictions_data
+            ]
             stmt = insert(ModelPrediction).values(predictions_data).returning(ModelPrediction)
             result = await db.execute(stmt)
             await db.commit()
@@ -118,6 +130,8 @@ class ModelPredictionCRUD:
         margin: int,
     ) -> ModelPrediction:
         """Create or update a model prediction."""
+        # Canonicalise so the backtest join never breaks on a stored alias.
+        winner = canonical_team(winner)
         # Check if prediction already exists
         result = await db.execute(
             select(ModelPrediction).where(
@@ -210,6 +224,7 @@ class ModelPredictionCRUD:
 
             for pred_data in predictions:
                 model_name = pred_data["model_name"]
+                winner = canonical_team(pred_data["winner"])
 
                 if model_name in existing_model_names:
                     if update_existing:
@@ -219,7 +234,7 @@ class ModelPredictionCRUD:
                             None
                         )
                         if existing_pred:
-                            existing_pred.winner = pred_data["winner"]
+                            existing_pred.winner = winner
                             existing_pred.confidence = pred_data["confidence"]
                             existing_pred.margin = pred_data["margin"]
                             stats["updated"] += 1
@@ -232,7 +247,7 @@ class ModelPredictionCRUD:
                         db=db,
                         game_id=game_id,
                         model_name=model_name,
-                        winner=pred_data["winner"],
+                        winner=winner,
                         confidence=pred_data["confidence"],
                         margin=pred_data["margin"],
                     )
