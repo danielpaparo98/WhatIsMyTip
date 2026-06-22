@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..cache import cached, invalidate_cache_pattern, short_cache
 from ..models import Tip
+from ..teams import canonical_team
 
 
 class TipCRUD:
@@ -61,6 +62,8 @@ class TipCRUD:
     ) -> Tip:
         """Create a new tip with proper transaction management."""
         try:
+            # Canonicalise so the backtest join never breaks on a stored alias.
+            selected_team = canonical_team(selected_team)
             tip = Tip(
                 game_id=game_id,
                 heuristic=heuristic,
@@ -108,6 +111,8 @@ class TipCRUD:
         ``id``/``created_at`` are populated).
         """
         try:
+            # Canonicalise so the backtest join never breaks on a stored alias.
+            selected_team = canonical_team(selected_team)
             stmt = pg_insert(Tip).values(
                 game_id=game_id,
                 heuristic=heuristic,
@@ -179,6 +184,15 @@ class TipCRUD:
         from ..cache import invalidate_cache_pattern
 
         try:
+            # Canonicalise team names so the backtest join never breaks
+            # on a stored alias. Operates on shallow copies to avoid
+            # mutating the caller's dicts.
+            tips_data = [
+                {**d, "selected_team": canonical_team(d["selected_team"])}
+                if "selected_team" in d
+                else d
+                for d in tips_data
+            ]
             stmt = insert(Tip).values(tips_data).returning(Tip)
             result = await db.execute(stmt)
             await db.commit()
