@@ -9,7 +9,7 @@ from typing import Optional
 
 from pydantic import BaseModel, Field
 
-_VALID_HEURISTICS = {"best_bet", "high_risk_high_reward", "yolo"}
+_VALID_HEURISTICS = {"best_bet", "weighted_tip", "yolo"}
 
 
 class GamesQuery(BaseModel):
@@ -26,7 +26,7 @@ class TipsQuery(BaseModel):
 
     season: Optional[int] = Field(default=None, ge=2000)
     round: Optional[int] = Field(default=None, ge=1, alias="round_id")
-    heuristic: Optional[str] = Field(default=None, pattern=r"^(best_bet|high_risk_high_reward|yolo)$")
+    heuristic: Optional[str] = Field(default=None, pattern=r"^(best_bet|weighted_tip|yolo)$")
     limit: int = Field(default=100, ge=1, le=500)
 
 
@@ -35,7 +35,7 @@ class TipsGameWithTipsQuery(BaseModel):
 
     season: int = Field(..., ge=2000)
     round: int = Field(..., ge=1, alias="round_id")
-    heuristic: str = Field(default="best_bet", pattern=r"^(best_bet|high_risk_high_reward|yolo)$")
+    heuristic: str = Field(default="best_bet", pattern=r"^(best_bet|weighted_tip|yolo)$")
 
 
 class TipsByHeuristicQuery(BaseModel):

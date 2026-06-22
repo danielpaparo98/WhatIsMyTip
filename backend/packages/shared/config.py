@@ -72,6 +72,7 @@ class Settings(BaseSettings):
     match_completion_cron: str = "5,20,35,50 * * * *"
     tip_generation_cron: str = "0 3 * * *"  # 3:00 AM AWST daily
     historic_refresh_cron: str = "0 4 * * 0"  # 4:00 AM AWST Sunday
+    model_retrain_cron: str = "0 5 * * 1"  # 5:00 AM AWST Monday (weekly retrain)
 
     # Daily Sync Configuration
     current_season: int = Field(default_factory=_default_season)
@@ -108,6 +109,12 @@ class Settings(BaseSettings):
     historic_refresh_regenerate_tips: bool = False
     historical_refresh_start_year: int = 2010
     historical_refresh_timeout_seconds: int = 900  # 15 minutes (safety cap for in-process scheduler)
+
+    # Model Retrain (weekly ``weighted_tip`` scikit-learn refit)
+    # The cron expression is interpreted in the app's local timezone
+    # (default Australia/Perth).  Toggle ``model_retrain_enabled`` to
+    # register/skip the job in the scheduler.
+    model_retrain_enabled: bool = True
 
     # Retry Configuration
     job_timeout_seconds: int = 3600

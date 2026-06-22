@@ -10,7 +10,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from packages.shared.heuristics.best_bet import BestBetHeuristic
-from packages.shared.heuristics.high_risk_high_reward import HighRiskHighRewardHeuristic
+from packages.shared.heuristics.weighted_tip import WeightedTipHeuristic
 from packages.shared.heuristics.yolo import YOLOHeuristic
 
 
@@ -169,28 +169,28 @@ class TestYOLOHeuristic:
 
 
 # ---------------------------------------------------------------------------
-# HighRiskHighRewardHeuristic
+# WeightedTipHeuristic
 # ---------------------------------------------------------------------------
 
-class TestHighRiskHighRewardHeuristic:
+class TestWeightedTipHeuristic:
     def setup_method(self):
-        self.heuristic = HighRiskHighRewardHeuristic(models=[])
+        self.heuristic = WeightedTipHeuristic(models=[])
 
     def test_get_name(self):
-        assert self.heuristic.get_name() == "high_risk_high_reward"
+        assert self.heuristic.get_name() == "weighted_tip"
 
     @pytest.mark.asyncio
     async def test_empty_predictions_fallback(self):
-        """With no predictions, should fall back to away team (risky)."""
+        """With no predictions, cold-start returns the away team."""
         game = _make_game()
         winner, confidence, margin = await self.heuristic.apply(game, {})
         assert winner == "Carlton"
         assert confidence == 0.55
-        assert margin == 25
+        assert margin == 6
 
     @pytest.mark.asyncio
-    async def test_picks_underdog(self):
-        """Should pick the team with fewer model votes."""
+    async def test_without_coefficients_uses_majority_vote(self):
+        """Before coefficients are injected, the majority-vote fallback wins."""
         game = _make_game()
         predictions = {
             "elo": ("Richmond", 0.7, 12),
@@ -199,38 +199,17 @@ class TestHighRiskHighRewardHeuristic:
             "value": ("Carlton", 0.55, 5),
         }
         winner, confidence, margin = await self.heuristic.apply(game, predictions)
-        # Carlton has fewer votes (1 vs 3), so it's the underdog
-        assert winner == "Carlton"
+        # Majority vote → Richmond; fallback confidence is fixed at 0.55.
+        assert winner == "Richmond"
+        assert confidence == 0.55
 
     @pytest.mark.asyncio
-    async def test_confidence_bounded(self):
-        """Confidence should be between 0.5 and 0.75."""
+    async def test_set_coefficients_switches_to_linear_path(self):
+        """After set_coefficients, the learned linear combiner is used."""
         game = _make_game()
-        predictions = {
-            "elo": ("Richmond", 0.9, 30),
-            "form": ("Carlton", 0.3, 5),
-        }
+        predictions = {"elo": ("Richmond", 0.7, 20)}
+        self.heuristic.set_coefficients(1.0, {"elo_margin_home": 1.0})
         winner, confidence, margin = await self.heuristic.apply(game, predictions)
-        assert 0.5 <= confidence <= 0.75
-
-    @pytest.mark.asyncio
-    async def test_split_models_picks_away(self):
-        """When models are evenly split, the away team is picked."""
-        game = _make_game()
-        predictions = {
-            "elo": ("Richmond", 0.7, 12),
-            "form": ("Carlton", 0.7, 12),
-        }
-        winner, confidence, margin = await self.heuristic.apply(game, predictions)
-        assert winner == "Carlton"
-
-    @pytest.mark.asyncio
-    async def test_margin_minimum_15(self):
-        """High risk margin should be at least 15."""
-        game = _make_game()
-        predictions = {
-            "elo": ("Richmond", 0.6, 5),
-            "form": ("Carlton", 0.6, 5),
-        }
-        winner, confidence, margin = await self.heuristic.apply(game, predictions)
-        assert margin >= 15
+        # y = intercept(1.0) + coef(1.0) * signed_margin(20) = 21 → home, margin 21
+        assert winner == "Richmond"
+        assert margin == 21

@@ -26,7 +26,7 @@ const EXPECTED_MODELS = [
 const EXPECTED_HEURISTICS = [
   'best_bet',
   'yolo',
-  'high_risk_high_reward',
+  'weighted_tip',
 ] as const
 
 describe('MODEL_DISPLAY_NAMES', () => {
@@ -59,6 +59,10 @@ describe('HEURISTIC_LABELS', () => {
       expect(HEURISTIC_LABELS[h]).not.toBe(h)
       expect(HEURISTIC_LABELS[h].length).toBeGreaterThan(0)
     }
+  })
+
+  it('maps weighted_tip to the "Weighted Tip" human label', () => {
+    expect(HEURISTIC_LABELS.weighted_tip).toBe('Weighted Tip')
   })
 })
 

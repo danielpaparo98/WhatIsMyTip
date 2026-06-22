@@ -206,7 +206,7 @@ class TestTipsByHeuristic:
 
     @pytest.mark.parametrize(
         "heuristic",
-        ["best_bet", "yolo", "high_risk_high_reward"],
+        ["best_bet", "yolo", "weighted_tip"],
     )
     def test_tips_by_heuristic_valid_returns_200(self, client, heuristic):
         """Each allowed heuristic returns a list (possibly empty)."""

@@ -8,7 +8,7 @@ Routes (mounted at ``/api/tips``):
 * ``GET  /``                    — list tips (filters: season, round, heuristic, limit)
 * ``GET  /games-with-tips``     — games-with-tips for a round (requires season, round)
 * ``GET  /{heuristic}``         — tips for one heuristic (``best_bet`` /
-                                   ``high_risk_high_reward`` / ``yolo``)
+                                   ``weighted_tip`` / ``yolo``)
 * ``POST /generate``            — public: generate tips for a round
                                    (no auth — intentionally public so any
                                    caller can trigger generation when no
@@ -44,8 +44,8 @@ router = APIRouter()
 
 
 # Heuristics allow-list (mirrors the FaaS handler).
-VALID_HEURISTICS = ["best_bet", "high_risk_high_reward", "yolo"]
-_HEURISTIC_PATTERN = r"^(best_bet|high_risk_high_reward|yolo)$"
+VALID_HEURISTICS = ["best_bet", "weighted_tip", "yolo"]
+_HEURISTIC_PATTERN = r"^(best_bet|weighted_tip|yolo)$"
 
 
 # Per-route rate limiter for ``POST /generate``: 10 req/min per client
@@ -247,7 +247,7 @@ async def tips_by_heuristic(
         str,
         Path(
             pattern=_HEURISTIC_PATTERN,
-            description="Heuristic name (best_bet, high_risk_high_reward, yolo)",
+            description="Heuristic name (best_bet, weighted_tip, yolo)",
         ),
     ],
     db: Annotated[AsyncSession, Depends(get_db)],

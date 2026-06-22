@@ -319,7 +319,7 @@ def section_public_reads_with_slug(
         "/api/tips/games-with-tips?season=2026&round=1", 200)
     add("tips_by_heuristic_best_bet", "GET", "/api/tips/best_bet?limit=5", 200)
     add("tips_by_heuristic_yolo", "GET", "/api/tips/yolo?limit=5", 200)
-    add("tips_by_heuristic_high_risk", "GET", "/api/tips/high_risk_high_reward?limit=5", 200)
+    add("tips_by_heuristic_weighted_tip", "GET", "/api/tips/weighted_tip?limit=5", 200)
 
 
 # ---------------------------------------------------------------------------

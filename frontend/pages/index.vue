@@ -165,7 +165,7 @@ const hasGamesWithoutTips = computed(() => {
 const heuristics = [
   { value: 'best_bet', label: 'Best Bet' },
   { value: 'yolo', label: 'YOLO' },
-  { value: 'high_risk_high_reward', label: 'High Risk' }
+  { value: 'weighted_tip', label: 'Weighted Tip' }
 ]
 
 const loadLatestRound = async () => {

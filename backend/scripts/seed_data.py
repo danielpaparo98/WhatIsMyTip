@@ -5,7 +5,7 @@ Database seed script for WhatIsMyTip.
 Generates realistic AFL data for development and testing, including:
 - Games across multiple rounds and seasons
 - Model predictions (elo, form, home_advantage, value) per game
-- Tips (best_bet, yolo, high_risk_high_reward) per game
+- Tips (best_bet, yolo, weighted_tip) per game
 - Elo cache ratings for all 18 teams
 - Backtest results for historical performance
 - Match analyses with AI-style talking points
@@ -105,7 +105,7 @@ TEAM_VENUES: Dict[str, str] = {
     "WestCoast": "Optus Stadium",
 }
 
-HEURISTICS: List[str] = ["best_bet", "yolo", "high_risk_high_reward"]
+HEURISTICS: List[str] = ["best_bet", "yolo", "weighted_tip"]
 MODEL_NAMES: List[str] = ["elo", "form", "home_advantage", "value"]
 
 # Default Elo rating for a new team
@@ -248,12 +248,12 @@ def _generate_confidence(rng: random.Random, heuristic: str) -> float:
     """Generate a realistic confidence value based on heuristic type.
 
     - best_bet: higher confidence (0.55-0.85)
-    - high_risk_high_reward: moderate confidence (0.35-0.65)
+    - weighted_tip: moderate confidence (0.35-0.65)
     - yolo: lower confidence (0.15-0.45)
     """
     ranges = {
         "best_bet": (0.55, 0.85),
-        "high_risk_high_reward": (0.35, 0.65),
+        "weighted_tip": (0.35, 0.65),
         "yolo": (0.15, 0.45),
     }
     lo, hi = ranges[heuristic]
@@ -264,12 +264,12 @@ def _generate_margin(rng: random.Random, heuristic: str) -> int:
     """Generate a realistic predicted margin based on heuristic type.
 
     - best_bet: moderate margins (5-30)
-    - high_risk_high_reward: larger margins (15-50)
+    - weighted_tip: larger margins (15-50)
     - yolo: can be anything (1-65)
     """
     ranges = {
         "best_bet": (5, 30),
-        "high_risk_high_reward": (15, 50),
+        "weighted_tip": (15, 50),
         "yolo": (1, 65),
     }
     lo, hi = ranges[heuristic]
@@ -290,10 +290,10 @@ def _generate_explanation(
             f"The models are aligned on {winner} here with good confidence. {margin}-point margin reflects their recent dominant performances.",
             f"{winner} at home with strong statistical backing. A {margin}-point win looks likely based on the data.",
         ],
-        "high_risk_high_reward": [
-            f"Going with {winner} as a value pick — the odds are generous given their underlying numbers. Could win by {margin}+ points.",
-            f"{winner} are underrated by the market. If they bring their A-game, a {margin}-point margin is very achievable.",
-            f"The contrarian play here is {winner}. Their recent form suggests they can cover the {margin}-point margin with ease.",
+        "weighted_tip": [
+            f"{winner} is the Weighted Tip pick — a learned blend of the models projects a {margin}-point margin.",
+            f"The weighted model favours {winner} here, combining the underlying signals into a {margin}-point projected margin.",
+            f"{winner} gets the nod from the Weighted Tip model, which leans on a learned weighting of every predictor for a {margin}-point edge.",
         ],
         "yolo": [
             f"YOLO pick: {winner} by {margin}. No guts, no glory! Sometimes you just have to trust the vibes.",
@@ -509,7 +509,7 @@ def seed_tips(rng: random.Random, games: List[Game]) -> List[Tip]:
             # yolo sometimes picks the underdog
             if heuristic == "yolo" and rng.random() < 0.35:
                 selected = game.away_team if actual_winner == game.home_team else game.home_team
-            elif heuristic == "high_risk_high_reward" and rng.random() < 0.25:
+            elif heuristic == "weighted_tip" and rng.random() < 0.25:
                 selected = game.away_team if actual_winner == game.home_team else game.home_team
             else:
                 selected = actual_winner
@@ -570,7 +570,7 @@ def seed_backtest_results(
             # Accuracy varies by heuristic
             accuracy_ranges = {
                 "best_bet": (0.55, 0.75),
-                "high_risk_high_reward": (0.40, 0.65),
+                "weighted_tip": (0.40, 0.65),
                 "yolo": (0.25, 0.50),
             }
             lo, hi = accuracy_ranges[heuristic]
@@ -580,7 +580,7 @@ def seed_backtest_results(
             # Profit varies: best_bet usually positive, yolo volatile
             profit_ranges = {
                 "best_bet": (-2, 8),
-                "high_risk_high_reward": (-5, 12),
+                "weighted_tip": (-5, 12),
                 "yolo": (-8, 15),
             }
             plo, phi = profit_ranges[heuristic]

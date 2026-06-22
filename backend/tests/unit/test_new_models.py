@@ -7,10 +7,14 @@ models without requiring a database.
 
 from datetime import date, datetime, timezone
 
+from sqlalchemy.dialects.postgresql import JSONB
+
 from packages.shared.models import (
     Game,
     Injury,
     MatchWeather,
+    ModelCoefficient,
+    ModelVersion,
     Player,
     PlayerAdvancedStats,
     PlayerMatchStats,
@@ -243,3 +247,115 @@ class TestGameModelAfltablesMatchId:
         """The column should be nullable for existing games."""
         game = Game(slug="test")
         assert game.afltables_match_id is None
+
+
+class TestModelVersionModel:
+    def test_model_version_instantiation(self):
+        version = ModelVersion(
+            model_name="weighted_tip",
+            version=3,
+            intercept=1.25,
+            training_rows=1234,
+            metrics={"r2": 0.71, "mae": 11.2},
+            is_active=True,
+        )
+        assert version.model_name == "weighted_tip"
+        assert version.version == 3
+        assert version.intercept == 1.25
+        assert version.training_rows == 1234
+        assert version.metrics == {"r2": 0.71, "mae": 11.2}
+        assert version.is_active is True
+
+    def test_model_version_column_defaults(self):
+        """insert-time defaults: intercept=0.0, training_rows=0, is_active=False.
+
+        SQLAlchemy ``Column(default=...)`` applies at flush, not at
+        instantiation, so we inspect the configured default on the column
+        metadata rather than an un-flushed instance.
+        """
+        assert ModelVersion.__table__.c.intercept.default.arg == 0.0
+        assert ModelVersion.__table__.c.training_rows.default.arg == 0
+        assert ModelVersion.__table__.c.is_active.default.arg is False
+        # metrics is nullable JSONB (no default).
+        assert ModelVersion.__table__.c.metrics.default is None
+
+    def test_model_version_tablename(self):
+        assert ModelVersion.__tablename__ == "model_versions"
+
+    def test_model_version_expected_columns(self):
+        columns = set(ModelVersion.__table__.c.keys())
+        for expected in [
+            "id",
+            "model_name",
+            "version",
+            "intercept",
+            "trained_at",
+            "training_rows",
+            "metrics",
+            "is_active",
+            "created_at",
+        ]:
+            assert expected in columns, f"ModelVersion missing column {expected}"
+
+    def test_model_version_metrics_is_jsonb(self):
+        assert isinstance(ModelVersion.__table__.c.metrics.type, JSONB)
+
+    def test_model_version_unique_constraint(self):
+        """Verify unique constraint on (model_name, version)."""
+        constraints = {
+            c.name
+            for c in ModelVersion.__table__.constraints
+            if hasattr(c, "name") and c.name is not None
+        }
+        assert "uq_model_versions_name_version" in constraints
+
+    def test_model_version_has_coefficients_relationship(self):
+        """Verify the relationship to ModelCoefficient."""
+        assert hasattr(ModelVersion, "coefficients")
+
+
+class TestModelCoefficientModel:
+    def test_model_coefficient_instantiation(self):
+        coeff = ModelCoefficient(
+            model_version_id=7,
+            feature_name="elo",
+            coefficient=0.42,
+        )
+        assert coeff.model_version_id == 7
+        assert coeff.feature_name == "elo"
+        assert coeff.coefficient == 0.42
+
+    def test_model_coefficient_tablename(self):
+        assert ModelCoefficient.__tablename__ == "model_coefficients"
+
+    def test_model_coefficient_expected_columns(self):
+        columns = set(ModelCoefficient.__table__.c.keys())
+        for expected in [
+            "id",
+            "model_version_id",
+            "feature_name",
+            "coefficient",
+            "created_at",
+        ]:
+            assert expected in columns, f"ModelCoefficient missing column {expected}"
+
+    def test_model_coefficient_fk_references_model_versions_with_cascade(self):
+        """model_version_id FK → model_versions.id with ON DELETE CASCADE."""
+        fks = list(ModelCoefficient.__table__.c.model_version_id.foreign_keys)
+        assert len(fks) == 1
+        fk = fks[0]
+        assert fk.column.table.name == "model_versions"
+        assert fk.ondelete == "CASCADE"
+
+    def test_model_coefficient_unique_constraint(self):
+        """Verify unique constraint on (model_version_id, feature_name)."""
+        constraints = {
+            c.name
+            for c in ModelCoefficient.__table__.constraints
+            if hasattr(c, "name") and c.name is not None
+        }
+        assert "uq_model_coefficients_version_feature" in constraints
+
+    def test_model_coefficient_has_model_version_relationship(self):
+        """Verify the relationship to ModelVersion."""
+        assert hasattr(ModelCoefficient, "model_version")
