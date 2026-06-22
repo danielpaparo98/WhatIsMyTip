@@ -4,7 +4,8 @@ from typing import Any, Dict, List, Tuple
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .heuristics import BaseHeuristic, BestBetHeuristic, HighRiskHighRewardHeuristic, YOLOHeuristic
+from .crud.model_versions import get_active_coefficients
+from .heuristics import BaseHeuristic, BestBetHeuristic, WeightedTipHeuristic, YOLOHeuristic
 from .logger import get_logger
 from .models import Game
 from .models_ml import (
@@ -20,6 +21,12 @@ from .models_ml import (
 )
 
 logger = get_logger(__name__)
+
+# How long the in-memory weighted-tip coefficient cache is considered
+# fresh.  The orchestrator owns the db session (the heuristic's apply()
+# does not), so it reloads the active model version's weights on this
+# cadence and pushes them into the WeightedTipHeuristic.
+WEIGHTED_TIP_COEFFICIENT_TTL_SECONDS = 3600
 
 
 class ModelOrchestrator:
@@ -42,8 +49,53 @@ class ModelOrchestrator:
         self.heuristics: Dict[str, BaseHeuristic] = {
             "best_bet": BestBetHeuristic(self.models),
             "yolo": YOLOHeuristic(self.models),
-            "high_risk_high_reward": HighRiskHighRewardHeuristic(self.models),
+            "weighted_tip": WeightedTipHeuristic(self.models),
         }
+
+        # In-memory cache of the active weighted-tip coefficients so we
+        # don't hit the DB on every tip.  ``_wt_coeffs`` is the
+        # ``(intercept, {feature: coef})`` tuple, or ``None`` when no
+        # version is active / not yet loaded.
+        self._wt_coeffs: Tuple[float, Dict[str, float]] | None = None
+        self._wt_coeffs_loaded_at: float = 0.0
+
+    async def _ensure_weighted_tip_coefficients(self, db) -> None:
+        """Refresh the weighted-tip coefficient cache and push it into the heuristic.
+
+        Called at the start of :meth:`predict` / :meth:`predict_all`
+        (the orchestrator owns the db session; the heuristic's ``apply``
+        does not).  Uses a TTL cache so repeated tip generation within
+        ``WEIGHTED_TIP_COEFFICIENT_TTL_SECONDS`` does not re-read the DB.
+        When no active version exists the heuristic is switched back to
+        its majority-vote fallback.  Any error is logged and swallowed
+        so tip generation never crashes because of a model-load failure.
+        """
+        now = time.monotonic()
+        if (
+            self._wt_coeffs is not None
+            and (now - self._wt_coeffs_loaded_at) < WEIGHTED_TIP_COEFFICIENT_TTL_SECONDS
+        ):
+            return  # cache still fresh
+
+        try:
+            result = await get_active_coefficients(db, "weighted_tip")
+        except Exception as e:  # noqa: BLE001 — never crash tip generation
+            logger.error(
+                "weighted_tip coefficient load failed; staying on fallback: %s",
+                e,
+                exc_info=True,
+            )
+            return
+
+        heuristic = self.heuristics["weighted_tip"]
+        if result is None:
+            heuristic.clear_coefficients()
+            self._wt_coeffs = None
+        else:
+            intercept, coefficients = result
+            heuristic.set_coefficients(intercept, coefficients)
+            self._wt_coeffs = result
+        self._wt_coeffs_loaded_at = now
 
     async def predict(
         self, game: Game, heuristic: str = "best_bet", db: AsyncSession = None
@@ -52,12 +104,16 @@ class ModelOrchestrator:
 
         Args:
             game: Game to predict
-            heuristic: Heuristic to apply (best_bet, yolo, high_risk_high_reward)
+            heuristic: Heuristic to apply (best_bet, yolo, weighted_tip)
             db: Database session to use for queries
 
         Returns:
             Tuple of (winner, confidence, margin)
         """
+        # Load the active weighted-tip coefficients (cached) before
+        # applying any heuristic.  Harmless for non-weighted_tip heuristics.
+        await self._ensure_weighted_tip_coefficients(db)
+
         start_time = time.time()
         logger.debug(
             f"ModelOrchestrator.predict: STARTING for game {game.id} with heuristic '{heuristic}'"
@@ -128,6 +184,10 @@ class ModelOrchestrator:
         Returns:
             Dict of heuristic -> {"model_predictions": dict, "tip": tuple}
         """
+        # Load the active weighted-tip coefficients (cached) before
+        # applying any heuristic.
+        await self._ensure_weighted_tip_coefficients(db)
+
         start_time = time.time()
         logger.debug(f"ModelOrchestrator.predict_all: STARTING for game {game.id}")
 

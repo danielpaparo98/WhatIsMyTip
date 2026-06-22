@@ -116,7 +116,7 @@ class OpenRouterClient:
         Args:
             game: Game dictionary with keys: home_team, away_team, venue, date
             prediction: Prediction dictionary with keys: winner, confidence, margin
-            heuristic: Heuristic type (best_bet, yolo, high_risk_high_reward)
+            heuristic: Heuristic type (best_bet, yolo, weighted_tip)
             model_predictions: Optional dict of model_name -> (winner, confidence, margin)
             match_context: Optional rich context dict from build_match_context
                 (elo, form, weather, injuries, head_to_head).
@@ -180,7 +180,7 @@ Your explanations should:
 Heuristics:
 - best_bet: Conservative, consensus-based picks with high confidence
 - yolo: Aggressive picks based on the highest confidence model prediction
-- high_risk_high_reward: Picks targeting upset opportunities when models disagree
+- weighted_tip: A learned-weight blend of the underlying models (scikit-learn linear regression)
 
 Only reference a data point if it is present in the context. Do not invent stats. Keep it brief."""
 
@@ -245,10 +245,11 @@ Confidence: {prediction["confidence"]:.0%}
                 f"Going all-in on {winner} — the highest-confidence model tips a "
                 f"{margin}-point win at {confidence:.0%} confidence."
             )
-        else:  # high_risk_high_reward
+        else:  # weighted_tip
             base = (
-                f"Targeting an upset with {winner}. The models are split, creating a "
-                f"high-risk, high-reward play around a projected {margin}-point margin."
+                f"{winner} is the Weighted Tip pick — a learned blend of the "
+                f"underlying models projects a {margin}-point margin at "
+                f"{confidence:.0%} confidence."
             )
 
         return (base + driver_text).strip()

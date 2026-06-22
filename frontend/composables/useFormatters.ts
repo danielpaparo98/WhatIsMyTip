@@ -4,7 +4,7 @@
 export const HEURISTIC_LABELS: Record<string, string> = {
   best_bet: 'Best Bet',
   yolo: 'YOLO',
-  high_risk_high_reward: 'High Risk / High Reward',
+  weighted_tip: 'Weighted Tip',
 }
 
 // Human-friendly labels for every model registered in

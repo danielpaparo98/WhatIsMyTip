@@ -48,7 +48,7 @@ class Tip(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     game_id = Column(Integer, index=True)
-    heuristic = Column(String(50), index=True)  # best_bet, yolo, high_risk_high_reward
+    heuristic = Column(String(50), index=True)  # best_bet, yolo, weighted_tip
     selected_team = Column(String(100))
     margin = Column(Integer)
     confidence = Column(Float)
@@ -273,3 +273,71 @@ class Injury(Base):
     )
 
     player = relationship("Player", backref="injuries")
+
+
+class ModelVersion(Base):
+    """A trained version of a named ML model (e.g. the ``weighted_tip`` heuristic).
+
+    Stores the scikit-learn ``LinearRegression`` intercept plus training
+    metadata and quality metrics.  ``is_active`` marks the version the
+    runtime should serve; weekly retraining promotes a new version by
+    flipping this flag so reads are never blocked.
+    """
+
+    __tablename__ = "model_versions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    model_name = Column(String(64), nullable=False)
+    version = Column(Integer, nullable=False)
+    intercept = Column(Float, nullable=False, default=0.0)
+    trained_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+    )
+    training_rows = Column(Integer, nullable=False, default=0)
+    metrics = Column(JSONB, nullable=True)  # e.g. {"r2": ..., "mae": ...}
+    is_active = Column(Boolean, nullable=False, default=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    coefficients = relationship(
+        "ModelCoefficient",
+        back_populates="model_version",
+        cascade="all, delete-orphan",
+    )
+
+    __table_args__ = (
+        UniqueConstraint("model_name", "version", name="uq_model_versions_name_version"),
+    )
+
+
+class ModelCoefficient(Base):
+    """A learned weight for one feature of a :class:`ModelVersion`.
+
+    ``feature_name`` is the name of an underlying model (e.g. ``elo``,
+    ``form``) and ``coefficient`` is the weight the LinearRegression
+    learned for combining it.
+    """
+
+    __tablename__ = "model_coefficients"
+
+    id = Column(Integer, primary_key=True, index=True)
+    model_version_id = Column(
+        Integer,
+        ForeignKey("model_versions.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    feature_name = Column(String(128), nullable=False)
+    coefficient = Column(Float, nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    model_version = relationship("ModelVersion", back_populates="coefficients")
+
+    __table_args__ = (
+        UniqueConstraint(
+            "model_version_id",
+            "feature_name",
+            name="uq_model_coefficients_version_feature",
+        ),
+    )

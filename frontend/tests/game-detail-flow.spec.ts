@@ -161,7 +161,7 @@ test.describe('Game Detail Flow - End to End', () => {
       await expect(heuristicSelector).toBeVisible();
       const heuristicTabs = heuristicSelector.locator('.heuristic-btn');
       const tabCount = await heuristicTabs.count();
-      expect(tabCount).toBeGreaterThanOrEqual(3); // best_bet, yolo, high_risk_high_reward
+      expect(tabCount).toBeGreaterThanOrEqual(3); // best_bet, yolo, weighted_tip
     });
 
     await test.step('Click a non-default heuristic tab to exercise the locator', async () => {

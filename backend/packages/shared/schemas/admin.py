@@ -88,5 +88,8 @@ class TipGenerateRequest(BaseModel):
     )
     heuristics: Optional[List[str]] = Field(
         default=None,
-        description="List of heuristic types to generate. Must be from the allowed set.",
+        description=(
+            "List of heuristic types to generate. Must be from the allowed "
+            "set (best_bet, weighted_tip, yolo)."
+        ),
     )

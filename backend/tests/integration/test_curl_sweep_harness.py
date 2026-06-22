@@ -118,7 +118,7 @@ def test_run_sweep_endpoint_coverage_matches_inventory() -> None:
         "tips_list_default", "tips_list_season_round",
         "tips_list_heuristic", "tips_games_with_tips",
         "tips_by_heuristic_best_bet", "tips_by_heuristic_yolo",
-        "tips_by_heuristic_high_risk",
+        "tips_by_heuristic_weighted_tip",
         # validation negatives
         "game_slug_404", "game_detail_404",
         "backtest_compare_no_season", "backtest_model_compare_no_season",

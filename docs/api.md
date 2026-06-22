@@ -104,7 +104,7 @@ curl 'http://localhost:8000/api/games?latest=true'
 |--------|------|------|-------------|
 | `GET` | `/api/tips` | public | List tips (filter: `heuristic`, `season`, `round`, `limit`) |
 | `GET` | `/api/tips/games-with-tips` | public | Games with their best-bet tips for a round (filter: `season`, `round`, `heuristic` default `best_bet`) |
-| `GET` | `/api/tips/{heuristic}` | public | Tips for one heuristic (`best_bet` \| `yolo` \| `high_risk_high_reward`); filter: `limit` |
+| `GET` | `/api/tips/{heuristic}` | public | Tips for one heuristic (`best_bet` \| `yolo` \| `weighted_tip`); filter: `limit` |
 | `POST` | `/api/tips/generate` | public (rate-limited) | Generate tips for a round. Body: `season`, `round_id`, `heuristics` (optional, comma-separated), `regenerate` (default `false`). See [`app/api/tips.py`](../backend/app/api/tips.py:261). |
 | `POST` | `/api/tips/explanations/generate` | public | Generate AI explanations for a round |
 
@@ -163,7 +163,7 @@ The API supports three heuristic strategies. Per-class implementation details (c
 |-----------|--------|-------------|
 | **Best Bet** | [`heuristics/best_bet.py`](../backend/packages/shared/heuristics/best_bet.py:1) | Conservative picks with high confidence. Best for long-term betting. |
 | **YOLO** | [`heuristics/yolo.py`](../backend/packages/shared/heuristics/yolo.py:1) | High-risk, high-reward selections. Ignores confidence thresholds. |
-| **High Risk High Reward** | [`heuristics/high_risk_high_reward.py`](../backend/packages/shared/heuristics/high_risk_high_reward.py:1) | Balanced approach for adventurous tippers. |
+| **Weighted Tip** | [`heuristics/weighted_tip.py`](../backend/packages/shared/heuristics/weighted_tip.py:1) | Data-driven tip combining model predictions with learned weights; retrained weekly. |
 
 ## ML Models
 

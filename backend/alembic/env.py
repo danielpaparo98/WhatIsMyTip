@@ -2,6 +2,7 @@ from logging.config import fileConfig
 
 from sqlalchemy import engine_from_config
 from sqlalchemy import pool
+from sqlalchemy import text
 
 from alembic import context
 
@@ -75,6 +76,57 @@ def run_migrations_offline() -> None:
         context.run_migrations()
 
 
+def _ensure_alembic_version_table_width(connectable) -> None:
+    """Ensure ``alembic_version.version_num`` can hold long revision ids.
+
+    Alembic creates its bookkeeping table with ``version_num VARCHAR(32)``,
+    but this repo's revision ids are longer than 32 characters (e.g.
+    ``0003_job_executions_metrics_index`` is 34 chars,
+    ``0005_model_versions_coefficients`` is 33).  On a from-scratch
+    ``alembic upgrade head`` alembic would raise
+    ``value too long for type character varying(32)`` the moment a long
+    revision id is stamped -- which happens *before* migration 0006 (which
+    widens the column) can ever run.
+
+    This guard runs *before* ``context.run_migrations()`` and pre-empts
+    that failure:
+
+    * If the table is **missing** (the very first run), ``CREATE TABLE IF
+      NOT EXISTS`` builds it with the wide column, so alembic's subsequent
+      ``checkfirst=True`` reuses this table instead of recreating it as
+      ``VARCHAR(32)``.  This is what actually fixes from-scratch upgrades.
+    * If the table already exists, ``ALTER ... TYPE VARCHAR(128)`` widens
+      it.
+
+    Both statements are idempotent, so the guard is safe on every
+    migration invocation -- a fresh DB, an already-widened prod DB, or a
+    narrow dev DB.  No new dependencies; uses the project's ``text()``
+    style throughout.
+    """
+    # The guard MUST run on its own connection and commit independently.
+    # If it executed on Alembic's migration connection it would leave an
+    # open transaction that Alembic's ``begin_transaction()`` treats as
+    # externally-managed -- Alembic would then skip its own commit and
+    # every migration would be silently rolled back on connection close.
+    #
+    # CREATE first (a no-op when the table already exists), then widen
+    # (a no-op when the column is already VARCHAR(128)).  Idempotent.
+    with connectable.connect() as connection:
+        connection.execute(
+            text(
+                "CREATE TABLE IF NOT EXISTS alembic_version "
+                "(version_num VARCHAR(128) NOT NULL)"
+            )
+        )
+        connection.execute(
+            text(
+                "ALTER TABLE alembic_version "
+                "ALTER COLUMN version_num TYPE VARCHAR(128)"
+            )
+        )
+        connection.commit()
+
+
 def run_migrations_online() -> None:
     """Run migrations in 'online' mode.
 
@@ -87,6 +139,13 @@ def run_migrations_online() -> None:
         prefix="sqlalchemy.",
         poolclass=pool.NullPool,
     )
+
+    # Ensure alembic_version.version_num is wide enough for this repo's
+    # revision ids before any migration runs.  This is the fix for
+    # from-scratch upgrades (migration 0006 alone cannot help because long
+    # ids are stamped before 0006 executes).  The guard commits on its own
+    # connection so it never disturbs Alembic's migration transaction.
+    _ensure_alembic_version_table_width(connectable)
 
     with connectable.connect() as connection:
         context.configure(
