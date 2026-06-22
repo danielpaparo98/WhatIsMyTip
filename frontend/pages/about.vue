@@ -144,10 +144,10 @@
             </p>
           </div>
           <div class="heuristic-card">
-            <h3>High Risk / High Reward</h3>
+            <h3>Weighted Tip</h3>
             <p>
-              Targets upset opportunities when models disagree. This heuristic identifies games
-              with high variance and picks the underdog for potentially higher returns.
+              A data-driven tip that combines model predictions with learned weights.
+              The underlying model is retrained weekly to keep its picks current.
             </p>
           </div>
     </div>

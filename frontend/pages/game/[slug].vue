@@ -157,7 +157,7 @@ const getHeuristicClass = (heuristic: string): string => {
   const classes: Record<string, string> = {
     'best_bet': 'best-bet',
     'yolo': 'yolo',
-    'high_risk_high_reward': 'high-risk'
+    'weighted_tip': 'weighted-tip'
   }
   return classes[heuristic] || ''
 }
@@ -435,7 +435,7 @@ useHead({
   border-left: 4px solid #f97316;
 }
 
-.tip-card.high-risk {
+.tip-card.weighted-tip {
   border-left: 4px solid #8b5cf6;
 }
 
