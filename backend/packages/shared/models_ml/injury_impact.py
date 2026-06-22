@@ -81,6 +81,13 @@ class InjuryImpactModel(BaseModel):
                     Injury.team.in_([game.home_team, game.away_team]),
                     Injury.return_timeline != "Available",
                     Injury.return_timeline != "Test",
+                    # Point-in-time guard: only consider injuries that were
+                    # already known (scraped) on or before the game's date.
+                    # Without this, future-scraped injury reports leak into
+                    # historical games and corrupt walk-forward predictions.
+                    # Mirrors the ``Game.date < game.date`` filters used by the
+                    # player-stat and team-average sub-queries below.
+                    Injury.scraped_at <= game.date,
                 )
             )
         )
