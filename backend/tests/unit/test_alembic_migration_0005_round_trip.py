@@ -23,10 +23,11 @@ Uses the same self-contained Podman ``postgres:16-alpine`` lifecycle as
 NOTE on ``alembic_version`` width: alembic creates its version table
 with ``version_num VARCHAR(32)``, but this repo's revision ids are
 longer than that (e.g. ``0003_job_executions_metrics_index`` is 34
-chars, ``0005_model_versions_coefficients`` is 33).  That is a
-pre-existing condition unrelated to this migration.  To exercise the
-full chain we pre-create ``alembic_version`` with ``VARCHAR(128)`` so
-alembic (``checkfirst=True``) reuses the wider table.
+chars, ``0005_model_versions_coefficients`` is 33).  This is now fixed
+by the env.py bootstrap guard (``_ensure_alembic_version_table_width``,
+added together with migration 0006), so this fixture no longer
+pre-creates a widened ``alembic_version``: the from-scratch upgrade
+relies on the guard, exactly like a real fresh database.
 
 Skips gracefully when ``podman`` is not on ``PATH``.
 """
@@ -185,12 +186,13 @@ def _run_alembic(dsn: str, *args: str) -> subprocess.CompletedProcess:
 
 @pytest_asyncio.fixture
 async def _fresh_db(pg_container) -> AsyncIterator[tuple[str, str]]:
-    """Reset the DB to an empty schema with a widened ``alembic_version``.
+    """Reset the DB to a completely empty public schema.
 
-    Each test starts from a clean public schema.  We pre-create
-    ``alembic_version(version_num VARCHAR(128))`` so the long revision
-    ids in this repo fit (alembic reuses the existing table via
-    ``checkfirst=True``).  Yields ``(sync_dsn, async_dsn)``.
+    Each test starts from a clean public schema.  We deliberately do NOT
+    pre-create ``alembic_version``: the from-scratch upgrade now relies on
+    the env.py bootstrap guard (``_ensure_alembic_version_table_width``,
+    added together with migration 0006) to widen/create the version column,
+    exactly as a real fresh database would.  Yields ``(sync_dsn, async_dsn)``.
     """
     _, async_dsn = pg_container
     engine = create_async_engine(async_dsn, poolclass=NullPool)
@@ -198,11 +200,6 @@ async def _fresh_db(pg_container) -> AsyncIterator[tuple[str, str]]:
         async with engine.begin() as conn:
             await conn.execute(text("DROP SCHEMA IF EXISTS public CASCADE"))
             await conn.execute(text("CREATE SCHEMA public"))
-            await conn.execute(
-                text(
-                    "CREATE TABLE alembic_version (version_num VARCHAR(128) NOT NULL)"
-                )
-            )
     finally:
         await engine.dispose()
     yield pg_container
