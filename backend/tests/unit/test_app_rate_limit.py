@@ -17,6 +17,46 @@ from fastapi.testclient import TestClient
 from slowapi import Limiter
 
 
+def _redis_is_available() -> bool:
+    """Probe the configured Redis with a short timeout.
+
+    ``get_limiter()`` builds a ``slowapi.Limiter`` whose ``storage_uri``
+    is the project's ``settings.redis_url`` — so the per-route limit
+    enforced by ``test_rate_limit_exceeded_returns_429`` increments a
+    counter in Redis.  When no Redis is reachable (e.g. a cold
+    developer machine, or CI without the Redis service container) the
+    counter write raises ``redis.exceptions.ConnectionError`` /
+    ``TimeoutError`` and the test fails for an environmental reason
+    rather than a code defect.
+
+    This helper pings **the same Redis** the limiter uses — it reads
+    ``settings.redis_url`` (no hardcoded ``localhost:6379``) so the
+    check honours whatever the environment configures.  The
+    connect/socket timeouts are tiny so a missing Redis only delays
+    the test by a fraction of a second before it skips.
+    """
+    import redis
+    import redis.exceptions
+
+    from packages.shared.config import settings
+
+    try:
+        client = redis.Redis.from_url(
+            settings.redis_url,
+            socket_connect_timeout=0.5,
+            socket_timeout=0.5,
+        )
+        client.ping()
+        client.close()
+        return True
+    except (
+        redis.exceptions.ConnectionError,
+        redis.exceptions.TimeoutError,
+        OSError,
+    ):
+        return False
+
+
 class TestGetLimiter:
     """``get_limiter()`` is a factory that returns a configured Limiter."""
 
@@ -109,6 +149,10 @@ class TestLimiterIntegration:
 
     def test_rate_limit_exceeded_returns_429(self, monkeypatch):
         """A 6th request within the window returns 429."""
+        if not _redis_is_available():
+            pytest.skip(
+                "Redis unavailable — skipping rate-limit integration test"
+            )
         from app.core.rate_limit import get_limiter
         from packages.shared.config import settings
         from slowapi import _rate_limit_exceeded_handler
