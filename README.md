@@ -20,7 +20,7 @@ WhatIsMyTip is a comprehensive AFL tipping application that combines machine lea
 - **Multiple Picking Heuristics**: Choose from different prediction strategies
   - **Best Bet**: Conservative picks with high confidence
   - **YOLO**: High-risk, high-reward selections
-  - **High Risk High Reward**: Balanced approach for adventurous tippers
+  - **Weighted Tip**: Data-driven tip combining model predictions with learned weights, retrained weekly
 
 - **Margin Calculations**: Predicted winning margins for each game
 

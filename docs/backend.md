@@ -461,7 +461,7 @@ All heuristics inherit from [`BaseHeuristic`](../backend/packages/shared/heurist
 |-----------|--------|
 | **Best Bet** | [`heuristics/best_bet.py`](../backend/packages/shared/heuristics/best_bet.py:1) |
 | **YOLO** | [`heuristics/yolo.py`](../backend/packages/shared/heuristics/yolo.py:1) |
-| **High Risk High Reward** | [`heuristics/high_risk_high_reward.py`](../backend/packages/shared/heuristics/high_risk_high_reward.py:1) |
+| **Weighted Tip** | [`heuristics/weighted_tip.py`](../backend/packages/shared/heuristics/weighted_tip.py:1) |
 
 The [`ModelOrchestrator`](../backend/packages/shared/orchestrator.py:1) runs all 8 models in parallel using `asyncio.gather()`, then each heuristic combines the model outputs into a final prediction with a team, confidence score, and predicted margin.
 
@@ -475,7 +475,7 @@ result = await orchestrator.predict(game, db=session, heuristic="best_bet")
 
 # All heuristics
 results = await orchestrator.predict_all(game, db=session)
-# Returns: {"best_bet": {...}, "yolo": {...}, "high_risk_high_reward": {...}}
+# Returns: {"best_bet": {...}, "yolo": {...}, "weighted_tip": {...}}
 ```
 
 ---
