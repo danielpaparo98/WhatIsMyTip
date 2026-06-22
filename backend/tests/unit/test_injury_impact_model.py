@@ -469,3 +469,77 @@ class TestEdgeCases:
 
         assert winner == "Brisbane"
         assert confidence >= 0.50
+
+
+# ---------------------------------------------------------------------------
+# Point-in-time safety (walk-forward backfill regression guard)
+# ---------------------------------------------------------------------------
+
+class TestPointInTimeSafety:
+    """Injuries must be point-in-time: only those scraped on/before game.date.
+
+    Regression guard: previously the injuries query had NO date filter, so
+    future-scraped injuries (e.g. 2026 data present in the DB) leaked into
+    historical games, corrupting point-in-time predictions and forcing the
+    model off its clean cold-start path. The player-stat and team-average
+    sub-queries already filter on ``Game.date < game.date``; the injuries
+    query must do the equivalent ``Injury.scraped_at <= game.date``.
+    """
+
+    @staticmethod
+    def _compiled_sql(db) -> str:
+        """Return the compiled SQL of the statement passed to db.execute()."""
+        stmt = db.execute.call_args.args[0]
+        return str(stmt.compile(compile_kwargs={"literal_binds": True}))
+
+    @pytest.mark.asyncio
+    async def test_query_contains_scraped_at_cutoff(self, model, game):
+        """The compiled query must filter injuries.scraped_at <= game.date."""
+        db = AsyncMock()
+        db.execute.return_value = _mock_result_all([])
+        await model._get_active_injuries(game, db)
+
+        compiled = self._compiled_sql(db)
+        assert "scraped_at <=" in compiled
+        # The game's date must be bound as the cutoff value.
+        assert "2025-06-15" in compiled
+
+    @pytest.mark.asyncio
+    async def test_cutoff_is_bound_to_each_game_date(self, model):
+        """An old game (predating all scrapes) uses its own date as cutoff."""
+        old_game = Game(
+            id=2,
+            slug="old-game",
+            home_team="Brisbane",
+            away_team="Collingwood",
+            venue="Gabba",
+            date=datetime(2010, 3, 1, tzinfo=timezone.utc),
+            completed=True,
+        )
+        db = AsyncMock()
+        db.execute.return_value = _mock_result_all([])
+        await model._get_active_injuries(old_game, db)
+
+        compiled = self._compiled_sql(db)
+        assert "scraped_at <=" in compiled
+        # Old game's date is the cutoff → all 2026 scrapes excluded (cold-start).
+        assert "2010-03-01" in compiled
+        assert "2025-06-15" not in compiled
+
+    @pytest.mark.asyncio
+    async def test_recent_game_date_keeps_prior_scrapes(self, model, game):
+        """A game dated AFTER a scrape uses that recent date as the cutoff.
+
+        Because the cutoff is the game's own date (2025-06-15), any injury
+        scraped on or before it would pass the filter — confirming the
+        predicate is relative to the game, not a hard future-blocking cutoff.
+        """
+        db = AsyncMock()
+        db.execute.return_value = _mock_result_all([])
+        await model._get_active_injuries(game, db)
+
+        compiled = self._compiled_sql(db)
+        assert "scraped_at <=" in compiled
+        assert "2025-06-15" in compiled
+        # No future-ish hard cutoff leaking into the query.
+        assert "2026" not in compiled
