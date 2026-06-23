@@ -54,6 +54,24 @@ def _predict_all_result(n_models=8):
     }
 
 
+def _session_factory(db=None):
+    """A session factory whose sessions are async CMs yielding ``db``.
+
+    Mirrors ``async_sessionmaker`` usage (``async with factory() as db:``) so
+    the per-game-session loop can be unit-tested with a mock session.
+    """
+    db = db if db is not None else AsyncMock()
+
+    class _Session:
+        async def __aenter__(self):
+            return db
+
+        async def __aexit__(self, *exc):
+            return False
+
+    return MagicMock(return_value=_Session())
+
+
 # ---------------------------------------------------------------------------
 # fetch_game_ids — chronological selection + filters
 # ---------------------------------------------------------------------------
@@ -216,7 +234,7 @@ class TestProcessGames:
         )
 
         await process_games(
-            MagicMock(), AsyncMock(), games, sleep=0, dry_run=False, log_every=0
+            MagicMock(), _session_factory(), games, sleep=0, dry_run=False, log_every=0
         )
         assert seen == [1, 2, 3, 4, 5]
 
@@ -237,7 +255,7 @@ class TestProcessGames:
         )
 
         stats = await process_games(
-            MagicMock(), AsyncMock(), games, sleep=0, dry_run=False, log_every=0
+            MagicMock(), _session_factory(), games, sleep=0, dry_run=False, log_every=0
         )
         assert stats["skipped"] == 1
         assert stats["processed"] == 0
@@ -258,7 +276,7 @@ class TestProcessGames:
         )
 
         stats = await process_games(
-            MagicMock(), AsyncMock(), games, sleep=0, dry_run=True, log_every=0
+            MagicMock(), _session_factory(), games, sleep=0, dry_run=True, log_every=0
         )
         backfill.assert_not_awaited()
         # Dry-run reports what WOULD be processed, but writes nothing.
@@ -285,7 +303,7 @@ class TestProcessGames:
         )
 
         stats = await process_games(
-            MagicMock(), AsyncMock(), games, sleep=0, dry_run=False, log_every=0
+            MagicMock(), _session_factory(), games, sleep=0, dry_run=False, log_every=0
         )
         assert stats["skipped"] == 3
         assert stats["processed"] == 0
@@ -311,7 +329,7 @@ class TestProcessGames:
         )
 
         stats = await process_games(
-            MagicMock(), AsyncMock(), games, sleep=0, dry_run=False, log_every=0
+            MagicMock(), _session_factory(), games, sleep=0, dry_run=False, log_every=0
         )
         assert stats["processed"] == 1
         assert stats["skipped"] == 0
@@ -337,10 +355,45 @@ class TestProcessGames:
         )
 
         stats = await process_games(
-            MagicMock(), AsyncMock(), games, sleep=0, dry_run=False, log_every=0
+            MagicMock(), _session_factory(), games, sleep=0, dry_run=False, log_every=0
         )
         assert stats["failed"] == 1
         assert stats["processed"] == 1
+
+    @pytest.mark.asyncio
+    async def test_dead_session_on_one_game_does_not_abort_run(self, monkeypatch):
+        """A transient DB/session failure for one game is swallowed; run continues.
+
+        Regression for the ConnectionDoesNotExistError / MissingGreenlet crash
+        that killed a long single-session backfill: with a fresh session per
+        game, a bad connection only costs one retry.
+        """
+        from scripts.run_walkforward_backfill import process_games
+
+        games = [_game(1, 1), _game(2, 2)]
+        calls = []
+
+        async def fake_backfill(orch, db, game):
+            calls.append(game.id)
+            if game.id == 1:
+                raise RuntimeError("connection was closed in the middle of operation")
+            return {"predictions": 8, "tips": 3, "game_id": game.id}
+
+        monkeypatch.setattr(
+            "scripts.run_walkforward_backfill.backfill_game", fake_backfill
+        )
+        monkeypatch.setattr(
+            "scripts.run_walkforward_backfill.existing_counts",
+            AsyncMock(return_value=(0, 0)),
+        )
+
+        stats = await process_games(
+            MagicMock(), _session_factory(), games, sleep=0, dry_run=False, log_every=0
+        )
+        # Game 1 failed but game 2 still ran (per-game sessions isolate failures).
+        assert stats["failed"] == 1
+        assert stats["processed"] == 1
+        assert calls == [1, 2]
 
 
 # ---------------------------------------------------------------------------
