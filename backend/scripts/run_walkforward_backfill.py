@@ -165,9 +165,44 @@ async def backfill_game(
 # Chronological processing loop
 # ---------------------------------------------------------------------------
 
-async def process_games(
+async def process_one(
     orchestrator: ModelOrchestrator,
     db: AsyncSession,
+    game: Game,
+    *,
+    dry_run: bool = False,
+) -> dict:
+    """Process a single game with ``db``: skip if complete, else backfill.
+
+    Returns ``{"action": "skipped" | "processed", "predictions": n, "tips": n}``.
+    For ``dry_run`` the action is ``"processed"`` (would-process) with no writes.
+    """
+    pred_count, tip_count = await existing_counts(db, game.id)
+
+    if is_complete(pred_count, tip_count):
+        return {"action": "skipped", "predictions": 0, "tips": 0}
+
+    if dry_run:
+        logger.info(
+            "DRY-RUN would backfill game %s: %s vs %s (%s)",
+            game.id,
+            game.home_team,
+            game.away_team,
+            getattr(game, "date", None),
+        )
+        return {"action": "processed", "predictions": 0, "tips": 0}
+
+    result = await backfill_game(orchestrator, db, game)
+    return {
+        "action": "processed",
+        "predictions": result["predictions"],
+        "tips": result["tips"],
+    }
+
+
+async def process_games(
+    orchestrator: ModelOrchestrator,
+    session_factory,
     games: list[Game],
     *,
     sleep: float = 0.1,
@@ -175,6 +210,11 @@ async def process_games(
     log_every: int = 25,
 ) -> dict:
     """Process ``games`` (already date-ordered): skip complete ones, backfill the rest.
+
+    Opens a **fresh session per game** (via ``session_factory``) so a transient
+    DB connection drop only costs one retry — the shared pool (with
+    ``pool_pre_ping``) hands the next game a healthy connection. This is what
+    keeps a multi-thousand-game backfill resilient against remote-DB blips.
 
     Resumable: a game that already has all 8 predictions + 3 tips is skipped.
     Idempotent: re-running over a fully-populated set writes nothing new.
@@ -191,32 +231,19 @@ async def process_games(
     start = time.time()
 
     for idx, game in enumerate(games, start=1):
+        # Per-game session: a dead connection can't poison the whole run.
         try:
-            pred_count, tip_count = await existing_counts(db, game.id)
+            async with session_factory() as db:
+                result = await process_one(
+                    orchestrator, db, game, dry_run=dry_run
+                )
         except Exception:
-            logger.exception("existing_counts failed for game %s", game.id)
-            pred_count, tip_count = 0, 0
-
-        if is_complete(pred_count, tip_count):
-            stats["skipped"] += 1
-        elif dry_run:
-            stats["processed"] += 1
-            logger.info(
-                "DRY-RUN would backfill game %s: %s vs %s (%s)",
-                game.id,
-                game.home_team,
-                game.away_team,
-                getattr(game, "date", None),
-            )
+            stats["failed"] += 1
+            logger.exception("backfill failed for game %s", game.id)
         else:
-            try:
-                result = await backfill_game(orchestrator, db, game)
-                stats["predictions"] += result["predictions"]
-                stats["tips"] += result["tips"]
-                stats["processed"] += 1
-            except Exception:
-                stats["failed"] += 1
-                logger.exception("backfill failed for game %s", game.id)
+            stats[result["action"]] += 1
+            stats["predictions"] += result["predictions"]
+            stats["tips"] += result["tips"]
 
         if sleep:
             await asyncio.sleep(sleep)
@@ -270,8 +297,12 @@ async def run_backfill(
     had_error = False
 
     try:
-        async with SessionLocal() as db:
-            game_ids = await fetch_game_ids(db, start_season, end_season, limit)
+        # Discover + load the games to process in a short-lived session, then
+        # detach them so they can be processed across fresh per-game sessions.
+        async with SessionLocal() as load_db:
+            game_ids = await fetch_game_ids(
+                load_db, start_season, end_season, limit
+            )
             logger.info(
                 "%s %d games for seasons %d-%d",
                 "DRY-RUN selected" if dry_run else "Selected",
@@ -284,22 +315,28 @@ async def run_backfill(
                 logger.info("No games to process; exiting.")
                 return {"games_total": 0, "processed": 0, "skipped": 0}
 
-            # Bulk-load full Game objects, preserving chronological order.
-            result = await db.execute(
-                select(Game).where(Game.id.in_(game_ids)).order_by(Game.date.asc())
+            # Bulk-load full Game objects, preserving chronological order, then
+            # expunge so the detached rows survive the session close (only
+            # loaded columns are read during backfill — no lazy loads).
+            result = await load_db.execute(
+                select(Game)
+                .where(Game.id.in_(game_ids))
+                .order_by(Game.date.asc())
             )
             games = list(result.scalars().all())
+            load_db.expunge_all()
 
-            stats = await process_games(
-                orchestrator,
-                db,
-                games,
-                sleep=sleep,
-                dry_run=dry_run,
-                log_every=log_every,
-            )
-            stats["games_total"] = len(game_ids)
-            return stats
+        # process_games opens its own fresh session per game.
+        stats = await process_games(
+            orchestrator,
+            SessionLocal,
+            games,
+            sleep=sleep,
+            dry_run=dry_run,
+            log_every=log_every,
+        )
+        stats["games_total"] = len(game_ids)
+        return stats
     except Exception:
         had_error = True
         logger.exception("walk-forward backfill failed")
