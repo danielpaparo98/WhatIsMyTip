@@ -227,3 +227,59 @@ class TestTeamNameCanonicalisation:
 
         assert existing.home_team == "GoldCoast"
         assert existing.away_team == "NorthMelbourne"
+
+
+# ---------------------------------------------------------------------------
+# get_recently_finished_games - timezone regression (ME-003 follow-up)
+# ---------------------------------------------------------------------------
+
+
+class TestRecentlyFinishedGamesTimezone:
+    """``get_recently_finished_games`` compares ``Game.date`` against a
+    computed ``cutoff_time``.  ``Game.date`` is a naive
+    ``TIMESTAMP WITHOUT TIME ZONE`` column, so the bound parameter MUST
+    also be naive.  Passing a tz-aware datetime (e.g.
+    ``datetime.now(timezone.utc)``) makes asyncpg raise::
+
+        can't subtract offset-naive and offset-aware datetimes
+
+    This class guards against that regression.
+    """
+
+    @pytest.mark.asyncio
+    async def test_cutoff_is_naive(self):
+        """The cutoff datetime bound into the WHERE clause must have
+        ``tzinfo is None`` so asyncpg can encode it for a
+        ``TIMESTAMP WITHOUT TIME ZONE`` column.
+        """
+        captured: dict = {}
+
+        async def _fake_execute(stmt, *args, **kwargs):
+            captured["stmt"] = stmt
+            result = MagicMock()
+            result.scalars.return_value.all.return_value = []
+            return result
+
+        db = AsyncMock(spec=AsyncSession)
+        db.execute = _fake_execute
+
+        await GameCRUD.get_recently_finished_games(db, buffer_minutes=60)
+
+        from sqlalchemy.dialects import postgresql
+
+        stmt = captured["stmt"]
+        # Render the statement with literals inlined.  A tz-aware
+        # datetime renders as ``...+00:00`` (or ``+00``), which is
+        # exactly what asyncpg rejects for a ``TIMESTAMP WITHOUT TIME
+        # ZONE`` column.  A naive datetime renders a bare timestamp.
+        rendered = str(
+            stmt.compile(
+                dialect=postgresql.asyncpg.dialect(),
+                compile_kwargs={"literal_binds": True},
+            )
+        )
+        assert "+00" not in rendered, (
+            "cutoff must be naive; rendered SQL contains a tz offset: "
+            f"{rendered!r}"
+        )
+        assert "TIMESTAMP WITHOUT TIME ZONE" in rendered or "games" in rendered
