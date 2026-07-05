@@ -429,10 +429,16 @@ class GameCRUD:
         Returns:
             List of games that may be completed
         """
-        from datetime import datetime, timedelta
+        from datetime import timedelta
 
-        # Calculate cutoff time: now minus buffer
-        cutoff_time = datetime.now(timezone.utc) - timedelta(minutes=buffer_minutes)
+        # Calculate cutoff time: now minus buffer.
+        # NOTE: games.date is a naive TIMESTAMP WITHOUT TIME ZONE column,
+        # so we must compare against a naive (tz-stripped) datetime to
+        # avoid asyncpg's "can't subtract offset-naive and offset-aware
+        # datetimes" error.
+        cutoff_time = (datetime.now(timezone.utc) - timedelta(minutes=buffer_minutes)).replace(
+            tzinfo=None
+        )
 
         # Find games where:
         # - completed = False
@@ -548,3 +554,4 @@ class GameCRUD:
         raise RuntimeError(
             f"Failed to generate a unique slug after {max_attempts} attempts"
         )
+
