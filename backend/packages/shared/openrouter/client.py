@@ -103,6 +103,38 @@ class OpenRouterClient:
             self.client = None
         self.model = settings.openrouter_model
 
+    def _extract_content(self, response: Any) -> Optional[str]:
+        """Safely pull assistant text out of an OpenRouter / OpenAI response.
+
+        OpenRouter can answer a request with HTTP 200 but ``choices == null``
+        and a top-level ``error`` object — this happens for free-model rate
+        limits, provider outages and moderation filters.  The OpenAI SDK turns
+        that into a ``ChatCompletion`` whose ``choices`` attribute is ``None``;
+        the previous ``response.choices[0]...`` access raised
+        ``TypeError: 'NoneType' object is not subscriptable`` on every call,
+        so AI output silently fell back and the real provider error was buried.
+
+        Returns the stripped assistant text, or ``None`` when there is no
+        usable content (the caller should use its deterministic fallback).
+        Any provider ``error`` is surfaced as a WARNING.
+        """
+        error = getattr(response, "error", None)
+        if error:
+            message = error.get("message") if isinstance(error, dict) else str(error)
+            logger.warning("OpenRouter returned an error response: %s", message)
+
+        choices = getattr(response, "choices", None)
+        if not choices:
+            return None
+
+        message_obj = getattr(choices[0], "message", None)
+        content = getattr(message_obj, "content", None) if message_obj else None
+        if not content:
+            return None
+
+        content = content.strip()
+        return content or None
+
     async def generate_explanation(
         self,
         game: dict,
@@ -154,8 +186,17 @@ class OpenRouterClient:
                 temperature=0.7,
             )
 
-            explanation = response.choices[0].message.content.strip()
-            return explanation
+            explanation = self._extract_content(response)
+            if explanation:
+                return explanation
+
+            logger.warning(
+                "OpenRouter returned no usable explanation content; "
+                "using fallback."
+            )
+            return self._generate_fallback_explanation(
+                game, prediction, heuristic, match_context
+            )
 
         except Exception as e:
             # Log the error but fallback to simple explanation
@@ -334,8 +375,15 @@ Confidence: {prediction["confidence"]:.0%}
                 temperature=0.75,
             )
 
-            analysis = response.choices[0].message.content.strip()
-            return analysis
+            analysis = self._extract_content(response)
+            if analysis:
+                return analysis
+
+            logger.warning(
+                "OpenRouter returned no usable match analysis content; "
+                "using fallback."
+            )
+            return self._generate_fallback_match_analysis(game, match_context)
 
         except Exception as e:
             logger.error(f"OpenRouter AI match analysis failed: {e}", exc_info=True)

@@ -146,7 +146,7 @@ SQUIGGLE_CONTACT_EMAIL=contact@whatismytip.com
 
 # OpenRouter (AI explanations)
 OPENROUTER_API_KEY=your_openrouter_api_key
-OPENROUTER_MODEL=google/gemma-4-26b-a4b-it:free
+OPENROUTER_MODEL=deepseek/deepseek-v4-flash
 OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
 
 # Admin
@@ -328,7 +328,7 @@ Add to `backend/.env`:
 
 ```bash
 OPENROUTER_API_KEY=your_key
-OPENROUTER_MODEL=google/gemma-4-26b-a4b-it:free
+OPENROUTER_MODEL=deepseek/deepseek-v4-flash
 ```
 
 ### Step 3: Cost Management
