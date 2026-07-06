@@ -217,7 +217,7 @@ All configuration is managed through [`packages/shared/config.py`](../backend/pa
 | `SQUIGGLE_API_BASE` | Squiggle API base URL (`https://api.squiggle.com.au`) |
 | `SQUIGGLE_CONTACT_EMAIL` | Contact email for Squiggle API identification |
 | `OPENROUTER_API_KEY` | OpenRouter API key for AI explanations |
-| `OPENROUTER_MODEL` | Model identifier (e.g., `google/gemma-4-26b-a4b-it:free`) |
+| `OPENROUTER_MODEL` | Model identifier (e.g., `deepseek/deepseek-v4-flash`) |
 | `OPENROUTER_BASE_URL` | OpenRouter API base URL (`https://openrouter.ai/api/v1`) |
 
 ### Admin & Security
