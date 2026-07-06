@@ -10,7 +10,11 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from packages.shared.services.tip_generation import run_tip_generation
+from packages.shared.crud.games import GameCRUD
+from packages.shared.services.tip_generation import (
+    TipGenerationService,
+    run_tip_generation,
+)
 
 
 def _make_session() -> AsyncMock:
@@ -134,3 +138,96 @@ class TestRunTipGeneration:
         # 'explanation failure' should be noted
         assert "explanation" in result["message"].lower()
         assert result["explanations_generated"] == 0
+
+
+class TestGenerateForRoundSessionRollback:
+    """Regression guard for the ``InFailedSQLTransactionError`` cascade.
+
+    A per-game DB error must not poison the shared ``self.db`` session for the
+    rest of the round. Before this fix, ``_generate_for_game`` failures were
+    logged-and-continued WITHOUT rolling back, so one aborted Postgres
+    transaction caused every subsequent game to fail with
+    ``current transaction is aborted, commands ignored``.
+    """
+
+    @staticmethod
+    def _stats_ok() -> dict:
+        return {
+            "tips_created": 1,
+            "tips_skipped": 0,
+            "tips_updated": 0,
+            "model_predictions_created": 0,
+            "model_predictions_updated": 0,
+        }
+
+    @pytest.mark.asyncio
+    async def test_failed_game_rolls_back_and_loop_continues(self, monkeypatch):
+        session = _make_session()
+        session.rollback = AsyncMock()
+
+        # Avoid constructing the real ModelOrchestrator singleton.
+        monkeypatch.setattr(
+            "packages.shared.services.tip_generation._get_orchestrator",
+            lambda: MagicMock(),
+        )
+
+        game_a = MagicMock(id=1, home_team="A", away_team="B")
+        game_b = MagicMock(id=2, home_team="C", away_team="D")
+        monkeypatch.setattr(
+            GameCRUD, "get_by_round", AsyncMock(return_value=[game_a, game_b])
+        )
+
+        service = TipGenerationService(session)
+
+        attempted: list[int] = []
+
+        async def fake_generate(game, regenerate=False, skip_nlp=False):
+            attempted.append(game.id)
+            if game.id == 1:
+                raise RuntimeError("simulated game failure")
+            return self._stats_ok()
+
+        monkeypatch.setattr(service, "_generate_for_game", fake_generate)
+
+        stats = await service.generate_for_round(2026, 18)
+
+        # The loop continued past the first game's failure (cascade prevented).
+        assert attempted == [1, 2]
+        # The aborted transaction was cleared before processing the next game.
+        assert session.rollback.await_count == 1
+        # The second game still processed successfully.
+        assert stats["games_processed"] == 1
+        assert stats["tips_created"] == 1
+        assert len(stats["errors"]) == 1
+
+    @pytest.mark.asyncio
+    async def test_generate_batch_rolls_back_and_loop_continues(self, monkeypatch):
+        session = _make_session()
+        session.rollback = AsyncMock()
+
+        monkeypatch.setattr(
+            "packages.shared.services.tip_generation._get_orchestrator",
+            lambda: MagicMock(),
+        )
+
+        game_a = MagicMock(id=1, home_team="A", away_team="B")
+        game_b = MagicMock(id=2, home_team="C", away_team="D")
+
+        service = TipGenerationService(session)
+
+        attempted: list[int] = []
+
+        async def fake_generate(game, regenerate=False):
+            attempted.append(game.id)
+            if game.id == 1:
+                raise RuntimeError("simulated game failure")
+            return self._stats_ok()
+
+        monkeypatch.setattr(service, "_generate_for_game", fake_generate)
+
+        stats = await service.generate_batch([game_a, game_b])
+
+        assert attempted == [1, 2]
+        assert session.rollback.await_count == 1
+        assert stats["games_processed"] == 1
+        assert len(stats["errors"]) == 1

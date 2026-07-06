@@ -148,6 +148,17 @@ class TipGenerationService:
                     )
                     self.logger.error(error_msg, exc_info=True)
                     stats["errors"].append(error_msg)
+                    # Clear any aborted transaction so the remaining games in the
+                    # round can still use this session. Without this, one failed
+                    # statement poisons the connection and every later game fails
+                    # with `current transaction is aborted, commands ignored`.
+                    try:
+                        await self.db.rollback()
+                    except Exception as rollback_err:  # noqa: BLE001
+                        self.logger.warning(
+                            f"Session rollback failed after game {game.id} "
+                            f"error: {rollback_err}"
+                        )
 
             duration = time.time() - start_time
             stats["duration_seconds"] = duration
@@ -395,6 +406,15 @@ class TipGenerationService:
                 error_msg = f"Error processing game {game.id}: {str(e)}"
                 self.logger.error(error_msg, exc_info=True)
                 stats["errors"].append(error_msg)
+                # Reset the session so a failed game does not poison the
+                # transaction for the rest of the batch.
+                try:
+                    await self.db.rollback()
+                except Exception as rollback_err:  # noqa: BLE001
+                    self.logger.warning(
+                        f"Session rollback failed after game {game.id} "
+                        f"error: {rollback_err}"
+                    )
 
         stats["duration_seconds"] = time.time() - start_time
 
