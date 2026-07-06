@@ -18,6 +18,10 @@ logger = get_logger(__name__)
 _ELO_RATINGS_REDIS_KEY = "wimt:elo_ratings"
 # TTL for Elo ratings in Redis (1 hour — recomputed on update_cache)
 _ELO_RATINGS_TTL = 3600
+# Server-side cursor chunk size for the streamed Elo recompute (S1).
+# Small enough to keep peak RSS low on a 512 MB instance, large enough
+# to avoid excessive round-trips over the ~3.4k completed-game history.
+_ELO_STREAM_CHUNK = 250
 
 
 class EloModel(BaseModel):
@@ -53,19 +57,59 @@ class EloModel(BaseModel):
     # ------------------------------------------------------------------
 
     @staticmethod
+    def _apply_game(
+        ratings: Dict[str, float],
+        game: Game,
+        k_factor: float,
+        home_advantage: float,
+    ) -> None:
+        """Fold a single completed game into *ratings* (mutated in place).
+
+        Single source of truth for the Elo per-game update so the in-memory
+        batch path (``_compute_ratings_from_games``) and the streamed DB
+        scans apply byte-for-byte identical math.  Callers MUST supply
+        games in chronological order — Elo is order-dependent because each
+        update depends on the cumulative rating produced by every previous
+        game.
+        """
+        home_rating = ratings.get(game.home_team, 1500.0)
+        away_rating = ratings.get(game.away_team, 1500.0)
+
+        # Expected scores
+        expected_home = 1.0 / (
+            1.0 + 10.0 ** ((away_rating - home_rating - home_advantage) / 400.0)
+        )
+        expected_away = 1.0 - expected_home
+
+        # Actual scores
+        if game.home_score is not None and game.away_score is not None:
+            actual_home = 1.0 if game.home_score > game.away_score else 0.0
+            actual_away = 1.0 - actual_home
+
+            # Update ratings
+            ratings[game.home_team] = home_rating + k_factor * (
+                actual_home - expected_home
+            )
+            ratings[game.away_team] = away_rating + k_factor * (
+                actual_away - expected_away
+            )
+
+    @staticmethod
     def _compute_ratings_from_games(
         games: Sequence[Game],
         initial_ratings: Dict[str, float],
         k_factor: float = 32.0,
         home_advantage: float = 50.0,
     ) -> Dict[str, float]:
-        """Compute Elo ratings by processing a list of games.
+        """Compute Elo ratings by processing a sequence of games.
 
-        This is the single source of truth for the Elo rating computation loop.
-        All methods that compute ratings should delegate to this method.
+        Delegates to :meth:`_apply_game` for each game so this in-memory
+        batch path stays numerically identical to the streamed DB scans.
+        ``games`` may be any iterable (list, generator, …) but MUST be
+        ordered chronologically.
 
         Args:
-            games: List of completed Game objects, ordered chronologically
+            games: Completed Game objects, ordered chronologically
             initial_ratings: Starting ratings dict (modified in-place and returned)
             k_factor: Elo K-factor for rating updates
             home_advantage: Home advantage bonus in Elo points
@@ -74,28 +118,7 @@ class EloModel(BaseModel):
             Updated ratings dictionary (same object as initial_ratings)
         """
         for game in games:
-            home_rating = initial_ratings.get(game.home_team, 1500.0)
-            away_rating = initial_ratings.get(game.away_team, 1500.0)
-
-            # Expected scores
-            expected_home = 1.0 / (
-                1.0 + 10.0 ** ((away_rating - home_rating - home_advantage) / 400.0)
-            )
-            expected_away = 1.0 - expected_home
-
-            # Actual scores
-            if game.home_score is not None and game.away_score is not None:
-                actual_home = 1.0 if game.home_score > game.away_score else 0.0
-                actual_away = 1.0 - actual_home
-
-                # Update ratings
-                initial_ratings[game.home_team] = home_rating + k_factor * (
-                    actual_home - expected_home
-                )
-                initial_ratings[game.away_team] = away_rating + k_factor * (
-                    actual_away - expected_away
-                )
-
+            EloModel._apply_game(initial_ratings, game, k_factor, home_advantage)
         return initial_ratings
 
     # ------------------------------------------------------------------
@@ -186,18 +209,27 @@ class EloModel(BaseModel):
         # Initialize all teams with 1500 rating
         ratings = {team: 1500.0 for team in all_teams}
 
-        # Load all completed games
-        result = await db.execute(select(Game).where(Game.completed).order_by(Game.date))
-        games = result.scalars().all()
+        # Stream completed games in chronological order via a server-side
+        # cursor (stream_results + yield_per) so we never materialise the
+        # whole table (~3.4k ORM rows) into memory at once.  Elo folding is
+        # order-dependent, so rows are still consumed in ``date`` order and
+        # fed through the exact same per-game math (``_apply_game``) as the
+        # batch path — only HOW rows are loaded changes, not the ratings.
+        games_streamed = 0
+        stream = await db.stream(
+            select(Game)
+            .where(Game.completed)
+            .order_by(Game.date)
+            .execution_options(stream_results=True, yield_per=_ELO_STREAM_CHUNK)
+        )
+        async for game in stream.scalars():
+            cls._apply_game(
+                ratings, game, cls._DEFAULT_K_FACTOR, cls._DEFAULT_HOME_ADVANTAGE
+            )
+            games_streamed += 1
 
-        logger.info(f"EloModel: Loaded {len(games)} completed games from database")
-
-        # Process games in chronological order
-        cls._compute_ratings_from_games(
-            games,
-            ratings,
-            k_factor=cls._DEFAULT_K_FACTOR,
-            home_advantage=cls._DEFAULT_HOME_ADVANTAGE,
+        logger.info(
+            f"EloModel: Loaded {games_streamed} completed games from database"
         )
 
         return ratings
@@ -431,26 +463,33 @@ class EloModel(BaseModel):
         # Initialize all teams with 1500 rating
         ratings = {team: 1500.0 for team in all_teams}
 
-        # Load only games that occurred BEFORE the prediction game's date
+        # Stream only games that occurred BEFORE the prediction game's date
+        # (point-in-time, no data leakage) via a server-side cursor so the
+        # backtest path does not materialise the whole history at once.
+        # Order and per-game math are unchanged (``_apply_game``), so the
+        # point-in-time ratings are identical to the previous batch result.
         query_start = time.time()
-        result = await db.execute(
-            select(Game).where(Game.completed, Game.date < game.date).order_by(Game.date)
+        games_streamed = 0
+        stream = await db.stream(
+            select(Game)
+            .where(Game.completed, Game.date < game.date)
+            .order_by(Game.date)
+            .execution_options(stream_results=True, yield_per=_ELO_STREAM_CHUNK)
         )
-        games = result.scalars().all()
+        async for historical_game in stream.scalars():
+            self._apply_game(
+                ratings,
+                historical_game,
+                self._DEFAULT_K_FACTOR,
+                self._DEFAULT_HOME_ADVANTAGE,
+            )
+            games_streamed += 1
         query_time = time.time() - query_start
 
         logger.info(
             f"EloModel._compute_point_in_time_ratings: Loaded "
-            f"{len(games)} historical games before {game.date} "
+            f"{games_streamed} historical games before {game.date} "
             f"(query took {query_time:.4f}s)"
-        )
-
-        # Process games using shared computation
-        self._compute_ratings_from_games(
-            games,
-            ratings,
-            k_factor=self._DEFAULT_K_FACTOR,
-            home_advantage=self._DEFAULT_HOME_ADVANTAGE,
         )
 
         return ratings

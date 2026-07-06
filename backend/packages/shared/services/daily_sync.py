@@ -107,17 +107,29 @@ async def run_daily_sync(
         total_games = sync_stats.get("total_games", 0)
         error_count = len(sync_stats.get("errors", []))
 
-        # Update Elo ratings cache after successful sync
-        logger.info("Updating Elo ratings cache")
-        try:
-            await EloModel.update_cache(session)
-        except Exception:  # noqa: BLE001
-            logger.exception("Elo cache update failed; continuing")
+        # Update Elo ratings cache after a successful sync — but ONLY
+        # when something actually changed.  ``EloModel.update_cache`` is
+        # an expensive full-table recompute (it folds every completed
+        # game in date order), so skipping it when no games were created
+        # or updated avoids the recurring daily-sync spike on the 512 MB
+        # instance.  The cache is still invalidated below so reads stay
+        # consistent regardless.
+        games_changed = games_created > 0 or games_updated > 0
+        if games_changed:
+            logger.info("Updating Elo ratings cache")
+            try:
+                await EloModel.update_cache(session)
+            except Exception:  # noqa: BLE001
+                logger.exception("Elo cache update failed; continuing")
+            elo_cache_status = "Elo cache updated"
+        else:
+            logger.info("Elo cache update skipped: no games changed")
+            elo_cache_status = "Elo cache skipped"
 
         summary_parts = [
             f"Synced {total_games} games for season {season}",
             f"Created: {games_created}, Updated: {games_updated}, Skipped: {games_skipped}",
-            "Elo cache updated",
+            elo_cache_status,
         ]
         if error_count > 0:
             summary_parts.append(f"Failed: {error_count}")

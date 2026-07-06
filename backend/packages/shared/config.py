@@ -52,14 +52,15 @@ class Settings(BaseSettings):
 
     # Database connection pool configuration (ME-005).
     # All three values are read from environment variables:
-    #   DB_POOL_SIZE       (default 5)
-    #   DB_MAX_OVERFLOW    (default 10)
+    #   DB_POOL_SIZE       (default 2)
+    #   DB_MAX_OVERFLOW    (default 3)
     #   DB_POOL_TIMEOUT    (default 30 seconds)
-    # Defaults are larger than the historic hard-coded values
-    # (2 + 3 = 5) so the app can absorb a brief traffic spike
-    # without saturating the pool.
-    db_pool_size: int = 5
-    db_max_overflow: int = 10
+    # Defaults are tuned for the 512 MB App Platform instance: every
+    # pooled connection is a server-side process plus an asyncpg buffer,
+    # so a tight (2 + 3 = 5) pool keeps the baseline RSS down. Raise via
+    # DB_POOL_SIZE / DB_MAX_OVERFLOW on larger instances.
+    db_pool_size: int = 2
+    db_max_overflow: int = 3
     db_pool_timeout: int = 30
 
     # --- Phase 3 in-process APScheduler cron expressions ---

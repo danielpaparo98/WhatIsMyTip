@@ -25,9 +25,6 @@ from __future__ import annotations
 
 from typing import Dict, List, Tuple
 
-import numpy as np
-from sklearn.linear_model import LinearRegression
-from sklearn.metrics import mean_absolute_error, r2_score
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -161,6 +158,15 @@ async def run_model_retrain(session: AsyncSession) -> Dict[str, object]:
         }
 
     # Build the design matrix from the gathered rows.
+    #
+    # Heavy ML deps are imported lazily (S3) so the always-on API workers
+    # never pay the scikit-learn + numpy + scipy resident-memory cost.  Only
+    # the weekly retrain actually fits, and only past this skip gate — a
+    # skipped retrain (too few rows) never loads them at all.
+    import numpy as np
+    from sklearn.linear_model import LinearRegression
+    from sklearn.metrics import mean_absolute_error, r2_score
+
     X = np.array([features for features, _ in rows], dtype=float)
     y = np.array([target for _, target in rows], dtype=float)
 
