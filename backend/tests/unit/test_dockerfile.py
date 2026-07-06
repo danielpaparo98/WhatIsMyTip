@@ -168,3 +168,57 @@ class TestDockerfileEnvVarInventory:
             "(The shell ${FORWARDED_ALLOW_IPS:-...} still works without "
             "this, but a missing ENV is a UX regression.)"
         )
+
+
+class TestUvicornWorkerCount:
+    """The uvicorn worker count defaults to ONE and stays env-overridable.
+
+    A 512 MB DigitalOcean App Platform instance hits ~99% RAM with two
+    uvicorn workers (each worker is a full process: Python interpreter,
+    loaded app, scikit-learn + SQLAlchemy).  Defaulting to a single
+    worker halves the baseline RSS while operators can still scale up
+    via the ``WORKERS`` env var on a larger instance.
+    """
+
+    def test_cmd_default_is_one_worker(self):
+        """The CMD ``--workers`` fallback MUST be ``1``."""
+        dockerfile = _read_dockerfile()
+        cmd = _extract_cmd(dockerfile)
+        match = re.search(r"--workers\s+\$\{WORKERS:-(\d+)\}", cmd)
+        assert match, (
+            "uvicorn is not using `${WORKERS:-<n>}` for --workers; the "
+            "worker count must be env-overridable with a numeric default."
+        )
+        default = match.group(1)
+        assert default == "1", (
+            f"Default WORKERS should be '1' on a 512 MB instance; got "
+            f"{default!r}. Operators can scale up via the WORKERS env var."
+        )
+
+    def test_workers_env_declared_as_one(self):
+        """The runtime ENV must declare ``WORKERS=1`` for `docker inspect`.
+
+        The Dockerfile declares runtime knobs in a multi-line ``ENV`` block
+        (one value per continuation line, e.g. ``    WORKERS=1 \\``), so we
+        match a ``WORKERS=<n>`` assignment at the start of any line.
+        """
+        dockerfile = _read_dockerfile()
+        match = re.search(
+            r"(?m)^[ \t]*WORKERS=(\d+)", dockerfile
+        )
+        assert match, (
+            "Dockerfile should declare `WORKERS=1` in a runtime ENV so "
+            "`docker inspect` shows the low-memory default."
+        )
+        assert match.group(1) == "1", (
+            f"ENV WORKERS default should be '1'; got {match.group(1)!r}."
+        )
+
+    def test_workers_remains_env_overridable(self):
+        """The value MUST still be sourced from the ``WORKERS`` env var."""
+        dockerfile = _read_dockerfile()
+        cmd = _extract_cmd(dockerfile)
+        assert "${WORKERS:" in cmd, (
+            "uvicorn --workers must read the WORKERS env var so operators "
+            "can scale the worker count without rebuilding the image."
+        )

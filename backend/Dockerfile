@@ -19,10 +19,15 @@ FROM python:3.12-slim
 # Set to "true" to run alembic migrations on container startup.
 # Defaults to "false" — docker-compose runs migrations via the
 # init-data container, and CI/CD runs them as a separate step.
+#
+# WORKERS defaults to ONE uvicorn worker: on the 512 MB App Platform
+# instance each worker is a full process (interpreter + app + sklearn),
+# so a single worker halves the baseline RSS. Operators can still scale
+# up via the WORKERS env var on a larger instance.
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PORT=8000 \
-    WORKERS=2 \
+    WORKERS=1 \
     FORWARDED_ALLOW_IPS=10.0.0.0/8 \
     RUN_MIGRATIONS_ON_START=false
 
@@ -77,4 +82,4 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
 # Shell-form CMD with conditional migration handling.
 # Migrations are gated by RUN_MIGRATIONS_ON_START (default false) to
 # prevent race conditions with docker-compose init-data or CI/CD.
-CMD ["sh", "-c", "if [ '${RUN_MIGRATIONS_ON_START:-false}' = 'true' ] && [ -n '${DATABASE_URL:-}' ]; then echo 'Running migrations...' && alembic upgrade head || exit 1; fi && exec uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000} --workers ${WORKERS:-2} --proxy-headers --forwarded-allow-ips ${FORWARDED_ALLOW_IPS:-10.0.0.0/8}"]
+CMD ["sh", "-c", "if [ '${RUN_MIGRATIONS_ON_START:-false}' = 'true' ] && [ -n '${DATABASE_URL:-}' ]; then echo 'Running migrations...' && alembic upgrade head || exit 1; fi && exec uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000} --workers ${WORKERS:-1} --proxy-headers --forwarded-allow-ips ${FORWARDED_ALLOW_IPS:-10.0.0.0/8}"]

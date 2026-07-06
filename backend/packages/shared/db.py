@@ -147,17 +147,17 @@ def get_engine():
     tuned per environment without code changes:
 
     - ``db_pool_size``  : persistent connections kept in the pool
-      (default 5)
+      (default 2)
     - ``db_max_overflow``: extra connections allowed during spikes
-      (default 10)
+      (default 3)
     - ``db_pool_timeout``: seconds to wait for a free connection
       before raising ``TimeoutError`` (default 30)
     - pool_pre_ping=True: Verify connections before use
     - pool_recycle=300: Recycle connections every 5 minutes
 
-    The defaults are conservative for a single-tenant FaaS workload
-    but can be raised via ``DB_POOL_SIZE`` / ``DB_MAX_OVERFLOW`` /
-    ``DB_POOL_TIMEOUT`` env vars in heavier deployments.
+    The defaults are tight (2 + 3 = 5) for the 512 MB App Platform
+    instance but can be raised via ``DB_POOL_SIZE`` / ``DB_MAX_OVERFLOW``
+    / ``DB_POOL_TIMEOUT`` env vars in heavier deployments.
     """
     global _engine
     if _engine is None:
