@@ -184,7 +184,7 @@ The API uses 8 ML models for predictions. Per-class implementation lives in the 
 
 The API can generate AI-powered explanations for tips using OpenRouter.  Explanations are generated on-demand by the tip-generation cron job and cached in PostgreSQL (one explanation per tip).
 
-Cost management: explanations are cached in DB and only generated when needed. Monitor usage in the OpenRouter dashboard. Model configurable via `OPENROUTER_MODEL` (e.g. `google/gemma-4-26b-a4b-it:free`).
+Cost management: explanations are cached in DB and only generated when needed. Monitor usage in the OpenRouter dashboard. Model configurable via `OPENROUTER_MODEL` (e.g. `deepseek/deepseek-v4-flash`).
 
 ## Integration Examples
 

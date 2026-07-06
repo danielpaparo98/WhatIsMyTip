@@ -774,7 +774,7 @@ REDIS_URL=redis://localhost:6379/0
 SQUIGGLE_API_BASE=https://api.squiggle.com.au
 SQUIGGLE_CONTACT_EMAIL=contact@whatismytip.com
 OPENROUTER_API_KEY=your_key
-OPENROUTER_MODEL=google/gemma-4-26b-a4b-it:free
+OPENROUTER_MODEL=deepseek/deepseek-v4-flash
 OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
 
 # Admin
