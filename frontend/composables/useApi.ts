@@ -283,15 +283,16 @@ export const useApi = () => {
   }
 
   const generateTips = async (season: number, round: number, heuristics?: string[]) => {
-    const queryParams = new URLSearchParams()
-    queryParams.append('season', season.toString())
-    queryParams.append('round', round.toString())
-    if (heuristics) {
-      heuristics.forEach(h => queryParams.append('heuristics', h))
-    }
-
-    const response = await fetchWithTimeout(`/api/tips/generate?${queryParams}`, {
+    // POST /tips/generate requires a JSON body (TipGenerateRequest) with
+    // season / round_id / heuristics. Sending these in the query string with
+    // no body made FastAPI return 422 {"detail":[{"type":"missing","loc":["body"]}]}.
+    // Note the schema field is `round_id` (not `round`). `heuristics` is passed
+    // straight to JSON.stringify, so when it is undefined/empty it is simply
+    // omitted from the body (handled gracefully).
+    const response = await fetchWithTimeout('/api/tips/generate', {
       method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ season, round_id: round, heuristics }),
     })
     if (!response.ok) throw new Error('Failed to generate tips')
     return response.json()
