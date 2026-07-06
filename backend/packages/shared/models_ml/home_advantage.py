@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..cache import _get_client
 from ..logger import get_logger
 from ..models import Game
+from ..utils import ensure_datetime
 from .base import BaseModel
 
 logger = get_logger(__name__)
@@ -41,8 +42,9 @@ class HomeAdvantageModel(BaseModel):
             db: Database session
             game: The game being predicted (used for temporal filtering)
         """
-        # Build cache key from the game date
-        cache_key = f"{_HOME_ADV_PREFIX}{game.date.isoformat() if game.date else 'all'}"
+        # Build cache key from the game date (coerce cache round-tripped strings)
+        game_date = ensure_datetime(game.date)
+        cache_key = f"{_HOME_ADV_PREFIX}{game_date.isoformat() if game_date else 'all'}"
 
         # Check Redis cache first
         try:

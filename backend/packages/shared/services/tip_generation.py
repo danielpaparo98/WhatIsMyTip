@@ -13,6 +13,7 @@ from ..crud.tips import TipCRUD
 from ..logger import get_logger
 from ..models import Game
 from ..orchestrator import ModelOrchestrator
+from ..utils import ensure_datetime
 from .explanation import ExplanationService
 
 logger = get_logger(__name__)
@@ -236,6 +237,11 @@ class TipGenerationService:
             "model_predictions_created": 0,
             "model_predictions_updated": 0,
         }
+
+        # Defensively coerce a cache-round-tripped string date back to a real
+        # datetime so every downstream model/query sees the correct type.
+        # Idempotent for already-correct datetime/None values.
+        game.date = ensure_datetime(game.date)
 
         # Check if tips already exist for this game
         existing_tips = await TipCRUD.get_by_game(self.db, game.id)

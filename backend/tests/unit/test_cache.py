@@ -715,3 +715,50 @@ class TestModelSerialization:
             assert await cache.get("n") == 42
             assert await cache.get("d") == {"a": 1, "b": [2, 3]}
             assert await cache.get("l") == ["x", "y"]
+
+    @pytest.mark.asyncio
+    async def test_set_get_roundtrips_orm_datetime_columns_as_datetime(self):
+        """Regression: a cached SQLAlchemy ORM object with ``DateTime``
+        columns (e.g. ``Game.date``) must round-trip with real
+        ``datetime`` values, not ISO-8601 strings.
+
+        Before the fix, ``_to_cacheable`` serialized datetimes to ISO
+        strings but ``_from_cacheable`` rebuilt the object with
+        ``cls(**data)`` without converting them back, so every cached
+        ``Game`` arrived in tip generation with ``game.date`` as a
+        ``str`` — crashing models (``'str' object has no attribute
+        'tzinfo'``) and Postgres comparisons (``timestamp < varchar``).
+        """
+        from datetime import datetime
+
+        from packages.shared.models import Game
+
+        client = _in_memory_redis_client()
+        cache = RedisCache(default_ttl=60, prefix="test:")
+        original = Game(
+            id=3622,
+            slug="freesyd012",
+            squiggle_id=7700,
+            round_id=18,
+            season=2026,
+            home_team="Fremantle",
+            away_team="Sydney",
+            home_score=0,
+            away_score=0,
+            venue="Optus Stadium",
+            date=datetime(2026, 7, 9, 20, 10, 0),
+            completed=False,
+        )
+        with patch("packages.shared.cache._get_client", return_value=client):
+            await cache.set("game:3622", original)
+            retrieved = await cache.get("game:3622")
+
+        assert isinstance(retrieved, Game)
+        # The critical assertion: date must be a real datetime, not a str.
+        assert isinstance(retrieved.date, datetime), (
+            f"expected datetime, got {type(retrieved.date).__name__}"
+        )
+        assert retrieved.date == datetime(2026, 7, 9, 20, 10, 0)
+        # Non-temporal columns are unaffected.
+        assert retrieved.id == 3622
+        assert retrieved.home_team == "Fremantle"

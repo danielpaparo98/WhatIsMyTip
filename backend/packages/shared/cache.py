@@ -11,13 +11,14 @@ import importlib
 import json
 import logging
 import time
-from datetime import date, datetime
+from datetime import date, datetime, time as time_cls
 from functools import wraps
 from typing import Any, Callable, Optional, TypeVar
 
 import redis.asyncio as redis
 from pydantic import BaseModel
 from redis.asyncio import ConnectionPool
+from sqlalchemy import Date, DateTime, Time
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .config import settings
@@ -183,6 +184,36 @@ def _to_cacheable(value: Any) -> Any:
     return value
 
 
+def _rehydrate_temporal_columns(cls: type, data: dict) -> None:
+    """Restore ``datetime``/``date``/``time`` values that
+    :func:`_to_cacheable` turned into ISO-8601 strings, using the live
+    model's column types. Mutates ``data`` in place.
+
+    Without this, a cached ORM object (e.g. ``Game``) is rebuilt via
+    ``cls(**data)`` with its ``DateTime`` columns still as strings, which
+    breaks every consumer that expects a real ``datetime`` (tip-generation
+    models and ``timestamp < varchar`` comparisons alike).
+    """
+    mapper = getattr(cls, "__mapper__", None)
+    if mapper is None:
+        return
+    for column in mapper.columns:
+        val = data.get(column.key)
+        if not isinstance(val, str):
+            continue
+        col_type = column.type
+        try:
+            if isinstance(col_type, DateTime):
+                data[column.key] = datetime.fromisoformat(val)
+            elif isinstance(col_type, Date):
+                data[column.key] = date.fromisoformat(val)
+            elif isinstance(col_type, Time):
+                data[column.key] = time_cls.fromisoformat(val)
+        except ValueError:
+            # Not a parseable ISO string — leave the original value.
+            pass
+
+
 def _from_cacheable(value: Any) -> Any:
     """Inverse of :func:`_to_cacheable`.
 
@@ -201,8 +232,11 @@ def _from_cacheable(value: Any) -> Any:
             try:
                 if tag == "pydantic" and issubclass(cls, BaseModel):
                     return cls.model_validate(data)
-                # SQLAlchemy: build a transient (session-free) instance
-                # carrying the cached column values.
+                # SQLAlchemy: rehydrate temporal columns that
+                # ``_to_cacheable`` turned into ISO-8601 strings, then
+                # build a transient (session-free) instance carrying the
+                # cached column values.
+                _rehydrate_temporal_columns(cls, data)
                 return cls(**data)
             except Exception:
                 return data

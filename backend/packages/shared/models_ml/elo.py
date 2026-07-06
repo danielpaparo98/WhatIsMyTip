@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..cache import _get_client
 from ..logger import get_logger
 from ..models import Game
+from ..utils import ensure_datetime
 from .base import BaseModel
 
 logger = get_logger(__name__)
@@ -350,10 +351,13 @@ class EloModel(BaseModel):
         # row was written; normalise both sides to naive UTC before
         # comparing so the 7-day cache window works in either case.
         now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
+        # Defensively coerce a cache-round-tripped string date back to a
+        # real datetime before touching datetime-only attributes.
+        game_date = ensure_datetime(game.date)
         game_date_naive = (
-            game.date.replace(tzinfo=None)
-            if game.date is not None and game.date.tzinfo is not None
-            else game.date
+            game_date.replace(tzinfo=None)
+            if game_date is not None and game_date.tzinfo is not None
+            else game_date
         )
         use_cache = (
             game_date_naive is not None
