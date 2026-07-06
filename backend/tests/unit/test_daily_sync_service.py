@@ -188,3 +188,68 @@ class TestRunDailySync:
         assert result["status"] == "success"
         assert result["errors"] == 1
         assert "Failed: 1" in result["message"]
+
+    @pytest.mark.asyncio
+    async def test_skips_elo_cache_when_no_games_changed(self, monkeypatch):
+        """When no game was created or updated, the Elo recompute is skipped.
+
+        ``EloModel.update_cache`` is an expensive full-table recompute.  If
+        the sync produced zero changes there is nothing new to fold in, so
+        we skip it to keep daily-sync (and the 512 MB instance) lean.  The
+        Elo cache is invalidated regardless so reads stay correct.
+        """
+        session = _make_session()
+        sync_return = {
+            "games_created": 0,
+            "games_updated": 0,
+            "games_skipped": 8,
+            "total_games": 8,
+            "errors": [],
+        }
+        elo_model = MagicMock()
+        elo_model.update_cache = AsyncMock()
+        _patch_squiggle_and_sync(monkeypatch, sync_return, elo_update=elo_model)
+        invalidate = _patch_invalidate(monkeypatch, deleted=0)
+
+        with patch("packages.shared.services.daily_sync.settings") as mock_settings:
+            mock_settings.current_season = 2025
+            mock_settings.cron_timezone = "Australia/Perth"
+            result = await run_daily_sync(session, now=datetime(2025, 6, 15, 10, 0))
+
+        # Elo recompute MUST be skipped
+        elo_model.update_cache.assert_not_awaited()
+        assert result["status"] == "success"
+        # Result reports the Elo cache was intentionally skipped
+        assert "Elo cache skipped" in result["message"]
+        assert "Elo cache updated" not in result["message"]
+        # Cache invalidation still happens so reads are consistent
+        invalidate.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_runs_elo_cache_when_games_changed(self, monkeypatch):
+        """When at least one game was created or updated, Elo recompute runs.
+
+        This guards the no-change gate (above) so it never over-skips the
+        recompute when there is real new data to fold into the ratings.
+        """
+        session = _make_session()
+        sync_return = {
+            "games_created": 2,
+            "games_updated": 1,
+            "games_skipped": 5,
+            "total_games": 8,
+            "errors": [],
+        }
+        elo_model = MagicMock()
+        elo_model.update_cache = AsyncMock()
+        _patch_squiggle_and_sync(monkeypatch, sync_return, elo_update=elo_model)
+        _patch_invalidate(monkeypatch, deleted=0)
+
+        with patch("packages.shared.services.daily_sync.settings") as mock_settings:
+            mock_settings.current_season = 2025
+            mock_settings.cron_timezone = "Australia/Perth"
+            result = await run_daily_sync(session, now=datetime(2025, 6, 15, 10, 0))
+
+        elo_model.update_cache.assert_awaited_once()
+        assert "Elo cache updated" in result["message"]
+        assert "Elo cache skipped" not in result["message"]
