@@ -371,6 +371,18 @@ export const useApi = () => {
     return response.json()
   }
 
+  const compareModels = async (season: number) => {
+    const response = await fetchWithTimeout(`/api/backtest/model-compare?season=${season}`)
+    if (!response.ok) throw new Error('Failed to compare models')
+    return response.json()
+  }
+
+  const getActiveModel = async () => {
+    const response = await fetchWithTimeout('/api/backtest/active-model')
+    if (!response.ok) throw new Error('Failed to fetch active model')
+    return response.json()
+  }
+
   return {
     getGames,
     getGame,
@@ -386,5 +398,7 @@ export const useApi = () => {
     getAvailableSeasons,
     getBacktestTableData,
     getCurrentSeasonPerformance,
+    compareModels,
+    getActiveModel,
   }
 }

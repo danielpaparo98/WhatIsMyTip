@@ -62,8 +62,84 @@
         </div>
       </section>
 
+      <!-- Active Weighted Model Section -->
+      <section class="active-model-section">
+        <div class="active-model-header">
+          <h2>Weighted Tip Model</h2>
+          <span v-if="activeModelData?.active" class="version-badge">
+            v{{ activeModelData.model?.version }}
+          </span>
+        </div>
+
+        <div v-if="activeModelLoading" class="loading" role="status" aria-live="polite">
+          <div class="spinner"></div>
+        </div>
+        <div v-else-if="activeModelError" class="error" role="status" aria-live="polite">
+          <p>{{ activeModelError }}</p>
+        </div>
+        <div v-else-if="!activeModelData?.active" class="model-empty">
+          <p>⏳ No trained Weighted Tip model yet. The model will be trained after the first weekly retrain job runs.</p>
+          <p class="model-empty-sub">Until then, the Weighted Tip heuristic uses a majority-vote fallback.</p>
+        </div>
+        <div v-else-if="activeModelData.model" class="model-content">
+          <div class="model-meta-row">
+            <span class="meta-item">
+              <strong>Trained:</strong> {{ formatDate(activeModelData.model.trained_at) }}
+            </span>
+            <span class="meta-item">
+              <strong>Training rows:</strong> {{ activeModelData.model.training_rows }}
+            </span>
+            <span class="meta-item">
+              <strong>Intercept:</strong> {{ activeModelData.model.intercept.toFixed(2) }}
+            </span>
+            <span v-if="activeModelData.model.metrics.r2 != null" class="meta-item">
+              <strong>R²:</strong> {{ activeModelData.model.metrics.r2.toFixed(4) }}
+            </span>
+            <span v-if="activeModelData.model.metrics.mae != null" class="meta-item">
+              <strong>MAE:</strong> {{ activeModelData.model.metrics.mae.toFixed(1) }}
+            </span>
+          </div>
+
+          <div class="model-explanation">
+            <p>{{ modelExplanationText }}</p>
+          </div>
+
+          <div v-if="groupedModelCoefficients.length > 0" class="coefficients-visual">
+            <!-- Model Equation -->
+            <div class="equation-card">
+              <div class="equation-title">Model Equation</div>
+              <div class="equation-display">
+                <span class="eq-left">predicted_margin =</span>
+                <span class="eq-intercept">{{ activeModelData.model!.intercept.toFixed(2) }}</span>
+                <span v-for="(row, i) in groupedModelCoefficients" :key="row.model" class="eq-term">
+                  <span class="eq-op">{{ row.margin_coef >= 0 ? '+' : '−' }}</span>
+                  <span class="eq-coeff">{{ Math.abs(row.margin_coef).toFixed(3) }}</span>
+                  <span class="eq-dot">·</span>
+                  <span class="eq-model">{{ getModelDisplayName(row.model) }}<sub class="eq-sub">m</sub></span>
+                </span>
+              </div>
+              <p class="equation-note">
+                Each model contributes a margin weight (× its predicted margin toward home) and a confidence weight.
+                Models with larger absolute weights have more influence on the final tip.
+              </p>
+            </div>
+
+            <!-- Coefficient Bar Chart -->
+            <div class="chart-row">
+              <div class="chart-col">
+                <h3 class="chart-heading">Margin Weights</h3>
+                <ModelCoefficientChart
+                  :coefficients="groupedModelCoefficients"
+                  :intercept="activeModelData.model.intercept"
+                />
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
       <section class="section">
-        <h2>Performance Comparison</h2>
+        <h2>Historical Performance</h2>
         
         <div class="controls">
           <select v-model="selectedSeason" class="select" :disabled="seasonsLoading || syncing" aria-label="Select season year">
@@ -78,14 +154,21 @@
               class="toggle-btn"
               :class="{ active: viewMode === 'summary' }"
             >
-              Summary
+              Heuristics
+            </button>
+            <button
+              @click="viewMode = 'models'"
+              class="toggle-btn"
+              :class="{ active: viewMode === 'models' }"
+            >
+              Models
             </button>
             <button
               @click="viewMode = 'table'"
               class="toggle-btn"
               :class="{ active: viewMode === 'table' }"
             >
-              Detailed Table
+              Round-by-Round
             </button>
             <button
               @click="viewMode = 'charts'"
@@ -135,6 +218,53 @@
           </div>
         </div>
         
+        <!-- Models View -->
+        <div v-else-if="viewMode === 'models'" class="models-section">
+          <div v-if="modelComparisonLoading" class="loading" role="status" aria-live="polite">
+            <div class="spinner"></div>
+          </div>
+          <div v-else-if="modelComparisonError" class="error" role="status" aria-live="polite">
+            <p>{{ modelComparisonError }}</p>
+          </div>
+          <div v-else-if="modelComparison?.comparison" class="model-comparison-grid">
+            <div
+              v-for="entry in modelComparison.comparison"
+              :key="entry.model_name"
+              class="model-stat-card"
+              :class="{ 'best-card': entry.model_name === modelComparison.best_overall?.model_name }"
+            >
+              <div class="card-header-row">
+                <h3>{{ getModelDisplayName(entry.model_name) }}</h3>
+                <span v-if="entry.model_name === modelComparison.best_overall?.model_name" class="best-badge">Best</span>
+              </div>
+              <div class="stat-grid">
+                <div class="stat">
+                  <span class="stat-label">Accuracy</span>
+                  <span class="stat-value">{{ (entry.overall_accuracy * 100).toFixed(1) }}%</span>
+                </div>
+                <div class="stat">
+                  <span class="stat-label">Profit</span>
+                  <span class="stat-value" :class="{ positive: entry.total_profit > 0, negative: entry.total_profit < 0 }">
+                    ${{ entry.total_profit.toFixed(2) }}
+                  </span>
+                </div>
+                <div class="stat">
+                  <span class="stat-label">Tips</span>
+                  <span class="stat-value">{{ entry.total_tips }}</span>
+                </div>
+                <div class="stat">
+                  <span class="stat-label">Avg Margin</span>
+                  <span class="stat-value">{{ entry.avg_margin.toFixed(1) }}</span>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div v-else class="empty-state">
+            <p>No model data available for {{ selectedSeason }}.</p>
+            <p class="empty-state-hint">Try selecting a different season or check back later.</p>
+          </div>
+        </div>
+
         <!-- Table View -->
         <div v-else-if="viewMode === 'table'" class="table-section">
           <div v-if="syncing" class="loading sync-message" role="status" aria-live="polite">
@@ -192,7 +322,7 @@
           <div v-else class="empty-state">
             <p>No table data available for this season.</p>
             <p class="empty-state-hint">This could be because the season hasn't started yet, tips haven't been generated, or there are no completed games. Try selecting a different season or check back later.</p>
-            <button @click="loadSeasonData" class="btn btn-secondary">Try Again</button>
+            <button @click="loadTableData" class="btn btn-secondary">Try Again</button>
           </div>
         </div>
         
@@ -220,7 +350,7 @@
           <div v-else class="empty-state">
             <p>No chart data available for this season.</p>
             <p class="empty-state-hint">This could be because the season hasn't started yet, tips haven't been generated, or there are no completed games. Try selecting a different season or check back later.</p>
-            <button @click="loadSeasonData" class="btn btn-secondary">Try Again</button>
+            <button @click="loadChartData" class="btn btn-secondary">Try Again</button>
           </div>
         </div>
   </section>
@@ -230,7 +360,7 @@
 import { sortByHeuristicOrder } from '~/composables/useFormatters'
 
 const api = useApi()
-const { formatHeuristic } = useFormatters()
+const { formatHeuristic, getModelDisplayName, formatDate } = useFormatters()
 
 // FX-05 / FX-20: page-specific SEO + canonical URL
 useSeoMeta({
@@ -312,21 +442,63 @@ interface CurrentSeasonResponse {
   heuristics: CurrentSeasonHeuristic[]
 }
 
+interface ModelComparisonStats {
+  model_name: string
+  season: number
+  total_tips: number
+  total_correct: number
+  overall_accuracy: number
+  total_profit: number
+  avg_margin: number
+}
+interface ModelComparisonResponse {
+  season: number
+  comparison: ModelComparisonStats[]
+  best_overall: { model_name: string; accuracy: number; profit: number }
+}
+
+interface ModelCoefficientEntry {
+  feature_name: string
+  coefficient: number
+  model: string
+  type: 'margin' | 'confidence' | 'other'
+}
+interface ActiveWeightedModel {
+  model_name: string
+  version: number
+  trained_at: string | null
+  training_rows: number
+  intercept: number
+  metrics: Record<string, number>
+  coefficients: ModelCoefficientEntry[]
+}
+interface ActiveModelResponse {
+  active: boolean
+  model?: ActiveWeightedModel
+  message?: string
+}
+
 const loading = ref(false)
 const seasonsLoading = ref(true)
 const tableLoading = ref(false)
 const chartsLoading = ref(false)
 const syncing = ref(false)
 const currentSeasonLoading = ref(false)
+const activeModelLoading = ref(false)
+const modelComparisonLoading = ref(false)
 const error = ref<string | null>(null)
 const tableError = ref<string | null>(null)
 const chartsError = ref<string | null>(null)
+const modelComparisonError = ref<string | null>(null)
 const currentSeasonError = ref<string | null>(null)
+const activeModelError = ref<string | null>(null)
 const comparison = ref<ComparisonResponse | null>(null)
 const tableData = ref<BacktestTableResponse | null>(null)
 const chartData = ref<{ heuristic: string; rounds: { round_id: number; profit: number; accuracy: number }[] }[] | null>(null)
 const currentSeasonData = ref<CurrentSeasonResponse | null>(null)
-const viewMode = ref<'summary' | 'table' | 'charts'>('summary')
+const activeModelData = ref<ActiveModelResponse | null>(null)
+const modelComparison = ref<ModelComparisonResponse | null>(null)
+const viewMode = ref<'summary' | 'models' | 'table' | 'charts'>('summary')
 const selectedSeason = ref(new Date().getFullYear() - 1)
 const availableYears = ref<number[]>([])
 
@@ -350,7 +522,7 @@ const loadAvailableSeasons = async () => {
     
     // Set default selected season to the first available year (newest)
     if (availableYears.value.length > 0) {
-      selectedSeason.value = availableYears.value[0]
+      selectedSeason.value = availableYears.value[0]!
     }
   } catch (e) {
     
@@ -360,7 +532,7 @@ const loadAvailableSeasons = async () => {
     const currentYear = new Date().getFullYear()
     availableYears.value = generateFallbackYears(currentYear)
     if (availableYears.value.length > 0) {
-      selectedSeason.value = availableYears.value[0]
+      selectedSeason.value = availableYears.value[0]!
     }
   } finally {
     seasonsLoading.value = false
@@ -403,6 +575,46 @@ const loadTableData = async () => {
   }
 }
 
+/** Coefficients grouped by model for the display table. */
+const groupedModelCoefficients = computed(() => {
+  if (!activeModelData.value?.active || !activeModelData.value.model) return []
+  const { coefficients } = activeModelData.value.model
+  const groups: Record<string, { model: string; margin_coef: number; confidence_coef: number }> = {}
+
+  for (const c of coefficients) {
+    if (!groups[c.model]) {
+      groups[c.model] = { model: c.model, margin_coef: 0, confidence_coef: 0 }
+    }
+    const g = groups[c.model]!
+    if (c.type === 'margin') g.margin_coef = c.coefficient
+    if (c.type === 'confidence') g.confidence_coef = c.coefficient
+  }
+
+  // Sort by absolute margin coefficient descending (most influential first)
+  return Object.values(groups).sort(
+    (a, b) => Math.abs(b.margin_coef) - Math.abs(a.margin_coef),
+  )
+})
+
+/** Friendly explanation text for the active weighted model. */
+const modelExplanationText = computed(() => {
+  if (!activeModelData.value?.active || !activeModelData.value.model) return ''
+  const m = activeModelData.value.model
+  const top = groupedModelCoefficients.value.slice(0, 3)
+  const topNames = top.map((r) => getModelDisplayName(r.model)).join(', ')
+  const r2 = m.metrics?.r2 != null ? m.metrics.r2.toFixed(3) : 'N/A'
+  return (
+    `The Weighted Tip model combines all 8 ML model predictions using a ` +
+    `linear regression trained on ${m.training_rows} historical games. ` +
+    `Each model contributes a margin weight (influence on score margin) and a ` +
+    `confidence weight (influence on confidence). ` +
+    `The current model (v${m.version}) has R² = ${r2} ` +
+    `with intercept ${m.intercept.toFixed(2)}. ` +
+    `Most influential models: ${topNames}. ` +
+    `The model is retrained weekly with updated coefficients.`
+  )
+})
+
 /** Sorted comparison entries for consistent heuristic ordering in the UI. */
 const sortedComparison = computed(() => {
   if (!comparison.value) return []
@@ -416,6 +628,8 @@ const sortedComparison = computed(() => {
 watch(selectedSeason, async () => {
   if (viewMode.value === 'summary') {
     await loadComparisonData()
+  } else if (viewMode.value === 'models') {
+    await loadModelComparisonData()
   } else if (viewMode.value === 'table') {
     await loadTableData()
   } else if (viewMode.value === 'charts') {
@@ -427,6 +641,8 @@ watch(selectedSeason, async () => {
 watch(viewMode, async (newMode) => {
   if (newMode === 'summary' && !comparison.value) {
     await loadComparisonData()
+  } else if (newMode === 'models') {
+    await loadModelComparisonData()
   } else if (newMode === 'table' && !tableData.value) {
     await loadTableData()
   } else if (newMode === 'charts') {
@@ -460,6 +676,32 @@ const loadChartData = async () => {
   }
 }
 
+const loadActiveModelData = async () => {
+  activeModelLoading.value = true
+  activeModelError.value = null
+  try {
+    activeModelData.value = await api.getActiveModel()
+  } catch (e) {
+    activeModelError.value = 'Failed to load active model data'
+    if (import.meta.dev) console.error(e)
+  } finally {
+    activeModelLoading.value = false
+  }
+}
+
+const loadModelComparisonData = async () => {
+  modelComparisonLoading.value = true
+  modelComparisonError.value = null
+  try {
+    modelComparison.value = await api.compareModels(selectedSeason.value)
+  } catch (e) {
+    modelComparisonError.value = 'Failed to load model comparison data'
+    if (import.meta.dev) console.error(e)
+  } finally {
+    modelComparisonLoading.value = false
+  }
+}
+
 const loadCurrentSeasonData = async () => {
   currentSeasonLoading.value = true
   currentSeasonError.value = null
@@ -482,6 +724,7 @@ onMounted(async () => {
   await Promise.all([
     loadAvailableSeasons(),
     loadCurrentSeasonData(),
+    loadActiveModelData(),
     loadComparisonData(),
   ])
 })
@@ -606,6 +849,236 @@ onMounted(async () => {
 .stat-value.projected {
   font-size: 1.125rem;
   font-weight: 800;
+}
+
+/* Active Weighted Model Styles */
+.active-model-section {
+  padding: 2.5rem 1.5rem;
+  background: var(--color-bg);
+  border-bottom: 2px solid var(--color-border);
+}
+
+.active-model-header {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+  margin-bottom: 1.5rem;
+}
+
+.active-model-header h2 {
+  margin: 0;
+}
+
+.version-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.25rem 0.625rem;
+  background: #6366f1;
+  color: white;
+  border-radius: 1rem;
+  font-size: 0.75rem;
+  font-weight: 700;
+}
+
+.model-empty {
+  text-align: center;
+  padding: 2rem 1.5rem;
+  color: var(--color-muted);
+}
+
+.model-empty-sub {
+  font-size: 0.875rem;
+  margin-top: 0.5rem;
+  opacity: 0.7;
+}
+
+.model-content {
+  max-width: 900px;
+  margin: 0 auto;
+}
+
+.model-meta-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  justify-content: center;
+  margin-bottom: 1.25rem;
+}
+
+.meta-item {
+  font-size: 0.8125rem;
+  color: var(--color-muted);
+}
+
+.meta-item strong {
+  color: var(--color-text);
+}
+
+.model-explanation {
+  padding: 1rem 1.25rem;
+  margin-bottom: 1.5rem;
+  background: var(--color-bg-secondary);
+  border-left: 3px solid #6366f1;
+  border-radius: 0.375rem;
+  font-size: 0.875rem;
+  line-height: 1.6;
+}
+
+.coefficients-visual {
+  max-width: 900px;
+  margin: 0 auto;
+}
+
+/* Equation Card */
+.equation-card {
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border);
+  border-radius: 0.625rem;
+  padding: 1.25rem;
+  margin-bottom: 1.5rem;
+}
+
+.equation-title {
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--color-muted);
+  margin-bottom: 1rem;
+}
+
+.equation-display {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.25rem 0.5rem;
+  font-size: 0.875rem;
+  line-height: 1.8;
+  font-family: 'Courier New', Courier, monospace;
+}
+
+.eq-left {
+  font-weight: 700;
+  color: var(--color-text);
+  white-space: nowrap;
+}
+
+.eq-intercept {
+  font-weight: 800;
+  color: #6366f1;
+  white-space: nowrap;
+}
+
+.eq-term {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.125rem;
+  white-space: nowrap;
+}
+
+.eq-op {
+  font-weight: 700;
+  color: var(--color-text);
+  width: 0.6em;
+  text-align: center;
+}
+
+.eq-coeff {
+  font-weight: 700;
+  color: var(--color-text);
+}
+
+.eq-dot {
+  color: var(--color-muted);
+  margin: 0 0.0625rem;
+}
+
+.eq-model {
+  color: var(--color-text);
+}
+
+.eq-sub {
+  font-size: 0.625rem;
+  color: var(--color-muted);
+}
+
+.equation-note {
+  margin-top: 0.875rem;
+  font-size: 0.8125rem;
+  color: var(--color-muted);
+  line-height: 1.5;
+  border-top: 1px solid var(--color-border);
+  padding-top: 0.75rem;
+}
+
+/* Chart row */
+.chart-row {
+  margin-top: 0.5rem;
+}
+
+.chart-col {
+  width: 100%;
+}
+
+.chart-heading {
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--color-muted);
+  margin-bottom: 0.75rem;
+}
+
+/* Model Comparison (Models tab) Styles */
+.models-section {
+  padding: 1rem 0;
+}
+
+.model-comparison-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 1rem;
+}
+
+.model-stat-card {
+  border: 1px solid var(--color-border);
+  padding: 1.25rem;
+  border-radius: 0.375rem;
+  transition: border-color 0.2s;
+}
+
+.model-stat-card.best-card {
+  border-color: #6366f1;
+  border-width: 2px;
+}
+
+.card-header-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 1rem;
+  padding-bottom: 0.75rem;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.card-header-row h3 {
+  font-size: 0.9375rem;
+  font-weight: 700;
+  margin: 0;
+}
+
+.best-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.1875rem 0.5rem;
+  background: #6366f1;
+  color: white;
+  border-radius: 0.25rem;
+  font-size: 0.625rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
 }
 
 .section {
@@ -988,6 +1461,24 @@ onMounted(async () => {
     gap: 1rem;
   }
 
+  .active-model-section {
+    padding: 2rem 1rem;
+  }
+
+  .model-meta-row {
+    flex-direction: column;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  .model-comparison-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .model-stat-card {
+    padding: 1rem;
+  }
+
   .loading, .error {
     padding: 2rem 1rem;
   }
@@ -1216,6 +1707,23 @@ onMounted(async () => {
 
   .btn-secondary:hover {
     opacity: 0.9;
+  }
+
+  .active-model-section {
+    padding: 3rem 2rem;
+  }
+
+  .model-meta-row {
+    gap: 1.5rem;
+  }
+
+  .model-comparison-grid {
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    gap: 1.25rem;
+  }
+
+  .model-stat-card {
+    padding: 1.5rem;
   }
 
   .charts-container {

@@ -509,6 +509,64 @@ class BacktestService:
 
         return round_data
 
+    async def get_active_weighted_model(
+        self,
+        db: AsyncSession,
+    ) -> dict | None:
+        """Return the currently-active ``weighted_tip`` model version + coefficients.
+
+        Enriches each coefficient with a ``model`` (the base model name) and
+        ``type`` (``"margin"`` or ``"confidence"``) derived from the feature
+        name convention established in :mod:`heuristics.weighted_tip`.
+
+        Returns ``None`` when no active version exists (e.g. before the first
+        weekly retrain has run).
+        """
+        from ..crud.model_versions import (
+            get_active_model_version,
+            get_model_coefficients,
+        )
+
+        model_version = await get_active_model_version(db, "weighted_tip")
+        if model_version is None:
+            return None
+
+        coefficient_rows = await get_model_coefficients(db, model_version.id)
+
+        coefficients = []
+        for row in coefficient_rows:
+            # Derive model + type from the feature name.
+            # Convention: "{model_name}_margin_home" or "{model_name}_conf"
+            fname = row.feature_name
+            if fname.endswith("_margin_home"):
+                model_name = fname[: -len("_margin_home")]
+                ctype = "margin"
+            elif fname.endswith("_conf"):
+                model_name = fname[: -len("_conf")]
+                ctype = "confidence"
+            else:
+                model_name = fname
+                ctype = "other"
+
+            coefficients.append({
+                "feature_name": fname,
+                "coefficient": row.coefficient,
+                "model": model_name,
+                "type": ctype,
+            })
+
+        return {
+            "model_name": "weighted_tip",
+            "version": model_version.version,
+            "trained_at": model_version.trained_at.isoformat()
+            if model_version.trained_at
+            else None,
+            "training_rows": model_version.training_rows,
+            "intercept": model_version.intercept,
+            "metrics": model_version.metrics or {},
+            "coefficients": coefficients,
+        }
+
     async def run_model_backtest(
         self,
         db: AsyncSession,
