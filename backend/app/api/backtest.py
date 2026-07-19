@@ -255,6 +255,32 @@ async def get_current_season(
 
 
 # ---------------------------------------------------------------------------
+# GET /active-model
+# ---------------------------------------------------------------------------
+
+
+@router.get("/active-model")
+async def get_active_model(
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Return the currently-active ``weighted_tip`` model version with its
+    learned coefficients and training metadata.
+
+    Returns ``{"active": false, "message": "..."}`` when no trained version
+    exists (e.g. before the first weekly retrain has run).
+    """
+    service = BacktestService()
+    result = await service.get_active_weighted_model(db)
+    if result is None:
+        return {
+            "active": False,
+            "message": "No active Weighted Tip model version found. "
+            "The model will be trained after the first weekly retrain job runs.",
+        }
+    return {"active": True, "model": result}
+
+
+# ---------------------------------------------------------------------------
 # POST /run  — admin
 # ---------------------------------------------------------------------------
 
