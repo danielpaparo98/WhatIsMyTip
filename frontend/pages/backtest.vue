@@ -104,37 +104,36 @@
             <p>{{ modelExplanationText }}</p>
           </div>
 
-          <div v-if="groupedModelCoefficients.length > 0" class="coefficients-card">
-            <h3>Feature Weights</h3>
-            <div class="coeff-table-scroll">
-              <table class="coeff-table">
-                <thead>
-                  <tr>
-                    <th>Model</th>
-                    <th class="num-col">Margin Weight</th>
-                    <th class="num-col">Confidence Weight</th>
-                    <th class="num-col">Combined Influence</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr v-for="row in groupedModelCoefficients" :key="row.model">
-                    <td>{{ getModelDisplayName(row.model) }}</td>
-                    <td class="num-col" :class="{ positive: row.margin_coef > 0, negative: row.margin_coef < 0 }">
-                      {{ row.margin_coef.toFixed(4) }}
-                    </td>
-                    <td class="num-col" :class="{ positive: row.confidence_coef > 0, negative: row.confidence_coef < 0 }">
-                      {{ row.confidence_coef.toFixed(4) }}
-                    </td>
-                    <td class="num-col" :class="{ positive: (row.margin_coef + row.confidence_coef) > 0, negative: (row.margin_coef + row.confidence_coef) < 0 }">
-                      {{ (row.margin_coef + row.confidence_coef).toFixed(4) }}
-                    </td>
-                  </tr>
-                </tbody>
-              </table>
+          <div v-if="groupedModelCoefficients.length > 0" class="coefficients-visual">
+            <!-- Model Equation -->
+            <div class="equation-card">
+              <div class="equation-title">Model Equation</div>
+              <div class="equation-display">
+                <span class="eq-left">predicted_margin =</span>
+                <span class="eq-intercept">{{ activeModelData.model!.intercept.toFixed(2) }}</span>
+                <span v-for="(row, i) in groupedModelCoefficients" :key="row.model" class="eq-term">
+                  <span class="eq-op">{{ row.margin_coef >= 0 ? '+' : '−' }}</span>
+                  <span class="eq-coeff">{{ Math.abs(row.margin_coef).toFixed(3) }}</span>
+                  <span class="eq-dot">·</span>
+                  <span class="eq-model">{{ getModelDisplayName(row.model) }}<sub class="eq-sub">m</sub></span>
+                </span>
+              </div>
+              <p class="equation-note">
+                Each model contributes a margin weight (× its predicted margin toward home) and a confidence weight.
+                Models with larger absolute weights have more influence on the final tip.
+              </p>
             </div>
-            <p class="coeff-note">
-              <small>Positive weights mean the model's prediction pushes toward the home team; negative weights push toward the away team. The combined influence is the sum of margin + confidence weights.</small>
-            </p>
+
+            <!-- Coefficient Bar Chart -->
+            <div class="chart-row">
+              <div class="chart-col">
+                <h3 class="chart-heading">Margin Weights</h3>
+                <ModelCoefficientChart
+                  :coefficients="groupedModelCoefficients"
+                  :intercept="activeModelData.model.intercept"
+                />
+              </div>
+            </div>
           </div>
         </div>
       </section>
@@ -926,72 +925,109 @@ onMounted(async () => {
   line-height: 1.6;
 }
 
-.coefficients-card {
-  border: 1px solid var(--color-border);
-  border-radius: 0.5rem;
-  padding: 1.25rem;
+.coefficients-visual {
+  max-width: 900px;
+  margin: 0 auto;
 }
 
-.coefficients-card h3 {
-  font-size: 1rem;
+/* Equation Card */
+.equation-card {
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border);
+  border-radius: 0.625rem;
+  padding: 1.25rem;
+  margin-bottom: 1.5rem;
+}
+
+.equation-title {
+  font-size: 0.75rem;
   font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--color-muted);
   margin-bottom: 1rem;
 }
 
-.coeff-table-scroll {
-  overflow-x: auto;
+.equation-display {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.25rem 0.5rem;
+  font-size: 0.875rem;
+  line-height: 1.8;
+  font-family: 'Courier New', Courier, monospace;
 }
 
-.coeff-table {
-  width: 100%;
-  border-collapse: collapse;
+.eq-left {
+  font-weight: 700;
+  color: var(--color-text);
+  white-space: nowrap;
+}
+
+.eq-intercept {
+  font-weight: 800;
+  color: #6366f1;
+  white-space: nowrap;
+}
+
+.eq-term {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.125rem;
+  white-space: nowrap;
+}
+
+.eq-op {
+  font-weight: 700;
+  color: var(--color-text);
+  width: 0.6em;
+  text-align: center;
+}
+
+.eq-coeff {
+  font-weight: 700;
+  color: var(--color-text);
+}
+
+.eq-dot {
+  color: var(--color-muted);
+  margin: 0 0.0625rem;
+}
+
+.eq-model {
+  color: var(--color-text);
+}
+
+.eq-sub {
+  font-size: 0.625rem;
+  color: var(--color-muted);
+}
+
+.equation-note {
+  margin-top: 0.875rem;
   font-size: 0.8125rem;
+  color: var(--color-muted);
+  line-height: 1.5;
+  border-top: 1px solid var(--color-border);
+  padding-top: 0.75rem;
 }
 
-.coeff-table thead {
-  background: var(--color-border);
+/* Chart row */
+.chart-row {
+  margin-top: 0.5rem;
 }
 
-.coeff-table th {
-  padding: 0.5rem 0.75rem;
-  text-align: left;
+.chart-col {
+  width: 100%;
+}
+
+.chart-heading {
+  font-size: 0.75rem;
   font-weight: 700;
   text-transform: uppercase;
-  letter-spacing: 0.05em;
-  font-size: 0.6875rem;
-}
-
-.coeff-table tbody tr {
-  border-bottom: 1px solid var(--color-border);
-}
-
-.coeff-table td {
-  padding: 0.5rem 0.75rem;
-}
-
-.coeff-table td.num-col {
-  text-align: right;
-  font-variant-numeric: tabular-nums;
-}
-
-.coeff-table th.num-col {
-  text-align: right;
-}
-
-.coeff-table td.positive {
-  color: #00a000;
-  font-weight: 600;
-}
-
-.coeff-table td.negative {
-  color: #c00000;
-  font-weight: 600;
-}
-
-.coeff-note {
-  margin-top: 0.75rem;
+  letter-spacing: 0.08em;
   color: var(--color-muted);
-  line-height: 1.4;
+  margin-bottom: 0.75rem;
 }
 
 /* Model Comparison (Models tab) Styles */
