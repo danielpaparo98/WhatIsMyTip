@@ -110,26 +110,26 @@
         
         <!-- Summary View -->
         <div v-else-if="viewMode === 'summary' && comparison" class="comparison">
-          <div v-for="(stats, heuristic) in comparison.comparison" :key="heuristic" class="stat-card">
-            <h3>{{ formatHeuristic(heuristic) }}</h3>
+          <div v-for="entry in sortedComparison" :key="entry.heuristic" class="stat-card">
+            <h3>{{ formatHeuristic(entry.heuristic) }}</h3>
             <div class="stat-grid">
               <div class="stat">
                 <span class="stat-label">Accuracy</span>
-                <span class="stat-value">{{ (stats.overall_accuracy * 100).toFixed(1) }}%</span>
+                <span class="stat-value">{{ (entry.overall_accuracy * 100).toFixed(1) }}%</span>
               </div>
               <div class="stat">
                 <span class="stat-label">Profit</span>
-                <span class="stat-value" :class="{ positive: stats.total_profit > 0, negative: stats.total_profit < 0 }">
-                  ${{ stats.total_profit.toFixed(2) }}
+                <span class="stat-value" :class="{ positive: entry.total_profit > 0, negative: entry.total_profit < 0 }">
+                  ${{ entry.total_profit.toFixed(2) }}
                 </span>
               </div>
               <div class="stat">
                 <span class="stat-label">Tips</span>
-                <span class="stat-value">{{ stats.total_tips }}</span>
+                <span class="stat-value">{{ entry.total_tips }}</span>
               </div>
               <div class="stat">
                 <span class="stat-label">Rounds</span>
-                <span class="stat-value">{{ stats.total_rounds }}</span>
+                <span class="stat-value">{{ entry.total_rounds }}</span>
               </div>
             </div>
           </div>
@@ -227,6 +227,8 @@
 </template>
 
 <script setup lang="ts">
+import { sortByHeuristicOrder } from '~/composables/useFormatters'
+
 const api = useApi()
 const { formatHeuristic } = useFormatters()
 
@@ -387,7 +389,11 @@ const loadTableData = async () => {
   tableError.value = null
   
   try {
-    tableData.value = await api.getBacktestTableData(selectedSeason.value)
+    const data = await api.getBacktestTableData(selectedSeason.value)
+    if (data) {
+      data.heuristics = sortByHeuristicOrder(data.heuristics)
+    }
+    tableData.value = data
   } catch (e) {
     tableError.value = 'Failed to load table data'
     if (import.meta.dev) console.error(e)
@@ -396,6 +402,15 @@ const loadTableData = async () => {
     syncing.value = false
   }
 }
+
+/** Sorted comparison entries for consistent heuristic ordering in the UI. */
+const sortedComparison = computed(() => {
+  if (!comparison.value) return []
+  const entries = Object.entries(comparison.value.comparison).map(
+    ([heuristic, stats]) => ({ heuristic, ...stats }),
+  )
+  return sortByHeuristicOrder(entries)
+})
 
 // Watch for season changes to reload data
 watch(selectedSeason, async () => {
@@ -426,8 +441,9 @@ const loadChartData = async () => {
   
   try {
     const tableResponse = await api.getBacktestTableData(selectedSeason.value)
-    // Transform table data into chart-friendly format
-    chartData.value = tableResponse.heuristics.map((h: HeuristicTableData) => ({
+    // Transform table data into chart-friendly format, sorted by heuristic order
+    const sorted = sortByHeuristicOrder<HeuristicTableData>(tableResponse.heuristics)
+    chartData.value = sorted.map((h) => ({
       heuristic: h.heuristic,
       rounds: h.rounds.map((r: RoundStat) => ({
         round_id: r.round_id,
@@ -449,7 +465,11 @@ const loadCurrentSeasonData = async () => {
   currentSeasonError.value = null
   
   try {
-    currentSeasonData.value = await api.getCurrentSeasonPerformance()
+    const data = await api.getCurrentSeasonPerformance()
+    if (data) {
+      data.heuristics = sortByHeuristicOrder(data.heuristics)
+    }
+    currentSeasonData.value = data
   } catch (e) {
     currentSeasonError.value = 'Failed to load current season data'
     if (import.meta.dev) console.error(e)
@@ -481,7 +501,7 @@ onMounted(async () => {
 /* Current Season Styles */
 .current-season-section {
   padding: 2rem 1.5rem;
-  background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%);
+  background: linear-gradient(135deg, var(--color-bg-secondary) 0%, var(--color-hover) 100%);
   border-bottom: 2px solid var(--color-border);
 }
 
@@ -522,6 +542,10 @@ onMounted(async () => {
   border-radius: 0.75rem;
   padding: 1.25rem;
   box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+}
+
+.dark .current-season-card {
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.4);
 }
 
 .card-header {

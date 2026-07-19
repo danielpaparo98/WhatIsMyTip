@@ -42,13 +42,13 @@ const props = defineProps<Props>()
   display: inline-block;
   margin-top: 2rem;
   padding: 0.75rem 1.5rem;
-  background: #000;
-  color: #fff;
+  background: var(--color-text);
+  color: var(--color-bg);
   text-decoration: none;
   border-radius: 4px;
 }
 
 .back-home:hover {
-  background: #333;
+  opacity: 0.8;
 }
 </style>

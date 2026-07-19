@@ -115,6 +115,7 @@
 <script setup lang="ts">
 import type { GameDetailResponse } from '~/composables/useApi'
 import { isValidGameSlug } from '~/composables/useGameSlug'
+import { sortByHeuristicOrder } from '~/composables/useFormatters'
 
 // FX-03: cache rendered game detail pages during client-side navigation
 // so going back/forward to a previously viewed game doesn't re-fetch.
@@ -141,7 +142,12 @@ onMounted(async () => {
       throw new Error('Invalid game slug')
     }
 
-    gameDetail.value = await getGameDetail(slug)
+    const detail = await getGameDetail(slug)
+    // Sort tips by canonical heuristic order (Weighted → Best Bet → YOLO)
+    if (detail?.tips) {
+      detail.tips = sortByHeuristicOrder(detail.tips)
+    }
+    gameDetail.value = detail
   } catch (err) {
     error.value = err instanceof Error ? err.message : 'Failed to load game details'
   } finally {

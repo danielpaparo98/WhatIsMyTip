@@ -32,6 +32,7 @@ import {
 } from 'chart.js'
 import { Line } from 'vue-chartjs'
 import { useChartTheme } from '~/composables/useChartTheme'
+import { useColorMode } from '~/composables/useColorMode'
 
 ChartJS.register(
   CategoryScale,
@@ -63,6 +64,7 @@ const props = withDefaults(defineProps<Props>(), {
 })
 
 const { getHeuristicColors, getHeuristicLabel } = useChartTheme()
+const { isDark } = useColorMode()
 
 const hasData = computed(() => {
   return props.data && props.data.length > 0 && props.data.some(h => h.rounds && h.rounds.length > 0)
@@ -106,7 +108,7 @@ const chartData = computed(() => {
   }
 })
 
-const chartOptions: ChartOptions<'line'> = {
+const chartOptions = computed<ChartOptions<'line'>>(() => ({
   responsive: true,
   maintainAspectRatio: false,
   interaction: {
@@ -122,11 +124,12 @@ const chartOptions: ChartOptions<'line'> = {
         font: {
           size: 12,
           weight: 600
-        }
+        },
+        color: isDark.value ? '#e5e5e5' : '#000000'
       }
     },
     tooltip: {
-      backgroundColor: 'rgba(0, 0, 0, 0.8)',
+      backgroundColor: isDark.value ? 'rgba(30, 30, 30, 0.95)' : 'rgba(0, 0, 0, 0.8)',
       padding: 12,
       titleFont: {
         size: 14,
@@ -135,6 +138,8 @@ const chartOptions: ChartOptions<'line'> = {
       bodyFont: {
         size: 13
       },
+      titleColor: isDark.value ? '#e5e5e5' : '#ffffff',
+      bodyColor: isDark.value ? '#e5e5e5' : '#ffffff',
       callbacks: {
         label: (context) => {
           const value = context.parsed.y
@@ -153,7 +158,11 @@ const chartOptions: ChartOptions<'line'> = {
         font: {
           size: 12,
           weight: 600
-        }
+        },
+        color: isDark.value ? '#e5e5e5' : '#000000'
+      },
+      ticks: {
+        color: isDark.value ? '#999999' : '#666666'
       },
       grid: {
         display: false
@@ -166,17 +175,19 @@ const chartOptions: ChartOptions<'line'> = {
         font: {
           size: 12,
           weight: 600
-        }
+        },
+        color: isDark.value ? '#e5e5e5' : '#000000'
       },
       ticks: {
+        color: isDark.value ? '#999999' : '#666666',
         callback: (value) => `$${value}`
       },
       grid: {
-        color: 'rgba(0, 0, 0, 0.05)'
+        color: isDark.value ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.05)'
       }
     }
   }
-}
+}))
 
 const plugins: Plugin<'line'>[] = []
 </script>

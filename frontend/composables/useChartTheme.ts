@@ -1,11 +1,11 @@
 export const HEURISTIC_CHART_COLORS: Record<string, { border: string; background: string }> = {
-  best_bet: {
-    border: '#3b82f6',
-    background: 'rgba(59, 130, 246, 0.8)',
-  },
   weighted_tip: {
     border: '#f97316',
     background: 'rgba(249, 115, 22, 0.8)',
+  },
+  best_bet: {
+    border: '#3b82f6',
+    background: 'rgba(59, 130, 246, 0.8)',
   },
   yolo: {
     border: '#ef4444',
@@ -14,9 +14,9 @@ export const HEURISTIC_CHART_COLORS: Record<string, { border: string; background
 }
 
 export const HEURISTIC_CHART_LABELS: Record<string, string> = {
+  weighted_tip: 'Weighted Tip',
   best_bet: 'Best Bet',
   yolo: 'YOLO',
-  weighted_tip: 'Weighted Tip',
 }
 
 export const DEFAULT_CHART_COLORS = {

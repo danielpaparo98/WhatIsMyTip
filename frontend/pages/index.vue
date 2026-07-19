@@ -108,6 +108,7 @@
 
 <script setup lang="ts">
 import type { GameWithTip, GamesWithTipsResponse, LatestRoundResponse } from '~/composables/useApi'
+import { HEURISTIC_ORDER } from '~/composables/useFormatters'
 const api = useApi()
 const { getLogoUrl } = useTeamLogos()
 const { formatHeuristic, formatDate: formatDateUtil } = useFormatters()
@@ -153,7 +154,7 @@ const loading = ref(true)
 const error = ref<string | null>(null)
 const gamesWithTips = ref<GameWithTip[]>([])
 const latestRound = ref<LatestRoundResponse | null>(null)
-const selectedHeuristic = ref<string>('best_bet')
+const selectedHeuristic = ref<string>('weighted_tip')
 const generating = ref(false)
 const AUTO_REFRESH_MS = 5 * 60 * 1000
 let autoRefreshTimer: ReturnType<typeof setInterval> | null = null
@@ -162,11 +163,10 @@ const hasGamesWithoutTips = computed(() => {
   return gamesWithTips.value.length > 0 && gamesWithTips.value.some(g => !g.tip)
 })
 
-const heuristics = [
-  { value: 'best_bet', label: 'Best Bet' },
-  { value: 'yolo', label: 'YOLO' },
-  { value: 'weighted_tip', label: 'Weighted Tip' }
-]
+const heuristics = HEURISTIC_ORDER.map(value => ({
+  value,
+  label: formatHeuristic(value)
+}))
 
 const loadLatestRound = async () => {
   try {
@@ -239,12 +239,17 @@ const generateTips = async () => {
 
 const formatDate = formatDateUtil
 
-// Reload games when heuristic changes
-watch(selectedHeuristic, () => {
+// Persist selected heuristic on change
+watch(selectedHeuristic, (val) => {
+  localStorage.setItem('selected-heuristic', val)
   loadGames()
 })
 
 onMounted(() => {
+  const stored = localStorage.getItem('selected-heuristic')
+  if (stored && ['weighted_tip', 'best_bet', 'yolo'].includes(stored)) {
+    selectedHeuristic.value = stored
+  }
   loadLatestRound()
   loadGames()
   const refreshCallback = async () => {

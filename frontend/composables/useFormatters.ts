@@ -1,10 +1,12 @@
 // Human-friendly labels for the 3 heuristic names returned by the
 // backend.  Keep in sync with `HEURISTICS` in
 // backend/scripts/seed_data.py.
+export const HEURISTIC_ORDER = ['weighted_tip', 'best_bet', 'yolo']
+
 export const HEURISTIC_LABELS: Record<string, string> = {
+  weighted_tip: 'Weighted Tip',
   best_bet: 'Best Bet',
   yolo: 'YOLO',
-  weighted_tip: 'Weighted Tip',
 }
 
 // Human-friendly labels for every model registered in
@@ -22,6 +24,22 @@ export const MODEL_DISPLAY_NAMES: Record<string, string> = {
   injury_impact: 'Injury Impact',
   matchup: 'Matchup',
   player_form: 'Player Form',
+}
+
+/**
+ * Sort an array of objects by their heuristic field matching
+ * HEURISTIC_ORDER (Weighted Tip → Best Bet → YOLO).
+ * Items whose heuristic is not in the list sink to the end.
+ */
+export function sortByHeuristicOrder<T extends { heuristic: string }>(
+  items: T[],
+): T[] {
+  const order = new Map(HEURISTIC_ORDER.map((key, i) => [key, i]))
+  return [...items].sort(
+    (a, b) =>
+      (order.get(a.heuristic) ?? Infinity) -
+      (order.get(b.heuristic) ?? Infinity),
+  )
 }
 
 export function useFormatters() {

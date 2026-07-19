@@ -130,6 +130,13 @@
         <h2>Heuristics</h2>
         <div class="heuristics">
           <div class="heuristic-card">
+            <h3>Weighted Tip</h3>
+            <p>
+              A data-driven tip that combines model predictions with learned weights.
+              The underlying model is retrained weekly to keep its picks current.
+            </p>
+          </div>
+          <div class="heuristic-card">
             <h3>Best Bet</h3>
             <p>
               Conservative, consensus-based picks with high confidence. This heuristic aggregates
@@ -141,13 +148,6 @@
             <p>
               Aggressive picks based on the highest confidence model prediction. This heuristic
               goes all-in on the model with the strongest conviction.
-            </p>
-          </div>
-          <div class="heuristic-card">
-            <h3>Weighted Tip</h3>
-            <p>
-              A data-driven tip that combines model predictions with learned weights.
-              The underlying model is retrained weekly to keep its picks current.
             </p>
           </div>
     </div>
