@@ -107,7 +107,7 @@
 </template>
 
 <script setup lang="ts">
-import type { GameWithTip, GamesWithTipsResponse } from '~/composables/useApi'
+import type { GameWithTip, GamesWithTipsResponse, LatestRoundResponse } from '~/composables/useApi'
 const api = useApi()
 const { getLogoUrl } = useTeamLogos()
 const { formatHeuristic, formatDate: formatDateUtil } = useFormatters()
@@ -152,7 +152,7 @@ useHead({
 const loading = ref(true)
 const error = ref<string | null>(null)
 const gamesWithTips = ref<GameWithTip[]>([])
-const latestRound = ref<GamesWithTipsResponse | null>(null)
+const latestRound = ref<LatestRoundResponse | null>(null)
 const selectedHeuristic = ref<string>('best_bet')
 const generating = ref(false)
 const AUTO_REFRESH_MS = 5 * 60 * 1000
@@ -198,7 +198,7 @@ const loadGames = async () => {
   }
 }
 
-const hasRoundChanged = (nextRound: GamesWithTipsResponse) => {
+const hasRoundChanged = (nextRound: LatestRoundResponse) => {
   if (!latestRound.value) return true
   return (
     latestRound.value.season !== nextRound?.season ||
