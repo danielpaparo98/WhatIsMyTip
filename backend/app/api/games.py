@@ -139,12 +139,54 @@ async def list_games(
             )
             row = result.first()
             if row:
+                # Check if this round is the grand final (last round of the season)
+                max_round_result = await db.execute(
+                    select(func.max(Game.round_id))
+                    .where(Game.season == row.season)
+                )
+                max_round_id = max_round_result.scalar()
+                is_grand_final = bool(max_round_id and row.round_id == max_round_id)
+
+                # Off-season: no upcoming games and the latest round isn't from
+                # the current year (i.e. we're looking at a completed past season).
+                is_off_season = not has_upcoming and row.season < current_year
+
+                # Premier: winner of the last completed game of the season
+                # (the grand final).  Only relevant in the off-season.
+                premier = None
+                if is_off_season:
+                    last_game_result = await db.execute(
+                        select(Game)
+                        .where(
+                            and_(
+                                Game.season == row.season,
+                                Game.completed,
+                            )
+                        )
+                        .order_by(Game.date.desc())
+                        .limit(1)
+                    )
+                    last_game = last_game_result.scalar_one_or_none()
+                    if (
+                        last_game
+                        and last_game.home_score is not None
+                        and last_game.away_score is not None
+                    ):
+                        premier = (
+                            last_game.home_team
+                            if last_game.home_score > last_game.away_score
+                            else last_game.away_team
+                        )
+
                 return {
                     "season": row.season,
                     "round_id": row.round_id,
                     "game_count": row.game_count,
                     "is_current_year": row.season == current_year,
                     "has_upcoming": has_upcoming,
+                    "is_grand_final": is_grand_final,
+                    "is_off_season": is_off_season,
+                    "premier": premier,
                 }
 
         return {
@@ -153,6 +195,9 @@ async def list_games(
             "game_count": 0,
             "is_current_year": False,
             "has_upcoming": False,
+            "is_grand_final": False,
+            "is_off_season": False,
+            "premier": None,
         }
 
     # Standard list path — always plumb the `limit` through to the CRUD layer

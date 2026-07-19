@@ -44,6 +44,9 @@ export default defineNuxtConfig({
       ],
       script: [
         {
+          innerHTML: '(function(){try{var m=localStorage.getItem("color-mode");if(m==="dark"||(!m&&window.matchMedia("(prefers-color-scheme:dark)").matches))document.documentElement.classList.add("dark")}catch(e){}})()'
+        },
+        {
           src: process.env.NUXT_PUBLIC_UMAMI_HOST ? `${process.env.NUXT_PUBLIC_UMAMI_HOST}/script.js` : '',
           'data-website-id': process.env.NUXT_PUBLIC_UMAMI_WEBSITE_ID || '',
           defer: true,

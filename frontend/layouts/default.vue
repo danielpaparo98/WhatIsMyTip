@@ -1,6 +1,8 @@
 <template>
   <div>
     <a href="#main-content" class="skip-link">Skip to main content</a>
+    <ConfettiEffect />
+    <OffSeasonBanner />
     <Header />
     <main id="main-content" class="main">
       <slot />
@@ -8,6 +10,11 @@
     <Footer />
   </div>
 </template>
+
+<script setup lang="ts">
+// Site-wide effects: grand-final confetti and off-season celebration banner
+// are self-contained components that fetch their own data.
+</script>
 
 <style scoped>
 .skip-link {

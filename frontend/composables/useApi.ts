@@ -122,6 +122,20 @@ const DEFAULT_RETRY_OPTIONS = {
   maxDelayMs: 2000,
 } as const
 
+/**
+ * Mirrors the round locator returned by `GET /api/games?latest=true`.
+ */
+export interface LatestRoundResponse {
+  season: number | null
+  round_id: number | null
+  game_count: number
+  is_current_year: boolean
+  has_upcoming: boolean
+  is_grand_final: boolean
+  is_off_season: boolean
+  premier: string | null
+}
+
 export const useApi = () => {
   const config = useRuntimeConfig()
   const apiBase = config.public.apiBase as string
@@ -246,7 +260,7 @@ export const useApi = () => {
     return response.json()
   }
 
-  const getLatestRound = async () => {
+  const getLatestRound = async (): Promise<LatestRoundResponse> => {
     const response = await fetchWithTimeout('/api/games?latest=true')
     if (!response.ok) throw new Error('Failed to fetch latest round')
     return response.json()
@@ -357,6 +371,18 @@ export const useApi = () => {
     return response.json()
   }
 
+  const compareModels = async (season: number) => {
+    const response = await fetchWithTimeout(`/api/backtest/model-compare?season=${season}`)
+    if (!response.ok) throw new Error('Failed to compare models')
+    return response.json()
+  }
+
+  const getActiveModel = async () => {
+    const response = await fetchWithTimeout('/api/backtest/active-model')
+    if (!response.ok) throw new Error('Failed to fetch active model')
+    return response.json()
+  }
+
   return {
     getGames,
     getGame,
@@ -372,5 +398,7 @@ export const useApi = () => {
     getAvailableSeasons,
     getBacktestTableData,
     getCurrentSeasonPerformance,
+    compareModels,
+    getActiveModel,
   }
 }
