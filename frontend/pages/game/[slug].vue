@@ -280,6 +280,15 @@ useHead({
   text-decoration: none;
   transition: color 0.2s ease;
   font-weight: 500;
+  padding: 0.5rem 0.75rem;
+  margin-bottom: 1rem;
+  border: 1px solid transparent;
+  border-radius: 4px;
+}
+
+.back-link:hover {
+  border-color: var(--color-border);
+  color: var(--color-text);
 }
 
 .back-link:hover {
@@ -298,10 +307,6 @@ useHead({
   border: 1px solid var(--color-border);
   padding: 2rem;
   margin-bottom: 2rem;
-}
-
-.game-header-section .back-link {
-  margin-bottom: 1.5rem;
 }
 
 .game-info {

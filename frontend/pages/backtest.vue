@@ -60,35 +60,34 @@
             </div>
           </div>
 
-          <!-- Current Season: Model Performance -->
-          <div v-if="currentSeasonModels" class="current-season-models">
-            <div class="models-divider">
-              <span>Individual Model Accuracy</span>
-            </div>
-            <div class="model-mini-grid">
-              <div
-                v-for="model in currentSeasonModels"
-                :key="model.model_name"
-                class="model-mini-card"
-                :class="{ 'best-model-card': model.model_name === currentSeasonBestModel }"
-              >
-                <div class="model-mini-header">
-                  <span class="model-mini-name">{{ getModelDisplayName(model.model_name) }}</span>
-                  <span v-if="model.model_name === currentSeasonBestModel" class="best-dot" title="Best performing model this season">★</span>
-                </div>
-                <div class="model-mini-acc">
-                  {{ (model.overall_accuracy * 100).toFixed(1) }}%
-                </div>
-                <div class="model-mini-label">Accuracy</div>
-                <div class="model-mini-profit" :class="{ positive: model.total_profit > 0, negative: model.total_profit < 0 }">
-                  ${{ model.total_profit.toFixed(0) }}
-                </div>
-                <div class="model-mini-label">Profit</div>
+        <!-- Current Season: Model Performance -->
+        <div v-if="currentSeasonModels" class="current-season-models">
+          <div class="models-divider">
+            <span>Individual Model Accuracy</span>
+          </div>
+          <div class="model-mini-grid">
+            <div
+              v-for="model in currentSeasonModels"
+              :key="model.model_name"
+              class="model-mini-card"
+              :class="{ 'best-model-card': model.model_name === currentSeasonBestModel }"
+            >
+              <div class="model-mini-header">
+                <span class="model-mini-name">{{ getModelDisplayName(model.model_name) }}</span>
+                <span v-if="model.model_name === currentSeasonBestModel" class="best-dot" title="Best performing model this season">★</span>
               </div>
+              <div class="model-mini-acc">
+                {{ (model.overall_accuracy * 100).toFixed(1) }}%
+              </div>
+              <div class="model-mini-label">Accuracy</div>
+              <div class="model-mini-profit" :class="{ positive: model.total_profit > 0, negative: model.total_profit < 0 }">
+                ${{ model.total_profit.toFixed(0) }}
+              </div>
+              <div class="model-mini-label">Profit</div>
             </div>
-            <div v-if="currentSeasonModelsError" class="model-mini-error">
-              <small>{{ currentSeasonModelsError }}</small>
-            </div>
+          </div>
+          <div v-if="currentSeasonModelsError" class="model-mini-error">
+            <small>{{ currentSeasonModelsError }}</small>
           </div>
         </div>
       </section>
@@ -167,8 +166,6 @@
             </div>
           </div>
         </div>
-      </section>
-
       </section>
 </template>
 
@@ -346,19 +343,6 @@ const loadActiveModelData = async () => {
     if (import.meta.dev) console.error(e)
   } finally {
     activeModelLoading.value = false
-  }
-}
-
-const loadModelComparisonData = async () => {
-  modelComparisonLoading.value = true
-  modelComparisonError.value = null
-  try {
-    modelComparison.value = await api.compareModels(selectedSeason.value)
-  } catch (e) {
-    modelComparisonError.value = 'Failed to load model comparison data'
-    if (import.meta.dev) console.error(e)
-  } finally {
-    modelComparisonLoading.value = false
   }
 }
 

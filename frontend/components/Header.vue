@@ -32,8 +32,8 @@ const { isDark, toggle } = useColorMode()
 }
 
 .nav {
-  display: flex;
-  justify-content: space-between;
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
   align-items: center;
   max-width: 1400px;
   margin: 0 auto;
@@ -42,6 +42,7 @@ const { isDark, toggle } = useColorMode()
 .logo {
   font-weight: 800;
   letter-spacing: -0.02em;
+  justify-self: start;
 }
 
 .logo-text {
@@ -54,6 +55,7 @@ const { isDark, toggle } = useColorMode()
   list-style: none;
   margin: 0;
   padding: 0;
+  justify-self: center;
 }
 
 .nav-links a {
@@ -85,6 +87,7 @@ const { isDark, toggle } = useColorMode()
   min-width: 44px;
   min-height: 44px;
   transition: border-color 0.2s ease;
+  justify-self: end;
 }
 
 .theme-toggle:hover {
@@ -94,21 +97,29 @@ const { isDark, toggle } = useColorMode()
 /* Mobile styles */
 @media (max-width: 640px) {
   .header {
-    padding: 1rem;
+    padding: 0.75rem 1rem;
   }
 
   .nav {
-    flex-direction: column;
-    gap: 1rem;
+    display: flex;
+    flex-direction: row;
+    justify-content: center;
+    align-items: center;
+    gap: 0.75rem;
     text-align: center;
   }
 
+  .logo {
+    position: absolute;
+    left: 1rem;
+  }
+
   .logo-text {
-    font-size: 1.125rem;
+    font-size: 1rem;
   }
 
   .nav-links {
-    gap: 1rem;
+    gap: 0.5rem;
   }
 
   .nav-links a {
@@ -117,7 +128,16 @@ const { isDark, toggle } = useColorMode()
   }
 
   .theme-toggle {
-    align-self: center;
+    position: absolute;
+    right: 1rem;
+    padding: 0.375rem;
+    min-width: 36px;
+    min-height: 36px;
+  }
+
+  .theme-toggle svg {
+    width: 16px;
+    height: 16px;
   }
 }
 
