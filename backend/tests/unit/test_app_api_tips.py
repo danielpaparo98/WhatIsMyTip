@@ -336,6 +336,52 @@ class TestGamesWithTips:
             f"games-with-tips query must ORDER BY games.date; got SQL: {sql!r}"
         )
 
+    def test_games_with_tips_excludes_teamless_games(self):
+        """TBC finals placeholders must not reach the homepage grid.
+
+        Regression: Squiggle publishes finals fixtures with null/empty
+        team names; the endpoint returned them as empty cards (and with
+        garbage ``selected_team = ''`` tips once the cron generated for
+        them).  The games SELECT must filter on both team columns.
+        """
+        from sqlalchemy.dialects import postgresql
+
+        mock_session = AsyncMock(spec=AsyncSession)
+        mock_game = _make_game_mock()
+
+        games_result = MagicMock()
+        games_result.scalars.return_value.all.return_value = [mock_game]
+        tips_result = MagicMock()
+        tips_result.scalars.return_value.all.return_value = []
+
+        mock_session.execute = AsyncMock(
+            side_effect=[games_result, tips_result, tips_result]
+        )
+
+        app = _build_app_with_tips_router()
+        _override_db(app, mock_session)
+
+        with patch("app.api.tips.ModelPredictionCRUD") as mock_pred_crud:
+            mock_pred_crud.get_by_games = AsyncMock(return_value={})
+            client = TestClient(app)
+            resp = client.get(
+                "/api/tips/games-with-tips?season=2025&round=1"
+            )
+
+        assert resp.status_code == 200
+
+        first_stmt = mock_session.execute.call_args_list[0].args[0]
+        compiled = first_stmt.compile(
+            dialect=postgresql.dialect(),
+            compile_kwargs={"literal_binds": True},
+        )
+        sql = str(compiled).lower()
+        assert "home_team is not null" in sql, sql
+        assert "away_team is not null" in sql, sql
+        assert sql.count("''") >= 2, (
+            f"games-with-tips query must exclude blank team names; got: {sql!r}"
+        )
+
 
 # ---------------------------------------------------------------------------
 # GET /{heuristic}

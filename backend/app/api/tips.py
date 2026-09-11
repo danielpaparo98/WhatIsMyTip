@@ -156,11 +156,19 @@ async def games_with_tips(
     # Without ORDER BY, Postgres returns rows in physical-storage order,
     # which made a round's games appear jumbled.  NULL dates (TBD
     # fixtures) sort last under the default ASC ordering.
+    #
+    # TBC finals placeholders (missing/empty team names) are excluded so
+    # the homepage never renders empty prediction cards for games that
+    # cannot be predicted yet.
     stmt = (
         select(Game)
         .where(
             Game.season == season,
             Game.round_id == round_id,
+            Game.home_team.isnot(None),
+            Game.home_team != "",
+            Game.away_team.isnot(None),
+            Game.away_team != "",
         )
         .order_by(Game.date.asc(), Game.id.asc())
     )

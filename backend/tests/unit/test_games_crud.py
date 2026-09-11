@@ -23,7 +23,6 @@ from packages.shared.cache import (
 )
 from packages.shared.crud.games import GameCRUD
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -283,3 +282,116 @@ class TestRecentlyFinishedGamesTimezone:
             f"{rendered!r}"
         )
         assert "TIMESTAMP WITHOUT TIME ZONE" in rendered or "games" in rendered
+
+
+# ---------------------------------------------------------------------------
+# Placeholder (TBC) fixtures — empty teams must not create predictable rows
+# ---------------------------------------------------------------------------
+#
+# Background: the Squiggle finals feed publishes fixtures before the
+# participants are known (``hteam``/``ateam`` are null or empty).  These
+# rows previously flowed straight into ``games`` and the tip-generation
+# cron produced tips with ``selected_team = ''`` for them, which the
+# homepage rendered as empty prediction cards.  Worse,
+# ``get_next_upcoming_round`` counted a round as "already tipped" the
+# moment ANY tip existed — so the garbage placeholder tip suppressed tip
+# generation for the REAL games in the same round.
+
+
+def _make_game_data(**overrides) -> dict:
+    """Return a valid Squiggle-style game payload, overridable per test."""
+    data = {
+        "id": 38799,
+        "year": 2026,
+        "round": 27,
+        "hteam": "Hawthorn",
+        "ateam": "Sydney",
+        "hscore": 0,
+        "ascore": 0,
+        "venue": "MCG",
+        "date": "2026-09-19T19:20:00Z",
+        "complete": 0,
+    }
+    data.update(overrides)
+    return data
+
+
+class TestPlaceholderGameSyncSkipping:
+    """``create_or_update_with_tracking`` must refuse to create game rows
+    for fixtures whose two teams are not yet known (Squiggle TBC finals
+    placeholders), and must never blank out a known team with an empty
+    value on the update path.
+    """
+
+    @pytest.mark.asyncio
+    async def test_create_skipped_when_both_teams_null(self):
+        db = AsyncMock(spec=AsyncSession)
+        slug_mock = AsyncMock(return_value="abc-12345")
+
+        with patch.object(GameCRUD, "get_by_squiggle_id", AsyncMock(return_value=None)), \
+                patch.object(GameCRUD, "_generate_unique_slug", slug_mock), \
+                patch.object(short_cache, "delete", AsyncMock(return_value=True)), \
+                patch.object(medium_cache, "delete", AsyncMock(return_value=True)):
+            result = await GameCRUD.create_or_update_with_tracking(
+                db, _make_game_data(hteam=None, ateam=None)
+            )
+
+        assert result["action"] == "skipped_no_teams"
+        assert result["game"] is None
+        slug_mock.assert_not_called()
+        db.add.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_create_skipped_when_both_teams_empty_strings(self):
+        db = AsyncMock(spec=AsyncSession)
+
+        with patch.object(GameCRUD, "get_by_squiggle_id", AsyncMock(return_value=None)), \
+                patch.object(GameCRUD, "_generate_unique_slug",
+                             AsyncMock(return_value="abc-12345")), \
+                patch.object(short_cache, "delete", AsyncMock(return_value=True)), \
+                patch.object(medium_cache, "delete", AsyncMock(return_value=True)):
+            result = await GameCRUD.create_or_update_with_tracking(
+                db, _make_game_data(hteam="", ateam="")
+            )
+
+        assert result["action"] == "skipped_no_teams"
+        assert result["game"] is None
+        db.add.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_partial_team_fixture_still_created(self):
+        """A real fixture with one TBC opponent (e.g. Hawthorn vs '') is
+        a legitimate row — it must still be created."""
+        db = AsyncMock(spec=AsyncSession)
+
+        with patch.object(GameCRUD, "get_by_squiggle_id", AsyncMock(return_value=None)), \
+                patch.object(GameCRUD, "_generate_unique_slug",
+                             AsyncMock(return_value="abc-12345")), \
+                patch.object(short_cache, "delete", AsyncMock(return_value=True)), \
+                patch.object(medium_cache, "delete", AsyncMock(return_value=True)):
+            result = await GameCRUD.create_or_update_with_tracking(
+                db, _make_game_data(hteam="Hawthorn", ateam="")
+            )
+
+        assert result["action"] == "created"
+        assert result["game"].home_team == "Hawthorn"
+        assert result["game"].away_team == ""
+
+    @pytest.mark.asyncio
+    async def test_update_never_blanks_existing_team(self):
+        """If Squiggle temporarily sends an empty team for a game that
+        already has a known team, the known team must be preserved."""
+        db = AsyncMock(spec=AsyncSession)
+        existing = _make_game()
+        existing.home_team = "Hawthorn"
+        existing.away_team = "PortAdelaide"
+
+        with patch.object(GameCRUD, "get_by_squiggle_id", AsyncMock(return_value=existing)), \
+                patch.object(short_cache, "delete", AsyncMock(return_value=True)), \
+                patch.object(medium_cache, "delete", AsyncMock(return_value=True)):
+            await GameCRUD.create_or_update_with_tracking(
+                db, _make_game_data(id=42, hteam="", ateam="")
+            )
+
+        assert existing.home_team == "Hawthorn"
+        assert existing.away_team == "PortAdelaide"
