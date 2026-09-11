@@ -6,11 +6,13 @@ and the new ``app.cron.tip_generation.TipGenerationJob`` invoke.
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from packages.shared.crud.games import GameCRUD
+from packages.shared.crud.tips import TipCRUD
 from packages.shared.services.tip_generation import (
     TipGenerationService,
     run_tip_generation,
@@ -231,3 +233,104 @@ class TestGenerateForRoundSessionRollback:
         assert session.rollback.await_count == 1
         assert stats["games_processed"] == 1
         assert len(stats["errors"]) == 1
+
+
+class TestTeamlessGameSkip:
+    """Games with unknown participants (Squiggle TBC finals placeholders)
+    must never receive tips.
+
+    Regression: the daily cron generated tips with ``selected_team = ''``
+    for placeholder fixtures, and because ``get_next_upcoming_round``
+    treats any existing tip as "round already done", the garbage tip
+    suppressed generation for the REAL games sharing that round —
+    leaving whatismytip.com's current round showing empty cards.
+    """
+
+    @staticmethod
+    def _placeholder_game(game_id: int = 999):
+        return SimpleNamespace(
+            id=game_id,
+            slug="tbc12345",
+            season=2026,
+            round_id=27,
+            home_team=None,
+            away_team=None,
+            date=None,
+            completed=False,
+        )
+
+    @pytest.mark.asyncio
+    async def test_generate_for_game_skips_placeholder(self, monkeypatch):
+        session = _make_session()
+        monkeypatch.setattr(
+            "packages.shared.services.tip_generation._get_orchestrator",
+            lambda: MagicMock(),
+        )
+        orchestrator = MagicMock()
+        orchestrator.predict = AsyncMock()
+        monkeypatch.setattr(
+            "packages.shared.services.tip_generation._shared_orchestrator",
+            orchestrator,
+        )
+        monkeypatch.setattr(
+            TipCRUD, "get_by_game", AsyncMock(return_value=[])
+        )
+        create_tip = AsyncMock()
+        monkeypatch.setattr(TipCRUD, "create", create_tip)
+
+        game = self._placeholder_game()
+        service = TipGenerationService(session)
+
+        stats = await service._generate_for_game(game)
+
+        create_tip.assert_not_awaited()
+        orchestrator.predict.assert_not_awaited()
+        assert stats["tips_created"] == 0
+        assert stats["games_skipped_no_teams"] == 1
+
+    @pytest.mark.asyncio
+    async def test_generate_for_round_skips_placeholder_but_tips_real_game(
+        self, monkeypatch
+    ):
+        session = _make_session()
+        session.rollback = AsyncMock()
+        monkeypatch.setattr(
+            "packages.shared.services.tip_generation._get_orchestrator",
+            lambda: MagicMock(),
+        )
+
+        placeholder = SimpleNamespace(
+            id=901, home_team=None, away_team=None, season=2026, round_id=27
+        )
+        partial = SimpleNamespace(
+            id=902, home_team="Hawthorn", away_team="", season=2026, round_id=27
+        )
+        real = SimpleNamespace(
+            id=903, home_team="Fremantle", away_team="Geelong", season=2026,
+            round_id=27,
+        )
+        monkeypatch.setattr(
+            GameCRUD, "get_by_round", AsyncMock(
+                return_value=[placeholder, partial, real]
+            )
+        )
+
+        service = TipGenerationService(session)
+
+        async def fake_generate(game, regenerate=False, skip_nlp=False):
+            return {
+                "tips_created": 3,
+                "tips_skipped": 0,
+                "tips_updated": 0,
+                "model_predictions_created": 0,
+                "model_predictions_updated": 0,
+            }
+
+        monkeypatch.setattr(service, "_generate_for_game", fake_generate)
+
+        stats = await service.generate_for_round(2026, 27)
+
+        assert stats["games_processed"] == 1
+        assert stats["games_skipped_no_teams"] == 2
+        assert stats["tips_created"] == 3
+        assert stats["errors"] == []
