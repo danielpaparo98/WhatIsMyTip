@@ -59,6 +59,7 @@
               </div>
             </div>
           </div>
+        </div>
 
         <!-- Current Season: Model Performance -->
         <div v-if="currentSeasonModels" class="current-season-models">
