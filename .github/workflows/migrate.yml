@@ -12,7 +12,12 @@ name: Database Migrations
 # Also runnable standalone via workflow_dispatch for manual backfills.
 
 on:
-  workflow_call: {}  # invoked by deploy.yml before the deploy job
+  workflow_call:
+    # Declared so deploy.yml can pass the secret through.  Omitting this
+    # block made every caller run fail with "startup failure".
+    secrets:
+      DATABASE_URL:
+        required: true
   workflow_dispatch:
     inputs:
       target:
