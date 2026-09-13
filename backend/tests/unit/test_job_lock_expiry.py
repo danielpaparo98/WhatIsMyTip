@@ -1,20 +1,30 @@
-"""Tests for SEC-ME-009: job lock expiry reduction + hard ceiling.
+"""Tests for job-lock expiry semantics (SEC-ME-009, revised 2026-09).
 
-The Phase 4 lock expiry was 15 minutes (``job_lock_expire_seconds=900``)
-— that was a carry-over from the FaaS architecture where 15 minutes was
-the original execution ceiling.  On the in-process scheduler a job
-running longer than 5 minutes is almost certainly stuck (every cron
-job's own timeout is 5–30 minutes, and any in-process job that hasn't
-finished by then needs an operator's attention, not a stale lock).
+**Original rule (SEC-ME-009):** every lock expiry was hard-capped at
+``JOB_LOCK_EXPIRE_SECONDS`` (300 s) regardless of the caller-supplied
+value, to stop a stuck in-process job from holding its lock for hours.
 
-The fix:
-* Add a hard 5-minute ceiling (300 s) on the lock expiry regardless of
-  the caller-supplied value.  This stops a future contributor from
-  accidentally passing a multi-hour ``expires_seconds`` to a long
-  batch job and silently holding the lock for the whole window.
-* Keep the ``JOB_LOCK_EXPIRE_SECONDS`` setting so operators can tune
-  the ceiling without a code change.
-* Update the default from 900 to 300 to match the new upper bound.
+**Why that rule was wrong (review finding JOBS-H2):** ``BaseJob``
+requests ``expires_seconds = timeout_seconds``, and several jobs have
+timeouts *longer* than the 300 s ceiling (tip-generation: 1800 s,
+historic-refresh: 900 s).  The clamp therefore expired the lock
+**while the job was still legitimately running**, letting the next
+scheduler tick (or another replica) start the same job concurrently —
+duplicate scraping, duplicate tip writes, and races on
+``job_executions``.
+
+**Revised contract (the invariant):**
+
+* A lock must never expire before the caller's own timeout does — the
+  caller-supplied ``expires_seconds`` is a **floor**, honoured as-is.
+* Stuck-job protection now comes from ``BaseJob``'s own
+  ``asyncio.wait_for`` timeout (a lock can only outlive its job by the
+  small buffer BaseJob adds on top of the timeout).
+* An absolute sanity max (``JOB_LOCK_MAX_SECONDS``, default 4 h) still
+  bounds truly absurd values — a caller cannot accidentally hold a lock
+  for a day.
+* ``expires_seconds=None`` falls back to ``JOB_LOCK_EXPIRE_SECONDS``
+  (300 s default) as before.
 """
 
 from __future__ import annotations
@@ -28,11 +38,6 @@ from packages.shared.config import settings
 from packages.shared.crud.jobs import JobLockCRUD
 
 
-# The hard ceiling.  Keep in sync with the module-level comment in
-# ``crud/jobs.py`` and the default in ``packages/shared/config.py``.
-MAX_LOCK_EXPIRY_SECONDS = 300
-
-
 def _make_session() -> MagicMock:
     session = MagicMock()
     session.execute = AsyncMock()
@@ -40,19 +45,29 @@ def _make_session() -> MagicMock:
     return session
 
 
+def _last_insert_bind(crud: JobLockCRUD) -> dict:
+    """Read the bind params of the last execute() call (the INSERT)."""
+    last_call = crud.db.execute.call_args_list[-1]
+    return last_call.args[1] if len(last_call.args) > 1 else last_call.kwargs
+
+
+def _expires_delta_seconds(bind: dict) -> float:
+    expires_at: datetime = bind["expires_at"]
+    now = datetime.now(timezone.utc)
+    if expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
+    return (expires_at - now).total_seconds()
+
+
 class TestJobLockExpireSetting:
-    """The config setting defaults to 300 and is configurable."""
+    """The default-expiry setting defaults to 300 and is configurable."""
 
     def test_default_is_300(self) -> None:
-        """Default lock-expiry ceiling must be 300 s (5 minutes)."""
-        # ``Settings`` is a singleton; we don't mutate it for this test
-        # (it could affect other tests).  Instead we just assert the
-        # class-level default by re-instantiating.
         from packages.shared.config import Settings
 
         s = Settings()
         assert s.job_lock_expire_seconds == 300, (
-            f"SEC-ME-009: default job_lock_expire_seconds must be 300 s, "
+            f"default job_lock_expire_seconds must be 300 s, "
             f"got {s.job_lock_expire_seconds}"
         )
 
@@ -63,71 +78,75 @@ class TestJobLockExpireSetting:
         assert isinstance(s.job_lock_expire_seconds, int)
         assert s.job_lock_expire_seconds > 0
 
+    def test_hard_max_setting_exists(self) -> None:
+        """JOBS-H2: the absolute sanity max must exist and default to 4 h."""
+        from packages.shared.config import Settings
 
-class TestAcquireLockCeiling:
-    """``acquire_lock`` must cap the expiry at JOB_LOCK_EXPIRE_SECONDS."""
+        s = Settings()
+        assert getattr(s, "job_lock_max_seconds", None) == 14_400
+        # The max must never be below the default expiry.
+        assert s.job_lock_max_seconds >= s.job_lock_expire_seconds
+
+
+class TestAcquireLockExpiryContract:
+    """Lock TTL must honour the caller (floor), bounded by an absolute max."""
 
     @pytest.mark.asyncio
-    async def test_long_expiry_is_capped(self, monkeypatch) -> None:
-        """A caller-supplied expiry longer than the setting is clamped down."""
+    async def test_job_timeout_expiry_above_old_ceiling_is_honoured(
+        self, monkeypatch
+    ) -> None:
+        """JOBS-H2 regression: a job whose timeout (1860 s = 1800 s tip-gen
+        timeout + buffer) exceeds the 300 s setting must get its full TTL —
+        the old code clamped it to 300 s and let duplicates start mid-run."""
         monkeypatch.setattr(settings, "job_lock_expire_seconds", 300)
+        monkeypatch.setattr(settings, "job_lock_max_seconds", 14_400)
 
         crud = JobLockCRUD(_make_session())
-        captured: dict = {}
-
-        # Intercept acquire_lock to capture the value the CRUD actually
-        # stored, by replacing ``text`` with a no-op that records the
-        # bind params used.
-        from sqlalchemy.sql import text as _text
-
-        original_text = _text
-
-        def _text_capture(stmt, *args, **kwargs):
-            # Return a real text() so the rest of the call path works,
-            # but record the call so we can inspect the bind params.
-            captured["stmt"] = stmt
-            return original_text(stmt, *args, **kwargs)
-
-        monkeypatch.setattr("packages.shared.crud.jobs.text", _text_capture)
-
         result = MagicMock()
         result.rowcount = 0
         crud.db.execute = AsyncMock(return_value=result)
 
-        # Caller asks for 3 hours (way over the 5-minute ceiling).
+        await crud.acquire_lock(
+            job_name="tip-generation",
+            locked_by="test",
+            expires_seconds=1860,
+        )
+
+        delta = _expires_delta_seconds(_last_insert_bind(crud))
+        assert delta >= 1855, (
+            f"lock TTL must honour the caller's 1860 s (got {delta:.0f} s) — "
+            f"the lock must never expire before the job's own timeout"
+        )
+
+    @pytest.mark.asyncio
+    async def test_absurd_expiry_capped_at_hard_max(self, monkeypatch) -> None:
+        """SEC-ME-009 preserved: an absurd caller value is capped at the
+        absolute max (4 h default) — no multi-hour accidental locks."""
+        monkeypatch.setattr(settings, "job_lock_expire_seconds", 300)
+        monkeypatch.setattr(settings, "job_lock_max_seconds", 14_400)
+
+        crud = JobLockCRUD(_make_session())
+        result = MagicMock()
+        result.rowcount = 0
+        crud.db.execute = AsyncMock(return_value=result)
+
         await crud.acquire_lock(
             job_name="nightly-batch",
             locked_by="test",
-            expires_seconds=3 * 3600,
+            expires_seconds=10 * 3600,  # 10 hours — absurd
         )
 
-        # Inspect the call we recorded.  We need to find the
-        # ``acquire_lock`` execute call and read the bind params.
-        # The crud may run multiple execute() calls (cleanup_expired_locks + INSERT); the last is the INSERT.
-        last_call = crud.db.execute.call_args_list[-1]
-        bind = last_call.args[1] if len(last_call.args) > 1 else last_call.kwargs
-        assert bind["expires_at"], "expected an expires_at bind param"
-
-        # The clamped expiry should be at most (now + 300 s).
-        now = datetime.now(timezone.utc)
-        expires_at: datetime = bind["expires_at"]
-        # Compare in UTC; both should be tz-aware.
-        if expires_at.tzinfo is None:
-            expires_at = expires_at.replace(tzinfo=timezone.utc)
-        delta = (expires_at - now).total_seconds()
-        assert delta <= 300 + 1, (
-            f"expires_at should be capped at ~300 s, got delta={delta:.0f} s"
+        delta = _expires_delta_seconds(_last_insert_bind(crud))
+        assert delta <= 14_400 + 5, (
+            f"expires_at must be capped at job_lock_max_seconds (got {delta:.0f} s)"
         )
-        # And at least 290 s (allow 10s test slack).
-        assert delta >= 290, f"expires_at was clamped too aggressively: {delta:.0f} s"
 
     @pytest.mark.asyncio
     async def test_short_expiry_is_honoured(self, monkeypatch) -> None:
-        """A short caller-supplied expiry must NOT be inflated to the ceiling."""
+        """A short caller-supplied expiry must NOT be inflated to the default."""
         monkeypatch.setattr(settings, "job_lock_expire_seconds", 300)
 
         crud = JobLockCRUD(_make_session())
-        crud.db.execute = AsyncMock()
         result = MagicMock()
         result.rowcount = 0
         crud.db.execute = AsyncMock(return_value=result)
@@ -138,32 +157,35 @@ class TestAcquireLockCeiling:
             expires_seconds=30,
         )
 
-        last_call = crud.db.execute.call_args_list[-1]
-        bind = last_call.args[1] if len(last_call.args) > 1 else last_call.kwargs
-        now = datetime.now(timezone.utc)
-        expires_at: datetime = bind["expires_at"]
-        if expires_at.tzinfo is None:
-            expires_at = expires_at.replace(tzinfo=timezone.utc)
-        delta = (expires_at - now).total_seconds()
-        # Should be ~30 s, NOT inflated to 300 s.
+        delta = _expires_delta_seconds(_last_insert_bind(crud))
         assert 25 <= delta <= 35, (
             f"expires_at should honour the caller's 30 s, got delta={delta:.0f} s"
+        )
+
+    @pytest.mark.asyncio
+    async def test_none_uses_default_setting(self, monkeypatch) -> None:
+        """``expires_seconds=None`` falls back to JOB_LOCK_EXPIRE_SECONDS."""
+        monkeypatch.setattr(settings, "job_lock_expire_seconds", 300)
+
+        crud = JobLockCRUD(_make_session())
+        result = MagicMock()
+        result.rowcount = 0
+        crud.db.execute = AsyncMock(return_value=result)
+
+        await crud.acquire_lock(job_name="defaulted", locked_by="test")
+
+        delta = _expires_delta_seconds(_last_insert_bind(crud))
+        assert 290 <= delta <= 310, (
+            f"None should resolve to the 300 s default, got {delta:.0f} s"
         )
 
 
 class TestAcquireLockSignature:
     """The function signature exposes the setting as the default."""
 
-    def test_default_expires_seconds_reflects_setting(self, monkeypatch) -> None:
-        """The default parameter should read from settings at call time
-        so operators can tune it without code changes."""
+    def test_default_expires_seconds_reflects_setting(self) -> None:
         import inspect
-
-        from packages.shared.crud.jobs import JobLockCRUD
 
         sig = inspect.signature(JobLockCRUD.acquire_lock)
         assert "expires_seconds" in sig.parameters
-        # The default is a sentinel that resolves to settings at call
-        # time.  This is verified by behaviour in the tests above; we
-        # just assert the parameter exists.
         assert sig.parameters["expires_seconds"].default is not inspect.Parameter.empty

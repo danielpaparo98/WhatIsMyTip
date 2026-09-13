@@ -119,16 +119,17 @@ class Settings(BaseSettings):
 
     # Retry Configuration
     job_timeout_seconds: int = 3600
-    # SEC-ME-009: lock expiry caps how long a crashed in-process job
-    # can hold the advisory lock before another instance / restart is
-    # allowed to pick it up.  The 15-minute default was a FaaS
-    # carry-over; on the in-process scheduler any job that hasn't
-    # finished within 5 minutes is almost certainly stuck and needs
-    # operator attention rather than a stale lock.  The CRUD layer
-    # also clamps the caller-supplied expiry to this value as a
-    # hard ceiling, so this setting is the upper bound for any lock
-    # acquisition.
+    # Default lock expiry when a caller does not supply one.  Callers
+    # that DO supply ``expires_seconds`` (e.g. BaseJob, which passes its
+    # own ``timeout_seconds`` + buffer) are honoured — a lock must never
+    # expire before the job's own timeout does, or a second instance can
+    # start the same job while the first is still running (JOBS-H2).
     job_lock_expire_seconds: int = 300
+    # Absolute sanity ceiling for any lock acquisition, regardless of
+    # what the caller requests.  Prevents an accidental multi-hour lock
+    # from a bad caller value while still allowing legitimate long-job
+    # TTLs (tip-generation runs up to 30 minutes).
+    job_lock_max_seconds: int = 14_400
     job_max_retries: int = 3
     job_retry_delay_seconds: int = 60
 
