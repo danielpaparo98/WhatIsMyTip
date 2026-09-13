@@ -9,7 +9,9 @@
     <!-- Error State -->
     <div v-else-if="error" class="error" role="status" aria-live="polite">
       <h2>Error</h2>
-      <p>{{ error }}</p>    </div>
+      <p>{{ error }}</p>
+      <button @click="retry" class="btn">Retry</button>
+    </div>
 
     <!-- Game Detail Content -->
     <div v-else-if="gameDetail" class="content">
@@ -117,43 +119,54 @@ import type { GameDetailResponse } from '~/composables/useApi'
 import { isValidGameSlug } from '~/composables/useGameSlug'
 import { sortByHeuristicOrder } from '~/composables/useFormatters'
 
-// FX-03: cache rendered game detail pages during client-side navigation
-// so going back/forward to a previously viewed game doesn't re-fetch.
-definePageMeta({
-  keepalive: true,
-})
-
 const route = useRoute()
 const { getGameDetail } = useApi()
 const { getLogoUrl } = useTeamLogos()
 const { formatDateShort, formatTime, getModelDisplayName } = useFormatters()
 
-const gameDetail = ref<GameDetailResponse | null>(null)
-const loading = ref(true)
-const error = ref<string | null>(null)
+// H-5 (2026-09 review): `keepalive: true` made Vue reuse this page
+// component across /game/a → /game/b navigations.  onMounted didn't
+// re-fire and there was no slug watcher, so game A's data rendered
+// under game B's URL.  The fetch is now a slug-watched useAsyncData:
+// reactive to param changes and payload-cached per fetch (no
+// keepalive needed).
+const slug = computed(() => route.params.slug as string)
 
-// Fetch game detail on mount
-onMounted(async () => {
-  try {
-    const slug = route.params.slug
+const {
+  data: gameDetail,
+  pending: loading,
+  error: fetchError,
+  refresh: refetch,
+} = await useAsyncData<GameDetailResponse | null>(
+  'game-detail',
+  async () => {
     // CR-004: regex loosened from `^[a-zA-Z0-9]{10,12}$` to support
     // hyphens and a wider length range.  See composables/useGameSlug.ts.
-    if (!isValidGameSlug(slug)) {
+    if (!isValidGameSlug(slug.value)) {
       throw new Error('Invalid game slug')
     }
-
-    const detail = await getGameDetail(slug)
+    const detail = await getGameDetail(slug.value)
     // Sort tips by canonical heuristic order (Weighted → Best Bet → YOLO)
     if (detail?.tips) {
       detail.tips = sortByHeuristicOrder(detail.tips)
     }
-    gameDetail.value = detail
-  } catch (err) {
-    error.value = err instanceof Error ? err.message : 'Failed to load game details'
-  } finally {
-    loading.value = false
-  }
+    return detail
+  },
+  {
+    watch: [slug],
+    dedupe: 'cancel',
+  },
+)
+
+const error = computed<string | null>(() => {
+  if (!fetchError.value) return null
+  return fetchError.value instanceof Error
+    ? fetchError.value.message
+    : 'Failed to load game details'
 })
+
+// Re-expose a retry for the error state template.
+const retry = () => refetch()
 
 // Use shared formatters
 const formatDate = formatDateShort
@@ -168,20 +181,23 @@ const getHeuristicClass = (heuristic: string): string => {
   return classes[heuristic] || ''
 }
 
-// FX-05 / FX-20: per-game SEO + canonical URL.  Title + meta change once
+// FX-05 / FX-20 / H-2: per-game SEO + canonical URL.  Title + meta change once
 // the game detail payload arrives; canonical is set up-front so it
 // appears in the SSR HTML head regardless of fetch timing.
+// FIX (L-2): the "| WhatIsMyTip" suffix is GONE from the title strings —
+// `titleTemplate` in nuxt.config already appends it (previously game
+// pages rendered "… | WhatIsMyTip | WhatIsMyTip" client-side).
 const canonicalBase = useRuntimeConfig().public.siteUrl
 const canonicalUrl = computed(() =>
   gameDetail.value
     ? `${canonicalBase}/game/${gameDetail.value.game.slug}`
-    : `${canonicalBase}/game/${route.params.slug as string}`
+    : `${canonicalBase}/game/${slug.value}`
 )
 
 useSeoMeta({
   title: () => gameDetail.value
-    ? `${gameDetail.value.game.home_team} vs ${gameDetail.value.game.away_team} | WhatIsMyTip`
-    : 'Game Details | WhatIsMyTip',
+    ? `${gameDetail.value.game.home_team} vs ${gameDetail.value.game.away_team}`
+    : 'Game Details',
   description: () => {
     const g = gameDetail.value?.game
     if (!g) return 'AFL game preview, tips, model predictions, weather and match analysis from WhatIsMyTip.'

@@ -174,6 +174,10 @@
 </template>
 
 <script setup lang="ts">
+// FX-05 / FX-20 / H-2: canonical + og:url derived from the siteUrl
+// runtime config (was hardcoded to the production domain).
+const siteUrl = useRuntimeConfig().public.siteUrl as string
+
 // FX-05 / FX-20: page-specific SEO + canonical URL
 useSeoMeta({
   title: 'About',
@@ -182,7 +186,7 @@ useSeoMeta({
   ogTitle: 'About | WhatIsMyTip - AI-Powered AFL Tipping',
   ogDescription: 'Learn about WhatIsMyTip\'s AI-powered AFL tipping system. Discover our machine learning models and heuristics.',
   ogType: 'website',
-  ogUrl: 'https://whatismytip.com/about',
+  ogUrl: `${siteUrl}/about`,
   twitterTitle: 'About | WhatIsMyTip - AI-Powered AFL Tipping',
   twitterDescription: 'Learn about WhatIsMyTip\'s AI-powered AFL tipping system. Discover our machine learning models and heuristics.',
   twitterCard: 'summary_large_image',
@@ -190,7 +194,7 @@ useSeoMeta({
 
 useHead({
   link: [
-    { rel: 'canonical', href: 'https://whatismytip.com/about' }
+    { rel: 'canonical', href: `${siteUrl}/about` }
   ],
   script: [
     {
@@ -200,7 +204,7 @@ useHead({
         '@type': 'AboutPage',
         name: 'About WhatIsMyTip',
         description: 'Learn about WhatIsMyTip\'s AI-powered AFL tipping system. Discover our machine learning models, heuristics, and how we generate accurate AFL predictions.',
-        url: 'https://whatismytip.com/about',
+        url: `${siteUrl}/about`,
         mainEntity: {
           '@type': 'SoftwareApplication',
           name: 'WhatIsMyTip',

@@ -1,32 +1,29 @@
 name: Database Migrations
 
-# Runs Alembic migrations against the production database as a
-# discrete step BEFORE the app deployment.  This prevents the
-# "migrations run as their own one-off workflow" promise in
-# deploy.yml from being broken.
+# Runs Alembic migrations against the production database.
+#
+# DEPLOY ORDER (fixed 2026-09): migrations run as a callable workflow
+# invoked by deploy.yml BEFORE the new image is rolled out — the old
+# `workflow_run` trigger fired *after* "Deploy Backend" completed, i.e.
+# deploy-then-migrate, the opposite of what the original comment
+# promised.  Requires migrations to be backward-compatible with the
+# currently-running image (expand/contract style).
+#
+# Also runnable standalone via workflow_dispatch for manual backfills.
 
 on:
+  workflow_call: {}  # invoked by deploy.yml before the deploy job
   workflow_dispatch:
     inputs:
       target:
         description: 'Alembic revision target (default: head)'
         required: false
         default: 'head'
-  workflow_run:
-    workflows: ["Deploy Backend"]
-    types: [completed]
-    branches: [main]
 
 jobs:
   migrate:
     name: Run Alembic migrations
     runs-on: ubuntu-latest
-    if: >
-      github.event_name == 'workflow_dispatch' ||
-      (github.event_name == 'workflow_run' &&
-       github.event.workflow_run.conclusion == 'success')
-    environment:
-      name: production
     defaults:
       run:
         working-directory: backend

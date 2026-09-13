@@ -102,3 +102,28 @@ class TestGetRecentlyFinishedGamesNotCompletedQuery:
 
         assert "where false" not in sql, sql
         assert "not games.completed" in sql, sql
+
+
+class TestGetUpcomingFiltersTeamlessGames:
+    """``get_upcoming`` must exclude games with missing/empty team names.
+
+    Background: the Squiggle finals feed publishes TBC fixtures (null or
+    empty ``hteam``/``ateam``).  Those rows used to flow into tip
+    generation, which produced tips with ``selected_team = ''`` that the
+    homepage rendered as empty prediction cards.
+    """
+
+    @pytest.mark.asyncio
+    async def test_where_clause_excludes_placeholder_rows(self):
+        db = _capturing_session()
+
+        with patch.object(short_cache, "get", AsyncMock(return_value=None)), \
+                patch.object(short_cache, "set", AsyncMock(return_value=None)):
+            await GameCRUD.get_upcoming(db, limit=50)
+
+        sql = _compile(db.execute.await_args_list[-1].args[0]).lower()
+
+        assert "home_team is not null" in sql, sql
+        assert "home_team" in sql and "''" in sql, sql
+        assert "away_team is not null" in sql, sql
+        assert "away_team" in sql and "''" in sql, sql

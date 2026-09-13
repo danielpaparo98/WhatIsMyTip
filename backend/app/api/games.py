@@ -103,10 +103,22 @@ async def list_games(
         current_year = datetime.now().year
         now = datetime.now(tz=ZoneInfo(settings.cron_timezone)).replace(tzinfo=None)
 
-        # Find the nearest upcoming game
+        # Find the nearest upcoming game.  TBC placeholders (missing or
+        # empty team names) are excluded: their estimated kick-off times
+        # would otherwise hijack the "current round" banner and the
+        # homepage would show empty prediction cards.
         future_game = await db.execute(
             select(Game.round_id, Game.season)
-            .where(and_(Game.date >= now, ~Game.completed))
+            .where(
+                and_(
+                    Game.date >= now,
+                    ~Game.completed,
+                    Game.home_team.isnot(None),
+                    Game.home_team != "",
+                    Game.away_team.isnot(None),
+                    Game.away_team != "",
+                )
+            )
             .order_by(Game.date.asc())
             .limit(1)
         )
@@ -116,7 +128,15 @@ async def list_games(
         if not target:
             past_game = await db.execute(
                 select(Game.round_id, Game.season)
-                .where(Game.date < now)
+                .where(
+                    and_(
+                        Game.date < now,
+                        Game.home_team.isnot(None),
+                        Game.home_team != "",
+                        Game.away_team.isnot(None),
+                        Game.away_team != "",
+                    )
+                )
                 .order_by(Game.date.desc())
                 .limit(1)
             )
@@ -133,6 +153,10 @@ async def list_games(
                     and_(
                         Game.round_id == target.round_id,
                         Game.season == target.season,
+                        Game.home_team.isnot(None),
+                        Game.home_team != "",
+                        Game.away_team.isnot(None),
+                        Game.away_team != "",
                     )
                 )
                 .group_by(Game.season, Game.round_id)

@@ -16,22 +16,48 @@ Public API:
 from __future__ import annotations
 
 import asyncio
+import os
+import socket
 import time
+import uuid
 from abc import ABC, abstractmethod
-from contextlib import AbstractAsyncContextManager
 from datetime import datetime, timezone
 from typing import Any, Optional
 
 from packages.shared.alerting import AlertingService
 from packages.shared.crud.jobs import JobExecutionCRUD, JobLockCRUD
-from packages.shared.exceptions import classify_error
-from packages.shared.logger import generate_execution_id, get_logger
 
 # Re-export so tests and BaseJob subclasses can import retry_with_backoff
 # from a single, app-level location.
-from packages.shared.exceptions import retry_with_backoff  # noqa: F401
+from packages.shared.exceptions import (
+    classify_error,
+    retry_with_backoff,  # noqa: F401
+)
+from packages.shared.logger import generate_execution_id, get_logger
 
 logger = get_logger(__name__)
+
+#: Extra seconds added on top of ``timeout_seconds`` when requesting the
+#: advisory-lock TTL.  The lock must outlive the job's own
+#: ``asyncio.wait_for`` timeout — otherwise the lock expires while the
+#: job is still legitimately running and a second instance (or the next
+#: scheduler tick) can start the same job concurrently (JOBS-H2).
+LOCK_TTL_BUFFER_SECONDS = 60
+
+
+def _make_lock_owner(job_name: str) -> str:
+    """Build a lock-ownership string that is unique per process AND per run.
+
+    The historical constant ``"fastapi-{name}"`` was identical on every
+    replica: after a TTL expiry, instance B could acquire the lock with
+    the same ``locked_by`` and instance A's ``release_lock`` (matching on
+    ``job_name AND locked_by``) would delete **B's** lock (JOBS-H3).
+    Uniqueness per run closes that hole — a release can now only ever
+    target the exact lock this run acquired.
+    """
+    host = socket.gethostname()
+    token = uuid.uuid4().hex[:8]
+    return f"fastapi-{job_name}-{host}-{os.getpid()}-{token}"
 
 
 class BaseJob(ABC):
@@ -108,12 +134,13 @@ class BaseJob(ABC):
                 and triggers a webhook alert).
         """
         execution_id = generate_execution_id()
-        started_at = datetime.now(timezone.utc)
         result: dict = {}
         error_message: Optional[str] = None
         status: str = "running"
         execution_pk: Optional[int] = None
-        lock_acquired = False
+        # Unique per run — release must target exactly the lock this run
+        # acquired, never another replica's (JOBS-H3).
+        lock_owner = _make_lock_owner(self.name)
 
         # ----- 1. Acquire lock and write execution row in one session -----
         try:
@@ -123,8 +150,10 @@ class BaseJob(ABC):
 
                 lock = await lock_crud.acquire_lock(
                     job_name=self.name,
-                    locked_by=f"fastapi-{self.name}",
-                    expires_seconds=self.timeout_seconds,
+                    locked_by=lock_owner,
+                    # TTL must cover the job's own timeout, plus a small
+                    # buffer, so the lock never expires mid-run (JOBS-H2).
+                    expires_seconds=self.timeout_seconds + LOCK_TTL_BUFFER_SECONDS,
                 )
                 if lock is None:
                     logger.info(
@@ -133,8 +162,6 @@ class BaseJob(ABC):
                         extra={"job_name": self.name, "execution_id": execution_id},
                     )
                     return {"skipped": True, "reason": "lock_held"}
-
-                lock_acquired = True
 
                 execution = await execution_crud.create_execution(
                     job_name=self.name,
@@ -174,7 +201,7 @@ class BaseJob(ABC):
                 timeout=self.timeout_seconds,
             )
             status = "completed"
-        except asyncio.TimeoutError as exc:
+        except asyncio.TimeoutError:
             error_message = (
                 f"TimeoutError: job exceeded {self.timeout_seconds}s timeout"
             )
@@ -236,7 +263,7 @@ class BaseJob(ABC):
                 lock_crud = JobLockCRUD(session)
                 await lock_crud.release_lock(
                     job_name=self.name,
-                    locked_by=f"fastapi-{self.name}",
+                    locked_by=lock_owner,
                 )
                 await session.commit()
         except Exception:  # noqa: BLE001

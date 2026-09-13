@@ -336,6 +336,52 @@ class TestGamesWithTips:
             f"games-with-tips query must ORDER BY games.date; got SQL: {sql!r}"
         )
 
+    def test_games_with_tips_excludes_teamless_games(self):
+        """TBC finals placeholders must not reach the homepage grid.
+
+        Regression: Squiggle publishes finals fixtures with null/empty
+        team names; the endpoint returned them as empty cards (and with
+        garbage ``selected_team = ''`` tips once the cron generated for
+        them).  The games SELECT must filter on both team columns.
+        """
+        from sqlalchemy.dialects import postgresql
+
+        mock_session = AsyncMock(spec=AsyncSession)
+        mock_game = _make_game_mock()
+
+        games_result = MagicMock()
+        games_result.scalars.return_value.all.return_value = [mock_game]
+        tips_result = MagicMock()
+        tips_result.scalars.return_value.all.return_value = []
+
+        mock_session.execute = AsyncMock(
+            side_effect=[games_result, tips_result, tips_result]
+        )
+
+        app = _build_app_with_tips_router()
+        _override_db(app, mock_session)
+
+        with patch("app.api.tips.ModelPredictionCRUD") as mock_pred_crud:
+            mock_pred_crud.get_by_games = AsyncMock(return_value={})
+            client = TestClient(app)
+            resp = client.get(
+                "/api/tips/games-with-tips?season=2025&round=1"
+            )
+
+        assert resp.status_code == 200
+
+        first_stmt = mock_session.execute.call_args_list[0].args[0]
+        compiled = first_stmt.compile(
+            dialect=postgresql.dialect(),
+            compile_kwargs={"literal_binds": True},
+        )
+        sql = str(compiled).lower()
+        assert "home_team is not null" in sql, sql
+        assert "away_team is not null" in sql, sql
+        assert sql.count("''") >= 2, (
+            f"games-with-tips query must exclude blank team names; got: {sql!r}"
+        )
+
 
 # ---------------------------------------------------------------------------
 # GET /{heuristic}
@@ -391,19 +437,20 @@ class TestTipsByHeuristic:
 
 
 # ---------------------------------------------------------------------------
-# POST /generate  — public, rate-limited
+# POST /generate  — admin-authenticated, rate-limited (SEC: TIPS-GEN-H4)
 # ---------------------------------------------------------------------------
 
 
 class TestGenerateTips:
-    """``POST /api/tips/generate`` is intentionally public.
+    """``POST /api/tips/generate`` requires the admin ``X-API-Key``.
 
-    The endpoint hits OpenRouter (real cost) and writes to the DB, but
-    the deliberate design is that **any caller may trigger tip generation
-    for a season/round that has no tips yet**.  The only protection is the
-    per-IP rate limit (10 req/min) declared on the route.  These tests
-    lock in the public contract: no ``X-API-Key`` is read or required,
-    and a stray ``X-API-Key`` header is silently ignored.
+    History: the endpoint was briefly public ("any caller may trigger
+    generation when no tips exist") with only a per-IP rate limit.  The
+    2026-09 review (TIPS-GEN-H4) flagged it as an unauthenticated compute
+    + OpenRouter-cost vector — the nightly ``tip-generation`` cron is the
+    intended generation path, and operators use the same admin key as
+    every other write endpoint.  These tests lock in the authenticated
+    contract: missing/garbage keys → 401, valid key → normal behaviour.
     """
 
     @pytest.fixture(autouse=True)
@@ -426,10 +473,57 @@ class TestGenerateTips:
                 pass
         yield
 
-    def test_generate_tips_public_no_auth_required_returns_200(
+    def test_generate_tips_requires_auth_returns_401_without_key(
         self, monkeypatch
     ):
-        """No headers at all → 200 (public endpoint, no auth required)."""
+        """No ``X-API-Key`` at all → 401, generation service NOT invoked."""
+        mock_session = AsyncMock(spec=AsyncSession)
+
+        app = _build_app_with_tips_router(monkeypatch=monkeypatch)
+        _override_db(app, mock_session)
+
+        with patch("app.api.tips.GameCRUD") as mock_game_crud, \
+             patch("app.api.tips.TipGenerationService") as mock_service_cls:
+            mock_game_crud.get_by_round = AsyncMock(return_value=[_make_game_mock()])
+            mock_service_cls.return_value.generate_for_round = AsyncMock()
+
+            client = TestClient(app)
+            resp = client.post(
+                "/api/tips/generate",
+                json={"season": 2025, "round_id": 1, "regenerate": False},
+            )
+
+        assert resp.status_code == 401
+        body = resp.json()
+        assert body["code"] == "invalid_api_key"
+        mock_service_cls.return_value.generate_for_round.assert_not_awaited()
+
+    def test_generate_tips_rejects_invalid_x_api_key_returns_401(self, monkeypatch):
+        """A garbage ``X-API-Key`` → 401 (auth is enforced, not ignored)."""
+        mock_session = AsyncMock(spec=AsyncSession)
+
+        app = _build_app_with_tips_router(monkeypatch=monkeypatch)
+        _override_db(app, mock_session)
+
+        with patch("app.api.tips.GameCRUD") as mock_game_crud, \
+             patch("app.api.tips.TipGenerationService") as mock_service_cls:
+            mock_game_crud.get_by_round = AsyncMock(return_value=[_make_game_mock()])
+            mock_service_cls.return_value.generate_for_round = AsyncMock()
+
+            client = TestClient(app)
+            resp = client.post(
+                "/api/tips/generate",
+                json={"season": 2025, "round_id": 1, "regenerate": False},
+                headers={"X-API-Key": "garbage-value-the-server-rejects"},
+            )
+
+        assert resp.status_code == 401
+        body = resp.json()
+        assert body["code"] == "invalid_api_key"
+        mock_service_cls.return_value.generate_for_round.assert_not_awaited()
+
+    def test_generate_tips_with_valid_key_returns_200(self, monkeypatch):
+        """Valid ``X-API-Key`` → 200 with the generation contract shape."""
         mock_session = AsyncMock(spec=AsyncSession)
         mock_stats = {
             "games_processed": 9,
@@ -456,6 +550,7 @@ class TestGenerateTips:
             resp = client.post(
                 "/api/tips/generate",
                 json={"season": 2025, "round_id": 1, "regenerate": False},
+                headers={"X-API-Key": "the-secret-key"},
             )
 
         assert resp.status_code == 200
@@ -465,44 +560,6 @@ class TestGenerateTips:
         assert body["round_id"] == 1
         assert body["tips_created"] == 27
         assert body["tips_skipped"] == 0
-        mock_service_cls.return_value.generate_for_round.assert_awaited_once()
-
-    def test_generate_tips_ignores_invalid_x_api_key_header(self, monkeypatch):
-        """A garbage ``X-API-Key`` header is silently ignored → 200.
-
-        This pins the public design: if someone re-adds ``require_admin_key``
-        to the route in the future, this test will fail with 401 instead
-        of 200 and the regression will be caught immediately.
-        """
-        mock_session = AsyncMock(spec=AsyncSession)
-        mock_stats = {
-            "games_processed": 1,
-            "tips_created": 3,
-            "tips_skipped": 0,
-            "tips_updated": 0,
-            "errors": [],
-        }
-
-        app = _build_app_with_tips_router(monkeypatch=monkeypatch)
-        _override_db(app, mock_session)
-
-        with patch("app.api.tips.GameCRUD") as mock_game_crud, \
-             patch("app.api.tips.TipGenerationService") as mock_service_cls:
-            mock_game_crud.get_by_round = AsyncMock(return_value=[_make_game_mock()])
-            mock_service_cls.return_value.generate_for_round = AsyncMock(
-                return_value=mock_stats
-            )
-
-            client = TestClient(app)
-            resp = client.post(
-                "/api/tips/generate",
-                json={"season": 2025, "round_id": 1, "regenerate": False},
-                headers={"X-API-Key": "garbage-value-the-server-should-ignore"},
-            )
-
-        assert resp.status_code == 200
-        body = resp.json()
-        assert body["status"] == "success"
         mock_service_cls.return_value.generate_for_round.assert_awaited_once()
 
     def test_generate_missing_season_returns_422(self, monkeypatch):

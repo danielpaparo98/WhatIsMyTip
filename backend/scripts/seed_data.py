@@ -198,13 +198,20 @@ def _generate_round_fixtures(
 
 
 def _generate_game_datetime(season: int, round_id: int, game_index: int) -> datetime:
-    """Generate a realistic game datetime.
+    """Generate a realistic game datetime (tz-NAIVE, stored as UTC).
 
-    AFL games are typically played Thursday to Sunday, with start times
-    ranging from early afternoon to evening.
+    The ``games.date`` column is ``TIMESTAMP WITHOUT TIME ZONE`` and
+    stores UTC values.  Returning a tz-AWARE datetime here made asyncpg
+    fail the whole batch insert with ``can't subtract offset-naive and
+    offset-aware datetimes`` whenever other bound params in the same
+    statement were naive (SEED-TZ, found 2026-09).  We therefore return
+    a naive datetime holding the UTC wall-clock time — the same
+    normalisation ``migrate_and_seed._parse_value`` applies for CSV
+    loading.
     """
-    # Base date: season start + (round_id - 1) weeks
-    base = datetime(season, SEASON_START_MONTH, SEASON_START_DAY, tzinfo=timezone.utc)
+    # Base date: season start + (round_id - 1) weeks.
+    # Constructed naive (UTC wall-clock) — see docstring.
+    base = datetime(season, SEASON_START_MONTH, SEASON_START_DAY)
     round_start = base + timedelta(weeks=(round_id - 1))
 
     # Spread games across Thursday (3) to Sunday (6)
@@ -560,9 +567,15 @@ def seed_elo_cache(rng: random.Random, season: int) -> List[EloCache]:
 def seed_backtest_results(
     rng: random.Random, season: int, rounds: int
 ) -> List[BacktestResult]:
-    """Generate backtest results for each heuristic and round."""
+    """Generate backtest results for each heuristic and round.
+
+    Rows carry NO explicit primary key: ``backtest_results.id`` is
+    autoincrement and nothing references these ids, so letting the
+    database assign them removes the cross-season id-collision bug
+    (SEED-ID: the old per-season ``result_id = 1`` counter produced
+    duplicate PKs whenever more than one season was seeded).
+    """
     results: List[BacktestResult] = []
-    result_id = 1
 
     for round_id in range(1, rounds + 1):
         for heuristic in HEURISTICS:
@@ -588,7 +601,6 @@ def seed_backtest_results(
 
             results.append(
                 BacktestResult(
-                    id=result_id,
                     heuristic=heuristic,
                     season=season,
                     round_id=round_id,
@@ -598,7 +610,6 @@ def seed_backtest_results(
                     profit=profit,
                 )
             )
-            result_id += 1
 
     return results
 

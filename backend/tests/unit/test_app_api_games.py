@@ -271,8 +271,11 @@ class TestListGames:
 
         mock_session = AsyncMock(spec=AsyncSession)
 
-        # First query: future game lookup → row with round_id + season
-        # Second query: count for that round → row with season/round_id/game_count
+        # Query order in the handler:
+        # 1. future game lookup → row with round_id + season
+        # 2. count for that round → row with season/round_id/game_count
+        # 3. max round for the season (grand-final detection)
+        # 4. premier lookup — only when off-season, so not reached here.
         future_row = SimpleNamespace(round_id=1, season=current_year)
         future_result = MagicMock()
         future_result.first.return_value = future_row
@@ -281,8 +284,12 @@ class TestListGames:
         )
         count_result = MagicMock()
         count_result.first.return_value = count_row
+        max_round_result = MagicMock()
+        max_round_result.scalar.return_value = 24
 
-        mock_session.execute = AsyncMock(side_effect=[future_result, count_result])
+        mock_session.execute = AsyncMock(
+            side_effect=[future_result, count_result, max_round_result]
+        )
 
         app = _build_app_with_games_router()
         _override_db(app, mock_session)
@@ -298,6 +305,9 @@ class TestListGames:
             "game_count": 9,
             "is_current_year": True,
             "has_upcoming": True,
+            "is_grand_final": False,
+            "is_off_season": False,
+            "premier": None,
         }
 
     def test_list_games_with_latest_no_data_returns_null_shape(self):
@@ -326,6 +336,9 @@ class TestListGames:
             "game_count": 0,
             "is_current_year": False,
             "has_upcoming": False,
+            "is_grand_final": False,
+            "is_off_season": False,
+            "premier": None,
         }
 
 

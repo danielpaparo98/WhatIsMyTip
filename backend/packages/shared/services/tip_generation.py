@@ -19,6 +19,19 @@ from .explanation import ExplanationService
 logger = get_logger(__name__)
 
 
+def _has_known_teams(game: "Game") -> bool:
+    """True when both participants of ``game`` are known.
+
+    Squiggle publishes TBC finals placeholders with null/empty team
+    names.  Generating tips for them yields ``selected_team = ''`` and
+    (worse) marks the round as already-tipped, suppressing generation
+    for the real games in it.
+    """
+    return bool((game.home_team or "").strip()) and bool(
+        (game.away_team or "").strip()
+    )
+
+
 # LO-004: share a single ModelOrchestrator across all
 # TipGenerationService instances.  Constructing the orchestrator
 # (and every model it lazily loads) is non-trivial; doing it once
@@ -100,6 +113,7 @@ class TipGenerationService:
             "tips_created": 0,
             "tips_skipped": 0,
             "tips_updated": 0,
+            "games_skipped_no_teams": 0,
             "model_predictions_created": 0,
             "model_predictions_updated": 0,
             "errors": [],
@@ -122,6 +136,15 @@ class TipGenerationService:
             # Process each game
             for game in games:
                 try:
+                    if not _has_known_teams(game):
+                        stats["games_skipped_no_teams"] += 1
+                        self.logger.warning(
+                            f"Skipping game {game.id} "
+                            f"({game.home_team!r} vs {game.away_team!r}): "
+                            "teams not yet known (TBC fixture)"
+                        )
+                        continue
+
                     game_stats = await self._generate_for_game(game, regenerate, skip_nlp=skip_nlp)
 
                     stats["games_processed"] += 1
@@ -237,6 +260,16 @@ class TipGenerationService:
             "model_predictions_created": 0,
             "model_predictions_updated": 0,
         }
+
+        # TBC fixture (participants not yet known) — nothing to predict.
+        if not _has_known_teams(game):
+            game_stats["games_skipped_no_teams"] = 1
+            self.logger.warning(
+                f"Skipping tip generation for game {game.id} "
+                f"({game.home_team!r} vs {game.away_team!r}): "
+                "teams not yet known (TBC fixture)"
+            )
+            return game_stats
 
         # Defensively coerce a cache-round-tripped string date back to a real
         # datetime so every downstream model/query sees the correct type.
@@ -390,6 +423,7 @@ class TipGenerationService:
             "tips_created": 0,
             "tips_skipped": 0,
             "tips_updated": 0,
+            "games_skipped_no_teams": 0,
             "model_predictions_created": 0,
             "model_predictions_updated": 0,
             "errors": [],
@@ -399,6 +433,15 @@ class TipGenerationService:
 
         for game in games:
             try:
+                if not _has_known_teams(game):
+                    stats["games_skipped_no_teams"] += 1
+                    self.logger.warning(
+                        f"Skipping game {game.id} "
+                        f"({game.home_team!r} vs {game.away_team!r}): "
+                        "teams not yet known (TBC fixture)"
+                    )
+                    continue
+
                 game_stats = await self._generate_for_game(game, regenerate)
 
                 stats["games_processed"] += 1
@@ -470,6 +513,7 @@ async def run_tip_generation(session: AsyncSession) -> Dict[str, Any]:
     tips_created = gen_stats.get("tips_created", 0)
     tips_skipped = gen_stats.get("tips_skipped", 0)
     tips_updated = gen_stats.get("tips_updated", 0)
+    games_skipped_no_teams = gen_stats.get("games_skipped_no_teams", 0)
     model_predictions_created = gen_stats.get("model_predictions_created", 0)
     error_count = len(gen_stats.get("errors", []))
 
@@ -479,6 +523,10 @@ async def run_tip_generation(session: AsyncSession) -> Dict[str, Any]:
         f"Created {tips_created} tips",
         f"Skipped {tips_skipped} existing tips",
     ]
+    if games_skipped_no_teams:
+        summary_parts.append(
+            f"Skipped {games_skipped_no_teams} TBC games (teams unknown)"
+        )
     if tips_updated:
         summary_parts.append(f"Updated {tips_updated} tips")
     summary_parts.append(

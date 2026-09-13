@@ -19,6 +19,39 @@ from ..teams import canonical_team
 from ..utils import generate_slug
 
 
+def _has_known_teams(home_team: Optional[str], away_team: Optional[str]) -> bool:
+    """True when BOTH team names are known (non-null, non-blank).
+
+    Squiggle publishes finals fixtures before the participants are
+    decided (``hteam``/``ateam`` null or empty).  Those TBC placeholders
+    must never be treated as predictable games — tips for them come out
+    with an empty ``selected_team`` and the homepage renders them as
+    empty prediction cards.
+    """
+    return bool((home_team or "").strip()) and bool((away_team or "").strip())
+
+
+def _teams_all_missing(home_team: Optional[str], away_team: Optional[str]) -> bool:
+    """True when NEITHER participant is known (pure TBC placeholder).
+
+    These rows are pure noise — there is no fixture data worth keeping —
+    so the sync refuses to create them.  Fixtures with one known team
+    (e.g. Hawthorn vs '') are still stored; they just never reach tip
+    generation until the opponent is decided.
+    """
+    return not (home_team or "").strip() and not (away_team or "").strip()
+
+
+# SQLAlchemy conditions matching :func:`_has_known_teams` for use in
+# queries over the ``games`` table.
+_TEAM_KNOWN_CONDITIONS = (
+    Game.home_team.isnot(None),
+    Game.home_team != "",
+    Game.away_team.isnot(None),
+    Game.away_team != "",
+)
+
+
 async def _delete_cached_key(
     cache: RedisCache, func_id: str, args: tuple, kwargs: Optional[dict] = None
 ) -> bool:
@@ -125,13 +158,16 @@ class GameCRUD:
     async def get_upcoming(
         db: AsyncSession, limit: Optional[int] = None
     ) -> List[Game]:
-        """Get all upcoming (not completed) games.
+        """Get all upcoming (not completed) games with both teams known.
+
+        TBC finals placeholders (missing/empty team names) are excluded:
+        they cannot be predicted and would surface as empty cards.
 
         ``limit`` bounds the returned list (and the SQL ``LIMIT`` clause).
         """
         stmt = (
             select(Game)
-            .where(~Game.completed)
+            .where(*_TEAM_KNOWN_CONDITIONS, ~Game.completed)
             .order_by(Game.date)
         )
         if limit is not None:
@@ -226,13 +262,30 @@ class GameCRUD:
         action = "skipped"
         now = datetime.now(timezone.utc)
 
+        # Refuse to CREATE rows for pure TBC placeholders (no teams at
+        # all).  Predicting those games produces tips with an empty
+        # ``selected_team``.  Fixtures with one known team are still
+        # stored — the opponent is filled in by a later sync.
+        if game is None and _teams_all_missing(home_team_val, away_team_val):
+            return {
+                "action": "skipped_no_teams",
+                "game": None,
+                "squiggle_id": game_data["id"],
+            }
+        # A row already exists — fall through so scores/date/venue can
+        # still be updated, but the blank incoming teams must never
+        # overwrite the stored ones (handled by the truthy guards in the
+        # update branch below).
+
         if game:
             # Check if any data actually changed
             changed = False
-            if home_team_val is not None and game.home_team != home_team_val:
+            # Only overwrite a stored team with a non-blank value: a
+            # blank from the feed must never clobber a known team.
+            if home_team_val and game.home_team != home_team_val:
                 changed = True
                 game.home_team = home_team_val
-            if away_team_val is not None and game.away_team != away_team_val:
+            if away_team_val and game.away_team != away_team_val:
                 changed = True
                 game.away_team = away_team_val
             if home_score_val is not None and game.home_score != home_score_val:
@@ -316,7 +369,8 @@ class GameCRUD:
 
         for game_data in games_data:
             game = await GameCRUD.create_or_update(db, game_data)
-            synced_games.append(game)
+            if game is not None:
+                synced_games.append(game)
 
         return synced_games
 
