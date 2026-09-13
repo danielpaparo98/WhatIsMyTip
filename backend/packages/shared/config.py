@@ -144,6 +144,12 @@ class Settings(BaseSettings):
     # are logged and never fail the job.
     site_rebuild_webhook_url: Optional[str] = None
     site_rebuild_timeout_seconds: int = 30
+    # DO-API rebuild mode (used when no generic webhook URL is set):
+    # trigger POST https://api.digitalocean.com/v2/apps/{id}/deployments
+    # with this app id + token.  The token is created in the DO console
+    # (custom scope, App Platform write) and stored as a SECRET env var.
+    site_rebuild_do_app_id: Optional[str] = None
+    site_rebuild_do_token: Optional[str] = None
     alert_email_recipients: Union[str, List[str]] = []
     alert_timeout_seconds: int = 10  # webhook timeout
 

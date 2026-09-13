@@ -79,6 +79,76 @@ class TestTriggerSiteRebuild:
         assert result == {"triggered": False, "error": "network down"}
 
 
+# ---------------------------------------------------------------------------
+# DO-API mode: trigger an App Platform deployment directly
+# ---------------------------------------------------------------------------
+
+class TestTriggerSiteRebuildDoApi:
+    """DigitalOcean App Platform has no inbound deploy-webhook API; the
+    supported programmatic trigger is POST /v2/apps/{id}/deployments with
+    an API token.  When SITE_REBUILD_DO_TOKEN + SITE_REBUILD_DO_APP_ID are
+    configured, the service uses that mode instead of a generic webhook."""
+
+    @pytest.fixture(autouse=True)
+    def _do_settings(self, monkeypatch):
+        monkeypatch.setattr(settings, "site_rebuild_webhook_url", None)
+        monkeypatch.setattr(settings, "site_rebuild_do_app_id", "app-123")
+        monkeypatch.setattr(settings, "site_rebuild_do_token", "dop_v1_testtoken")
+
+    @pytest.mark.asyncio
+    async def test_do_api_mode_posts_deployment(self):
+        response = MagicMock()
+        response.status_code = 201
+        http = MagicMock()
+        http.__aenter__ = AsyncMock(return_value=http)
+        http.__aexit__ = AsyncMock(return_value=False)
+        http.post = AsyncMock(return_value=response)
+        with patch(
+            "packages.shared.services.site_rebuild.httpx.AsyncClient",
+            return_value=http,
+        ):
+            result = await trigger_site_rebuild(tips_created=27)
+
+        http.post.assert_awaited_once()
+        args, kwargs = http.post.await_args
+        assert args[0] == (
+            "https://api.digitalocean.com/v2/apps/app-123/deployments"
+        )
+        sent = kwargs["headers"]["Authorization"]
+        assert sent == "Bearer dop_v1_testtoken"
+        assert result == {"triggered": True, "mode": "do_api", "status_code": 201}
+
+    @pytest.mark.asyncio
+    async def test_do_api_error_does_not_raise(self):
+        http = MagicMock()
+        http.__aenter__ = AsyncMock(return_value=http)
+        http.__aexit__ = AsyncMock(return_value=False)
+        http.post = AsyncMock(side_effect=RuntimeError("402 payment required"))
+        with patch(
+            "packages.shared.services.site_rebuild.httpx.AsyncClient",
+            return_value=http,
+        ):
+            result = await trigger_site_rebuild(tips_created=0)
+
+        assert result["triggered"] is False
+        assert "402" in result["error"]
+
+    @pytest.mark.asyncio
+    async def test_do_api_without_token_is_a_noop(self, monkeypatch):
+        """App id without a token → no call (token must come from console)."""
+        monkeypatch.setattr(settings, "site_rebuild_do_token", None)
+        http = MagicMock()
+        http.post = AsyncMock()
+        with patch(
+            "packages.shared.services.site_rebuild.httpx.AsyncClient",
+            return_value=http,
+        ):
+            result = await trigger_site_rebuild(tips_created=1)
+
+        http.post.assert_not_awaited()
+        assert result is None
+
+
 class TestTipGenerationJobFiresRebuild:
     """TipGenerationJob.run triggers the site rebuild after success."""
 
