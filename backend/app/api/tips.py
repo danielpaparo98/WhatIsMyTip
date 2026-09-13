@@ -9,15 +9,17 @@ Routes (mounted at ``/api/tips``):
 * ``GET  /games-with-tips``     — games-with-tips for a round (requires season, round)
 * ``GET  /{heuristic}``         — tips for one heuristic (``best_bet`` /
                                    ``weighted_tip`` / ``yolo``)
-* ``POST /generate``            — public: generate tips for a round
-                                   (no auth — intentionally public so any
-                                   caller can trigger generation when no
-                                   tips exist for a period; rate-limited
-                                   to 10/minute per IP)
+* ``POST /generate``            — generate tips for a round
+                                   (requires the admin ``X-API-Key``; the
+                                   nightly ``tip-generation`` cron is the
+                                   normal generation path — this endpoint
+                                   exists for operators/backfills;
+                                   rate-limited to 10/minute per IP)
 """
 
 from __future__ import annotations
 
+import asyncio
 from typing import Annotated, Optional
 
 from fastapi import APIRouter, Body, Depends, Path, Query, Request
@@ -28,6 +30,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.db_deps import get_db
 from app.core.exceptions import http_error
+from app.core.security import require_admin_key
 from packages.shared.crud import GameCRUD, ModelPredictionCRUD, TipCRUD
 from packages.shared.models import Game, Tip
 from packages.shared.schemas import (
@@ -47,16 +50,35 @@ router = APIRouter()
 VALID_HEURISTICS = ["best_bet", "weighted_tip", "yolo"]
 _HEURISTIC_PATTERN = r"^(best_bet|weighted_tip|yolo)$"
 
+# Hard ceiling for on-demand generation inside an HTTP request.  The
+# nightly cron allows 30 minutes, but an HTTP request hanging that long
+# holds a DB session and a worker slot — 10 minutes is the practical
+# ceiling before the caller should be using the admin cron trigger
+# instead.  Exceeding it returns a 504 with the generation left to be
+# completed/re-run rather than blocking the request forever.
+GENERATION_HTTP_TIMEOUT_SECONDS = 600
+
 
 # Per-route rate limiter for ``POST /generate``: 10 req/min per client
 # IP (BACKEND-FAAS-CODE-REVIEW §3.5 + api.md:50).
 #
-# LO-003: this rate limiter is in-memory and is only enforced across
-# the current FastAPI process.  At the current scale (single-region
-# single-replica) that is acceptable; if we ever scale horizontally
-# we must move the limiter to a shared store (e.g. Redis, which the
-# app already uses for cache).
-_post_generate_limiter = Limiter(key_func=get_remote_address)
+# TIPS-GEN-H4: this limiter used in-memory storage, which multiplies the
+# effective limit across workers and resets on restart.  In production
+# it is Redis-backed (single shared counter, SEC-ME-004).  Outside
+# production we keep in-memory storage so dev/test stay hermetic (no
+# Redis required to boot the API or run the test suites).
+def _build_post_generate_limiter() -> Limiter:
+    from packages.shared.config import settings
+
+    if settings.environment == "production":
+        return Limiter(
+            key_func=get_remote_address,
+            storage_uri=settings.redis_url,
+        )
+    return Limiter(key_func=get_remote_address)
+
+
+_post_generate_limiter = _build_post_generate_limiter()
 
 
 # ---------------------------------------------------------------------------
@@ -287,23 +309,29 @@ async def tips_by_heuristic(
 
 
 # ---------------------------------------------------------------------------
-# POST /generate  — public, rate-limited
+# POST /generate  — admin-authenticated, rate-limited
 # ---------------------------------------------------------------------------
 
 
-# Intentionally public — rate-limited to 10/min per IP. See docs/api.md.
+# Requires the admin ``X-API-Key`` (TIPS-GEN-H4): the endpoint runs the
+# full 8-model pipeline plus paid OpenRouter calls — leaving it open let
+# any visitor trigger that cost at will.  The nightly ``tip-generation``
+# cron is the normal generation path; this endpoint is for operators and
+# backfills, consistent with every other write endpoint.
 @router.post("/generate")
 @_post_generate_limiter.limit("10/minute")
 async def generate_tips(
     request: Request,
     body: Annotated[TipGenerateRequest, Body(...)],
     db: Annotated[AsyncSession, Depends(get_db)],
+    _admin: Annotated[bool, require_admin_key],
 ):
     """Generate tips for a specific round.
 
-    **Intentionally public.**  No ``X-API-Key`` is required: any caller
-    may trigger tip generation for a season/round that has no tips yet.
-    Protection is the per-IP rate limit of 10 requests/minute.
+    Requires the admin ``X-API-Key`` header.  Rate-limited to 10
+    requests/minute per IP (Redis-backed in production).  The generation
+    is bounded by a 10-minute in-request timeout; longer jobs should use
+    the admin cron trigger (``POST /api/admin/tip-generation/trigger``).
     """
     season = body.season
     round_id = body.round_id
@@ -339,17 +367,31 @@ async def generate_tips(
             f"No games found for season {season}, round {round_id}",
         )
 
-    # Run generation via the existing service.
+    # Run generation via the existing service, bounded by an in-request
+    # timeout so a stuck run cannot hold the HTTP connection (and the
+    # request-scoped DB session) open indefinitely.
     generation_service = TipGenerationService(
         db_session=db,
         season=season,
         round_id=round_id,
     )
-    stats = await generation_service.generate_for_round(
-        season=season,
-        round_id=round_id,
-        regenerate=regenerate,
-    )
+    try:
+        stats = await asyncio.wait_for(
+            generation_service.generate_for_round(
+                season=season,
+                round_id=round_id,
+                regenerate=regenerate,
+            ),
+            timeout=GENERATION_HTTP_TIMEOUT_SECONDS,
+        )
+    except asyncio.TimeoutError:
+        raise http_error(
+            504,
+            "generation_timeout",
+            f"Tip generation for season {season}, round {round_id} exceeded "
+            f"{GENERATION_HTTP_TIMEOUT_SECONDS}s. Use the admin cron trigger "
+            f"for long-running generation.",
+        )
 
     return {
         "status": "success",
