@@ -21,18 +21,19 @@ import socket
 import time
 import uuid
 from abc import ABC, abstractmethod
-from contextlib import AbstractAsyncContextManager
 from datetime import datetime, timezone
 from typing import Any, Optional
 
 from packages.shared.alerting import AlertingService
 from packages.shared.crud.jobs import JobExecutionCRUD, JobLockCRUD
-from packages.shared.exceptions import classify_error
-from packages.shared.logger import generate_execution_id, get_logger
 
 # Re-export so tests and BaseJob subclasses can import retry_with_backoff
 # from a single, app-level location.
-from packages.shared.exceptions import retry_with_backoff  # noqa: F401
+from packages.shared.exceptions import (
+    classify_error,
+    retry_with_backoff,  # noqa: F401
+)
+from packages.shared.logger import generate_execution_id, get_logger
 
 logger = get_logger(__name__)
 
@@ -133,12 +134,10 @@ class BaseJob(ABC):
                 and triggers a webhook alert).
         """
         execution_id = generate_execution_id()
-        started_at = datetime.now(timezone.utc)
         result: dict = {}
         error_message: Optional[str] = None
         status: str = "running"
         execution_pk: Optional[int] = None
-        lock_acquired = False
         # Unique per run — release must target exactly the lock this run
         # acquired, never another replica's (JOBS-H3).
         lock_owner = _make_lock_owner(self.name)
@@ -163,8 +162,6 @@ class BaseJob(ABC):
                         extra={"job_name": self.name, "execution_id": execution_id},
                     )
                     return {"skipped": True, "reason": "lock_held"}
-
-                lock_acquired = True
 
                 execution = await execution_crud.create_execution(
                     job_name=self.name,
@@ -204,7 +201,7 @@ class BaseJob(ABC):
                 timeout=self.timeout_seconds,
             )
             status = "completed"
-        except asyncio.TimeoutError as exc:
+        except asyncio.TimeoutError:
             error_message = (
                 f"TimeoutError: job exceeded {self.timeout_seconds}s timeout"
             )

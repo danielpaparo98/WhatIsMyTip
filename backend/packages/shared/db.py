@@ -1,6 +1,6 @@
+import logging
 import os
 import ssl as _ssl
-import logging
 from urllib.parse import urlparse, urlunparse
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
@@ -185,7 +185,7 @@ def get_engine():
     return _engine
 
 
-def _get_session_factory():
+def _get_session_factory() -> async_sessionmaker[AsyncSession]:
     """Get or create the async session factory."""
     global _async_session_factory
     if _async_session_factory is None:
