@@ -124,6 +124,44 @@ class TestSessionIsolation:
         assert len(all_sessions) == 4
         assert all(s is not caller_db for s in all_sessions)
 
+    @pytest.mark.asyncio
+    async def test_default_factory_path_yields_working_sessions(self, monkeypatch):
+        """B1 regression (2026-09 pre-deploy review).
+
+        The DEFAULT production path resolves the shared
+        ``async_sessionmaker`` from packages.shared.db.  The orchestrator
+        treats ``self._session_factory()`` as an async context manager —
+        so the default resolver must return the *session* (a real async
+        CM), NOT the maker (which has no ``__aenter__``/``__aexit__``).
+        The original implementation returned the maker itself, so every
+        model raised ``TypeError`` on the default path, was swallowed by
+        the abstain handler, and ALL tips silently degraded to heuristic
+        fallbacks.  This test pins the default path with a fake maker.
+        """
+        created: List[FakeSession] = []
+
+        def fake_maker() -> FakeSession:
+            session = FakeSession()
+            created.append(session)
+            return session
+
+        monkeypatch.setattr(
+            "packages.shared.db._get_session_factory", lambda: fake_maker
+        )
+
+        models = [FakeModel(f"m{i}") for i in range(3)]
+        orch = ModelOrchestrator()  # NO session_factory — default path
+        orch.models = models
+
+        results = await orch.predict_all(_make_game())
+
+        # Every model must have actually run (not silently abstained):
+        preds = results["best_bet"]["model_predictions"]
+        failed = results["best_bet"]["failed_models"]
+        assert len(preds) == 3, f"models silently failed on the default path: {failed}"
+        assert failed == []
+        assert len(created) == 3
+
 
 # ---------------------------------------------------------------------------
 # ORCH-M7: abstain semantics

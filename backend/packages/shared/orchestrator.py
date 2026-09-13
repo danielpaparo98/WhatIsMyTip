@@ -37,15 +37,18 @@ SessionFactory = Callable[[], Any]
 
 
 def _default_session_factory() -> Any:
-    """Lazily resolve the shared application session factory.
+    """Return an async context manager yielding a fresh ``AsyncSession``.
 
-    Imported at call time (not import time) so that importing this module
-    never constructs the engine, and so unit tests that inject their own
-    factory never touch it.
+    B1 regression fix (2026-09 pre-deploy review): this must return the
+    *session* (``AsyncSession`` IS an async context manager), not the
+    ``async_sessionmaker`` itself — the maker has no
+    ``__aenter__``/``__aexit__``, so the original implementation made
+    every model raise ``TypeError`` on the default production path,
+    silently abstaining 100% of the time.
     """
     from .db import _get_session_factory
 
-    return _get_session_factory()
+    return _get_session_factory()()
 
 
 class ModelOrchestrator:

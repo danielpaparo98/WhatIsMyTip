@@ -73,11 +73,15 @@ async def test_predict_all_real_models_real_postgres(seeded_db):
     for heuristic_name, payload in results.items():
         preds = payload["model_predictions"]
         failed = payload["failed_models"]
-        # Every model accounted for: contributed OR reported as failed.
-        assert len(preds) + len(failed) == MODEL_COUNT, (
-            f"{heuristic_name}: {len(preds)} predictions + {len(failed)} failed "
-            f"!= {MODEL_COUNT} models"
+        # B1 regression (2026-09 pre-deploy review): the accounting
+        # assertion alone passes with ALL models failed, so also require
+        # that the real models actually SUCCEED against seeded data —
+        # the default session-factory path must produce working sessions.
+        assert failed == [], (
+            f"{heuristic_name}: models silently abstained on the default "
+            f"factory path — B1 regression: {failed}"
         )
+        assert len(preds) == MODEL_COUNT
         # No phantom home-team default votes from the old fallback:
         for name, (winner, confidence, margin) in preds.items():
             assert confidence != 0.5 or margin != 0 or winner != game.home_team, (
