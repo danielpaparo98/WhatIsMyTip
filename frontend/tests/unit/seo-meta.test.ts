@@ -130,20 +130,53 @@ describe('FX-20: Canonical URLs on every page', () => {
         return
       }
 
-      it('declares a canonical URL (FX-20)', () => {
+      it('declares a canonical URL via a useHead link (H-2)', () => {
+        // `useSeoMeta({ canonical })` is NOT a supported key — it
+        // silently renders nothing.  Canonicals are <link> elements
+        // and must go through useHead (or ogUrl + useHead link).
         expect(
           hasCanonical(source),
-          `${rel} should set a canonical URL via useSeoMeta({ canonical: ... }) or useHead link`,
+          `${rel} should set a canonical URL via useHead({ link: [{ rel: 'canonical', ... }] })`,
+        ).toBe(true)
+      })
+
+      it('derives the canonical from the siteUrl runtime config (H-2)', () => {
+        expect(
+          /siteUrl/.test(source),
+          `${rel} should use runtimeConfig.public.siteUrl instead of a hardcoded domain`,
         ).toBe(true)
       })
     })
   }
 })
 
-describe('FX-20: nuxt.config.ts sets a default canonical', () => {
+describe('H-2: nuxt.config.ts must NOT set a global default canonical', () => {
   const source = readFileSync(resolve(FRONTEND_ROOT, NUXT_CONFIG), 'utf8')
 
-  it('declares a default canonical in app.head.link', () => {
-    expect(source).toMatch(/rel\s*:\s*['"]canonical['"]/)
+  it('does not declare a site-wide canonical in app.head.link', () => {
+    // A global canonical pointing at "/" contradicted the per-page
+    // canonicals on every non-home page (duplicate-content hazard).
+    // Each page owns its canonical now.
+    expect(source).not.toMatch(/rel\s*:\s*['"]canonical['"]/)
+  })
+
+  it('does not hardcode a preconnect to the retired API subdomain (M-8)', () => {
+    expect(source).not.toMatch(/api\.whatismytip\.com/)
+  })
+
+  it('does not declare an empty-src analytics script (H-1)', () => {
+    // The analytics script is registered conditionally by
+    // plugins/umami.client.ts; a static head entry rendered
+    // <script src=""> when env vars were unset.  nuxt.config must not
+    // declare the script itself (runtimeConfig keys for the plugin are
+    // fine).
+    expect(source).not.toMatch(/umami-analytics/)
+    expect(source).not.toMatch(/data-website-id/)
+  })
+
+  it('ships the og:image / twitter:image preview asset (M-7)', () => {
+    expect(source).toMatch(/og:image/)
+    expect(source).toMatch(/twitter:image/)
+    expect(source).not.toMatch(/TODO: Create og-image/i)
   })
 })

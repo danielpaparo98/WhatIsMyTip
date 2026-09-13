@@ -176,7 +176,10 @@ import { sortByHeuristicOrder } from '~/composables/useFormatters'
 const api = useApi()
 const { formatHeuristic, getModelDisplayName, formatDate } = useFormatters()
 
-// FX-05 / FX-20: page-specific SEO + canonical URL
+// FX-05 / FX-20 / H-2: canonical derived from the siteUrl runtime
+// config (was hardcoded to the production domain).
+const siteUrl = useRuntimeConfig().public.siteUrl as string
+
 useSeoMeta({
   title: 'Backtesting',
   description: 'View historical performance and accuracy of our AFL prediction heuristics. Analyze year-to-date profit, accuracy rates, and betting performance across multiple seasons.',
@@ -184,7 +187,7 @@ useSeoMeta({
   ogTitle: 'Backtesting | AFL Prediction Performance & Accuracy',
   ogDescription: 'View historical performance and accuracy of our AFL prediction heuristics. Analyze year-to-date profit and accuracy rates.',
   ogType: 'website',
-  ogUrl: 'https://whatismytip.com/backtest',
+  ogUrl: `${siteUrl}/backtest`,
   twitterTitle: 'Backtesting | AFL Prediction Performance & Accuracy',
   twitterDescription: 'View historical performance and accuracy of our AFL prediction heuristics. Analyze year-to-date profit and accuracy rates.',
   twitterCard: 'summary_large_image',
@@ -192,7 +195,7 @@ useSeoMeta({
 
 useHead({
   link: [
-    { rel: 'canonical', href: 'https://whatismytip.com/backtest' }
+    { rel: 'canonical', href: `${siteUrl}/backtest` }
   ],
   script: [
     {
@@ -202,7 +205,7 @@ useHead({
         '@type': 'WebPage',
         name: 'AFL Prediction Backtesting',
         description: 'View historical performance and accuracy of our AFL prediction heuristics. Analyze year-to-date profit, accuracy rates, and betting performance.',
-        url: 'https://whatismytip.com/backtest',
+        url: `${siteUrl}/backtest`,
         mainEntity: {
           '@type': 'Dataset',
           name: 'AFL Prediction Performance Data',

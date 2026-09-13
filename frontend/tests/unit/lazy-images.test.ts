@@ -16,8 +16,8 @@ import { fileURLToPath } from 'node:url'
 const FRONTEND_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..')
 
 // Files that render <img> elements for team logos
+// (GameCard.vue removed 2026-09 — dead component, deleted)
 const IMG_SOURCE_FILES = [
-  'components/GameCard.vue',
   'pages/index.vue',
   'pages/game/[slug].vue',
 ]

@@ -100,14 +100,6 @@ export interface GamesWithTipsResponse {
 }
 
 /**
- * Route prefix → FaaS function URL mapping.
- * Built once from Nuxt runtime config. When any FaaS URL is present,
- * API calls are routed to the correct function instead of the monolithic
- * apiBase URL.
- */
-type FnUrlMap = Record<string, string>
-
-/**
  * FX-11: HTTP status codes that we consider transient and worth retrying.
  */
 const TRANSIENT_STATUSES = new Set([502, 503, 504])
@@ -140,38 +132,16 @@ export const useApi = () => {
   const config = useRuntimeConfig()
   const apiBase = config.public.apiBase as string
 
-  // Build FaaS function URL map from runtime config
-  const fnUrlMap: FnUrlMap = {
-    '/api/games': config.public.gamesFnUrl as string,
-    '/api/tips': config.public.tipsFnUrl as string,
-    '/api/backtest': config.public.backtestFnUrl as string,
-    '/api/admin': config.public.adminFnUrl as string,
-  }
-
-  // FaaS mode is active when at least one function URL is configured
-  const isFaasMode = Object.values(fnUrlMap).some((url) => url && url.length > 0)
-
   /**
-   * Resolve a logical API path to the correct full URL.
+   * Resolve a logical API path to the full URL.
    *
-   * In legacy mode: `{apiBase}/api/games/...`
-   * In FaaS mode:   `{gamesFnUrl}/...` (strips the `/api/games` prefix)
+   * FIX H-4 (2026-09 review): the dead FaaS routing block (fnUrlMap /
+   * isFaasMode / prefix rewriting) read runtime-config keys that have
+   * not existed since Phase 4 — `isFaasMode` was always false and the
+   * `as string` casts hid undefined values.  The backend is a single
+   * FastAPI origin; resolution is a plain base+path join.
    */
-  const resolveUrl = (path: string): string => {
-    if (isFaasMode) {
-      // Sort prefixes longest-first so `/api/games` doesn't match before `/api/games-with-tips`
-      const sortedPrefixes = Object.keys(fnUrlMap).sort((a, b) => b.length - a.length)
-      for (const prefix of sortedPrefixes) {
-        const fnUrl = fnUrlMap[prefix]
-        if (fnUrl && path.startsWith(prefix)) {
-          const subPath = path.slice(prefix.length)
-          return `${fnUrl}${subPath}`
-        }
-      }
-    }
-    // Legacy mode or unmatched route — use monolithic backend
-    return `${apiBase}${path}`
-  }
+  const resolveUrl = (path: string): string => `${apiBase}${path}`
 
   /**
    * FX-11: Sleep helper used between retry attempts.
@@ -296,21 +266,10 @@ export const useApi = () => {
     return response.json()
   }
 
-  const generateTips = async (season: number, round: number, heuristics?: string[]) => {
-    // POST /tips/generate requires a JSON body (TipGenerateRequest) with
-    // season / round_id / heuristics. Sending these in the query string with
-    // no body made FastAPI return 422 {"detail":[{"type":"missing","loc":["body"]}]}.
-    // Note the schema field is `round_id` (not `round`). `heuristics` is passed
-    // straight to JSON.stringify, so when it is undefined/empty it is simply
-    // omitted from the body (handled gracefully).
-    const response = await fetchWithTimeout('/api/tips/generate', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ season, round_id: round, heuristics }),
-    })
-    if (!response.ok) throw new Error('Failed to generate tips')
-    return response.json()
-  }
+  // NOTE (2026-09): `generateTips` has been REMOVED.  The generate
+  // endpoint requires the admin X-API-Key (TIPS-GEN-H4) — a browser
+  // must never hold that key.  Generation is the nightly
+  // `tip-generation` cron's job; operators use the admin API directly.
 
   const getGamesWithTips = async (season: number, round: number, heuristic: string = 'best_bet'): Promise<GamesWithTipsResponse> => {
     const queryParams = new URLSearchParams()
@@ -390,7 +349,6 @@ export const useApi = () => {
     getLatestRound,
     getTips,
     getTipsByHeuristic,
-    generateTips,
     getGamesWithTips,
     getBacktestResults,
     runBacktest,

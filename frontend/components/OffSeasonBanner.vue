@@ -27,8 +27,13 @@
 <script setup lang="ts">
 import confetti from 'canvas-confetti'
 import { getTeamColors } from '~/composables/useTeamColors'
+import { useLatestRound } from '~/composables/useLatestRound'
 
-const api = useApi()
+// M-4 (2026-09 review): this component used to fetch
+// `/api/games?latest=true` itself on mount.  It now reads the shared
+// latest-round store (populated by the index page's useAsyncData and
+// refreshed by the page's single poller) — zero extra requests.
+const { latestRound } = useLatestRound()
 const { getLogoUrl } = useTeamLogos()
 
 const visible = ref(false)
@@ -78,26 +83,28 @@ function fireCelebration(colors: string[]) {
   }, 200)
 }
 
-onMounted(async () => {
-  try {
-    const data = await api.getLatestRound()
+watch(
+  latestRound,
+  (data) => {
+    if (!data) return
     if (data.is_off_season && data.premier) {
       premier.value = data.premier
       season.value = data.season
       premierLogo.value = getLogoUrl(data.premier)
       visible.value = true
 
-      // Fire confetti once on mount using the premier's colours
+      // Fire confetti once using the premier's colours
       if (!hasFired.value) {
         hasFired.value = true
         const colors = getTeamColors(data.premier)
         fireCelebration(colors)
       }
+    } else {
+      visible.value = false
     }
-  } catch {
-    // Silently ignore — banner simply won't show on fetch failure
-  }
-})
+  },
+  { immediate: true },
+)
 </script>
 
 <style scoped>
