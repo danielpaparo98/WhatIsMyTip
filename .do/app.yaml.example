@@ -1,0 +1,263 @@
+﻿# WhatIsMyTip — DigitalOcean App Platform spec (SANITIZED TEMPLATE)
+#
+# This file is the committed IaC reference.  Secret values are replaced
+# with EV_REDACTED_SEE_HEADER placeholders.
+#
+# Working copy (NEVER keep inside the repo — it contains DO-encrypted
+# EV[...] secret values and the repo-wide test_no_hardcoded_secrets
+# guard scans every file on disk).  Save it outside the repository:
+#   doctl apps spec get ecc5a2a0-917b-4659-add6-e558c2d00902 --format yaml > ~/.do/whatismytip.app.yaml
+# Apply changes with:
+#   doctl apps update ecc5a2a0-917b-4659-add6-e558c2d00902 --spec ~/.do/whatismytip.app.yaml
+#
+# NOTE: deploy_on_push is deliberately false on both components — CI
+# (.github/workflows) is the sole deployment trigger so migrations
+# always run BEFORE rollout.
+
+domains:
+- domain: whatismytip.com
+  type: PRIMARY
+  zone: whatismytip.com
+ingress:
+  rules:
+  - component:
+      name: whatismytip-backend
+    match:
+      path:
+        prefix: /api
+  - component:
+      name: whatismytip-frontend
+    match:
+      path:
+        prefix: /
+name: whatismytip
+region: syd
+services:
+- dockerfile_path: backend/Dockerfile
+  envs:
+  - key: ENVIRONMENT
+    scope: RUN_AND_BUILD_TIME
+    value: production
+  - key: SITE_REBUILD_DO_APP_ID
+    scope: RUN_AND_BUILD_TIME
+    value: ecc5a2a0-917b-4659-add6-e558c2d00902
+  - key: DATABASE_URL
+    scope: RUN_AND_BUILD_TIME
+    type: SECRET
+    value: EV_REDACTED_SEE_HEADER
+  - key: DB_SSL_VERIFY
+    scope: RUN_AND_BUILD_TIME
+    value: "true"
+  - key: DB_POOL_SIZE
+    scope: RUN_AND_BUILD_TIME
+    value: "5"
+  - key: DB_MAX_OVERFLOW
+    scope: RUN_AND_BUILD_TIME
+    value: "10"
+  - key: DB_POOL_TIMEOUT
+    scope: RUN_AND_BUILD_TIME
+    value: "30"
+  - key: REDIS_URL
+    scope: RUN_AND_BUILD_TIME
+    type: SECRET
+    value: EV_REDACTED_SEE_HEADER
+  - key: ADMIN_API_KEY
+    scope: RUN_AND_BUILD_TIME
+    type: SECRET
+    value: EV_REDACTED_SEE_HEADER
+  - key: OPENROUTER_API_KEY
+    scope: RUN_AND_BUILD_TIME
+    type: SECRET
+    value: EV_REDACTED_SEE_HEADER
+  - key: OPENROUTER_BASE_URL
+    scope: RUN_AND_BUILD_TIME
+    value: https://openrouter.ai/api/v1
+  - key: OPENROUTER_MODEL
+    scope: RUN_AND_BUILD_TIME
+    value: deepseek/deepseek-v4-flash
+  - key: SQUIGGLE_API_BASE
+    scope: RUN_AND_BUILD_TIME
+    value: https://api.squiggle.com.au
+  - key: SQUIGGLE_CONTACT_EMAIL
+    scope: RUN_AND_BUILD_TIME
+    value: paparodaniel98@gmail.com
+  - key: CORS_ORIGINS
+    scope: RUN_AND_BUILD_TIME
+    value: https://whatismytip.com,https://www.whatismytip.com
+  - key: RATE_LIMIT_MAX_REQUESTS
+    scope: RUN_AND_BUILD_TIME
+    value: "60"
+  - key: RATE_LIMIT_WINDOW_SECONDS
+    scope: RUN_AND_BUILD_TIME
+    value: "60"
+  - key: RATE_LIMIT_PER_MINUTE
+    scope: RUN_AND_BUILD_TIME
+    value: "60"
+  - key: MAX_REQUEST_BODY_BYTES
+    scope: RUN_AND_BUILD_TIME
+    value: "5242880"
+  - key: CRON_ENABLED
+    scope: RUN_AND_BUILD_TIME
+    value: "true"
+  - key: CRON_TIMEZONE
+    scope: RUN_AND_BUILD_TIME
+    value: Australia/Perth
+  - key: DAILY_SYNC_CRON
+    scope: RUN_AND_BUILD_TIME
+    value: '*/15 * * * *'
+  - key: MATCH_COMPLETION_CRON
+    scope: RUN_AND_BUILD_TIME
+    value: 5,20,35,50 * * * *
+  - key: TIP_GENERATION_CRON
+    scope: RUN_AND_BUILD_TIME
+    value: 0 3 * * *
+  - key: HISTORIC_REFRESH_CRON
+    scope: RUN_AND_BUILD_TIME
+    value: 0 4 * * 0
+  - key: DAILY_SYNC_OFF_SEASON_START_HOUR
+    scope: RUN_AND_BUILD_TIME
+    value: "2"
+  - key: DAILY_SYNC_OFF_SEASON_END_HOUR
+    scope: RUN_AND_BUILD_TIME
+    value: "4"
+  - key: CURRENT_SEASON
+    scope: RUN_AND_BUILD_TIME
+    value: "2026"
+  - key: HISTORIC_REFRESH_SEASONS
+    scope: RUN_AND_BUILD_TIME
+    value: 2010-2025
+  - key: HISTORICAL_REFRESH_START_YEAR
+    scope: RUN_AND_BUILD_TIME
+    value: "2010"
+  - key: ALERT_ENABLED
+    scope: RUN_AND_BUILD_TIME
+    value: "false"
+  - key: ALERT_WEBHOOK_URL
+    scope: RUN_AND_BUILD_TIME
+  - key: ALERT_EMAIL_RECIPIENTS
+    scope: RUN_AND_BUILD_TIME
+  - key: ALERT_TIMEOUT_SECONDS
+    scope: RUN_AND_BUILD_TIME
+    value: "10"
+  - key: JOB_TIMEOUT_SECONDS
+    scope: RUN_AND_BUILD_TIME
+    value: "3600"
+  - key: JOB_LOCK_EXPIRE_SECONDS
+    scope: RUN_AND_BUILD_TIME
+    value: "300"
+  - key: JOB_MAX_RETRIES
+    scope: RUN_AND_BUILD_TIME
+    value: "3"
+  - key: JOB_RETRY_DELAY_SECONDS
+    scope: RUN_AND_BUILD_TIME
+    value: "60"
+  - key: DAILY_SYNC_ENABLED
+    scope: RUN_AND_BUILD_TIME
+    value: "true"
+  - key: DAILY_SYNC_TIMEOUT_SECONDS
+    scope: RUN_AND_BUILD_TIME
+    value: "3600"
+  - key: MATCH_COMPLETION_BUFFER_MINUTES
+    scope: RUN_AND_BUILD_TIME
+    value: "60"
+  - key: MATCH_COMPLETION_CHECK_ENABLED
+    scope: RUN_AND_BUILD_TIME
+    value: "true"
+  - key: COMPLETION_CHECK_TIMEOUT_SECONDS
+    scope: RUN_AND_BUILD_TIME
+    value: "300"
+  - key: TIP_GENERATION_ENABLED
+    scope: RUN_AND_BUILD_TIME
+    value: "true"
+  - key: TIP_GENERATION_TIMEOUT_SECONDS
+    scope: RUN_AND_BUILD_TIME
+    value: "1800"
+  - key: TIP_GENERATION_REGENERATE_EXISTING
+    scope: RUN_AND_BUILD_TIME
+    value: "false"
+  - key: HISTORIC_REFRESH_ENABLED
+    scope: RUN_AND_BUILD_TIME
+    value: "true"
+  - key: HISTORIC_REFRESH_REGENERATE_TIPS
+    scope: RUN_AND_BUILD_TIME
+    value: "false"
+  - key: HISTORICAL_REFRESH_TIMEOUT_SECONDS
+    scope: RUN_AND_BUILD_TIME
+    value: "900"
+  - key: METRICS_ENABLED
+    scope: RUN_AND_BUILD_TIME
+    value: "true"
+  - key: METRICS_RETENTION_DAYS
+    scope: RUN_AND_BUILD_TIME
+    value: "30"
+  - key: LOG_FORMAT
+    scope: RUN_AND_BUILD_TIME
+    value: json
+  - key: FORWARDED_ALLOW_IPS
+    scope: RUN_AND_BUILD_TIME
+    value: 10.0.0.0/8
+  - key: NUXT_PUBLIC_API_BASE
+    scope: RUN_AND_BUILD_TIME
+    value: https://whatismytip.com
+  - key: NUXT_PUBLIC_SITE_URL
+    scope: RUN_AND_BUILD_TIME
+    value: https://whatismytip.com
+  - key: NUXT_PUBLIC_UMAMI_HOST
+    scope: RUN_AND_BUILD_TIME
+    value: https://cloud.umami.is
+  - key: NUXT_PUBLIC_UMAMI_WEBSITE_ID
+    scope: RUN_AND_BUILD_TIME
+    value: 82e9b924-49cb-4d16-9e69-5682a1143ea6
+  - key: NUXT_PUBLIC_BUY_ME_A_COFFEE_URL
+    scope: RUN_AND_BUILD_TIME
+    value: https://www.buymeacoffee.com/danielpaparo
+  - key: NODE_ENV
+    scope: RUN_AND_BUILD_TIME
+    value: production
+  github:
+    branch: main
+    # B3 fix (2026-09 review): DO must not deploy main pushes directly —
+    # CI (deploy.yml) runs migrations BEFORE rollout and is the sole
+    # deployment trigger.
+    deploy_on_push: false
+    repo: danielpaparo98/WhatIsMyTip
+  health_check:
+    http_path: /health
+    initial_delay_seconds: 60
+    port: 8000
+  http_port: 8000
+  instance_count: 1
+  instance_size_slug: apps-s-1vcpu-0.5gb
+  name: whatismytip-backend
+  source_dir: backend
+static_sites:
+- build_command: bun install && bun run generate
+  envs:
+  - key: NUXT_PUBLIC_API_BASE
+    scope: BUILD_TIME
+    value: https://whatismytip.com
+  - key: NUXT_PUBLIC_SITE_URL
+    scope: BUILD_TIME
+    value: https://whatismytip.com
+  - key: NUXT_PUBLIC_UMAMI_HOST
+    scope: BUILD_TIME
+    value: https://cloud.umami.is
+  - key: NUXT_PUBLIC_UMAMI_WEBSITE_ID
+    scope: BUILD_TIME
+    value: 82e9b924-49cb-4d16-9e69-5682a1143ea6
+  - key: NUXT_PUBLIC_BUY_ME_A_COFFEE_URL
+    scope: BUILD_TIME
+  - key: NODE_ENV
+    scope: BUILD_TIME
+    value: production
+  github:
+    branch: main
+    # B3 fix (2026-09 review): deploy_on_push was true, so DO deployed
+    # every main push independently of CI — racing the migrate job that
+    # must run BEFORE rollout. CI (deploy.yml / frontend.yml) is now the
+    # sole deployment trigger; migrations always precede rollout.
+    deploy_on_push: false
+    repo: danielpaparo98/WhatIsMyTip
+  name: whatismytip-frontend
+  output_dir: .output/public
+  source_dir: frontend

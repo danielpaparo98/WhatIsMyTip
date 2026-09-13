@@ -106,7 +106,7 @@ describe('TEAM_LOGOS mapping', () => {
 })
 
 describe('getLogoUrl alias resolution', () => {
-  const { getLogoUrl } = useTeamLogos()
+  const { getLogoUrl, PLACEHOLDER_LOGO } = useTeamLogos()
 
   // These raw Squiggle forms previously rendered broken logos because
   // they did not match a TEAM_LOGOS key. After adding the alias
@@ -134,13 +134,27 @@ describe('getLogoUrl alias resolution', () => {
     expect(getLogoUrl('Collingwood')).toBe('/logos/Collingwood.png')
   })
 
-  it('returns empty string for null/undefined/empty', () => {
-    expect(getLogoUrl(null)).toBe('')
-    expect(getLogoUrl(undefined)).toBe('')
-    expect(getLogoUrl('')).toBe('')
-  })
+  // M-1 (2026-09 review): unknown/null teams now resolve to an inline
+  // placeholder SVG — NEVER an empty string.  <img src=""> resolves to
+  // the current document URL per spec, so the browser fetched the
+  // page's own HTML as an image (broken icon + wasted request).
+  describe('placeholder for unknown/missing teams (M-1)', () => {
+    it('returns the placeholder for null/undefined/empty', () => {
+      expect(getLogoUrl(null)).toBe(PLACEHOLDER_LOGO)
+      expect(getLogoUrl(undefined)).toBe(PLACEHOLDER_LOGO)
+      expect(getLogoUrl('')).toBe(PLACEHOLDER_LOGO)
+    })
 
-  it('returns empty string for an unknown team', () => {
-    expect(getLogoUrl('Tasmania Devils')).toBe('')
+    it('returns the placeholder for an unknown team', () => {
+      expect(getLogoUrl('Tasmania Devils')).toBe(PLACEHOLDER_LOGO)
+    })
+
+    it('placeholder is an inline data-URI SVG (no extra request)', () => {
+      expect(PLACEHOLDER_LOGO).toMatch(/^data:image\/svg\+xml/)
+    })
+
+    it('placeholder is never an empty string (the old bug)', () => {
+      expect(PLACEHOLDER_LOGO.length).toBeGreaterThan(0)
+    })
   })
 })

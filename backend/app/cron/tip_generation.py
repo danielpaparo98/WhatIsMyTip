@@ -2,11 +2,17 @@
 
 Wraps :func:`packages.shared.services.tip_generation.run_tip_generation`
 with the :class:`app.cron.base.BaseJob` machinery.
+
+After a successful run, a site-rebuild webhook
+(``SITE_REBUILD_WEBHOOK_URL``) is fired (best-effort) so the statically
+generated frontend rebuilds with the fresh tips — see
+:mod:`packages.shared.services.site_rebuild`.
 """
 
 from __future__ import annotations
 
 from app.cron.base import BaseJob
+from packages.shared.services.site_rebuild import trigger_site_rebuild
 from packages.shared.services.tip_generation import run_tip_generation
 
 
@@ -28,4 +34,14 @@ class TipGenerationJob(BaseJob):
     async def run(self) -> dict:
         """Invoke the tip-generation service within the active session."""
         async with self._session_factory() as session:
-            return await run_tip_generation(session)
+            result = await run_tip_generation(session)
+
+        # Best-effort SSG freshness: rebuild the static frontend so the
+        # baked HTML picks up the new tips.  Never fails the job.
+        rebuild = await trigger_site_rebuild(
+            tips_created=result.get("tips_created", 0)
+        )
+        if rebuild is not None:
+            result["site_rebuild"] = rebuild
+
+        return result

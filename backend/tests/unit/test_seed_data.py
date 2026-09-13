@@ -166,9 +166,15 @@ class TestGameDatetime:
         dt = _generate_game_datetime(2025, 1, 0)
         assert dt.year == 2025
 
-    def test_utc_timezone(self):
+    def test_naive_utc_wall_clock(self):
+        """SEED-TZ regression: the generated datetime must be tz-NAIVE.
+
+        ``games.date`` is ``TIMESTAMP WITHOUT TIME ZONE`` storing UTC.
+        The old tz-aware value made asyncpg fail the batch insert with
+        ``can't subtract offset-naive and offset-aware datetimes``.
+        """
         dt = _generate_game_datetime(2025, 1, 0)
-        assert dt.tzinfo is not None
+        assert dt.tzinfo is None
 
     def test_rounds_progress(self):
         dt_r1 = _generate_game_datetime(2025, 1, 0)
@@ -389,6 +395,28 @@ class TestSeedGames:
         for game in games:
             assert game.season == 2026
 
+    def test_game_date_is_tz_naive(self, rng):
+        """SEED-TZ regression: every generated Game.date must be tz-naive.
+
+        The ``games.date`` column is ``TIMESTAMP WITHOUT TIME ZONE``;
+        tz-aware values abort the entire insertmanyvalues batch.
+        """
+        games = seed_games(rng, season=2024, rounds=6, completed_rounds=4)
+        assert games
+        for game in games:
+            assert game.date is not None
+            assert game.date.tzinfo is None, (
+                f"game {game.slug} has a tz-aware date — asyncpg will "
+                f"reject the mixed-aware/naive batch insert"
+            )
+        # completed games' last_synced_at is a timezone=True column, so
+        # it SHOULD stay tz-aware:
+        completed = [g for g in games if g.completed]
+        assert completed
+        for game in completed:
+            assert game.last_synced_at is not None
+            assert game.last_synced_at.tzinfo is not None
+
     def test_round_ids_range(self, rng):
         games = seed_games(rng, season=2025, rounds=10)
         round_ids = {g.round_id for g in games}
@@ -558,6 +586,20 @@ class TestSeedBacktestResults:
         results = seed_backtest_results(rng, season=2025, rounds=10)
         keys = [(r.season, r.round_id, r.heuristic) for r in results]
         assert len(keys) == len(set(keys))
+
+    def test_no_explicit_ids(self, rng):
+        """SEED-ID regression: rows must NOT carry explicit primary keys.
+
+        The old code reset a per-season ``result_id = 1`` counter, so
+        seeding more than one season produced duplicate PKs and aborted
+        the whole batch insert.  The database (autoincrement) owns ids.
+        """
+        multi_season = (
+            seed_backtest_results(rng, season=2024, rounds=5)
+            + seed_backtest_results(rng, season=2025, rounds=5)
+        )
+        for r in multi_season:
+            assert r.id is None
 
 
 # ---------------------------------------------------------------------------

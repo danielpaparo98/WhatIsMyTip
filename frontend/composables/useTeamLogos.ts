@@ -64,20 +64,37 @@ function normalizeTeam(name: string): string {
   return TEAM_ALIASES[key] ?? name.trim()
 }
 
+// M-1 (2026-09 review): an inline neutral placeholder (data URI, no
+// extra request).  Previously unknown/placeholder teams ('TBD', null)
+// resolved to '' and pages rendered <img src=""> — per spec an empty
+// src resolves to the CURRENT DOCUMENT URL, so the browser fetched the
+// page's own HTML as an image (broken-image icon + wasted request).
+// The placeholder is a 40x40 monochrome silhouette matching the site's
+// bold monochrome design.
+const PLACEHOLDER_LOGO =
+  'data:image/svg+xml;utf8,' +
+  encodeURIComponent(
+    '<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 40 40">' +
+      '<rect width="40" height="40" fill="#f5f5f5"/>' +
+      '<ellipse cx="20" cy="20" rx="13" ry="17" fill="none" stroke="#666666" stroke-width="2"/>' +
+      '<line x1="20" y1="3" x2="20" y2="37" stroke="#666666" stroke-width="2"/>' +
+      '</svg>'
+  )
+
 export function useTeamLogos() {
   /**
    * Resolve a team name to its public logo URL.
-   * Accepts `null`/`undefined` and returns an empty string so callers
-   * can safely bind the result to `<img :src="…">` without a runtime
-   * TypeError.  Non-canonical aliases are normalised first so every
-   * known AFL team renders its logo.
+   * Accepts `null`/`undefined`; unknown or placeholder teams ('TBD')
+   * return an inline placeholder SVG (never an empty string — see M-1).
+   * Non-canonical aliases are normalised first so every known AFL team
+   * renders its logo.
    */
   const getLogoUrl = (teamName: string | null | undefined): string => {
-    if (!teamName) return ''
+    if (!teamName) return PLACEHOLDER_LOGO
     const canonical = normalizeTeam(teamName)
     const filename = TEAM_LOGOS[canonical] || ''
-    return filename ? `/logos/${filename}` : ''
+    return filename ? `/logos/${filename}` : PLACEHOLDER_LOGO
   }
 
-  return { getLogoUrl, TEAM_LOGOS, normalizeTeam }
+  return { getLogoUrl, TEAM_LOGOS, normalizeTeam, PLACEHOLDER_LOGO }
 }

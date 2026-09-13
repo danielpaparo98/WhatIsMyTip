@@ -5,12 +5,15 @@
 <script setup lang="ts">
 import confetti from 'canvas-confetti'
 import { GRAND_FINAL_COLORS } from '~/composables/useTeamColors'
+import { useLatestRound } from '~/composables/useLatestRound'
 
-const api = useApi()
+// M-4 (2026-09 review): this component used to fetch
+// `/api/games?latest=true` AND run its own 5-minute poller.  It now
+// reacts to the shared latest-round store (populated by the index
+// page's useAsyncData and refreshed by the page's single poller).
+const { latestRound } = useLatestRound()
 
-const AUTO_REFRESH_MS = 5 * 60 * 1000
 let animationTimer: ReturnType<typeof setInterval> | null = null
-let refreshTimer: ReturnType<typeof setInterval> | null = null
 let active = false
 
 /**
@@ -40,9 +43,18 @@ function fireBurst() {
   })
 }
 
-async function checkAndStart() {
-  try {
-    const data = await api.getLatestRound()
+function stop() {
+  active = false
+  if (animationTimer) {
+    clearInterval(animationTimer)
+    animationTimer = null
+  }
+}
+
+watch(
+  latestRound,
+  (data) => {
+    if (!data) return
     if (data.is_grand_final && !active) {
       active = true
       // Fire immediately on activation
@@ -52,32 +64,9 @@ async function checkAndStart() {
     } else if (!data.is_grand_final && active) {
       stop()
     }
-  } catch {
-    // Silently ignore — show stops on errors
-    if (active) stop()
-  }
-}
+  },
+  { immediate: true },
+)
 
-function stop() {
-  active = false
-  if (animationTimer) {
-    clearInterval(animationTimer)
-    animationTimer = null
-  }
-}
-
-onMounted(() => {
-  checkAndStart()
-  // Periodically recheck (in case the round changes or the page was open
-  // when the grand-final round started)
-  refreshTimer = setInterval(checkAndStart, AUTO_REFRESH_MS)
-})
-
-onUnmounted(() => {
-  stop()
-  if (refreshTimer) {
-    clearInterval(refreshTimer)
-    refreshTimer = null
-  }
-})
+onUnmounted(stop)
 </script>

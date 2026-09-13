@@ -119,22 +119,37 @@ class Settings(BaseSettings):
 
     # Retry Configuration
     job_timeout_seconds: int = 3600
-    # SEC-ME-009: lock expiry caps how long a crashed in-process job
-    # can hold the advisory lock before another instance / restart is
-    # allowed to pick it up.  The 15-minute default was a FaaS
-    # carry-over; on the in-process scheduler any job that hasn't
-    # finished within 5 minutes is almost certainly stuck and needs
-    # operator attention rather than a stale lock.  The CRUD layer
-    # also clamps the caller-supplied expiry to this value as a
-    # hard ceiling, so this setting is the upper bound for any lock
-    # acquisition.
+    # Default lock expiry when a caller does not supply one.  Callers
+    # that DO supply ``expires_seconds`` (e.g. BaseJob, which passes its
+    # own ``timeout_seconds`` + buffer) are honoured — a lock must never
+    # expire before the job's own timeout does, or a second instance can
+    # start the same job while the first is still running (JOBS-H2).
     job_lock_expire_seconds: int = 300
+    # Absolute sanity ceiling for any lock acquisition, regardless of
+    # what the caller requests.  Prevents an accidental multi-hour lock
+    # from a bad caller value while still allowing legitimate long-job
+    # TTLs (tip-generation runs up to 30 minutes).
+    job_lock_max_seconds: int = 14_400
     job_max_retries: int = 3
     job_retry_delay_seconds: int = 60
 
     # Alerting Configuration
     alert_enabled: bool = False
     alert_webhook_url: Optional[str] = None
+
+    # Site rebuild webhook (SSG freshness): when set, TipGenerationJob
+    # POSTs to this URL after a successful tip-generation run so the
+    # statically-generated frontend rebuilds with fresh tips (e.g. a
+    # DigitalOcean App Platform deploy webhook).  Best-effort: failures
+    # are logged and never fail the job.
+    site_rebuild_webhook_url: Optional[str] = None
+    site_rebuild_timeout_seconds: int = 30
+    # DO-API rebuild mode (used when no generic webhook URL is set):
+    # trigger POST https://api.digitalocean.com/v2/apps/{id}/deployments
+    # with this app id + token.  The token is created in the DO console
+    # (custom scope, App Platform write) and stored as a SECRET env var.
+    site_rebuild_do_app_id: Optional[str] = None
+    site_rebuild_do_token: Optional[str] = None
     alert_email_recipients: Union[str, List[str]] = []
     alert_timeout_seconds: int = 10  # webhook timeout
 

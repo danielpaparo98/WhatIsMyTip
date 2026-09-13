@@ -1,6 +1,6 @@
 import asyncio
 import time
-from typing import Any, Dict, List, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -28,11 +28,44 @@ logger = get_logger(__name__)
 # cadence and pushes them into the WeightedTipHeuristic.
 WEIGHTED_TIP_COEFFICIENT_TTL_SECONDS = 3600
 
+# A session factory is any callable returning an async context manager
+# that yields an AsyncSession (e.g. ``async_sessionmaker``).  Each model
+# task gets its own session so the parallel ``asyncio.gather`` never
+# shares one AsyncSession (SQLAlchemy forbids concurrent use of a single
+# session — see the ORCH-H1 review finding).
+SessionFactory = Callable[[], Any]
+
+
+def _default_session_factory() -> Any:
+    """Return an async context manager yielding a fresh ``AsyncSession``.
+
+    B1 regression fix (2026-09 pre-deploy review): this must return the
+    *session* (``AsyncSession`` IS an async context manager), not the
+    ``async_sessionmaker`` itself — the maker has no
+    ``__aenter__``/``__aexit__``, so the original implementation made
+    every model raise ``TypeError`` on the default production path,
+    silently abstaining 100% of the time.
+    """
+    from .db import _get_session_factory
+
+    return _get_session_factory()()
+
 
 class ModelOrchestrator:
-    """Orchestrates ML models and heuristic layers for predictions."""
+    """Orchestrates ML models and heuristic layers for predictions.
 
-    def __init__(self):
+    Args:
+        session_factory: Optional callable returning an async context
+            manager that yields an ``AsyncSession`` (defaults to the
+            shared application factory from :mod:`packages.shared.db`).
+            Each model task opens its own session — a single
+            ``AsyncSession`` must never be shared across concurrent
+            tasks.  Tests inject a fake factory here.
+    """
+
+    def __init__(self, session_factory: Optional[SessionFactory] = None):
+        self._session_factory = session_factory or _default_session_factory
+
         # Initialize ML models
         self.models: List[BaseModel] = [
             EloModel(),
@@ -97,6 +130,74 @@ class ModelOrchestrator:
             self._wt_coeffs = result
         self._wt_coeffs_loaded_at = now
 
+    async def _predict_one(
+        self, model: BaseModel, game: Game, ctx: str
+    ) -> Tuple[str, Optional[Tuple[str, float, int]]]:
+        """Run ONE model in its OWN session.
+
+        Opens a fresh session from the session factory (never shares the
+        caller's session across the concurrent ``gather``), times the
+        call, and — on failure — logs the error and returns ``None`` for
+        the prediction so the model **abstains** rather than voting a
+        home-team default (ORCH-M7).
+
+        Returns:
+            ``(model_name, prediction_or_None)``
+        """
+        model_predict_start = time.time()
+        try:
+            async with self._session_factory() as session:
+                result = await model.predict(game, session)
+            model_predict_time = time.time() - model_predict_start
+            logger.debug(
+                f"ModelOrchestrator.{ctx}: {model.get_name()} "
+                f"model took {model_predict_time:.4f}s"
+            )
+            return model.get_name(), result
+        except Exception as e:
+            model_predict_time = time.time() - model_predict_start
+            logger.error(
+                f"ModelOrchestrator.{ctx}: {model.get_name()} "
+                f"model failed after {model_predict_time:.4f}s: {e}"
+            )
+            # Abstain: exclude the model from consensus instead of
+            # substituting a home-team default.
+            return model.get_name(), None
+
+    async def _gather_model_predictions(
+        self, game: Game, ctx: str
+    ) -> Tuple[Dict[str, Tuple[str, float, int]], List[str]]:
+        """Run all models concurrently, each in its own session.
+
+        Returns:
+            ``(model_predictions, failed_models)`` — the predictions dict
+            contains only models that succeeded; ``failed_models`` lists
+            the names of models that raised (they abstain).
+        """
+        model_start = time.time()
+
+        tasks = [self._predict_one(model, game, ctx) for model in self.models]
+        results = await asyncio.gather(*tasks)
+
+        model_predictions: Dict[str, Tuple[str, float, int]] = {}
+        failed_models: List[str] = []
+        for model_name, prediction in results:
+            if prediction is None:
+                failed_models.append(model_name)
+            else:
+                model_predictions[model_name] = prediction
+
+        model_total_time = time.time() - model_start
+        logger.debug(f"ModelOrchestrator.{ctx}: ALL MODELS took {model_total_time:.4f}s")
+
+        if failed_models:
+            logger.warning(
+                f"ModelOrchestrator.{ctx}: {len(failed_models)}/{len(self.models)} "
+                f"models failed and abstained: {sorted(failed_models)}"
+            )
+
+        return model_predictions, failed_models
+
     async def predict(
         self, game: Game, heuristic: str = "best_bet", db: AsyncSession = None
     ) -> Tuple[str, float, int]:
@@ -105,7 +206,9 @@ class ModelOrchestrator:
         Args:
             game: Game to predict
             heuristic: Heuristic to apply (best_bet, yolo, weighted_tip)
-            db: Database session to use for queries
+            db: Database session used for heuristic-support queries
+                (e.g. weighted-tip coefficient loading).  Model tasks
+                open their own sessions.
 
         Returns:
             Tuple of (winner, confidence, margin)
@@ -122,40 +225,11 @@ class ModelOrchestrator:
         if heuristic not in self.heuristics:
             raise ValueError(f"Unknown heuristic: {heuristic}")
 
-        # Get predictions from all models in parallel
-        model_predictions: Dict[str, Tuple[str, float, int]] = {}
-        model_start = time.time()
-
-        async def predict_with_logging(model: BaseModel) -> Tuple[str, Tuple[str, float, int]]:
-            """Predict with error handling and timing."""
-            model_predict_start = time.time()
-            try:
-                result = await model.predict(game, db)
-                model_predict_time = time.time() - model_predict_start
-                logger.debug(
-                    f"ModelOrchestrator.predict: {model.get_name()} "
-                    f"model took {model_predict_time:.4f}s"
-                )
-                return model.get_name(), result
-            except Exception as e:
-                model_predict_time = time.time() - model_predict_start
-                logger.error(
-                    f"ModelOrchestrator.predict: {model.get_name()} "
-                    f"model failed after {model_predict_time:.4f}s: {e}"
-                )
-                # Return a default prediction on error
-                return model.get_name(), (str(game.home_team), 0.5, 0)
-
-        # Run all models in parallel
-        tasks = [predict_with_logging(model) for model in self.models]
-        results = await asyncio.gather(*tasks)
-
-        # Build predictions dictionary
-        for model_name, prediction in results:
-            model_predictions[model_name] = prediction
-
-        model_total_time = time.time() - model_start
-        logger.debug(f"ModelOrchestrator.predict: ALL MODELS took {model_total_time:.4f}s")
+        # Get predictions from all models in parallel (session per task,
+        # failed models abstain).
+        model_predictions, failed_models = await self._gather_model_predictions(
+            game, ctx="predict"
+        )
 
         # Apply heuristic
         heuristic_obj = self.heuristics[heuristic]
@@ -179,10 +253,13 @@ class ModelOrchestrator:
 
         Args:
             game: Game to predict
-            db: Database session to use for queries
+            db: Database session used for heuristic-support queries
+                (e.g. weighted-tip coefficient loading).  Model tasks
+                open their own sessions.
 
         Returns:
-            Dict of heuristic -> {"model_predictions": dict, "tip": tuple}
+            Dict of heuristic -> {"model_predictions": dict, "tip": tuple,
+            "failed_models": list[str]}
         """
         # Load the active weighted-tip coefficients (cached) before
         # applying any heuristic.
@@ -191,37 +268,10 @@ class ModelOrchestrator:
         start_time = time.time()
         logger.debug(f"ModelOrchestrator.predict_all: STARTING for game {game.id}")
 
-        # Run all models once in parallel
-        model_predictions: Dict[str, Tuple[str, float, int]] = {}
-        model_start = time.time()
-
-        async def predict_with_logging(model: BaseModel) -> Tuple[str, Tuple[str, float, int]]:
-            """Predict with error handling and timing."""
-            model_predict_start = time.time()
-            try:
-                result = await model.predict(game, db)
-                model_predict_time = time.time() - model_predict_start
-                logger.debug(
-                    f"ModelOrchestrator.predict_all: {model.get_name()} "
-                    f"model took {model_predict_time:.4f}s"
-                )
-                return model.get_name(), result
-            except Exception as e:
-                model_predict_time = time.time() - model_predict_start
-                logger.error(
-                    f"ModelOrchestrator.predict_all: {model.get_name()} "
-                    f"model failed after {model_predict_time:.4f}s: {e}"
-                )
-                return model.get_name(), (str(game.home_team), 0.5, 0)
-
-        tasks = [predict_with_logging(model) for model in self.models]
-        results = await asyncio.gather(*tasks)
-
-        for model_name, prediction in results:
-            model_predictions[model_name] = prediction
-
-        model_total_time = time.time() - model_start
-        logger.debug(f"ModelOrchestrator.predict_all: ALL MODELS took {model_total_time:.4f}s")
+        # Run all models once in parallel (session per task, abstain on failure).
+        model_predictions, failed_models = await self._gather_model_predictions(
+            game, ctx="predict_all"
+        )
 
         # Apply all heuristics to the same model predictions
         all_results = {}
@@ -233,7 +283,11 @@ class ModelOrchestrator:
                 f"ModelOrchestrator.predict_all: heuristic "
                 f"'{heuristic_name}' took {heuristic_time:.4f}s"
             )
-            all_results[heuristic_name] = {"model_predictions": model_predictions, "tip": tip}
+            all_results[heuristic_name] = {
+                "model_predictions": model_predictions,
+                "tip": tip,
+                "failed_models": failed_models,
+            }
 
         total_time = time.time() - start_time
         logger.debug(f"ModelOrchestrator.predict_all: COMPLETED in {total_time:.4f}s")

@@ -6,17 +6,17 @@
 
       <section class="section">
         <!-- Round Display -->
-        <div v-if="latestRound" class="round-display">
-          <span class="round-label">{{ latestRound.is_current_year ? 'Current Round' : 'Latest Available' }}</span>
-          <span class="round-value">R{{ latestRound.round_id }} • {{ latestRound.season }}</span>
-          <span class="game-count">{{ latestRound.game_count }} Games</span>
+        <div v-if="round" class="round-display">
+          <span class="round-label">{{ round.is_current_year ? 'Current Round' : 'Latest Available' }}</span>
+          <span class="round-value">R{{ round.round_id }} • {{ round.season }}</span>
+          <span class="game-count">{{ round.game_count }} Games</span>
         </div>
-        
+
         <!-- Data Warning -->
-        <div v-if="latestRound && !latestRound.is_current_year" class="data-warning">
+        <div v-if="round && !round.is_current_year" class="data-warning">
           <p>
             <strong>No data available for {{ new Date().getFullYear() }}.</strong>
-            Showing historical data from {{ latestRound.season }}.
+            Showing historical data from {{ round.season }}.
           </p>
         </div>
 
@@ -42,11 +42,11 @@
             </div>
             <div v-else-if="error" class="error" role="status" aria-live="polite">
               <p>{{ error }}</p>
-              <button @click="loadGames" class="btn">Retry</button>
+              <button @click="refreshAll" class="btn">Retry</button>
             </div>
             <div v-else-if="gamesWithTips.length === 0" class="empty" role="status" aria-live="polite">
-              <p>No tips available for this round.</p>
-              <button @click="generateTips" class="btn btn-primary">Generate Tips</button>
+              <p>No tips available for this round yet.</p>
+              <p class="empty-hint">Tips are generated automatically after each round's data sync.</p>
             </div>
             <div v-else class="games-grid">
             <NuxtLink
@@ -72,7 +72,7 @@
                   <span class="date">{{ game.date ? formatDate(game.date) : 'TBD' }}</span>
                 </div>
               </div>
-              
+
               <!-- Tip Info -->
               <div v-if="game.tip" class="tip-info">
                 <div class="tip-header">
@@ -88,18 +88,9 @@
               <div v-else class="no-tip">
                 <p>No tip available</p>
               </div>
-              
+
               </div>
             </NuxtLink>
-          </div>
-          <!-- Generate Tips button when games exist but tips are missing -->
-          <div v-if="hasGamesWithoutTips && !generating" class="generate-tips-bar">
-            <p>Tips haven't been generated for this round yet.</p>
-            <button @click="generateTips" class="btn btn-primary">Generate Tips</button>
-          </div>
-          <div v-if="generating" class="generate-tips-bar generating">
-            <div class="spinner"></div>
-            <p>Generating tips…</p>
           </div>
         </div>
         </Transition>
@@ -109,25 +100,132 @@
 <script setup lang="ts">
 import type { GameWithTip, GamesWithTipsResponse, LatestRoundResponse } from '~/composables/useApi'
 import { HEURISTIC_ORDER } from '~/composables/useFormatters'
+import { AUTO_REFRESH_MS, useLatestRound } from '~/composables/useLatestRound'
 const api = useApi()
 const { getLogoUrl } = useTeamLogos()
 const { formatHeuristic, formatDate: formatDateUtil } = useFormatters()
 
-// Page-specific SEO
-// FX-05 / FX-20: page-specific SEO + canonical URL (alongside useHead for legacy meta)
-useSeoMeta({
-  ogType: 'website',
-  canonical: 'https://whatismytip.com/'
+// ---------------------------------------------------------------------------
+// UI state (declared first — the fetch watcher below reads it)
+// ---------------------------------------------------------------------------
+const selectedHeuristic = ref<string>('weighted_tip')
+
+const heuristics = HEURISTIC_ORDER.map(value => ({
+  value,
+  label: formatHeuristic(value)
+}))
+
+const formatDate = formatDateUtil
+
+// ---------------------------------------------------------------------------
+// Data fetching — SEO-C1 / H-3 / M-4 (2026-09 review)
+//
+// This page used to fetch everything in onMounted (client-only), so the
+// prerendered HTML shipped an empty shell to crawlers and social
+// previews.  Fetching now happens in <setup> via useAsyncData: it runs
+// at generate time (data is inlined into the prerendered HTML AND the
+// Nuxt payload, so hydration needs no refetch), and re-runs reactively
+// when the heuristic or round changes.
+// ---------------------------------------------------------------------------
+const { data: round, refresh: refreshRound } = await useAsyncData<LatestRoundResponse>(
+  'latest-round',
+  () => api.getLatestRound(),
+)
+
+// Publish the round into the shared store so passive consumers
+// (OffSeasonBanner, ConfettiEffect) hydrate without fetching.
+const { setLatestRound } = useLatestRound()
+setLatestRound(round.value)
+
+// Reactive season/round locator (falls back to current year / round 1).
+const seasonRound = computed(() => ({
+  season: round.value?.season ?? new Date().getFullYear(),
+  round: round.value?.round_id ?? 1,
+}))
+
+const { data: gamesData, pending: loading, error: gamesError, refresh: refreshGames } =
+  await useAsyncData<GamesWithTipsResponse>(
+    'games-with-tips',
+    () => api.getGamesWithTips(seasonRound.value.season, seasonRound.value.round, selectedHeuristic.value),
+    {
+      // FIX H-3: `watch` + `dedupe: 'cancel'` means a rapid heuristic
+      // switch cancels the in-flight request instead of letting a slow
+      // stale response overwrite the newer selection (previously
+      // last-RESOLVED won → wrong tips under the wrong tab).
+      watch: [selectedHeuristic, seasonRound],
+      dedupe: 'cancel',
+    },
+  )
+
+const gamesWithTips = computed<GameWithTip[]>(() => gamesData.value?.games ?? [])
+
+const error = computed<string | null>(() => {
+  if (!gamesError.value) return null
+  return 'Failed to load tips'
 })
+
+const refreshAll = async () => {
+  await refreshRound()
+  setLatestRound(round.value)
+  await refreshGames()
+}
+
+// ---------------------------------------------------------------------------
+// Client-side behaviour
+// ---------------------------------------------------------------------------
+
+// Restore the persisted heuristic preference (client-only).  Setting
+// the ref triggers the useAsyncData watcher — no manual double fetch.
+onMounted(() => {
+  const stored = localStorage.getItem('selected-heuristic')
+  if (stored && HEURISTIC_ORDER.includes(stored) && stored !== selectedHeuristic.value) {
+    selectedHeuristic.value = stored
+  }
+})
+
+// Auto-refresh: ONE poller, owned by this page (previously the page,
+// OffSeasonBanner and ConfettiEffect each polled independently).  A
+// round change flows through `seasonRound` and re-triggers the games
+// fetch reactively.
+let autoRefreshTimer: ReturnType<typeof setInterval> | null = null
+onMounted(() => {
+  autoRefreshTimer = setInterval(async () => {
+    if (document.visibilityState !== 'visible') return
+    try {
+      await refreshRound()
+      setLatestRound(round.value)
+    } catch (e) {
+      if (import.meta.dev) console.error('Auto-refresh failed:', e)
+    }
+  }, AUTO_REFRESH_MS)
+})
+onUnmounted(() => {
+  if (autoRefreshTimer) {
+    clearInterval(autoRefreshTimer)
+    autoRefreshTimer = null
+  }
+})
+
+// ---------------------------------------------------------------------------
+// SEO — FX-05 / FX-20 / H-2 (2026-09 review)
+// ---------------------------------------------------------------------------
+// `useSeoMeta({ canonical })` was NOT a supported key — it silently
+// rendered nothing.  Canonicals are <link> elements and go through
+// useHead, using the siteUrl runtime config.
+const siteUrl = useRuntimeConfig().public.siteUrl as string
 
 useHead({
   title: 'AFL Tips & Predictions',
+  link: [
+    { rel: 'canonical', href: siteUrl }
+  ],
   meta: [
     { name: 'description', content: 'Get AI-powered AFL tips and predictions for the current round. Expert footy tipping advice with smart heuristics, betting tips, and round predictions backed by machine learning models.' },
     { name: 'keywords', content: 'AFL tips, AFL predictions, AFL betting tips, AFL footy tips, AFL round predictions, AFL betting advice, footy tipping, AFL betting' },
+    { property: 'og:type', content: 'website' },
     { property: 'og:title', content: 'AFL Tips & Predictions | AI-Powered Footy Tipping' },
     { property: 'og:description', content: 'Get AI-powered AFL tips and predictions for the current round. Expert footy tipping advice with smart heuristics.' },
-    { property: 'og:url', content: 'https://whatismytip.com' },
+    { property: 'og:url', content: siteUrl },
     { name: 'twitter:title', content: 'AFL Tips & Predictions | AI-Powered Footy Tipping' },
     { name: 'twitter:description', content: 'Get AI-powered AFL tips and predictions for the current round. Expert footy tipping advice with smart heuristics.' }
   ],
@@ -139,7 +237,7 @@ useHead({
         '@type': 'WebPage',
         name: 'AFL Tips & Predictions',
         description: 'Get AI-powered AFL tips and predictions for the current round. Expert footy tipping advice with smart heuristics.',
-        url: 'https://whatismytip.com',
+        url: siteUrl,
         mainEntity: {
           '@type': 'SportsEvent',
           sport: 'Australian Rules Football',
@@ -148,123 +246,6 @@ useHead({
       })
     }
   ]
-})
-
-const loading = ref(true)
-const error = ref<string | null>(null)
-const gamesWithTips = ref<GameWithTip[]>([])
-const latestRound = ref<LatestRoundResponse | null>(null)
-const selectedHeuristic = ref<string>('weighted_tip')
-const generating = ref(false)
-const AUTO_REFRESH_MS = 5 * 60 * 1000
-let autoRefreshTimer: ReturnType<typeof setInterval> | null = null
-
-const hasGamesWithoutTips = computed(() => {
-  return gamesWithTips.value.length > 0 && gamesWithTips.value.some(g => !g.tip)
-})
-
-const heuristics = HEURISTIC_ORDER.map(value => ({
-  value,
-  label: formatHeuristic(value)
-}))
-
-const loadLatestRound = async () => {
-  try {
-    latestRound.value = await api.getLatestRound()
-  } catch (e) {
-    if (import.meta.dev) console.error('Failed to load latest round:', e)
-  }
-}
-
-const loadGames = async () => {
-  loading.value = true
-  error.value = null
-  
-  try {
-    if (!latestRound.value) {
-      await loadLatestRound()
-    }
-    
-    const season = latestRound.value?.season || new Date().getFullYear()
-    const round = latestRound.value?.round_id || 1
-    
-    const data = await api.getGamesWithTips(season, round, selectedHeuristic.value)
-    gamesWithTips.value = data.games || []
-  } catch (e) {
-    error.value = 'Failed to load tips'
-    if (import.meta.dev) console.error(e)
-  } finally {
-    loading.value = false
-  }
-}
-
-const hasRoundChanged = (nextRound: LatestRoundResponse) => {
-  if (!latestRound.value) return true
-  return (
-    latestRound.value.season !== nextRound?.season ||
-    latestRound.value.round_id !== nextRound?.round_id
-  )
-}
-
-const refreshCurrentView = async () => {
-  try {
-    const nextRound = await api.getLatestRound()
-    const shouldSwitchRound = hasRoundChanged(nextRound)
-    latestRound.value = nextRound
-
-    // Keep current view fresh and automatically switch when the latest round changes.
-    if (shouldSwitchRound || !loading.value) {
-      await loadGames()
-    }
-  } catch (e) {
-    if (import.meta.dev) console.error('Auto-refresh failed:', e)
-  }
-}
-
-const generateTips = async () => {
-  generating.value = true
-  error.value = null
-  try {
-    const season = latestRound.value?.season || new Date().getFullYear()
-    const round = latestRound.value?.round_id || 1
-    await api.generateTips(season, round, [selectedHeuristic.value])
-    await loadGames()
-  } catch (e) {
-    error.value = 'Failed to generate tips'
-    if (import.meta.dev) console.error(e)
-  } finally {
-    generating.value = false
-  }
-}
-
-const formatDate = formatDateUtil
-
-// Persist selected heuristic on change
-watch(selectedHeuristic, (val) => {
-  localStorage.setItem('selected-heuristic', val)
-  loadGames()
-})
-
-onMounted(() => {
-  const stored = localStorage.getItem('selected-heuristic')
-  if (stored && ['weighted_tip', 'best_bet', 'yolo'].includes(stored)) {
-    selectedHeuristic.value = stored
-  }
-  loadLatestRound()
-  loadGames()
-  const refreshCallback = async () => {
-    if (document.visibilityState === 'visible') {
-      await refreshCurrentView()
-    }
-  }
-  autoRefreshTimer = setInterval(refreshCallback, AUTO_REFRESH_MS)
-})
-
-onUnmounted(() => {
-  if (autoRefreshTimer) {
-    clearInterval(autoRefreshTimer)
-    autoRefreshTimer = null
-  }
 })
 </script>
 
@@ -379,36 +360,10 @@ onUnmounted(() => {
   padding: 3rem 1.5rem;
 }
 
-/* Generate Tips Bar */
-.generate-tips-bar {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 1rem;
-  padding: 1.25rem 1.5rem;
-  margin-top: 1.5rem;
-  border: 1px dashed var(--color-border);
-  text-align: center;
-  flex-wrap: wrap;
-}
-
-.generate-tips-bar p {
-  margin: 0;
-  color: var(--color-muted);
+.empty-hint {
+  margin-top: 0.5rem;
   font-size: 0.875rem;
-}
-
-.generate-tips-bar.generating {
-  gap: 0.75rem;
-}
-
-.generate-tips-bar.generating .spinner {
-  width: 18px;
-  height: 18px;
-  border: 2px solid var(--color-border);
-  border-top-color: var(--color-text);
-  border-radius: 50%;
-  animation: spin 0.6s linear infinite;
+  color: var(--color-muted);
 }
 
 /* Games Grid */
@@ -539,53 +494,6 @@ onUnmounted(() => {
   text-align: center;
   padding: 1.5rem;
   color: var(--color-muted);
-}
-
-/* Model Predictions */
-.model-predictions {
-  margin-top: 1.25rem;
-  padding-top: 1.25rem;
-  border-top: 1px solid var(--color-border);
-}
-
-.models-header {
-  margin-bottom: 0.75rem;
-}
-
-.models-label {
-  font-size: 0.6875rem;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.1em;
-  color: var(--color-muted);
-}
-
-.models-list {
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-}
-
-.model-item {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 0.5rem 0;
-  font-size: 0.8125rem;
-}
-
-.model-name {
-  font-weight: 600;
-  color: var(--color-muted);
-}
-
-.model-prediction {
-  font-weight: 700;
-}
-
-.model-confidence {
-  font-weight: 700;
-  color: var(--color-text);
 }
 
 /* Mobile styles */

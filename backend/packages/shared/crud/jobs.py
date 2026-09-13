@@ -233,14 +233,19 @@ class JobLockCRUD:
         preventing race conditions where two concurrent invocations
         could both acquire the same lock.
 
-        SEC-ME-009: the caller-supplied ``expires_seconds`` is
-        **clamped to ``settings.job_lock_expire_seconds``** (default
-        300 s / 5 minutes).  This is a hard ceiling: a stuck in-process
-        job that holds the lock for hours blocks every subsequent run
-        of the same job, and operator intervention is the only
-        resolution.  Callers that want a shorter window can pass
-        ``expires_seconds=60`` etc.; the ceiling is only an upper
-        bound.
+        Expiry semantics (revised 2026-09, review finding JOBS-H2):
+
+        * ``expires_seconds=None`` → defaults to
+          ``settings.job_lock_expire_seconds`` (300 s).
+        * A caller-supplied value is **honoured as a floor**: a lock
+          must never expire before the caller's own job timeout does,
+          or a second instance can start the same job while the first
+          is still running.  Stuck-job protection is provided by the
+          job's own ``asyncio.wait_for`` timeout, not by an expiry
+          clamp.
+        * An absolute sanity ceiling (``settings.job_lock_max_seconds``,
+          default 4 h) still bounds absurd values — a caller cannot
+          accidentally hold a lock for a day.
 
         Before the INSERT, the method opportunistically cleans up any
         lock rows that have been expired for more than 24 hours
@@ -253,12 +258,10 @@ class JobLockCRUD:
         Returns:
             JobLock if lock was acquired, None if already locked
         """
-        # SEC-ME-009: clamp caller-supplied expires_seconds to the
-        # configured ceiling so a stuck in-process job cannot block
-        # every subsequent run of the same job for hours.
-        ceiling = settings.job_lock_expire_seconds
-        if expires_seconds is None or expires_seconds > ceiling:
-            expires_seconds = ceiling
+        if expires_seconds is None:
+            expires_seconds = settings.job_lock_expire_seconds
+        else:
+            expires_seconds = min(expires_seconds, settings.job_lock_max_seconds)
 
         # Opportunistic stale-lock cleanup (ME-004).  We do this
         # *before* the atomic INSERT so a newly-acquired lock is not
