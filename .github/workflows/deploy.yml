@@ -128,9 +128,22 @@ jobs:
           docker stop smoke-test || true
           exit 1
 
+  migrate:
+    name: Run DB migrations (before rollout)
+    # DEPLOY ORDER: migrations run BEFORE the new image is deployed so
+    # the app never boots against a schema it doesn't know.  Requires
+    # migrations to stay backward-compatible with the currently-running
+    # image (expand/contract).  Replaces the old post-deploy
+    # workflow_run trigger on migrate.yml.
+    needs: [test, integration-test, docker-smoke]
+    if: github.ref == 'refs/heads/main'
+    uses: ./.github/workflows/migrate.yml
+    secrets:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+
   deploy:
     name: Deploy to DigitalOcean App Platform
-    needs: [test, integration-test, docker-smoke]
+    needs: [test, integration-test, docker-smoke, migrate]
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main'
     environment:
