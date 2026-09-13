@@ -201,8 +201,11 @@ jobs:
 
       - name: Smoke test production health endpoint
         run: |
+          # B2 fix (2026-09 review): poll /api/health — the DO ingress
+          # routes /api to the backend (trimmed), while /health at the
+          # root is served by the frontend static site (404).
           for i in $(seq 1 30); do
-            HEALTH=$(curl -sf https://whatismytip.com/health 2>/dev/null || echo "failed")
+            HEALTH=$(curl -sf https://whatismytip.com/api/health 2>/dev/null || echo "failed")
             if [ "$HEALTH" != "failed" ]; then
               STATUS=$(echo "$HEALTH" | python3 -c "import sys,json; print(json.load(sys.stdin).get('status','unknown'))" 2>/dev/null || echo "unknown")
               if [ "$STATUS" = "healthy" ]; then

@@ -38,25 +38,20 @@ from typing import Dict, List, Optional, Tuple
 # `packages.shared` is importable when running from repo root.
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from packages.shared.db import Base, get_engine
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+from packages.shared.db import get_engine
 from packages.shared.models import (
     BacktestResult,
     EloCache,
     Game,
     GenerationProgress,
-    Injury,
     JobExecution,
     MatchAnalysis,
-    MatchWeather,
     ModelPrediction,
-    Player,
-    PlayerAdvancedStats,
-    PlayerMatchStats,
     Tip,
 )
-from packages.shared.utils import generate_slug
-from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -619,7 +614,6 @@ def seed_match_analyses(
 ) -> List[MatchAnalysis]:
     """Generate match analysis talking points for each game."""
     analyses: List[MatchAnalysis] = []
-    analysis_id = 1
 
     for game in games:
         # Determine winner for the analysis narrative
@@ -645,20 +639,21 @@ def seed_match_analyses(
 
         analyses.append(
             MatchAnalysis(
-                id=analysis_id,
                 game_id=game.id,
                 analysis_text=analysis_text,
             )
         )
-        analysis_id += 1
 
     return analyses
 
 
 def seed_generation_progress(seasons: List[int]) -> List[GenerationProgress]:
-    """Generate generation progress tracking entries."""
+    """Generate generation progress tracking entries.
+
+    No explicit ids (SEED-ID): the database autoincrement owns PKs —
+    explicit per-call counters collide across seasons.
+    """
     entries: List[GenerationProgress] = []
-    progress_id = 1
     now = datetime.now(timezone.utc)
 
     operations = [
@@ -673,7 +668,6 @@ def seed_generation_progress(seasons: List[int]) -> List[GenerationProgress]:
             started = now - timedelta(days=30)
             entries.append(
                 GenerationProgress(
-                    id=progress_id,
                     operation_type=op_type,
                     season=season,
                     total_items=total,
@@ -685,15 +679,18 @@ def seed_generation_progress(seasons: List[int]) -> List[GenerationProgress]:
                     updated_at=started + timedelta(minutes=45) if status == "completed" else started,
                 )
             )
-            progress_id += 1
 
     return entries
 
 
 def seed_job_executions() -> List[JobExecution]:
-    """Generate sample job execution history."""
+    """Generate sample job execution history.
+
+    No explicit ids (SEED-ID): explicit seeded ids don't advance the
+    Postgres identity sequence, so the FIRST real cron run after a seed
+    would collide on id=1.  Let the database assign ids.
+    """
     executions: List[JobExecution] = []
-    exec_id = 1
     now = datetime.now(timezone.utc)
 
     jobs = [
@@ -707,14 +704,13 @@ def seed_job_executions() -> List[JobExecution]:
         ("daily_sync", "completed", 9, 0),
     ]
 
-    for job_name, status, processed, failed in jobs:
-        started = now - timedelta(hours=exec_id * 4)
+    for hours_ago, (job_name, status, processed, failed) in enumerate(jobs, start=1):
+        started = now - timedelta(hours=hours_ago * 4)
         duration = random.randint(30, 300)
         completed = started + timedelta(seconds=duration)
 
         executions.append(
             JobExecution(
-                id=exec_id,
                 job_name=job_name,
                 status=status,
                 started_at=started,
@@ -726,7 +722,6 @@ def seed_job_executions() -> List[JobExecution]:
                 result_summary=f"Processed {processed} items successfully",
             )
         )
-        exec_id += 1
 
     return executions
 

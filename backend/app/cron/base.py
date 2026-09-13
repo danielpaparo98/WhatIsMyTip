@@ -57,7 +57,10 @@ def _make_lock_owner(job_name: str) -> str:
     """
     host = socket.gethostname()
     token = uuid.uuid4().hex[:8]
-    return f"fastapi-{job_name}-{host}-{os.getpid()}-{token}"
+    owner = f"fastapi-{job_name}-{host}-{os.getpid()}-{token}"
+    # JobLock.locked_by is String(100) — truncate defensively so a very
+    # long hostname/job name can never fail the INSERT.
+    return owner[:100]
 
 
 class BaseJob(ABC):
