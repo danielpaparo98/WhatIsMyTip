@@ -136,6 +136,14 @@ class Settings(BaseSettings):
     # Alerting Configuration
     alert_enabled: bool = False
     alert_webhook_url: Optional[str] = None
+
+    # Site rebuild webhook (SSG freshness): when set, TipGenerationJob
+    # POSTs to this URL after a successful tip-generation run so the
+    # statically-generated frontend rebuilds with fresh tips (e.g. a
+    # DigitalOcean App Platform deploy webhook).  Best-effort: failures
+    # are logged and never fail the job.
+    site_rebuild_webhook_url: Optional[str] = None
+    site_rebuild_timeout_seconds: int = 30
     alert_email_recipients: Union[str, List[str]] = []
     alert_timeout_seconds: int = 10  # webhook timeout
 
