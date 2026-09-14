@@ -8,7 +8,7 @@
       <section v-if="currentSeasonData" class="current-season-section">
         <div class="current-season-header">
           <h2>
-            <span class="badge">ðŸ† Current Season {{ currentSeasonData.season }}</span>
+            <span class="badge">Current Season {{ currentSeasonData.season }}</span>
           </h2>
           <p class="season-progress">
             {{ currentSeasonData.rounds_completed }} / {{ currentSeasonData.total_rounds }} rounds completed
@@ -75,7 +75,7 @@
             >
               <div class="model-mini-header">
                 <span class="model-mini-name">{{ getModelDisplayName(model.model_name) }}</span>
-                <span v-if="model.model_name === currentSeasonBestModel" class="best-dot" title="Best performing model this season">â˜…</span>
+                <span v-if="model.model_name === currentSeasonBestModel" class="best-dot" title="Best performing model this season">★</span>
               </div>
               <div class="model-mini-acc">
                 {{ (model.overall_accuracy * 100).toFixed(1) }}%
