@@ -31,16 +31,19 @@
           <div class="teams">
             <div class="team home">
 <img :src="getLogoUrl(gameDetail.game.home_team ?? 'TBD')" :alt="`${gameDetail.game.home_team ?? 'TBD'} logo`" class="team-logo" loading="lazy" decoding="async" width="80" height="80" />
-              <span class="team-name">{{ gameDetail.game.home_team ?? 'TBD' }}</span>
-              <span v-if="gameDetail.game.home_score !== null" class="score">{{ gameDetail.game.home_score }}</span>
+              <span class="team-name">{{ getTeamDisplayName(gameDetail.game.home_team) }}</span>
+              <!-- DESIGN-FIX: an upcoming game showed literal "0 - 0"
+                   scores — meaningless and misleading. Only completed
+                   games display scores. -->
+              <span v-if="gameDetail.game.completed && gameDetail.game.home_score !== null" class="score">{{ gameDetail.game.home_score }}</span>
             </div>
 
             <div class="vs">VS</div>
 
             <div class="team away">
 <img :src="getLogoUrl(gameDetail.game.away_team ?? 'TBD')" :alt="`${gameDetail.game.away_team ?? 'TBD'} logo`" class="team-logo" loading="lazy" decoding="async" width="80" height="80" />
-              <span class="team-name">{{ gameDetail.game.away_team ?? 'TBD' }}</span>
-              <span v-if="gameDetail.game.away_score !== null" class="score">{{ gameDetail.game.away_score }}</span>
+              <span class="team-name">{{ getTeamDisplayName(gameDetail.game.away_team) }}</span>
+              <span v-if="gameDetail.game.completed && gameDetail.game.away_score !== null" class="score">{{ gameDetail.game.away_score }}</span>
             </div>
           </div>
 
@@ -121,7 +124,7 @@ import { sortByHeuristicOrder } from '~/composables/useFormatters'
 
 const route = useRoute()
 const { getGameDetail } = useApi()
-const { getLogoUrl } = useTeamLogos()
+const { getLogoUrl, getTeamDisplayName } = useTeamLogos()
 const { formatDateShort, formatTime, getModelDisplayName } = useFormatters()
 
 // H-5 (2026-09 review): `keepalive: true` made Vue reuse this page
@@ -358,12 +361,13 @@ useHead({
   text-transform: uppercase;
   letter-spacing: 0.05em;
   background: var(--color-muted);
-  color: var(--color-background);
+  color: var(--color-bg);
 }
 
 .status.completed {
-  background: #10b981;
-  color: white;
+  /* DESIGN-FIX (identity): green pill broke the monochrome language */
+  background: var(--color-text);
+  color: var(--color-bg);
 }
 
 /* Teams */
@@ -453,17 +457,15 @@ useHead({
   gap: 1rem;
 }
 
-/* Heuristic-specific styling */
-.tip-card.best-bet {
-  border-left: 4px solid #10b981;
-}
-
-.tip-card.yolo {
-  border-left: 4px solid #f97316;
-}
-
+/* Heuristic-specific styling
+   DESIGN-FIX (identity): the three accents (purple/green/orange) broke
+   the monochrome wireframe language — the Color Consistency Lock in the
+   design review. The uppercase label already differentiates heuristics;
+   all tips now carry the same strong monochrome spine. */
+.tip-card.best-bet,
+.tip-card.yolo,
 .tip-card.weighted-tip {
-  border-left: 4px solid #8b5cf6;
+  border-left: 4px solid var(--color-text);
 }
 
 /* Models Grid */

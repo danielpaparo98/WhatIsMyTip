@@ -64,34 +64,29 @@ const chartData = computed(() => {
       {
         label: 'Margin Weight',
         data: sorted.map((r) => r.margin_coef),
+        // DESIGN-FIX (identity): red/green/purple chart palette broke
+        // the monochrome wireframe language. Positive = solid black,
+        // negative = 45° grey — direction stays readable, identity holds.
         backgroundColor: sorted.map((r) =>
-          r.margin_coef >= 0
-            ? 'rgba(99, 102, 241, 0.75)'
-            : 'rgba(239, 68, 68, 0.75)',
+          r.margin_coef >= 0 ? 'rgba(0, 0, 0, 0.85)' : 'rgba(0, 0, 0, 0.35)',
         ),
         borderColor: sorted.map((r) =>
-          r.margin_coef >= 0
-            ? 'rgba(99, 102, 241, 1)'
-            : 'rgba(239, 68, 68, 1)',
+          r.margin_coef >= 0 ? 'rgba(0, 0, 0, 1)' : 'rgba(0, 0, 0, 0.5)',
         ),
         borderWidth: 1,
-        borderRadius: 3,
+        borderRadius: 0,
       },
       {
         label: 'Confidence Weight',
         data: sorted.map((r) => r.confidence_coef),
         backgroundColor: sorted.map((r) =>
-          r.confidence_coef >= 0
-            ? 'rgba(16, 185, 129, 0.75)'
-            : 'rgba(239, 68, 68, 0.75)',
+          r.confidence_coef >= 0 ? 'rgba(120, 120, 120, 0.8)' : 'rgba(120, 120, 120, 0.35)',
         ),
         borderColor: sorted.map((r) =>
-          r.confidence_coef >= 0
-            ? 'rgba(16, 185, 129, 1)'
-            : 'rgba(239, 68, 68, 1)',
+          r.confidence_coef >= 0 ? 'rgba(90, 90, 90, 1)' : 'rgba(90, 90, 90, 0.5)',
         ),
         borderWidth: 1,
-        borderRadius: 3,
+        borderRadius: 0,
       },
     ],
   }
