@@ -85,5 +85,19 @@ export function useFormatters() {
     })
   }
 
-  return { formatHeuristic, getModelDisplayName, formatDate, formatDateShort, formatTime }
+  /**
+   * DESIGN-FIX (copy): normalises AI explanation copy for display —
+   * em-dashes (the most recognisable LLM copy tell) become en-dashes.
+   * The DB source text stays untouched.
+   */
+  const formatExplanation = formatExplanationImpl
+
+  return { formatHeuristic, getModelDisplayName, formatDate, formatDateShort, formatTime, formatExplanation }
+}
+
+// Module-level implementation so non-composable contexts (pure computed
+// helpers in components) can normalise copy without calling the composable.
+export const formatExplanationImpl = (text: string | null | undefined): string => {
+  if (!text) return ''
+  return text.replace(/—/g, '–')
 }

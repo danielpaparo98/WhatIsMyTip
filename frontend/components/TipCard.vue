@@ -1,19 +1,5 @@
-<template>
-  <div class="tip-card">
-    <div class="tip-header">
-      <span class="heuristic">{{ heuristicLabel }}</span>
-      <span class="confidence">{{ Math.round(confidence * 100) }}%</span>
-    </div>
-    <div class="tip-body">
-      <h3>{{ selectedTeam }}</h3>
-      <p class="margin">Margin: {{ margin }} pts</p>
-    </div>
-    <p v-if="explanation" class="explanation">{{ explanation }}</p>
-  </div>
-</template>
-
 <script setup lang="ts">
-import { HEURISTIC_LABELS } from '~/composables/useFormatters'
+import { HEURISTIC_LABELS, formatExplanationImpl } from '~/composables/useFormatters'
 
 interface Props {
   heuristic: string
@@ -25,10 +11,29 @@ interface Props {
 
 const props = defineProps<Props>()
 
+const { getTeamDisplayName } = useTeamLogos()
+
 const heuristicLabel = computed(() => {
   return HEURISTIC_LABELS[props.heuristic] || props.heuristic
 })
+
+const teamDisplay = computed(() => getTeamDisplayName(props.selectedTeam))
+const cleanExplanation = computed(() => formatExplanationImpl(props.explanation))
 </script>
+
+<template>
+  <div class="tip-card">
+    <div class="tip-header">
+      <span class="heuristic">{{ heuristicLabel }}</span>
+      <span class="confidence">{{ Math.round(confidence * 100) }}%</span>
+    </div>
+    <div class="tip-body">
+      <h3>{{ teamDisplay }}</h3>
+      <p class="margin">Margin: {{ margin }} pts</p>
+    </div>
+    <p v-if="cleanExplanation" class="explanation">{{ cleanExplanation }}</p>
+  </div>
+</template>
 
 <style scoped>
 .tip-card {

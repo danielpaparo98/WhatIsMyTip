@@ -61,10 +61,14 @@
                 <div class="teams">
                   <div class="team home">
                     <img :src="getLogoUrl(game.home_team ?? 'TBD')" :alt="`${game.home_team ?? 'TBD'} logo`" class="team-logo" loading="lazy" decoding="async" width="40" height="40" />
+                    <!-- DESIGN-FIX: logos alone assumed badge recognition —
+                         show the name so the matchup is readable at a glance -->
+                    <span class="team-name">{{ getTeamDisplayName(game.home_team) }}</span>
                   </div>
                   <span class="vs">VS</span>
                   <div class="team away">
                     <img :src="getLogoUrl(game.away_team ?? 'TBD')" :alt="`${game.away_team ?? 'TBD'} logo`" class="team-logo" loading="lazy" decoding="async" width="40" height="40" />
+                    <span class="team-name">{{ getTeamDisplayName(game.away_team) }}</span>
                   </div>
                 </div>
                 <div class="match-details">
@@ -80,10 +84,10 @@
                   <span class="confidence">{{ Math.round(game.tip.confidence * 100) }}%</span>
                 </div>
                 <div class="tip-body">
-                  <h3>{{ game.tip.selected_team }}</h3>
+                  <h3>{{ getTeamDisplayName(game.tip.selected_team) }}</h3>
                   <p class="margin">Margin: {{ game.tip.margin }} pts</p>
                 </div>
-                <p v-if="game.tip.explanation" class="explanation">{{ game.tip.explanation }}</p>
+                <p v-if="game.tip?.explanation" class="explanation">{{ formatExplanation(game.tip.explanation) }}</p>
               </div>
               <div v-else class="no-tip">
                 <p>No tip available</p>
@@ -102,8 +106,8 @@ import type { GameWithTip, GamesWithTipsResponse, LatestRoundResponse } from '~/
 import { HEURISTIC_ORDER } from '~/composables/useFormatters'
 import { AUTO_REFRESH_MS, useLatestRound } from '~/composables/useLatestRound'
 const api = useApi()
-const { getLogoUrl } = useTeamLogos()
-const { formatHeuristic, formatDate: formatDateUtil } = useFormatters()
+const { getLogoUrl, getTeamDisplayName } = useTeamLogos()
+const { formatHeuristic, formatDate: formatDateUtil, formatExplanation } = useFormatters()
 
 // ---------------------------------------------------------------------------
 // UI state (declared first — the fetch watcher below reads it)
@@ -251,14 +255,17 @@ useHead({
 
 <style scoped>
 .hero {
-  padding: 4rem 1.5rem;
+  /* DESIGN-FIX (rhythm): the old 4rem bottom padding stacked with the
+     section's 3rem top padding left a ~200px dead zone between the hero
+     and the round strip. Tightened so the page breathes without a chasm. */
+  padding: 3.5rem 1.5rem 2.25rem;
   text-align: center;
 }
 
 .hero h1 {
   font-size: clamp(2rem, 8vw, 6rem);
   line-height: 1.05;
-  margin-bottom: 1.5rem;
+  margin-bottom: 1rem;
 }
 
 .hero p {
@@ -268,7 +275,7 @@ useHead({
 }
 
 .section {
-  padding: 3rem 1.5rem;
+  padding: 2.25rem 1.5rem 3rem;
 }
 
 /* Round Display */
@@ -301,12 +308,14 @@ useHead({
   color: var(--color-muted);
 }
 
-/* Data Warning */
+/* Data Warning
+   DESIGN-FIX (identity): amber alert styling broke the monochrome
+   language — a dashed border carries the "notice" weight instead. */
 .data-warning {
   padding: 0.875rem 1.25rem;
-  background: rgba(255, 193, 7, 0.1);
-  border: 1px solid rgba(255, 193, 7, 0.3);
-  border-radius: 8px;
+  background: var(--color-hover);
+  border: 1px dashed var(--color-text);
+  border-radius: 0;
   margin-bottom: 1.5rem;
   text-align: center;
 }
@@ -318,7 +327,7 @@ useHead({
 }
 
 .data-warning strong {
-  color: #f59e0b;
+  color: var(--color-text);
 }
 
 /* Heuristic Selector */
@@ -385,13 +394,17 @@ useHead({
   box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.1);
 }
 
+/* Match Info */
 .game-card {
   border: 1px solid var(--color-border);
   padding: 1.5rem;
   height: 100%;
+  /* DESIGN-FIX (rhythm): equal-height cards — the tip block fills the
+     card so short explanations no longer leave a ragged void */
+  display: flex;
+  flex-direction: column;
 }
 
-/* Match Info */
 .match-info {
   margin-bottom: 1.5rem;
   padding-bottom: 1.25rem;
@@ -400,7 +413,7 @@ useHead({
 
 .teams {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
   margin-bottom: 0.75rem;
 }
@@ -410,18 +423,27 @@ useHead({
   font-size: 1.125rem;
   font-weight: 700;
   display: flex;
+  flex-direction: column;
   align-items: center;
-  gap: 0.5rem;
+  gap: 0.375rem;
 }
 
 .team.home {
-  text-align: right;
-  justify-content: flex-end;
+  text-align: center;
+  justify-content: center;
 }
 
 .team.away {
-  text-align: left;
-  justify-content: flex-start;
+  text-align: center;
+  justify-content: center;
+}
+
+.team-name {
+  font-size: 0.8125rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  line-height: 1.2;
 }
 
 .team-logo {
@@ -450,6 +472,8 @@ useHead({
   background: var(--color-hover);
   padding: 1.25rem;
   border-radius: 4px;
+  /* Fill remaining card height so sibling cards align */
+  flex: 1;
 }
 
 .tip-header {
@@ -488,18 +512,29 @@ useHead({
   margin-top: 0.875rem;
   font-size: 0.875rem;
   line-height: 1.5;
+  margin-bottom: 0;
+  /* DESIGN-FIX (density): long AI explanations dominated the cards —
+     clamp on the home grid; the full text lives on the game page */
+  display: -webkit-box;
+  -webkit-line-clamp: 5;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 
 .no-tip {
   text-align: center;
   padding: 1.5rem;
   color: var(--color-muted);
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 /* Mobile styles */
 @media (max-width: 640px) {
   .hero {
-    padding: 3rem 1rem;
+    padding: 2.5rem 1rem 1.75rem;
   }
 
   .hero h1 {
@@ -577,7 +612,7 @@ useHead({
 /* Desktop styles */
 @media (min-width: 1025px) {
   .hero {
-    padding: 6rem 2rem;
+    padding: 5rem 2rem 3rem;
   }
 
   .hero h1 {
