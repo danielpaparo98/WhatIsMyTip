@@ -83,28 +83,45 @@ function fireCelebration(colors: string[]) {
   }, 200)
 }
 
-watch(
-  latestRound,
-  (data) => {
-    if (!data) return
-    if (data.is_off_season && data.premier) {
-      premier.value = data.premier
-      season.value = data.season
-      premierLogo.value = getLogoUrl(data.premier)
-      visible.value = true
+// DESIGN-FIX (hydration): the previous `watch(..., { immediate: true })`
+// applied state during client SETUP — before hydration patching — while
+// the server had rendered the banner-hidden state (the store only
+// becomes seeded after the page's payload lands). That produced a
+// hydration mismatch on every off-season page load. Apply the initial
+// state in onMounted instead; the non-immediate watch handles updates.
+watch(latestRound, (data) => {
+  if (!data) return
+  if (data.is_off_season && data.premier) {
+    premier.value = data.premier
+    season.value = data.season
+    premierLogo.value = getLogoUrl(data.premier)
+    visible.value = true
 
-      // Fire confetti once using the premier's colours
-      if (!hasFired.value) {
-        hasFired.value = true
-        const colors = getTeamColors(data.premier)
-        fireCelebration(colors)
-      }
-    } else {
-      visible.value = false
+    // Fire confetti once using the premier's colours
+    if (!hasFired.value) {
+      hasFired.value = true
+      const colors = getTeamColors(data.premier)
+      fireCelebration(colors)
     }
-  },
-  { immediate: true },
-)
+  } else {
+    visible.value = false
+  }
+})
+
+onMounted(() => {
+  // Apply whatever the store already holds (seeded from payload).
+  const data = latestRound.value
+  if (data?.is_off_season && data.premier) {
+    premier.value = data.premier
+    season.value = data.season
+    premierLogo.value = getLogoUrl(data.premier)
+    visible.value = true
+    if (!hasFired.value) {
+      hasFired.value = true
+      fireCelebration(getTeamColors(data.premier))
+    }
+  }
+})
 </script>
 
 <style scoped>
