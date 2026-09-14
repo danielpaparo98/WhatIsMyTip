@@ -1,9 +1,9 @@
-﻿name: Backend CI
+name: Backend CI
 
 # DEPLOY MODEL (simplified 2026-09): DigitalOcean deploys natively on
 # push to main (deploy_on_push: true in the app spec) and the backend
 # container runs `alembic upgrade head` at startup
-# (RUN_MIGRATIONS_ON_START=true) BEFORE uvicorn serves â€” DO's health
+# (RUN_MIGRATIONS_ON_START=true) BEFORE uvicorn serves — DO's health
 # check gates the rollout, so migrations always precede traffic.
 #
 # CI's job is therefore quality gates only: unit tests, integration
