@@ -1,7 +1,7 @@
-﻿name: Frontend CI
+name: Frontend CI
 
 # DEPLOY MODEL (simplified 2026-09): DigitalOcean deploys natively on
-# push to main (deploy_on_push: true in the app spec) â€” the static site
+# push to main (deploy_on_push: true in the app spec) — the static site
 # rebuilds from source with its BUILD_TIME env vars. CI here is quality
 # gates only: lint/typecheck/unit tests + a production build check.
 # No GitHub secrets required.

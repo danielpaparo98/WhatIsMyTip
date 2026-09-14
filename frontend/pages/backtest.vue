@@ -124,7 +124,7 @@
               <strong>Intercept:</strong> {{ activeModelData.model.intercept.toFixed(2) }}
             </span>
             <span v-if="activeModelData.model.metrics.r2 != null" class="meta-item">
-              <strong>RÂ²:</strong> {{ activeModelData.model.metrics.r2.toFixed(4) }}
+              <strong>R²:</strong> {{ activeModelData.model.metrics.r2.toFixed(4) }}
             </span>
             <span v-if="activeModelData.model.metrics.mae != null" class="meta-item">
               <strong>MAE:</strong> {{ activeModelData.model.metrics.mae.toFixed(1) }}
@@ -143,14 +143,14 @@
                 <span class="eq-left">predicted_margin =</span>
                 <span class="eq-intercept">{{ activeModelData.model!.intercept.toFixed(2) }}</span>
                 <span v-for="(row, i) in groupedModelCoefficients" :key="row.model" class="eq-term">
-                  <span class="eq-op">{{ row.margin_coef >= 0 ? '+' : 'âˆ’' }}</span>
+                  <span class="eq-op">{{ row.margin_coef >= 0 ? '+' : '−' }}</span>
                   <span class="eq-coeff">{{ Math.abs(row.margin_coef).toFixed(3) }}</span>
-                  <span class="eq-dot">Â·</span>
+                  <span class="eq-dot">·</span>
                   <span class="eq-model">{{ getModelDisplayName(row.model) }}<sub class="eq-sub">m</sub></span>
                 </span>
               </div>
               <p class="equation-note">
-                Each model contributes a margin weight (Ã— its predicted margin toward home) and a confidence weight.
+                Each model contributes a margin weight (× its predicted margin toward home) and a confidence weight.
                 Models with larger absolute weights have more influence on the final tip.
               </p>
             </div>
@@ -319,7 +319,7 @@ const modelExplanationText = computed(() => {
     `linear regression trained on ${m.training_rows} historical games. ` +
     `Each model contributes a margin weight (influence on score margin) and a ` +
     `confidence weight (influence on confidence). ` +
-    `The current model (v${m.version}) has RÂ² = ${r2} ` +
+    `The current model (v${m.version}) has R² = ${r2} ` +
     `with intercept ${m.intercept.toFixed(2)}. ` +
     `Most influential models: ${topNames}. ` +
     `The model is retrained weekly with updated coefficients.`
@@ -941,7 +941,7 @@ onMounted(async () => {
   }
 }
 
-/* Disclaimer â€” visible on all screen sizes */
+/* Disclaimer — visible on all screen sizes */
 .disclaimer {
   margin-top: 1rem;
   padding: 0.75rem;
