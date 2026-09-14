@@ -1,5 +1,10 @@
-name: Frontend CI
+﻿name: Frontend CI
 
+# DEPLOY MODEL (simplified 2026-09): DigitalOcean deploys natively on
+# push to main (deploy_on_push: true in the app spec) â€” the static site
+# rebuilds from source with its BUILD_TIME env vars. CI here is quality
+# gates only: lint/typecheck/unit tests + a production build check.
+# No GitHub secrets required.
 on:
   push:
     branches: [main, dev]
@@ -66,64 +71,4 @@ jobs:
             echo "ERROR: Build did not produce .output directory"
             exit 1
           fi
-          echo "✅ Build succeeded, .output directory created"
-
-  deploy:
-    name: Deploy frontend (DigitalOcean App Platform)
-    # CI previously built and verified the frontend but never shipped
-    # it — deploys happened manually from the DO dashboard, so what CI
-    # validated and what was live could drift.  The DO app is one unit
-    # (frontend static site + backend container), so triggering an app
-    # deployment ships the frontend component too.
-    needs: build
-    runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main'
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install doctl
-        uses: digitalocean/action-doctl@v2
-        with:
-          token: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
-
-      - name: Trigger App Platform deployment
-        env:
-          DO_APP_ID: ${{ secrets.DO_APP_ID }}
-        run: |
-          DEPLOYMENT_ID=$(doctl apps create-deployment "$DO_APP_ID" --format ID --no-header)
-          echo "Triggered deployment: $DEPLOYMENT_ID"
-          echo "DEPLOYMENT_ID=$DEPLOYMENT_ID" >> $GITHUB_ENV
-
-      - name: Wait for deployment to complete
-        env:
-          DO_APP_ID: ${{ secrets.DO_APP_ID }}
-        run: |
-          for i in $(seq 1 50); do
-            STATUS=$(doctl apps get-deployment "$DO_APP_ID" "$DEPLOYMENT_ID" --format Phase --no-header 2>/dev/null || echo "unknown")
-            echo "Deployment status: $STATUS"
-            if [ "$STATUS" = "ACTIVE" ]; then
-              echo "Deployment is active"
-              exit 0
-            fi
-            if [ "$STATUS" = "ERROR" ]; then
-              echo "ERROR: Deployment failed"
-              exit 1
-            fi
-            sleep 12
-          done
-          echo "ERROR: Deployment timed out after 10 minutes"
-          exit 1
-
-      - name: Smoke test production site
-        run: |
-          for i in $(seq 1 30); do
-            HTTP=$(curl -sf -o /dev/null -w "%{http_code}" https://whatismytip.com 2>/dev/null || echo "failed")
-            if [ "$HTTP" = "200" ]; then
-              echo "✅ Production site is serving (HTTP $HTTP)"
-              exit 0
-            fi
-            echo "Attempt $i: HTTP $HTTP"
-            sleep 10
-          done
-          echo "❌ Production site smoke test failed after 5 minutes" >&2
-          exit 1
+          echo "âœ… Build succeeded, .output directory created"

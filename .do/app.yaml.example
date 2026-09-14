@@ -10,9 +10,7 @@
 # Apply changes with:
 #   doctl apps update ecc5a2a0-917b-4659-add6-e558c2d00902 --spec ~/.do/whatismytip.app.yaml
 #
-# NOTE: deploy_on_push is deliberately false on both components — CI
-# (.github/workflows) is the sole deployment trigger so migrations
-# always run BEFORE rollout.
+# NOTE: deploy_on_push is true on both components — push = deploy. Migrations run inside each deployment at container startup (RUN_MIGRATIONS_ON_START) and DO's health check gates the rollout.
 
 domains:
 - domain: whatismytip.com
@@ -38,6 +36,9 @@ services:
   - key: ENVIRONMENT
     scope: RUN_AND_BUILD_TIME
     value: production
+  - key: RUN_MIGRATIONS_ON_START
+    scope: RUN_AND_BUILD_TIME
+    value: "true"
   - key: SITE_REBUILD_DO_APP_ID
     scope: RUN_AND_BUILD_TIME
     value: ecc5a2a0-917b-4659-add6-e558c2d00902
@@ -216,10 +217,10 @@ services:
     value: production
   github:
     branch: main
-    # B3 fix (2026-09 review): DO must not deploy main pushes directly —
-    # CI (deploy.yml) runs migrations BEFORE rollout and is the sole
-    # deployment trigger.
-    deploy_on_push: false
+    # Push = deploy. The backend container runs alembic upgrade head at
+    # startup (RUN_MIGRATIONS_ON_START) BEFORE serving; DO's health
+    # check gates the rollout.
+    deploy_on_push: true
     repo: danielpaparo98/WhatIsMyTip
   health_check:
     http_path: /health
@@ -252,11 +253,10 @@ static_sites:
     value: production
   github:
     branch: main
-    # B3 fix (2026-09 review): deploy_on_push was true, so DO deployed
-    # every main push independently of CI — racing the migrate job that
-    # must run BEFORE rollout. CI (deploy.yml / frontend.yml) is now the
-    # sole deployment trigger; migrations always precede rollout.
-    deploy_on_push: false
+    # Push = deploy. Migrations run inside each deployment at container
+    # startup (RUN_MIGRATIONS_ON_START) with the health check gating
+    # the rollout.
+    deploy_on_push: true
     repo: danielpaparo98/WhatIsMyTip
   name: whatismytip-frontend
   output_dir: .output/public
