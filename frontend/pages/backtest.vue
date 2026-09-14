@@ -1,4 +1,4 @@
-<template>
+﻿<template>
   <section class="hero">
         <h1>Backtesting</h1>
         <p>See how our heuristics performed historically.</p>
@@ -8,7 +8,7 @@
       <section v-if="currentSeasonData" class="current-season-section">
         <div class="current-season-header">
           <h2>
-            <span class="badge">🏆 Current Season {{ currentSeasonData.season }}</span>
+            <span class="badge">ðŸ† Current Season {{ currentSeasonData.season }}</span>
           </h2>
           <p class="season-progress">
             {{ currentSeasonData.rounds_completed }} / {{ currentSeasonData.total_rounds }} rounds completed
@@ -41,7 +41,7 @@
                 </span>
               </div>
               <div class="disclaimer">
-                <small>⚠️ Projections are based on early season performance and may change as the season progresses.</small>
+                <small>âš ï¸ Projections are based on early season performance and may change as the season progresses.</small>
               </div>
               <div class="stat-row">
                 <span class="stat-label">Accuracy</span>
@@ -75,7 +75,7 @@
             >
               <div class="model-mini-header">
                 <span class="model-mini-name">{{ getModelDisplayName(model.model_name) }}</span>
-                <span v-if="model.model_name === currentSeasonBestModel" class="best-dot" title="Best performing model this season">★</span>
+                <span v-if="model.model_name === currentSeasonBestModel" class="best-dot" title="Best performing model this season">â˜…</span>
               </div>
               <div class="model-mini-acc">
                 {{ (model.overall_accuracy * 100).toFixed(1) }}%
@@ -109,7 +109,7 @@
           <p>{{ activeModelError }}</p>
         </div>
         <div v-else-if="!activeModelData?.active" class="model-empty">
-          <p>⏳ No trained Weighted Tip model yet. The model will be trained after the first weekly retrain job runs.</p>
+          <p>â³ No trained Weighted Tip model yet. The model will be trained after the first weekly retrain job runs.</p>
           <p class="model-empty-sub">Until then, the Weighted Tip heuristic uses a majority-vote fallback.</p>
         </div>
         <div v-else-if="activeModelData.model" class="model-content">
@@ -124,7 +124,7 @@
               <strong>Intercept:</strong> {{ activeModelData.model.intercept.toFixed(2) }}
             </span>
             <span v-if="activeModelData.model.metrics.r2 != null" class="meta-item">
-              <strong>R²:</strong> {{ activeModelData.model.metrics.r2.toFixed(4) }}
+              <strong>RÂ²:</strong> {{ activeModelData.model.metrics.r2.toFixed(4) }}
             </span>
             <span v-if="activeModelData.model.metrics.mae != null" class="meta-item">
               <strong>MAE:</strong> {{ activeModelData.model.metrics.mae.toFixed(1) }}
@@ -143,14 +143,14 @@
                 <span class="eq-left">predicted_margin =</span>
                 <span class="eq-intercept">{{ activeModelData.model!.intercept.toFixed(2) }}</span>
                 <span v-for="(row, i) in groupedModelCoefficients" :key="row.model" class="eq-term">
-                  <span class="eq-op">{{ row.margin_coef >= 0 ? '+' : '−' }}</span>
+                  <span class="eq-op">{{ row.margin_coef >= 0 ? '+' : 'âˆ’' }}</span>
                   <span class="eq-coeff">{{ Math.abs(row.margin_coef).toFixed(3) }}</span>
-                  <span class="eq-dot">·</span>
+                  <span class="eq-dot">Â·</span>
                   <span class="eq-model">{{ getModelDisplayName(row.model) }}<sub class="eq-sub">m</sub></span>
                 </span>
               </div>
               <p class="equation-note">
-                Each model contributes a margin weight (× its predicted margin toward home) and a confidence weight.
+                Each model contributes a margin weight (Ã— its predicted margin toward home) and a confidence weight.
                 Models with larger absolute weights have more influence on the final tip.
               </p>
             </div>
@@ -319,7 +319,7 @@ const modelExplanationText = computed(() => {
     `linear regression trained on ${m.training_rows} historical games. ` +
     `Each model contributes a margin weight (influence on score margin) and a ` +
     `confidence weight (influence on confidence). ` +
-    `The current model (v${m.version}) has R² = ${r2} ` +
+    `The current model (v${m.version}) has RÂ² = ${r2} ` +
     `with intercept ${m.intercept.toFixed(2)}. ` +
     `Most influential models: ${topNames}. ` +
     `The model is retrained weekly with updated coefficients.`
@@ -409,7 +409,7 @@ onMounted(async () => {
   padding: 0.375rem 0.75rem;
   background: var(--color-text);
   color: var(--color-bg);
-  border-radius: 2rem;
+  border-radius: 0;
   font-weight: 700;
   font-size: 0.8125rem;
 }
@@ -429,7 +429,7 @@ onMounted(async () => {
 .current-season-card {
   background: var(--color-bg);
   border: 2px solid var(--color-text);
-  border-radius: 0.75rem;
+  border-radius: 0;
   padding: 1.25rem;
   box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
 }
@@ -455,9 +455,7 @@ onMounted(async () => {
 
 .heuristic-badge {
   padding: 0.25rem 0.625rem;
-  background: #10b981;
-  color: white;
-  border-radius: 1rem;
+  background: transparent;$2color: var(--color-text);$3border: 1px solid var(--color-text);border-radius: 0;text-transform: uppercase;
   font-size: 0.6875rem;
   font-weight: 600;
 }
@@ -486,11 +484,11 @@ onMounted(async () => {
 }
 
 .stat-value.positive {
-  color: #00a000;
+  color: #15803d;
 }
 
 .stat-value.negative {
-  color: #c00000;
+  color: #b91c1c;
 }
 
 .stat-value.projected {
@@ -521,9 +519,9 @@ onMounted(async () => {
   display: inline-flex;
   align-items: center;
   padding: 0.25rem 0.625rem;
-  background: #6366f1;
-  color: white;
-  border-radius: 1rem;
+  background: var(--color-text);
+  color: var(--color-bg);
+  border-radius: 0;
   font-size: 0.75rem;
   font-weight: 700;
 }
@@ -566,7 +564,7 @@ onMounted(async () => {
   padding: 1rem 1.25rem;
   margin-bottom: 1.5rem;
   background: var(--color-bg-secondary);
-  border-left: 3px solid #6366f1;
+  border-left: 3px solid var(--color-text);
   border-radius: 0.375rem;
   font-size: 0.875rem;
   line-height: 1.6;
@@ -581,7 +579,7 @@ onMounted(async () => {
 .equation-card {
   background: var(--color-bg-secondary);
   border: 1px solid var(--color-border);
-  border-radius: 0.625rem;
+  border-radius: 0;
   padding: 1.25rem;
   margin-bottom: 1.5rem;
 }
@@ -613,7 +611,7 @@ onMounted(async () => {
 
 .eq-intercept {
   font-weight: 800;
-  color: #6366f1;
+  color: var(--color-text);
   white-space: nowrap;
 }
 
@@ -691,12 +689,12 @@ onMounted(async () => {
 .model-stat-card {
   border: 1px solid var(--color-border);
   padding: 1.25rem;
-  border-radius: 0.375rem;
+  border-radius: 0;
   transition: border-color 0.2s;
 }
 
 .model-stat-card.best-card {
-  border-color: #6366f1;
+  border-color: var(--color-text);
   border-width: 2px;
 }
 
@@ -719,9 +717,9 @@ onMounted(async () => {
   display: inline-flex;
   align-items: center;
   padding: 0.1875rem 0.5rem;
-  background: #6366f1;
-  color: white;
-  border-radius: 0.25rem;
+  background: var(--color-text);
+  color: var(--color-bg);
+  border-radius: 0;
   font-size: 0.625rem;
   font-weight: 700;
   text-transform: uppercase;
@@ -765,7 +763,7 @@ onMounted(async () => {
 
 .model-mini-card {
   border: 1px solid var(--color-border);
-  border-radius: 0.5rem;
+  border-radius: 0;
   padding: 0.625rem;
   text-align: center;
   background: var(--color-bg);
@@ -773,9 +771,9 @@ onMounted(async () => {
 }
 
 .model-mini-card.best-model-card {
-  border-color: #6366f1;
+  border-color: var(--color-text);
   border-width: 2px;
-  box-shadow: 0 0 0 1px rgba(99, 102, 241, 0.15);
+  
 }
 
 .model-mini-header {
@@ -798,7 +796,7 @@ onMounted(async () => {
 
 .best-dot {
   font-size: 0.6875rem;
-  color: #6366f1;
+  color: var(--color-text);
   flex-shrink: 0;
 }
 
@@ -825,11 +823,11 @@ onMounted(async () => {
 }
 
 .model-mini-profit.positive {
-  color: #00a000;
+  color: #15803d;
 }
 
 .model-mini-profit.negative {
-  color: #c00000;
+  color: #b91c1c;
 }
 
 .model-mini-error {
@@ -943,17 +941,17 @@ onMounted(async () => {
   }
 }
 
-/* Disclaimer — visible on all screen sizes */
+/* Disclaimer â€” visible on all screen sizes */
 .disclaimer {
   margin-top: 1rem;
   padding: 0.75rem;
-  background-color: rgba(251, 191, 36, 0.1);
-  border-left: 3px solid #fbbf24;
+  background-color: var(--color-bg-secondary);
+  border-left: 3px solid var(--color-text);
   border-radius: 0.25rem;
 }
 
 .disclaimer small {
-  color: #fbbf24;
+  color: var(--color-muted);
   font-size: 0.75rem;
   line-height: 1.4;
 }

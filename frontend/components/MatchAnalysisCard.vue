@@ -1,7 +1,6 @@
 <template>
   <div class="match-analysis-card">
     <div class="card-header">
-      <span class="header-icon">🗣️</span>
       <div class="header-text">
         <h3 class="header-title">Talking Points</h3>
         <p class="header-subtitle">A balanced read on the matchup</p>
@@ -13,7 +12,7 @@
         :key="index"
         class="talking-point"
       >
-        {{ point }}
+        {{ formatExplanationImpl(point) }}
       </p>
     </div>
   </div>
@@ -21,6 +20,7 @@
 
 <script setup lang="ts">
 import type { MatchAnalysis } from '~/composables/useApi'
+import { formatExplanationImpl } from '~/composables/useFormatters'
 
 interface Props {
   analysis: MatchAnalysis
@@ -40,13 +40,15 @@ const talkingPoints = computed(() => {
 .match-analysis-card {
   background: var(--color-surface);
   border: 1px solid var(--color-border);
-  border-left: 4px solid #f59e0b;
+  /* DESIGN-FIX (identity): orange accent broke the monochrome language;
+     the strong black spine matches the heuristic tips on this page */
+  border-left: 4px solid var(--color-text);
   padding: 1.5rem;
   transition: border-color 0.2s ease;
 }
 
 .match-analysis-card:hover {
-  border-color: #f59e0b;
+  border-color: var(--color-text);
 }
 
 .card-header {
@@ -58,11 +60,6 @@ const talkingPoints = computed(() => {
   border-bottom: 1px solid var(--color-border);
 }
 
-.header-icon {
-  font-size: 1.5rem;
-  flex-shrink: 0;
-}
-
 .header-text {
   display: flex;
   flex-direction: column;
@@ -72,7 +69,7 @@ const talkingPoints = computed(() => {
 .header-title {
   font-size: 1.125rem;
   font-weight: 700;
-  color: #f59e0b;
+  color: var(--color-text);
   margin: 0;
 }
 
@@ -95,7 +92,7 @@ const talkingPoints = computed(() => {
   color: var(--color-text);
   margin: 0;
   padding-left: 1rem;
-  border-left: 2px solid rgba(245, 158, 11, 0.3);
+  border-left: 2px solid var(--color-border);
 }
 
 /* Mobile */

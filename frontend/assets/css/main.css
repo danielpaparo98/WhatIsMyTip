@@ -11,6 +11,8 @@
   --color-hover: #f5f5f5;
   --color-surface: #ffffff;
   --color-bg-secondary: #f5f5f5;
+  /* Wireframe identity: all corners sharp. One shape system, everywhere. */
+  color-scheme: light;
 }
 
 .dark {
@@ -21,6 +23,8 @@
   --color-hover: #1e1e1e;
   --color-surface: #1a1a1a;
   --color-bg-secondary: #1a1a1a;
+  /* Fixes native scrollbar/inputs/form controls in dark mode */
+  color-scheme: dark;
 }
 
 * {
@@ -29,6 +33,34 @@
 
 html {
   scroll-behavior: smooth;
+}
+
+/* DESIGN-FIX (a11y): honour users who opt out of motion */
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* DESIGN-FIX (a11y): visible keyboard focus everywhere — there was
+   previously NO focus style, leaving keyboard users blind. */
+:focus-visible {
+  outline: 2px solid var(--color-text);
+  outline-offset: 2px;
+}
+
+/* Monochrome selection — invert instead of the browser default blue */
+::selection {
+  background: var(--color-text);
+  color: var(--color-bg);
 }
 
 body {
@@ -103,7 +135,11 @@ a:hover {
   background: var(--color-bg);
   color: var(--color-text);
   cursor: pointer;
-  transition: all 0.2s ease;
+  /* DESIGN-FIX: `transition: all` is a performance/anti-pattern — list
+     the properties explicitly */
+  transition:
+    background-color 0.2s ease,
+    color 0.2s ease;
   text-decoration: none;
 }
 
@@ -114,6 +150,15 @@ a:hover {
 
 .btn:active {
   transform: scale(0.98);
+}
+
+/* DESIGN-FIX (typography): data values align in columns — tabular
+   numerals prevent the percent/margin jitter seen in cards */
+.stat-value,
+.confidence,
+.margin,
+.model-confidence {
+  font-variant-numeric: tabular-nums;
 }
 
 .btn-primary {

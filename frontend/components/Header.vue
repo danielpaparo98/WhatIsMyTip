@@ -65,6 +65,11 @@ const { isDark, toggle } = useColorMode()
   letter-spacing: 0.05em;
   padding: 0.5rem;
   transition: color 0.2s ease;
+  /* DESIGN-FIX: nav links were inheriting the global link underline,
+     which made every page's nav render differently (the active link's
+     router-link-active rule stripped its underline only). Nav is quiet
+     by default; the CURRENT page gets the underline. */
+  text-decoration: none;
 }
 
 .nav-links a:hover {
@@ -72,7 +77,8 @@ const { isDark, toggle } = useColorMode()
 }
 
 .nav-links a.router-link-active {
-  text-decoration: none;
+  text-decoration: underline;
+  text-underline-offset: 4px;
 }
 
 .theme-toggle {
@@ -100,36 +106,34 @@ const { isDark, toggle } = useColorMode()
     padding: 0.75rem 1rem;
   }
 
+  /* DESIGN-FIX: the old single-row layout absolutely positioned the
+     logo, which overlapped the centered links at ~390px ("WhatIsMyTIPS").
+     Two clean rows instead: brand + toggle on top, links below. */
   .nav {
-    display: flex;
-    flex-direction: row;
-    justify-content: center;
+    display: grid;
+    grid-template-columns: 1fr auto;
+    grid-template-rows: auto auto;
     align-items: center;
-    gap: 0.75rem;
-    text-align: center;
+    row-gap: 0.5rem;
+    max-width: 1400px;
+    margin: 0 auto;
   }
 
   .logo {
-    position: absolute;
-    left: 1rem;
+    grid-column: 1;
+    grid-row: 1;
+    justify-self: start;
+    position: static;
   }
 
   .logo-text {
-    font-size: 1rem;
-  }
-
-  .nav-links {
-    gap: 0.5rem;
-  }
-
-  .nav-links a {
-    font-size: 0.75rem;
-    padding: 0.25rem 0.5rem;
+    font-size: 1.0625rem;
   }
 
   .theme-toggle {
-    position: absolute;
-    right: 1rem;
+    grid-column: 2;
+    grid-row: 1;
+    position: static;
     padding: 0.375rem;
     min-width: 36px;
     min-height: 36px;
@@ -138,6 +142,18 @@ const { isDark, toggle } = useColorMode()
   .theme-toggle svg {
     width: 16px;
     height: 16px;
+  }
+
+  .nav-links {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    justify-content: center;
+    gap: 1.25rem;
+  }
+
+  .nav-links a {
+    font-size: 0.75rem;
+    padding: 0.375rem 0.5rem;
   }
 }
 

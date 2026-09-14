@@ -81,7 +81,29 @@ const PLACEHOLDER_LOGO =
       '</svg>'
   )
 
+// DESIGN-FIX: the backend stores canonical Squiggle names WITHOUT
+// spaces (NorthMelbourne, PortAdelaide, GoldCoast, StKilda, Giants,
+// Bulldogs) — correct for lookups, wrong for humans. Display-only map;
+// data keys stay canonical.
+const TEAM_DISPLAY: Record<string, string> = {
+  NorthMelbourne: 'North Melbourne',
+  PortAdelaide: 'Port Adelaide',
+  GoldCoast: 'Gold Coast',
+  StKilda: 'St Kilda',
+  Giants: 'GWS Giants',
+  Bulldogs: 'Western Bulldogs',
+}
+
 export function useTeamLogos() {
+  /**
+   * Human-friendly display name for a canonical team name.
+   * Falls back to the input when no display mapping exists.
+   */
+  const getTeamDisplayName = (teamName: string | null | undefined): string => {
+    if (!teamName) return 'TBD'
+    return TEAM_DISPLAY[teamName] ?? teamName
+  }
+
   /**
    * Resolve a team name to its public logo URL.
    * Accepts `null`/`undefined`; unknown or placeholder teams ('TBD')
@@ -96,5 +118,5 @@ export function useTeamLogos() {
     return filename ? `/logos/${filename}` : PLACEHOLDER_LOGO
   }
 
-  return { getLogoUrl, TEAM_LOGOS, normalizeTeam, PLACEHOLDER_LOGO }
+  return { getLogoUrl, getTeamDisplayName, TEAM_LOGOS, normalizeTeam, PLACEHOLDER_LOGO }
 }
