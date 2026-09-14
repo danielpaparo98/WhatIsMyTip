@@ -1,4 +1,4 @@
-﻿<template>
+<template>
   <section class="hero">
         <h1>Backtesting</h1>
         <p>See how our heuristics performed historically.</p>
@@ -41,7 +41,7 @@
                 </span>
               </div>
               <div class="disclaimer">
-                <small>âš ï¸ Projections are based on early season performance and may change as the season progresses.</small>
+                <small>Projections are based on early season performance and may change as the season progresses.</small>
               </div>
               <div class="stat-row">
                 <span class="stat-label">Accuracy</span>
@@ -109,7 +109,7 @@
           <p>{{ activeModelError }}</p>
         </div>
         <div v-else-if="!activeModelData?.active" class="model-empty">
-          <p>â³ No trained Weighted Tip model yet. The model will be trained after the first weekly retrain job runs.</p>
+          <p>No trained Weighted Tip model yet. The model will be trained after the first weekly retrain job runs.</p>
           <p class="model-empty-sub">Until then, the Weighted Tip heuristic uses a majority-vote fallback.</p>
         </div>
         <div v-else-if="activeModelData.model" class="model-content">
