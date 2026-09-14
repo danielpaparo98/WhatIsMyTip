@@ -135,13 +135,21 @@ const { formatDateShort, formatTime, getModelDisplayName } = useFormatters()
 // keepalive needed).
 const slug = computed(() => route.params.slug as string)
 
+// H-5 fix, revised (GAME-CACHE regression, 2026-09 user report):
+// the previous static key ('game-detail') plus `watch: [slug]` had a
+// fatal flaw — useAsyncData serves CACHED data on mount when the key
+// already exists (e.g. from the previous game you visited), and the
+// watcher only fires on CHANGE, not on mount. Result: visit game A,
+// then click game B → B's URL rendered A's content.
+// The key is now REACTIVE and includes the slug: every game gets its
+// own cache slot, and a key change triggers the fetch automatically.
 const {
   data: gameDetail,
   pending: loading,
   error: fetchError,
   refresh: refetch,
 } = await useAsyncData<GameDetailResponse | null>(
-  'game-detail',
+  computed(() => `game-detail-${slug.value}`),
   async () => {
     // CR-004: regex loosened from `^[a-zA-Z0-9]{10,12}$` to support
     // hyphens and a wider length range.  See composables/useGameSlug.ts.
@@ -156,7 +164,6 @@ const {
     return detail
   },
   {
-    watch: [slug],
     dedupe: 'cancel',
   },
 )

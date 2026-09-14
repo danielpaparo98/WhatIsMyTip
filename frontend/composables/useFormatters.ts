@@ -54,6 +54,14 @@ export function useFormatters() {
   // All date formatters accept `string | null | undefined` and fall
   // back to an em-dash placeholder.  Callers don't have to wrap every
   // usage in a null check.
+  //
+  // DESIGN-FIX (hydration): formatting without an explicit timeZone
+  // made the prerendered HTML (built in UTC) differ from the client's
+  // en-AU rendering — a systematic hydration mismatch on every card
+  // with a date.  Pin to Australia/Sydney: identical text server and
+  // client, and venue-consistent times for an AFL product.
+  const DATE_TZ = 'Australia/Sydney'
+
   const formatDate = (dateStr: string | null | undefined): string => {
     if (!dateStr) return '—'
     const date = new Date(dateStr)
@@ -63,6 +71,7 @@ export function useFormatters() {
       month: 'short',
       hour: '2-digit',
       minute: '2-digit',
+      timeZone: DATE_TZ,
     })
   }
 
@@ -73,6 +82,7 @@ export function useFormatters() {
       weekday: 'short',
       day: 'numeric',
       month: 'short',
+      timeZone: DATE_TZ,
     })
   }
 
@@ -82,6 +92,7 @@ export function useFormatters() {
     return date.toLocaleTimeString('en-AU', {
       hour: '2-digit',
       minute: '2-digit',
+      timeZone: DATE_TZ,
     })
   }
 
