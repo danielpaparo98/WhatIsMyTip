@@ -14,6 +14,9 @@ Routes (mounted at ``/api/admin``):
                                         ``tip-generation``,
                                         ``historic-refresh`` (422 on
                                         unknown name)
+* ``POST /match-report/regenerate``    — delete + regenerate the
+                                        grand-final pre-match report
+                                        for one game (``?slug=``)
 * ``GET  /historic-refresh/progress``  — current historic-refresh progress
 * ``GET  /metrics``                    — per-job execution metrics
 """
@@ -24,7 +27,7 @@ import logging
 import platform
 from typing import Annotated, Any, Optional
 
-from fastapi import APIRouter, Body, Depends, Path
+from fastapi import APIRouter, Body, Depends, Path, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.db_deps import get_db
@@ -32,6 +35,7 @@ from app.core.exceptions import http_error
 from app.core.security import require_admin_key
 from packages.shared.cache import short_cache
 from packages.shared.config import settings
+from packages.shared.crud import GameCRUD, MatchReportCRUD
 from packages.shared.crud.jobs import JobExecutionCRUD
 from packages.shared.models_ml.elo import EloModel
 from packages.shared.schemas.admin import (
@@ -47,6 +51,7 @@ from packages.shared.services.historic_data_refresh import (
 from packages.shared.services.match_completion import (
     MatchCompletionDetectorService,
 )
+from packages.shared.services.match_report import MatchReportService
 from packages.shared.services.tip_generation import TipGenerationService
 from packages.shared.squiggle import SquiggleClient
 
@@ -403,3 +408,48 @@ async def metrics(
         "system": system_info,
         "alerting_enabled": settings.alert_enabled,
     }
+
+
+# ---------------------------------------------------------------------------
+# POST /match-report/regenerate
+# ---------------------------------------------------------------------------
+
+
+@router.post("/match-report/regenerate")
+async def regenerate_match_report(
+    slug: Annotated[
+        str,
+        Query(min_length=1, max_length=12, description="Slug of the grand-final game"),
+    ],
+    db: AsyncSession = Depends(get_db),
+):
+    """Delete and regenerate the stored grand-final pre-match report.
+
+    Any existing report row is deleted first so the generation below
+    cannot hit the service's skip-if-exists path.  The service still
+    enforces its own gates (grand final only, pre-match only, teams
+    known, OpenRouter key configured), so a non-GF slug returns
+    ``{"status": "skipped", ...}`` rather than an error.
+    """
+    game = await GameCRUD.get_by_slug(db, slug)
+    if not game:
+        raise http_error(404, "not_found", "Game not found")
+
+    await MatchReportCRUD.delete_for_game(db, game.id)
+
+    service = MatchReportService()
+    try:
+        report = await service.generate_and_store_report(db, game)
+    finally:
+        await service.close()
+
+    if report is None:
+        return {
+            "status": "skipped",
+            "reason": (
+                "Report not generated: the game may not be an upcoming "
+                "grand final with known teams, the OpenRouter key may be "
+                "missing, or generation failed"
+            ),
+        }
+    return {"status": "generated"}

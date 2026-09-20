@@ -41,3 +41,24 @@ export const useLatestRound = () => {
 
 /** Poll interval shared by the index page's auto-refresh. */
 export const AUTO_REFRESH_MS = 5 * 60 * 1000
+
+// ---------------------------------------------------------------------------
+// Home-page state resolution (grand-final uplift, 2026-09).
+//
+// The home page renders one of three mutually-exclusive states, driven
+// entirely by the latest-round locator.  Post-season wins over grand
+// final: once every GF-round game is completed the backend flips
+// `is_post_season` on and the celebration page takes over — so the
+// "grand final week" state requires `is_grand_final && !is_post_season`.
+// Kept as a pure exported function so the gating logic is unit-testable
+// without mounting the page.
+// ---------------------------------------------------------------------------
+export type HomeState = 'grand_final' | 'post_season' | 'regular'
+
+export function resolveHomeState(
+  round: Pick<LatestRoundResponse, 'is_grand_final' | 'is_post_season'> | null | undefined,
+): HomeState {
+  if (round?.is_post_season) return 'post_season'
+  if (round?.is_grand_final) return 'grand_final'
+  return 'regular'
+}

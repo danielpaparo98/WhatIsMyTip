@@ -9,6 +9,7 @@ network access required; CRUD/service functions are mocked.
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from fastapi import FastAPI
@@ -275,7 +276,8 @@ class TestListGames:
         # 1. future game lookup → row with round_id + season
         # 2. count for that round → row with season/round_id/game_count
         # 3. max round for the season (grand-final detection)
-        # 4. premier lookup — only when off-season, so not reached here.
+        # 4. post-season / premier lookups — only for GF rounds, so not
+        #    reached here.
         future_row = SimpleNamespace(round_id=1, season=current_year)
         future_result = MagicMock()
         future_result.first.return_value = future_row
@@ -306,6 +308,7 @@ class TestListGames:
             "is_current_year": True,
             "has_upcoming": True,
             "is_grand_final": False,
+            "is_post_season": False,
             "is_off_season": False,
             "premier": None,
         }
@@ -337,9 +340,113 @@ class TestListGames:
             "is_current_year": False,
             "has_upcoming": False,
             "is_grand_final": False,
+            "is_post_season": False,
             "is_off_season": False,
             "premier": None,
         }
+
+
+class TestLatestRoundPostSeason:
+    """Grand-final rounds now expose ``is_post_season`` and ``premier``.
+
+    Query order for a completed GF round (no upcoming games, target from
+    the past-game lookup):
+
+    1. future game lookup → None
+    2. past game lookup → row with round_id + season (the GF round)
+    3. count for that round → row with season/round_id/game_count
+    4. max round for the season (grand-final detection)
+    5. incomplete count for the GF round (post-season detection)
+    6. last completed game of the season (premier lookup)
+    """
+
+    @staticmethod
+    def _locator_session(current_year: int, incomplete_count: int):
+        mock_session = AsyncMock(spec=AsyncSession)
+
+        future_result = MagicMock()
+        future_result.first.return_value = None
+
+        past_row = SimpleNamespace(round_id=27, season=current_year)
+        past_result = MagicMock()
+        past_result.first.return_value = past_row
+
+        count_row = SimpleNamespace(season=current_year, round_id=27, game_count=1)
+        count_result = MagicMock()
+        count_result.first.return_value = count_row
+
+        max_round_result = MagicMock()
+        max_round_result.scalar.return_value = 27
+
+        incomplete_result = MagicMock()
+        incomplete_result.scalar.return_value = incomplete_count
+
+        last_game = _make_game_mock(
+            id=99,
+            round_id=27,
+            season=current_year,
+            home_team="Brisbane",
+            away_team="Collingwood",
+            home_score=90,
+            away_score=75,
+            completed=True,
+        )
+        last_game_result = MagicMock()
+        last_game_result.scalar_one_or_none.return_value = last_game
+
+        mock_session.execute = AsyncMock(
+            side_effect=[
+                future_result,
+                past_result,
+                count_result,
+                max_round_result,
+                incomplete_result,
+                last_game_result,
+            ]
+        )
+        return mock_session
+
+    def test_completed_grand_final_round_is_post_season_with_premier(self):
+        """GF round fully completed → is_post_season=True + premier set,
+        even though the season is the current year (not the calendar
+        off-season)."""
+        current_year = datetime.now().year
+        mock_session = self._locator_session(current_year, incomplete_count=0)
+
+        app = _build_app_with_games_router()
+        _override_db(app, mock_session)
+
+        client = TestClient(app)
+        resp = client.get("/api/games?latest=true")
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["is_grand_final"] is True
+        assert body["is_post_season"] is True
+        assert body["is_off_season"] is False
+        assert body["premier"] == "Brisbane"
+        assert body["season"] == current_year
+
+    def test_partially_completed_grand_final_round_is_not_post_season(self):
+        """GF round with an unplayed game (GF week, pre-match) →
+        is_post_season=False while is_grand_final stays True."""
+        current_year = datetime.now().year
+        mock_session = self._locator_session(current_year, incomplete_count=1)
+
+        app = _build_app_with_games_router()
+        _override_db(app, mock_session)
+
+        client = TestClient(app)
+        resp = client.get("/api/games?latest=true")
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["is_grand_final"] is True
+        assert body["is_post_season"] is False
+        assert body["is_off_season"] is False
+        # Premier still computed on GF week: the last *completed* game
+        # (the preliminary final) decides the provisional winner.
+        assert body["premier"] == "Brisbane"
 
 
 # ---------------------------------------------------------------------------

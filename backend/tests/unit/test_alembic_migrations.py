@@ -16,7 +16,6 @@ import importlib.util
 import inspect
 from pathlib import Path
 
-
 MIGRATIONS_DIR = Path(__file__).resolve().parents[2] / "alembic" / "versions"
 
 
@@ -325,11 +324,58 @@ def test_migration_0007_downgrade_is_safe_noop():
     assert "INSERT" not in src.upper()
 
 
-def test_migration_head_is_0007():
-    """After adding 0006 and 0007, the migration tree must have exactly one
-    head: 0007_elo_cache_dedup (nothing chains off it).
+# ---------------------------------------------------------------------------
+# Migration 0008: match_reports table
+#
+# Stores the grand-final pre-match report (structured JSONB payload from
+# the Pydantic AI research agent), unique per game.
+# ---------------------------------------------------------------------------
+
+_MIG_0008 = "2026_09_19_1200-0008_match_reports"
+
+
+def test_migration_0008_registers_revision_ids():
+    """The match_reports migration must declare the expected ids."""
+    mod = _load_module(_MIG_0008)
+    assert mod.revision == "0008_match_reports"
+    assert mod.down_revision == "0007_elo_cache_dedup"
+
+
+def test_migration_0008_chains_off_0007():
+    """0008 must chain directly off 0007 (the previous head)."""
+    revisions = _all_migrations()
+    assert revisions.get("0008_match_reports") == "0007_elo_cache_dedup"
+
+
+def test_migration_0008_upgrade_creates_match_reports():
+    """The upgrade must create ``match_reports`` with its key columns,
+    the FK to games, the unique constraint and the indexes."""
+    src = _read_source(_MIG_0008, "upgrade")
+    assert '"match_reports"' in src
+    assert "game_id" in src
+    assert "report_type" in src
+    assert "JSONB" in src
+    # One report per game.
+    assert "uq_match_reports_game_id" in src
+    assert "games.id" in src
+    # Indexes matching the model's index=True columns.
+    assert "ix_match_reports_game_id" in src
+    assert "ix_match_reports_report_type" in src
+
+
+def test_migration_0008_downgrade_drops_table():
+    """The downgrade must drop the table (and its indexes)."""
+    src = _read_source(_MIG_0008, "downgrade")
+    assert 'op.drop_table("match_reports")' in src
+    assert "ix_match_reports_report_type" in src
+    assert "ix_match_reports_game_id" in src
+
+
+def test_migration_head_is_0008():
+    """After adding 0008, the migration tree must have exactly one head:
+    0008_match_reports (nothing chains off it).
     """
     revisions = _all_migrations()
     heads = [rev for rev in revisions if rev not in set(revisions.values())]
-    assert "0007_elo_cache_dedup" in heads
+    assert "0008_match_reports" in heads
     assert len(heads) == 1, f"expected a single head, got {heads}"

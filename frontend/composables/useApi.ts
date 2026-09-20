@@ -116,6 +116,8 @@ const DEFAULT_RETRY_OPTIONS = {
 
 /**
  * Mirrors the round locator returned by `GET /api/games?latest=true`.
+ * `is_post_season` is additive (grand-final uplift, 2026-09): true once
+ * every game of the latest round is completed — the GF has been played.
  */
 export interface LatestRoundResponse {
   season: number | null
@@ -124,8 +126,93 @@ export interface LatestRoundResponse {
   is_current_year: boolean
   has_upcoming: boolean
   is_grand_final: boolean
+  is_post_season: boolean
   is_off_season: boolean
   premier: string | null
+}
+
+// ---------------------------------------------------------------------------
+// Grand-final pre-match report (grand-final uplift, 2026-09).
+// Mirrors backend/.../schemas/match_report.py field-for-field — do not
+// rename: the payload keys come straight from the Pydantic models.
+// ---------------------------------------------------------------------------
+
+/** Mirrors `TeamStory`. */
+export interface TeamStory {
+  team: string
+  narrative: string
+  finals_path: string[]
+}
+
+/** Mirrors `PlayerSpotlight`. */
+export interface PlayerSpotlight {
+  name: string
+  team: string
+  note: string
+}
+
+/** Mirrors `InjuryNote`. */
+export interface InjuryNote {
+  player: string
+  status: string
+  note: string
+}
+
+/** Mirrors `SeasonStory` (home/away team narratives). */
+export interface SeasonStory {
+  home: TeamStory
+  away: TeamStory
+}
+
+/** Mirrors `TeamPlayers` (home/away player spotlights). */
+export interface TeamPlayers {
+  home: PlayerSpotlight[]
+  away: PlayerSpotlight[]
+}
+
+/** Mirrors `InjuryWatch` (home/away injury notes). */
+export interface InjuryWatch {
+  home: InjuryNote[]
+  away: InjuryNote[]
+}
+
+/** Mirrors `ModelConsensus`. */
+export interface ModelConsensus {
+  summary: string
+  models_picking_home: number
+  models_picking_away: number
+  season_accuracy_note: string
+}
+
+/** Mirrors `Prediction` (pre-match verdict; confidence is 0–1). */
+export interface Prediction {
+  winner: string
+  margin: number
+  confidence: number
+}
+
+/** Mirrors `GrandFinalReport` — the structured report payload. */
+export interface GrandFinalReport {
+  headline: string
+  executive_summary: string
+  season_story: SeasonStory
+  keys_to_the_game: string[]
+  key_players: TeamPlayers
+  injury_watch: InjuryWatch
+  model_consensus: ModelConsensus
+  weather_impact: string
+  x_factor: string
+  prediction: Prediction
+  talking_points: string[]
+}
+
+/** Mirrors `MatchReportResponse` — envelope for `GET /api/games/{slug}/report`. */
+export interface MatchReportResponse {
+  id: number
+  game_id: number
+  report_type: string
+  report: GrandFinalReport
+  created_at: string
 }
 
 export const useApi = () => {
@@ -248,6 +335,20 @@ export const useApi = () => {
     return response.json()
   }
 
+  /**
+   * Grand-final pre-match report (grand-final uplift, 2026-09).
+   * 404 means "no report for this game" (non-GF game, or the report
+   * hasn't been generated yet) — that is an expected, non-error state,
+   * so it maps to `null` instead of throwing.  Other non-OK responses
+   * surface as errors like the rest of the composable.
+   */
+  const getGameReport = async (slug: string): Promise<MatchReportResponse | null> => {
+    const response = await fetchWithTimeout(`/api/games/${slug}/report`)
+    if (response.status === 404) return null
+    if (!response.ok) throw new Error('Failed to fetch match report')
+    return response.json()
+  }
+
   // Tips
   const getTips = async (params?: { heuristic?: string; season?: number; round?: number }) => {
     const queryParams = new URLSearchParams()
@@ -346,6 +447,7 @@ export const useApi = () => {
     getGames,
     getGame,
     getGameDetail,
+    getGameReport,
     getLatestRound,
     getTips,
     getTipsByHeuristic,

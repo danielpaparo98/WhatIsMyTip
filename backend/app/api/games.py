@@ -15,6 +15,9 @@ Routes (mounted at ``/api/games``):
 * ``GET /{slug}``        — single game by slug
 * ``GET /{slug}/detail`` — game + tips + model_predictions +
                            match_analysis + weather
+* ``GET /{slug}/report`` — stored grand-final pre-match report
+                           (404 unless the game is the grand final and
+                           a report has been generated)
 """
 
 from __future__ import annotations
@@ -33,6 +36,7 @@ from packages.shared.config import settings
 from packages.shared.crud import (
     GameCRUD,
     MatchAnalysisCRUD,
+    MatchReportCRUD,
     ModelPredictionCRUD,
     TipCRUD,
 )
@@ -45,6 +49,8 @@ from packages.shared.schemas import (
     WeatherResponse,
 )
 from packages.shared.schemas.match_analysis import MatchAnalysisResponse
+from packages.shared.schemas.match_report import MatchReportResponse
+from packages.shared.services.match_report import MatchReportService
 
 router = APIRouter()
 
@@ -92,7 +98,8 @@ async def list_games(
     """List games, with optional filters.
 
     When ``latest=true``, returns a small "round locator" object
-    (season, round_id, game_count, is_current_year, has_upcoming)
+    (season, round_id, game_count, is_current_year, has_upcoming,
+    is_grand_final, is_post_season, is_off_season, premier)
     instead of a games list — used by the homepage to render the
     current round banner.  Otherwise returns a ``GameListResponse``.
 
@@ -171,14 +178,36 @@ async def list_games(
                 max_round_id = max_round_result.scalar()
                 is_grand_final = bool(max_round_id and row.round_id == max_round_id)
 
+                # Post-season: the grand-final round has fully completed
+                # (every game played), i.e. the season is over.  Only
+                # meaningful when the target round IS the grand final.
+                is_post_season = False
+                if is_grand_final:
+                    incomplete_result = await db.execute(
+                        select(func.count(Game.id))
+                        .where(
+                            Game.season == row.season,
+                            Game.round_id == max_round_id,
+                            ~Game.completed,
+                            Game.home_team.isnot(None),
+                            Game.home_team != "",
+                            Game.away_team.isnot(None),
+                            Game.away_team != "",
+                        )
+                    )
+                    incomplete = incomplete_result.scalar() or 0
+                    is_post_season = incomplete == 0
+
                 # Off-season: no upcoming games and the latest round isn't from
                 # the current year (i.e. we're looking at a completed past season).
                 is_off_season = not has_upcoming and row.season < current_year
 
                 # Premier: winner of the last completed game of the season
-                # (the grand final).  Only relevant in the off-season.
+                # (the grand final).  Surfaced as soon as the grand final
+                # has been played — including later in the same season year,
+                # not only once the calendar moves past it.
                 premier = None
-                if is_off_season:
+                if is_grand_final or is_post_season:
                     last_game_result = await db.execute(
                         select(Game)
                         .where(
@@ -209,6 +238,7 @@ async def list_games(
                     "is_current_year": row.season == current_year,
                     "has_upcoming": has_upcoming,
                     "is_grand_final": is_grand_final,
+                    "is_post_season": is_post_season,
                     "is_off_season": is_off_season,
                     "premier": premier,
                 }
@@ -220,6 +250,7 @@ async def list_games(
             "is_current_year": False,
             "has_upcoming": False,
             "is_grand_final": False,
+            "is_post_season": False,
             "is_off_season": False,
             "premier": None,
         }
@@ -322,3 +353,39 @@ async def get_game_detail(
         weather=weather,
     )
     return resp.model_dump(mode="json")
+
+
+# ---------------------------------------------------------------------------
+# GET /{slug}/report  — stored grand-final pre-match report
+# ---------------------------------------------------------------------------
+
+
+@router.get("/{slug}/report")
+async def get_game_report(
+    # LO-005: the slug column is VARCHAR(12); the explicit
+    # max_length rejects over-long slugs at the routing layer.
+    slug: Annotated[str, Path(min_length=1, max_length=12)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Return the stored grand-final pre-match report for a game.
+
+    Raises 404 ``not_found`` when no game exists for ``slug``, when the
+    game is not the grand final, or when the report has not been
+    generated yet.
+    """
+    game = await GameCRUD.get_by_slug(db, slug)
+    if not game:
+        raise http_error(404, "not_found", "Game not found")
+
+    # Static helper — no MatchReportService/OpenRouter client is
+    # constructed just to evaluate this gate.
+    if not await MatchReportService.is_grand_final(db, game):
+        raise http_error(
+            404, "not_found", "Match report is only available for the grand final"
+        )
+
+    row = await MatchReportCRUD.get_by_game_id(db, game.id)
+    if row is None:
+        raise http_error(404, "not_found", "Match report not yet generated")
+
+    return MatchReportResponse.model_validate(row).model_dump(mode="json")
