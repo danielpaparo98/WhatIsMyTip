@@ -200,8 +200,10 @@ export interface GrandFinalReport {
   key_players: TeamPlayers
   injury_watch: InjuryWatch
   model_consensus: ModelConsensus
-  weather_impact: string
-  x_factor: string
+  // GF-CONTENT: null when the agent's data source was empty — the
+  // component hides the section instead of showing filler prose.
+  weather_impact: string | null
+  x_factor: string | null
   prediction: Prediction
   talking_points: string[]
 }

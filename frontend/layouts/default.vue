@@ -1,7 +1,8 @@
 <template>
   <div>
     <a href="#main-content" class="skip-link">Skip to main content</a>
-    <ConfettiEffect />
+    <!-- GF-DESIGN (2026-09-20, user request): ConfettiEffect moved to
+         index.vue — confetti fires on the HOME PAGE ONLY. -->
     <OffSeasonBanner />
     <Header />
     <main id="main-content" class="main">
@@ -12,8 +13,8 @@
 </template>
 
 <script setup lang="ts">
-// Site-wide effects: grand-final confetti and off-season celebration banner
-// are self-contained components that fetch their own data.
+// Site-wide: the off-season banner is self-contained (reads the shared
+// latest-round store).  Confetti lives on the home page only.
 </script>
 
 <style scoped>

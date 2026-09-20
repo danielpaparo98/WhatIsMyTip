@@ -25,8 +25,9 @@
 </template>
 
 <script setup lang="ts">
-import confetti from 'canvas-confetti'
-import { getTeamColors } from '~/composables/useTeamColors'
+// GF-DESIGN (2026-09-20, user request): the banner no longer fires
+// confetti — confetti is HOME-PAGE ONLY (OffSeasonCelebration on the
+// index page owns the off-season celebration burst).
 import { useLatestRound } from '~/composables/useLatestRound'
 
 // M-4 (2026-09 review): this component used to fetch
@@ -40,48 +41,6 @@ const visible = ref(false)
 const premier = ref<string | null>(null)
 const season = ref<number | null>(null)
 const premierLogo = ref('')
-const hasFired = ref(false)
-
-/**
- * Fire a single celebratory confetti burst using the premier's colours.
- */
-function fireCelebration(colors: string[]) {
-  // Left burst
-  confetti({
-    particleCount: 60,
-    spread: 80,
-    origin: { x: 0, y: 0.5 },
-    colors,
-    startVelocity: 30,
-    gravity: 0.6,
-    scalar: 1.0,
-    ticks: 250,
-  })
-  // Right burst
-  confetti({
-    particleCount: 60,
-    spread: 80,
-    origin: { x: 1, y: 0.5 },
-    colors,
-    startVelocity: 30,
-    gravity: 0.6,
-    scalar: 1.0,
-    ticks: 250,
-  })
-  // Top centre burst
-  setTimeout(() => {
-    confetti({
-      particleCount: 80,
-      spread: 120,
-      origin: { x: 0.5, y: 0.1 },
-      colors,
-      startVelocity: 35,
-      gravity: 0.5,
-      scalar: 1.1,
-      ticks: 300,
-    })
-  }, 200)
-}
 
 // DESIGN-FIX (hydration): the previous `watch(..., { immediate: true })`
 // applied state during client SETUP — before hydration patching — while
@@ -96,13 +55,6 @@ watch(latestRound, (data) => {
     season.value = data.season
     premierLogo.value = getLogoUrl(data.premier)
     visible.value = true
-
-    // Fire confetti once using the premier's colours
-    if (!hasFired.value) {
-      hasFired.value = true
-      const colors = getTeamColors(data.premier)
-      fireCelebration(colors)
-    }
   } else {
     visible.value = false
   }
@@ -116,10 +68,6 @@ onMounted(() => {
     season.value = data.season
     premierLogo.value = getLogoUrl(data.premier)
     visible.value = true
-    if (!hasFired.value) {
-      hasFired.value = true
-      fireCelebration(getTeamColors(data.premier))
-    }
   }
 })
 </script>
