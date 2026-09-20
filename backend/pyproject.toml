@@ -13,6 +13,8 @@ dependencies = [
     "asyncpg>=0.30.0",
     "pydantic>=2.10",
     "pydantic-settings>=2.14.2",
+    # Grand-final pre-match report research agent (B1)
+    "pydantic-ai-slim[openrouter]>=2.46.0",
     "openai>=1.57.0",
     "redis>=5.0.0",
     "tzdata>=2024.1",

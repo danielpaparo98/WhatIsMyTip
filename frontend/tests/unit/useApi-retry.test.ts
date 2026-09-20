@@ -11,10 +11,11 @@
  * a real Nuxt runtime to wire useRuntimeConfig() — better to test the
  * source invariants than to mock the world.
  */
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi, afterEach } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { useApi } from '~/composables/useApi'
 
 const FRONTEND_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..')
 const COMPOSABLE = 'composables/useApi.ts'
@@ -85,5 +86,73 @@ describe('generateTips is removed from the public UI surface (TIPS-GEN-H4)', () 
 
   it('never posts to /api/tips/generate', () => {
     expect(source).not.toMatch(/\/api\/tips\/generate/)
+  })
+})
+
+/**
+ * Grand-final uplift (2026-09): `getGameReport` contract.
+ *
+ * Unlike the source-grep suites above, these exercise the live
+ * composable: `useRuntimeConfig` is a Nuxt auto-import (not a module
+ * import), so stubbing it as a global is enough to run `useApi()` under
+ * plain vitest; fetch is mocked per test.  404 maps to null because a
+ * missing report is an expected state (non-GF game, or the pre-match
+ * report hasn't been generated yet).
+ */
+describe('getGameReport (grand-final uplift)', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  function stubRuntimeConfig() {
+    vi.stubGlobal('useRuntimeConfig', () => ({ public: { apiBase: 'http://api.test' } }))
+  }
+
+  it('maps HTTP 404 to null', async () => {
+    stubRuntimeConfig()
+    const fetchMock = vi.fn(
+      async (..._args: Parameters<typeof fetch>): Promise<Response> =>
+        new Response('{"detail": "Match report not yet generated"}', { status: 404 }),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+
+    const { getGameReport } = useApi()
+    await expect(getGameReport('abc12345')).resolves.toBeNull()
+
+    // Hits the report endpoint on the configured API base exactly once
+    // (404 is a caller error — never retried).
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(fetchMock.mock.calls[0][0]).toBe('http://api.test/api/games/abc12345/report')
+  })
+
+  it('parses the MatchReportResponse payload on HTTP 200', async () => {
+    stubRuntimeConfig()
+    const payload = {
+      id: 1,
+      game_id: 2,
+      report_type: 'grand_final_pre_match',
+      report: { headline: 'Deck chairs on the Titanic' },
+      created_at: '2026-09-19T00:00:00Z',
+    }
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response(JSON.stringify(payload), { status: 200 })),
+    )
+
+    const { getGameReport } = useApi()
+    const result = await getGameReport('abc12345')
+    expect(result).not.toBeNull()
+    expect(result?.report_type).toBe('grand_final_pre_match')
+    expect(result?.report.headline).toBe('Deck chairs on the Titanic')
+  })
+
+  it('throws on other non-OK statuses (non-transient 4xx)', async () => {
+    stubRuntimeConfig()
+    const fetchMock = vi.fn(async () => new Response('nope', { status: 400 }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const { getGameReport } = useApi()
+    await expect(getGameReport('abc12345')).rejects.toThrow('Failed to fetch match report')
+    expect(fetchMock).toHaveBeenCalledTimes(1)
   })
 })
