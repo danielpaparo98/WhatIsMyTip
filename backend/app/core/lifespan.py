@@ -79,6 +79,38 @@ def _validate_production_security() -> None:
         raise RuntimeError(msg)
 
 
+def _run_startup_migrations() -> None:
+    """Apply pending Alembic migrations (sync, blocking — call in a thread).
+
+    DUP-MIG: the Dockerfile CMD also runs ``alembic upgrade head``, but
+    the deployed runtime pinned ``RUN_MIGRATIONS_ON_START=false``, which
+    left the production schema behind the code (the ``match_reports``
+    table never existed and the grand-final report 500'd).  This runs
+    inside the app itself so schema parity is guaranteed regardless of
+    how the container is launched.
+
+    Alembic is sync and blocking; the caller wraps it in a worker
+    thread and only invokes this in production.  ``alembic/env.py``
+    reads the URL from ``settings``, so no extra configuration is
+    needed beyond the ini path.
+    """
+    from pathlib import Path
+
+    from alembic.config import Config
+
+    from alembic import command
+
+    ini_path = Path(__file__).resolve().parents[2] / "alembic.ini"
+    alembic_cfg = Config(str(ini_path))
+    # Silence alembic's own stdout logging config; the app logger reports.
+    alembic_cfg.set_main_option("script_location", str(ini_path.parent / "alembic"))
+    # DUP-MIG: don't let alembic's fileConfig(disable_existing_loggers)
+    # tear down the application's loggers mid-process (DUP-MIG runs
+    # inside the live app, unlike CLI migrations).
+    alembic_cfg.attributes["configure_logger"] = False
+    command.upgrade(alembic_cfg, "head")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Startup/shutdown hooks for the FastAPI app.
@@ -112,6 +144,33 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # we accept the request, the load balancer will route traffic to
     # us and every admin call will silently 403.
     _validate_production_security()
+
+    # ----- DUP-MIG: schema parity before anything touches the DB -----
+    # PRODUCTION ONLY: this is the drift that bit us (the deployed
+    # runtime pinned RUN_MIGRATIONS_ON_START=false, so migration 0008
+    # never ran and every match-report query 500'd).  Dev/test have
+    # their own migration owners (compose init-data / pytest fixtures)
+    # and usually no reachable DB, so the step is skipped there.
+    #
+    # NOT fail-closed, matching this lifespan's stated philosophy
+    # ("startup failures are logged but do not abort the app"): if the
+    # DB is unreachable the app is degraded either way, and a genuine
+    # migration bug would crash-loop the container while the old image
+    # could still serve.  The migration retries on the next restart /
+    # deploy; the Dockerfile CMD (RUN_MIGRATIONS_ON_START) keeps its
+    # hard-exit as the container-level gate.
+    if settings.schema_auto_upgrade and settings.environment == "production":
+        import asyncio
+
+        try:
+            await asyncio.to_thread(_run_startup_migrations)
+            logger.info("Schema auto-upgrade complete (alembic head)")
+        except Exception as exc:  # noqa: BLE001 — degraded, not fatal
+            logger.critical(
+                "Startup migration failed — serving on a possibly stale "
+                "schema (will retry on next restart): %s",
+                exc,
+            )
 
     try:
         engine = _db.get_engine()

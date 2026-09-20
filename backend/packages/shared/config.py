@@ -99,6 +99,15 @@ class Settings(BaseSettings):
     # after the hour still rerun that night (30 min after detection).
     round_completion_rerun_hour: int = 22
 
+    # DUP-MIG: apply pending Alembic migrations at app startup, before
+    # the engine serves traffic.  The Dockerfile CMD also runs
+    # `alembic upgrade head`, but the deployed DO runtime historically
+    # pinned RUN_MIGRATIONS_ON_START=false, leaving the schema behind
+    # the code (match_reports never came into existence).  This
+    # in-process upgrade is the repo-controlled guarantee.  Failures
+    # are fail-closed: the app refuses to start on a broken migration.
+    schema_auto_upgrade: bool = True
+
     # Tip Generation
     # Phase 4: cron expressions here are interpreted by the in-process
     # APScheduler (see app/core/scheduler.py) in the FastAPI app's
