@@ -251,6 +251,7 @@ describe('GrandFinalReport component contract', () => {
   it('renders all report sections', () => {
     expect(GF_REPORT).toContain('Grand Final') // hero eyebrow
     expect(GF_REPORT).toContain('The Verdict')
+    expect(GF_REPORT).toContain('The Models') // GF-DESIGN: model cards
     expect(GF_REPORT).toContain('Season Story')
     expect(GF_REPORT).toContain('Keys to the Game')
     expect(GF_REPORT).toContain('Players to Watch')
@@ -259,6 +260,40 @@ describe('GrandFinalReport component contract', () => {
     expect(GF_REPORT).toContain('Talking Points')
     // GF-DESIGN: heuristic tips surface directly in the report
     expect(GF_REPORT).toContain('The Tips')
+  })
+
+  it('GF-DESIGN: weighted tip leads the tip cards', () => {
+    const tipIdx = GF_REPORT.indexOf('TIP_ORDER')
+    expect(tipIdx).toBeGreaterThan(-1)
+    expect(GF_REPORT.indexOf('weighted_tip', tipIdx)).toBeLessThan(
+      GF_REPORT.indexOf('best_bet', tipIdx),
+    )
+    expect(GF_REPORT.indexOf('best_bet', tipIdx)).toBeLessThan(
+      GF_REPORT.indexOf('yolo', tipIdx),
+    )
+    expect(GF_REPORT).toContain('class="tip-cards"')
+    expect(GF_REPORT).toContain('class="tip-card"')
+  })
+
+  it('GF-DESIGN: models wired from the game-detail payload', () => {
+    expect(INDEX).toContain(':models="grandFinalDetail?.model_predictions ?? []"')
+    expect(GF_REPORT).toContain('class="model-cards"')
+    expect(GF_REPORT).toMatch(/getModelDisplayName\(prediction\.model_name\)/)
+  })
+
+  it('GF-DESIGN: confetti skips hidden tabs and flushes the queue', () => {
+    expect(CONFETTI).toMatch(/if \(typeof document !== 'undefined' && document\.hidden\) return/)
+    expect(CONFETTI).toMatch(/confetti\.reset\(\)/)
+  })
+
+  it('GF-DESIGN: headings and lede read at full text strength', () => {
+    expect(GF_REPORT).toMatch(/\.section-label \{[\s\S]*?color: var\(--color-text\)/)
+    expect(GF_REPORT).toMatch(/\.lede \{[\s\S]*?color: var\(--color-text\)/)
+  })
+
+  it('GF-DESIGN: talking points are horizontal quick-hit panels', () => {
+    expect(GF_REPORT).toContain('class="quick-hit"')
+    expect(GF_REPORT).toMatch(/scroll-snap-type: x mandatory/)
   })
 
   it('is optional-safe: every list-backed section is guarded', () => {

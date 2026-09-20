@@ -65,23 +65,38 @@
       </p>
     </section>
 
-    <!-- 02 · The Tips -->
+    <!-- 02 · The Tips — weighted tip leads; one card per heuristic -->
     <section v-if="tips.length > 0" class="gf-section">
       <h2 class="section-label"><span class="section-no">02</span>The Tips</h2>
-      <ul class="tip-rows">
-        <li v-for="tip in tips" :key="tip.heuristic" class="tip-row">
+      <div class="tip-cards">
+        <div v-for="tip in tips" :key="tip.heuristic" class="tip-card">
           <span class="tip-heuristic">{{ formatHeuristic(tip.heuristic) }}</span>
           <span class="tip-team">{{ getTeamDisplayName(tip.selected_team) }}</span>
           <span class="tip-score">
             by {{ tip.margin }} pts &middot; {{ Math.round(tip.confidence * 100) }}%
           </span>
-        </li>
-      </ul>
+        </div>
+      </div>
     </section>
 
-    <!-- 03 · Season Story -->
+    <!-- 03 · The Models — every model's raw call, so users can see what
+         feeds the heuristics above -->
+    <section v-if="models.length > 0" class="gf-section">
+      <h2 class="section-label"><span class="section-no">03</span>The Models</h2>
+      <div class="model-cards">
+        <div v-for="prediction in models" :key="prediction.model_name" class="model-card">
+          <span class="model-name">{{ getModelDisplayName(prediction.model_name) }}</span>
+          <span class="model-winner">{{ getTeamDisplayName(prediction.winner) }}</span>
+          <span class="model-score">
+            by {{ prediction.margin }} pts &middot; {{ Math.round(prediction.confidence * 100) }}%
+          </span>
+        </div>
+      </div>
+    </section>
+
+    <!-- 04 · Season Story -->
     <section v-if="seasonStorySides.length > 0" class="gf-section">
-      <h2 class="section-label"><span class="section-no">03</span>Season Story</h2>
+      <h2 class="section-label"><span class="section-no">04</span>Season Story</h2>
       <div class="two-col">
         <div v-for="side in seasonStorySides" :key="side.side" class="story">
           <h3 class="sub-head">{{ getTeamDisplayName(side.story.team) }}</h3>
@@ -95,7 +110,7 @@
 
     <!-- 04 · Keys to the Game -->
     <section v-if="keys.length > 0" class="gf-section">
-      <h2 class="section-label"><span class="section-no">04</span>Keys to the Game</h2>
+      <h2 class="section-label"><span class="section-no">05</span>Keys to the Game</h2>
       <ol class="key-list">
         <li v-for="(key, i) in keys" :key="i" class="key-item">
           <span class="key-no">{{ String(i + 1).padStart(2, '0') }}</span>
@@ -106,7 +121,7 @@
 
     <!-- 05 · Players to Watch -->
     <section v-if="homePlayers.length > 0 || awayPlayers.length > 0" class="gf-section">
-      <h2 class="section-label"><span class="section-no">05</span>Players to Watch</h2>
+      <h2 class="section-label"><span class="section-no">06</span>Players to Watch</h2>
       <div class="two-col">
         <div v-if="homePlayers.length > 0" class="watch-col">
           <h3 class="sub-head">{{ getTeamDisplayName(game.home_team) }}</h3>
@@ -131,7 +146,7 @@
 
     <!-- 06 · Injury Watch (hidden entirely when no data) -->
     <section v-if="homeInjuries.length > 0 || awayInjuries.length > 0" class="gf-section">
-      <h2 class="section-label"><span class="section-no">06</span>Injury Watch</h2>
+      <h2 class="section-label"><span class="section-no">07</span>Injury Watch</h2>
       <div class="two-col">
         <div v-if="homeInjuries.length > 0" class="watch-col">
           <h3 class="sub-head">{{ getTeamDisplayName(game.home_team) }}</h3>
@@ -159,7 +174,7 @@
     <!-- 07 · Conditions & X-Factor (each half hidden when the agent
          could not assess it — no "unavailable" filler prose) -->
     <section v-if="weatherVisible || xFactorVisible" class="gf-section">
-      <h2 class="section-label"><span class="section-no">07</span>Conditions &amp; X-Factor</h2>
+      <h2 class="section-label"><span class="section-no">08</span>Conditions &amp; X-Factor</h2>
       <div class="two-col">
         <div v-if="weatherVisible" class="fact">
           <h3 class="sub-head">Weather</h3>
@@ -172,13 +187,15 @@
       </div>
     </section>
 
-    <!-- 08 · Talking Points -->
+    <!-- 09 · Talking Points — horizontal quick-hit panels (scroll-snap
+         on mobile, a distinct layout family from the sections above) -->
     <section v-if="talkingPoints.length > 0" class="gf-section">
-      <h2 class="section-label"><span class="section-no">08</span>Talking Points</h2>
-      <div class="talking-points">
-        <p v-for="(point, i) in talkingPoints" :key="i" class="talking-point">
-          {{ point }}
-        </p>
+      <h2 class="section-label"><span class="section-no">09</span>Talking Points</h2>
+      <div class="talking-points" role="list">
+        <div v-for="(point, i) in talkingPoints" :key="i" class="quick-hit" role="listitem">
+          <span class="quick-hit-no">{{ String(i + 1).padStart(2, '0') }}</span>
+          <p class="quick-hit-text">{{ point }}</p>
+        </div>
       </div>
     </section>
   </article>
@@ -189,6 +206,7 @@ import type {
   Game,
   GrandFinalReport,
   InjuryNote,
+  ModelPrediction,
   PlayerSpotlight,
   TeamStory,
   Tip,
@@ -200,12 +218,25 @@ interface Props {
   game: Game
   /** Heuristic tips for the game (from the game-detail payload). */
   tips?: Tip[]
+  /** Every model's raw call, so users see what feeds the heuristics. */
+  models?: ModelPrediction[]
 }
 
-const props = withDefaults(defineProps<Props>(), { tips: () => [] })
+const props = withDefaults(defineProps<Props>(), {
+  tips: () => [],
+  models: () => [],
+})
 
 const { getLogoUrl, getTeamDisplayName } = useTeamLogos()
-const { formatDate, formatHeuristic } = useFormatters()
+const { formatDate, formatHeuristic, getModelDisplayName } = useFormatters()
+
+// GF-DESIGN (user request): the weighted tip is the site's primary
+// recommendation — it leads the card row.  best_bet and yolo follow.
+const TIP_ORDER: Record<string, number> = {
+  weighted_tip: 0,
+  best_bet: 1,
+  yolo: 2,
+}
 
 // Optional-safe section data: every list degrades to an empty array so
 // a thin report hides its sections instead of crashing the page.
@@ -247,7 +278,13 @@ const xFactorVisible = computed(
   () => !!props.report.x_factor && !isUnavailableNote(props.report.x_factor),
 )
 
-const tips = computed<Tip[]>(() => sortByHeuristicOrder(props.tips))
+const tips = computed<Tip[]>(() =>
+  sortByHeuristicOrder(props.tips).slice().sort(
+    (a, b) => (TIP_ORDER[a.heuristic] ?? 9) - (TIP_ORDER[b.heuristic] ?? 9),
+  ),
+)
+
+const models = computed<ModelPrediction[]>(() => props.models)
 
 const talkingPoints = computed<string[]>(() =>
   (props.report.talking_points ?? [])
@@ -343,7 +380,9 @@ const talkingPoints = computed<string[]>(() =>
 .lede {
   font-size: 1.0625rem;
   line-height: 1.75;
-  color: var(--color-muted);
+  /* GF-DESIGN: full text colour — muted grey read as "too light" on the
+     live site (user report, 2026-09-20). */
+  color: var(--color-text);
   max-width: 65ch;
   margin: 0 auto;
 }
@@ -363,6 +402,8 @@ const talkingPoints = computed<string[]>(() =>
   font-weight: 800;
   text-transform: uppercase;
   letter-spacing: 0.12em;
+  /* GF-DESIGN: headings read at full strength (user: "way too light"). */
+  color: var(--color-text);
   margin-bottom: 1.25rem;
 }
 
@@ -385,7 +426,7 @@ const talkingPoints = computed<string[]>(() =>
 }
 
 .prose-muted {
-  color: var(--color-muted);
+  color: var(--color-text);
   font-size: 0.9375rem;
 }
 
@@ -414,24 +455,27 @@ const talkingPoints = computed<string[]>(() =>
   font-variant-numeric: tabular-nums;
 }
 
-/* Tips: simple rows with hairline dividers */
-.tip-rows {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-}
-
-.tip-row {
+/* Tips + Models: card grids (user request — scores as cards).
+   Weighted tip leads via the sort in script; visually the FIRST card
+   carries a stronger border so hierarchy reads without colour. */
+.tip-cards {
   display: grid;
-  grid-template-columns: minmax(110px, auto) 1fr auto;
-  align-items: baseline;
+  grid-template-columns: repeat(3, 1fr);
   gap: 1rem;
-  padding: 0.875rem 0;
-  border-bottom: 1px solid var(--color-border);
 }
 
-.tip-row:last-child {
-  border-bottom: none;
+.tip-card,
+.model-card {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  padding: 1.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.tip-card:first-child {
+  border-left: 4px solid var(--color-text);
 }
 
 .tip-heuristic {
@@ -444,15 +488,56 @@ const talkingPoints = computed<string[]>(() =>
 
 .tip-team {
   font-weight: 800;
-  font-size: 1.0625rem;
+  font-size: 1.125rem;
 }
 
 .tip-score {
   font-size: 0.875rem;
   font-weight: 700;
-  color: var(--color-muted);
+  color: var(--color-text);
   font-variant-numeric: tabular-nums;
-  white-space: nowrap;
+}
+
+.model-cards {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 1rem;
+}
+
+.model-name {
+  font-size: 0.6875rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--color-muted);
+}
+
+.model-winner {
+  font-weight: 800;
+  font-size: 1rem;
+}
+
+.model-score {
+  font-size: 0.8125rem;
+  font-weight: 700;
+  color: var(--color-text);
+  font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 900px) {
+  .model-cards {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (max-width: 640px) {
+  .tip-cards {
+    grid-template-columns: 1fr;
+  }
+
+  .model-cards {
+    grid-template-columns: 1fr 1fr;
+  }
 }
 
 /* Two-column blocks (season story / players / conditions) */
@@ -560,21 +645,40 @@ const talkingPoints = computed<string[]>(() =>
   color: var(--color-muted);
 }
 
-/* Talking points */
+/* Talking points: horizontal quick-hit panels (scroll-snap). */
 .talking-points {
   display: flex;
-  flex-direction: column;
-  gap: 1.25rem;
+  gap: 1rem;
+  overflow-x: auto;
+  scroll-snap-type: x mandatory;
+  padding-bottom: 0.75rem;
+  scrollbar-width: thin;
 }
 
-.talking-point {
-  font-size: 1.0625rem;
-  line-height: 1.7;
-  font-weight: 600;
+.quick-hit {
+  scroll-snap-align: start;
+  flex: 0 0 min(320px, 82vw);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-top: 3px solid var(--color-text);
+  padding: 1.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.quick-hit-no {
+  font-size: 1.5rem;
+  font-weight: 800;
+  line-height: 1;
+  color: var(--color-text);
+  font-variant-numeric: tabular-nums;
+}
+
+.quick-hit-text {
+  font-size: 0.9375rem;
+  line-height: 1.65;
   margin: 0;
-  padding-left: 1.25rem;
-  border-left: 3px solid var(--color-text);
-  max-width: 68ch;
 }
 
 /* Mobile collapse (explicit, per section) */
@@ -603,14 +707,6 @@ const talkingPoints = computed<string[]>(() =>
   .two-col {
     grid-template-columns: 1fr;
     gap: 1.5rem;
-  }
-
-  .tip-row {
-    grid-template-columns: 1fr auto;
-  }
-
-  .tip-heuristic {
-    grid-column: 1 / -1;
   }
 
   .verdict-winner {

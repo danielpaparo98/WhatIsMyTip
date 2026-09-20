@@ -28,6 +28,7 @@
       :report="grandFinalReport.report"
       :game="grandFinalGame"
       :tips="grandFinalDetail?.tips ?? []"
+      :models="grandFinalDetail?.model_predictions ?? []"
     />
 
     <!-- Report not yet generated — standard detail experience -->

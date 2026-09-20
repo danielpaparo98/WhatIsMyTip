@@ -19,7 +19,9 @@
   --color-bg: #121212;
   --color-text: #e5e5e5;
   --color-border: #333333;
-  --color-muted: #999999;
+  /* GF-DESIGN: was #999999 — read as "way too light" on dark surfaces
+     (user report, 2026-09-20). */
+  --color-muted: #a6a6a6;
   --color-hover: #1e1e1e;
   --color-surface: #1a1a1a;
   --color-bg-secondary: #1a1a1a;

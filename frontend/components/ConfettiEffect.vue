@@ -29,9 +29,14 @@ let animationTimer: ReturnType<typeof setInterval> | null = null
 let active = false
 
 /**
- * Fire a single confetti burst from a random edge origin.
+ * GF-DESIGN FIX (2026-09-20, user report): with the tab hidden, timers
+ * throttle while canvas-confetti's internal queue keeps filling — the
+ * moment the user returns, EVERY queued burst fires at once.  Skip
+ * bursts while hidden and flush the queue when the page becomes
+ * visible again.
  */
 function fireBurst() {
+  if (typeof document !== 'undefined' && document.hidden) return
   const origins: Array<{ x: number; y: number }> = [
     { x: 0, y: 0.2 },
     { x: 0, y: 0.6 },
@@ -51,6 +56,25 @@ function fireBurst() {
     ticks: 200,
   })
 }
+
+function handleVisibility() {
+  if (typeof document !== 'undefined' && !document.hidden && active) {
+    // Discard anything queued while the tab was hidden.
+    confetti.reset()
+  }
+}
+
+onMounted(() => {
+  if (typeof document !== 'undefined') {
+    document.addEventListener('visibilitychange', handleVisibility)
+  }
+})
+
+onUnmounted(() => {
+  if (typeof document !== 'undefined') {
+    document.removeEventListener('visibilitychange', handleVisibility)
+  }
+})
 
 function stop() {
   active = false
