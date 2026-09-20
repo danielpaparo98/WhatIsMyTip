@@ -453,3 +453,71 @@ async def regenerate_match_report(
             ),
         }
     return {"status": "generated"}
+
+
+# ---------------------------------------------------------------------------
+# POST /games/{slug}/void-fixture  (DUP-GUARD operator tool)
+# ---------------------------------------------------------------------------
+
+
+@router.post("/games/{slug}/void-fixture")
+async def void_fixture(
+    # LO-005: slug column is VARCHAR(12); reject over-long at routing.
+    slug: Annotated[str, Path(min_length=1, max_length=12)],
+    db: AsyncSession = Depends(get_db),
+):
+    """Soft-void a duplicated fixture row (TBC-style).
+
+    Squiggle re-publishing a fixture under a new id used to leave two
+    identical rows for one game (see the DUP-GUARD in
+    ``GameCRUD.create_or_update_with_tracking``).  The orphan row is
+    invisible to every consumer once its teams are NULL: the round
+    locator's game_count filters blank-team rows out, tips grids and
+    TBC placeholders already exclude them, and the sync will never
+    feed the orphan a final score anyway.
+
+    Team columns are set to NULL rather than deleting the row — tips,
+    predictions and analyses reference it and there is no cascade.
+    Refuses (409) for completed games: history is never rewritten.
+    """
+    from datetime import datetime, timezone
+
+    from packages.shared.crud.games import _invalidate_game_cache
+
+    game = await GameCRUD.get_by_slug(db, slug)
+    if not game:
+        raise http_error(404, "not_found", "Game not found")
+
+    if game.completed:
+        raise http_error(
+            409,
+            "game_completed",
+            "Refusing to void a completed game — scores are historical fact",
+        )
+
+    game.home_team = None
+    game.away_team = None
+    game.last_synced_at = datetime.now(timezone.utc)
+    game.sync_version = (game.sync_version or 0) + 1
+    await db.commit()
+    await db.refresh(game)
+
+    try:
+        await _invalidate_game_cache(game)
+    except Exception:  # noqa: BLE001 — cache cleanup is best-effort
+        logging.getLogger(__name__).exception(
+            "Cache invalidation after voiding %s failed (non-fatal)", slug
+        )
+
+    logging.getLogger(__name__).warning(
+        "Voided duplicate fixture row %s (game_id=%s, squiggle_id=%s)",
+        slug,
+        game.id,
+        game.squiggle_id,
+    )
+    return {
+        "status": "voided",
+        "slug": slug,
+        "game_id": game.id,
+        "squiggle_id": game.squiggle_id,
+    }

@@ -614,3 +614,101 @@ class TestAdminMatchReportRegenerate:
         body = resp.json()
         assert body["status"] == "skipped"
         assert "reason" in body
+
+
+# ---------------------------------------------------------------------------
+# POST /games/{slug}/void-fixture  (DUP-GUARD operator tool)
+# ---------------------------------------------------------------------------
+
+
+class TestAdminVoidFixture:
+    """Soft-voids a duplicated fixture row (teams -> NULL, TBC-style)."""
+
+    def _game(self, **overrides):
+        from types import SimpleNamespace
+
+        defaults = {
+            "id": 3706,
+            "slug": "p2aa56iknf",
+            "squiggle_id": 39880,
+            "home_team": "Fremantle",
+            "away_team": "Brisbane",
+            "completed": False,
+            "sync_version": 3,
+            "last_synced_at": None,
+        }
+        defaults.update(overrides)
+        return SimpleNamespace(**defaults)
+
+    def test_void_route_registered(self):
+        from app.api.admin import router
+
+        paths = {r.path for r in router.routes}
+        assert "/games/{slug}/void-fixture" in paths
+
+    def test_missing_api_key_returns_401(self, monkeypatch):
+        app = _build_app_with_admin_router(monkeypatch=monkeypatch)
+        _override_db(app, AsyncMock(spec=AsyncSession))
+        client = TestClient(app)
+        resp = client.post("/api/admin/games/p2aa56iknf/void-fixture")
+        assert resp.status_code == 401
+
+    def test_unknown_slug_returns_404(self, monkeypatch):
+        app = _build_app_with_admin_router(monkeypatch=monkeypatch)
+        _override_db(app, AsyncMock(spec=AsyncSession))
+
+        with patch("app.api.admin.GameCRUD") as mock_game_crud:
+            mock_game_crud.get_by_slug = AsyncMock(return_value=None)
+            client = TestClient(app)
+            resp = client.post(
+                "/api/admin/games/unknown-1/void-fixture",
+                headers=ADMIN_HEADERS,
+            )
+
+        assert resp.status_code == 404
+        assert resp.json()["code"] == "not_found"
+
+    def test_completed_game_returns_409(self, monkeypatch):
+        app = _build_app_with_admin_router(monkeypatch=monkeypatch)
+        db = AsyncMock(spec=AsyncSession)
+        _override_db(app, db)
+        game = self._game(completed=True)
+
+        with patch("app.api.admin.GameCRUD") as mock_game_crud:
+            mock_game_crud.get_by_slug = AsyncMock(return_value=game)
+            client = TestClient(app)
+            resp = client.post(
+                "/api/admin/games/p2aa56iknf/void-fixture",
+                headers=ADMIN_HEADERS,
+            )
+
+        assert resp.status_code == 409
+        assert resp.json()["code"] == "game_completed"
+        # Historical fact untouched.
+        assert game.home_team == "Fremantle"
+        assert game.away_team == "Brisbane"
+
+    def test_void_nulls_teams_and_bumps_sync_version(self, monkeypatch):
+        app = _build_app_with_admin_router(monkeypatch=monkeypatch)
+        db = AsyncMock(spec=AsyncSession)
+        _override_db(app, db)
+        game = self._game()
+
+        with patch("app.api.admin.GameCRUD") as mock_game_crud:
+            mock_game_crud.get_by_slug = AsyncMock(return_value=game)
+            client = TestClient(app)
+            resp = client.post(
+                "/api/admin/games/p2aa56iknf/void-fixture",
+                headers=ADMIN_HEADERS,
+            )
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["status"] == "voided"
+        assert body["game_id"] == 3706
+        assert body["squiggle_id"] == 39880
+        assert game.home_team is None
+        assert game.away_team is None
+        assert game.sync_version == 4
+        db.commit.assert_awaited()
+        db.refresh.assert_awaited()

@@ -115,11 +115,14 @@ jobs:
 
       - name: Run container and verify health endpoint
         run: |
+          # DUP-MIG: the image now defaults to startup migrations;
+          # the smoke DB is empty/unreachable, so pin them off here.
           docker run -d --name smoke-test \
             -p 8000:8000 \
             -e ENVIRONMENT=development \
             -e DATABASE_URL=postgresql+asyncpg://localhost/whatismytip \
             -e REDIS_URL=redis://localhost:6379/0 \
+            -e RUN_MIGRATIONS_ON_START=false \
             whatismytip-api:ci-smoke
 
           # Wait for container to be healthy
