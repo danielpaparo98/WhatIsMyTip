@@ -62,3 +62,30 @@ export function resolveHomeState(
   if (round?.is_grand_final) return 'grand_final'
   return 'regular'
 }
+
+// ---------------------------------------------------------------------------
+// Grand-final game resolution (GF-VIEW FIX, 2026-09-20).
+// ---------------------------------------------------------------------------
+
+/**
+ * Pick the first usable game (both teams known) from a games-list
+ * payload.
+ *
+ * PROD INCIDENT FIX: `GET /api/games?season&round` returns a
+ * `GameListResponse` — `{ games: Game[], count: number }` — but the
+ * grand-final view called `.find()` on the payload directly, which
+ * threw `".find is not a function"` on EVERY load (build-time AND
+ * client-side), permanently baking the "grand final preview isn't
+ * available yet" fallback.  This helper accepts the real envelope,
+ * a bare array, or null, and never throws.
+ */
+export function pickGrandFinalGame(
+  payload: { games?: Array<{ slug: string; home_team: string | null; away_team: string | null }> } | Array<{ slug: string; home_team: string | null; away_team: string | null }> | null | undefined,
+): { slug: string } | null {
+  const games = Array.isArray(payload)
+    ? payload
+    : Array.isArray(payload?.games)
+      ? payload.games
+      : []
+  return games.find(g => g.home_team && g.away_team) ?? null
+}
