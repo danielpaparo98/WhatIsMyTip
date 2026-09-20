@@ -5,6 +5,7 @@ Field names here are mirrored verbatim by the frontend
 """
 
 from datetime import datetime
+from typing import Optional
 
 from pydantic import BaseModel
 
@@ -81,8 +82,11 @@ class GrandFinalReport(BaseModel):
     key_players: TeamPlayers
     injury_watch: InjuryWatch
     model_consensus: ModelConsensus
-    weather_impact: str
-    x_factor: str
+    # GF-CONTENT (2026-09-20, user report): optional so the agent OMITS
+    # a section when its data source is empty instead of writing
+    # "unavailable" filler prose (the frontend hides null sections).
+    weather_impact: Optional[str] = None
+    x_factor: Optional[str] = None
     prediction: Prediction
     talking_points: list[str]
 
