@@ -203,11 +203,13 @@ async def list_games(
                 is_off_season = not has_upcoming and row.season < current_year
 
                 # Premier: winner of the last completed game of the season
-                # (the grand final).  Surfaced as soon as the grand final
-                # has been played — including later in the same season year,
-                # not only once the calendar moves past it.
+                # (the grand final).  Only meaningful once the grand final
+                # has actually been played — during GF week the last
+                # completed game is the preliminary final, and naming it
+                # "premier" would publish a false fact — so this is gated
+                # on is_post_season, not merely is_grand_final.
                 premier = None
-                if is_grand_final or is_post_season:
+                if is_post_season:
                     last_game_result = await db.execute(
                         select(Game)
                         .where(

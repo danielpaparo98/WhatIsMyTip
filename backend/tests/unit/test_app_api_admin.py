@@ -481,3 +481,136 @@ class TestAdminMetrics:
         }
         for name, metric in body["metrics"].items():
             assert metric["job_name"] == name
+
+
+# ---------------------------------------------------------------------------
+# POST /match-report/regenerate  (REVIEW-MAJOR-2 coverage)
+# ---------------------------------------------------------------------------
+
+
+class TestAdminMatchReportRegenerate:
+    """``POST /api/admin/match-report/regenerate`` — a privileged,
+    cost-incurring endpoint (LLM spend), so auth + contract are pinned."""
+
+    def test_regenerate_route_registered(self):
+        from app.api.admin import router
+
+        paths = {r.path for r in router.routes}
+        assert "/match-report/regenerate" in paths
+
+    def test_missing_api_key_returns_401(self, monkeypatch):
+        app = _build_app_with_admin_router(monkeypatch=monkeypatch)
+        _override_db(app, AsyncMock(spec=AsyncSession))
+        client = TestClient(app)
+        resp = client.post("/api/admin/match-report/regenerate?slug=abc-12345")
+        assert resp.status_code == 401
+        assert resp.json()["code"] == "invalid_api_key"
+
+    def test_invalid_api_key_returns_401(self, monkeypatch):
+        app = _build_app_with_admin_router(monkeypatch=monkeypatch)
+        _override_db(app, AsyncMock(spec=AsyncSession))
+        client = TestClient(app)
+        resp = client.post(
+            "/api/admin/match-report/regenerate?slug=abc-12345",
+            headers={"X-API-Key": "wrong"},
+        )
+        assert resp.status_code == 401
+
+    def test_unknown_slug_returns_404(self, monkeypatch):
+        mock_session = AsyncMock(spec=AsyncSession)
+        app = _build_app_with_admin_router(monkeypatch=monkeypatch)
+        _override_db(app, mock_session)
+
+        with patch("app.api.admin.GameCRUD") as mock_game_crud, \
+             patch("app.api.admin.MatchReportCRUD") as mock_report_crud, \
+             patch("app.api.admin.MatchReportService") as mock_service_cls:
+            mock_game_crud.get_by_slug = AsyncMock(return_value=None)
+            service = mock_service_cls.return_value
+            service.generate_and_store_report = AsyncMock()
+            service.close = AsyncMock()
+
+            client = TestClient(app)
+            resp = client.post(
+                "/api/admin/match-report/regenerate?slug=unknown-1",
+                headers=ADMIN_HEADERS,
+            )
+
+        assert resp.status_code == 404
+        body = resp.json()
+        assert body["code"] == "not_found"
+        # No report row should be touched and no generation attempted.
+        mock_report_crud.delete_for_game.assert_not_called()
+        service.generate_and_store_report.assert_not_called()
+
+    def test_generated_deletes_existing_before_generating(self, monkeypatch):
+        """The delete MUST happen before generation so the service's
+        skip-if-exists gate cannot short-circuit the regeneration."""
+        from types import SimpleNamespace
+
+        mock_session = AsyncMock(spec=AsyncSession)
+        game = SimpleNamespace(id=42)
+        app = _build_app_with_admin_router(monkeypatch=monkeypatch)
+        _override_db(app, mock_session)
+
+        call_order: list[str] = []
+
+        def _record_delete(*_a, **_k):
+            call_order.append("delete")
+
+        def _record_generate(*_a, **_k):
+            call_order.append("generate")
+            return {"ok": True}
+
+        with patch("app.api.admin.GameCRUD") as mock_game_crud, \
+             patch("app.api.admin.MatchReportCRUD") as mock_report_crud, \
+             patch("app.api.admin.MatchReportService") as mock_service_cls:
+            mock_game_crud.get_by_slug = AsyncMock(return_value=game)
+            mock_report_crud.delete_for_game = AsyncMock(side_effect=_record_delete)
+
+            service = mock_service_cls.return_value
+            service.generate_and_store_report = AsyncMock(side_effect=_record_generate)
+            service.close = AsyncMock()
+
+            client = TestClient(app)
+            resp = client.post(
+                "/api/admin/match-report/regenerate?slug=abc-12345",
+                headers=ADMIN_HEADERS,
+            )
+
+        assert resp.status_code == 200
+        assert resp.json() == {"status": "generated"}
+        mock_report_crud.delete_for_game.assert_awaited_once_with(mock_session, 42)
+        service.generate_and_store_report.assert_awaited_once_with(mock_session, game)
+        service.close.assert_awaited_once()
+        # Deletion is ordered before generation (skip-if-exists must lose).
+        assert call_order == ["delete", "generate"]
+
+    def test_service_none_returns_skipped(self, monkeypatch):
+        """When the service declines (non-GF slug, missing key, failure),
+        the endpoint reports ``skipped`` rather than erroring."""
+        from types import SimpleNamespace
+
+        mock_session = AsyncMock(spec=AsyncSession)
+        game = SimpleNamespace(id=7)
+        app = _build_app_with_admin_router(monkeypatch=monkeypatch)
+        _override_db(app, mock_session)
+
+        with patch("app.api.admin.GameCRUD") as mock_game_crud, \
+             patch("app.api.admin.MatchReportCRUD") as mock_report_crud, \
+             patch("app.api.admin.MatchReportService") as mock_service_cls:
+            mock_game_crud.get_by_slug = AsyncMock(return_value=game)
+            mock_report_crud.delete_for_game = AsyncMock()
+            service = mock_service_cls.return_value
+            service.generate_and_store_report = AsyncMock(return_value=None)
+            service.close = AsyncMock()
+
+            client = TestClient(app)
+            resp = client.post(
+                "/api/admin/match-report/regenerate?slug=abc-12345",
+                headers=ADMIN_HEADERS,
+            )
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["status"] == "skipped"
+        assert "reason" in body

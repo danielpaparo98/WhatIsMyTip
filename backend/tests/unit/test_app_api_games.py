@@ -444,9 +444,10 @@ class TestLatestRoundPostSeason:
         assert body["is_grand_final"] is True
         assert body["is_post_season"] is False
         assert body["is_off_season"] is False
-        # Premier still computed on GF week: the last *completed* game
-        # (the preliminary final) decides the provisional winner.
-        assert body["premier"] == "Brisbane"
+        # REVIEW-MAJOR-1: no premier during GF week — the last completed
+        # game is the preliminary final, and publishing it as "premier"
+        # would be false.  premier only appears once is_post_season.
+        assert body["premier"] is None
 
 
 # ---------------------------------------------------------------------------

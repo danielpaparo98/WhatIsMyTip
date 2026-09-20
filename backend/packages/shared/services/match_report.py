@@ -373,10 +373,14 @@ def _register_tools(agent: Agent[GFDeps, GrandFinalReport], game: Game) -> None:
             team: Team name as it appears in the fixtures.
         """
         try:
+            # REVIEW-MINOR-4: canonicalize like the sibling tools — the
+            # injuries pipeline predates the 0004 canonical-name rewrite,
+            # so a raw LLM-supplied team string may not match stored rows.
+            canonical = canonical_team(team)
             result = await ctx.deps.db.execute(
                 select(Injury.player_name, Injury.injury_type, Injury.return_timeline)
                 .where(
-                    Injury.team == team,
+                    or_(Injury.team == team, Injury.team == canonical),
                     Injury.return_timeline.isnot(None),
                     Injury.return_timeline != "Available",
                     Injury.return_timeline != "Test",
