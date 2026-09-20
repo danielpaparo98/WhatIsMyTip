@@ -11,12 +11,15 @@ from ..cache import (
     medium_cache,
     short_cache,
 )
+from ..logger import get_logger
 from ..models import Game, Tip
 from ..schemas.games import GameResponse
 from ..squiggle import SquiggleClient
 from ..squiggle.utils import parse_squiggle_complete
 from ..teams import canonical_team
 from ..utils import generate_slug
+
+logger = get_logger(__name__)
 
 
 def _has_known_teams(home_team: Optional[str], away_team: Optional[str]) -> bool:
@@ -126,6 +129,41 @@ class GameCRUD:
         """Get a game by Squiggle ID."""
         result = await db.execute(
             select(Game).where(Game.squiggle_id == squiggle_id)
+        )
+        return result.scalar_one_or_none()
+
+    @staticmethod
+    async def _find_adoptable_duplicate(
+        db: AsyncSession,
+        *,
+        season: int,
+        round_id: int,
+        home: str,
+        away: str,
+    ) -> Optional[Game]:
+        """DUP-GUARD helper: find an uncompleted row for the same fixture
+        under a DIFFERENT squiggle_id, so the sync can adopt it instead
+        of inserting a duplicate (see create_or_update_with_tracking).
+
+        Teams are compared canonically on both sides: the stored value
+        was canonicalized at insert time and the incoming value is
+        canonicalized before this call, but pre-0004 rows may hold
+        legacy names, so the WHERE matches either form.
+        """
+        result = await db.execute(
+            select(Game)
+            .where(
+                Game.season == season,
+                Game.round_id == round_id,
+                ~Game.completed,
+                Game.squiggle_id.isnot(None),
+                Game.home_team.isnot(None),
+                Game.away_team.isnot(None),
+                Game.home_team.in_([home, canonical_team(home)]),
+                Game.away_team.in_([away, canonical_team(away)]),
+            )
+            .order_by(Game.id)
+            .limit(1)
         )
         return result.scalar_one_or_none()
 
@@ -276,6 +314,37 @@ class GameCRUD:
         # still be updated, but the blank incoming teams must never
         # overwrite the stored ones (handled by the truthy guards in the
         # update branch below).
+
+        # DUP-GUARD: Squiggle occasionally re-publishes a fixture under
+        # a NEW id (e.g. the grand-final TBC placeholder is replaced by
+        # a real fixture with a fresh id).  With squiggle_id as the only
+        # identity this used to INSERT a second row for the same game —
+        # the locator double-counts the round and the site can fixate
+        # on the orphan row, which the feed will NEVER mark complete.
+        # Adopt the existing row by re-pointing its squiggle_id so the
+        # update branch below refreshes it in place.
+        if game is None and home_team_val and away_team_val and not is_complete:
+            adoptable = await GameCRUD._find_adoptable_duplicate(
+                db,
+                season=game_data.get("year", 0),
+                round_id=game_data.get("round", 0),
+                home=home_team_val,
+                away=away_team_val,
+            )
+            if adoptable is not None:
+                logger.info(
+                    "DUP-GUARD: adopting existing game %s (squiggle_id %s -> %s) "
+                    "for %s vs %s s%s r%s",
+                    adoptable.slug,
+                    adoptable.squiggle_id,
+                    game_data["id"],
+                    home_team_val,
+                    away_team_val,
+                    game_data.get("year", 0),
+                    game_data.get("round", 0),
+                )
+                adoptable.squiggle_id = game_data["id"]
+                game = adoptable
 
         if game:
             # Check if any data actually changed

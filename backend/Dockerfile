@@ -16,9 +16,14 @@
 FROM python:3.12-slim
 
 # Set environment variables for Python and the application
-# Set to "true" to run alembic migrations on container startup.
-# Defaults to "false" — docker-compose runs migrations via the
-# init-data container, and CI/CD runs them as a separate step.
+# Set to "false" to skip alembic migrations on container startup.
+# Defaults to "true" (DUP-MIG, 2026-09): the documented deploy model
+# (see .github/workflows/deploy.yml) is "migrations run at container
+# start, before uvicorn serves, gated by DO's health check".  The old
+# default of "false" left the production schema behind the code — the
+# match_reports table never came into existence and the grand-final
+# report 500'd.  docker-compose still pins "false" (its init-data
+# container owns migrations locally).
 #
 # WORKERS defaults to ONE uvicorn worker: on the 512 MB App Platform
 # instance each worker is a full process (interpreter + app + sklearn),
@@ -29,7 +34,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PORT=8000 \
     WORKERS=1 \
     FORWARDED_ALLOW_IPS=10.0.0.0/8 \
-    RUN_MIGRATIONS_ON_START=false
+    RUN_MIGRATIONS_ON_START=true
 
 # Explicit ENV declaration for docker inspect visibility
 ENV FORWARDED_ALLOW_IPS=10.0.0.0/8
@@ -91,6 +96,6 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD curl -f http://localhost:8000/health || exit 1
 
 # Shell-form CMD with conditional migration handling.
-# Migrations are gated by RUN_MIGRATIONS_ON_START (default false) to
-# prevent race conditions with docker-compose init-data or CI/CD.
-CMD ["sh", "-c", "if [ '${RUN_MIGRATIONS_ON_START:-false}' = 'true' ] && [ -n '${DATABASE_URL:-}' ]; then echo 'Running migrations...' && alembic upgrade head || exit 1; fi && exec uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000} --workers ${WORKERS:-1} --proxy-headers --forwarded-allow-ips ${FORWARDED_ALLOW_IPS:-10.0.0.0/8}"]
+# Migrations are gated by RUN_MIGRATIONS_ON_START (default TRUE — see
+# the ENV block above; docker-compose pins it back to "false").
+CMD ["sh", "-c", "if [ '${RUN_MIGRATIONS_ON_START:-true}' = 'true' ] && [ -n '${DATABASE_URL:-}' ]; then echo 'Running migrations...' && alembic upgrade head || exit 1; fi && exec uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000} --workers ${WORKERS:-1} --proxy-headers --forwarded-allow-ips ${FORWARDED_ALLOW_IPS:-10.0.0.0/8}"]

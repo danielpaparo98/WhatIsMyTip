@@ -175,6 +175,11 @@ services:
       # so the API doesn't fire background syncs every 15 minutes.
       # Re-enable with CRON_ENABLED=true to exercise the cron paths.
       CRON_ENABLED: "false"
+      # Local dev: migrations are owned by the init-data container
+      # (migrate_and_seed).  The image default is "true" (DUP-MIG) for
+      # production startup-migrations; pin "false" here so compose
+      # keeps its existing single-owner migration flow.
+      RUN_MIGRATIONS_ON_START: "false"
       LOG_FORMAT: plain
     volumes:
       # Overlay the WHOLE backend on /app so --reload watches

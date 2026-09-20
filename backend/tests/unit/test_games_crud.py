@@ -395,3 +395,76 @@ class TestPlaceholderGameSyncSkipping:
 
         assert existing.home_team == "Hawthorn"
         assert existing.away_team == "PortAdelaide"
+
+
+class TestDuplicateFixtureAdoption:
+    """DUP-GUARD: Squiggle re-publishing a fixture under a NEW id used
+    to INSERT a duplicate row (two rows, same game).  The sync must
+    adopt the existing row by re-pointing its squiggle_id instead."""
+
+    @pytest.mark.asyncio
+    async def test_republished_id_adopts_existing_row(self):
+        db = AsyncMock(spec=AsyncSession)
+        existing = _make_game(game_id=3705, slug="xo9e0w3dnv", season=2026, round_id=29)
+        existing.completed = False
+        existing.squiggle_id = 38729
+        # The incoming feed carries the NEW id (39880) for the same fixture.
+        game_data = _make_game_data(id=39880, year=2026, round=29)
+
+        adoptable = AsyncMock(return_value=existing)
+        with patch.object(GameCRUD, "get_by_squiggle_id", AsyncMock(return_value=None)), \
+                patch.object(GameCRUD, "_find_adoptable_duplicate", adoptable), \
+                patch.object(GameCRUD, "_generate_unique_slug", AsyncMock(return_value="unused")), \
+                patch.object(short_cache, "delete", AsyncMock(return_value=True)), \
+                patch.object(medium_cache, "delete", AsyncMock(return_value=True)):
+            result = await GameCRUD.create_or_update_with_tracking(db, game_data)
+
+        # The existing row was adopted, NOT a second row inserted.
+        db.add.assert_not_called()
+        assert result["game"] is existing
+        assert result["action"] == "updated"
+        # Its squiggle_id was re-pointed to the feed's current id.
+        assert existing.squiggle_id == 39880
+
+    @pytest.mark.asyncio
+    async def test_genuinely_new_game_still_creates(self):
+        """No adoptable duplicate → normal create path (guard is inert)."""
+        db = AsyncMock(spec=AsyncSession)
+
+        no_dup = AsyncMock(return_value=None)
+        fresh_slug = AsyncMock(return_value="new-slug-1")
+        with patch.object(GameCRUD, "get_by_squiggle_id", no_dup), \
+                patch.object(GameCRUD, "_find_adoptable_duplicate", no_dup), \
+                patch.object(GameCRUD, "_generate_unique_slug", fresh_slug), \
+                patch.object(short_cache, "delete", AsyncMock(return_value=True)), \
+                patch.object(medium_cache, "delete", AsyncMock(return_value=True)):
+            result = await GameCRUD.create_or_update_with_tracking(
+                db, _make_game_data(id=40000)
+            )
+
+        assert result["action"] == "created"
+        db.add.assert_called_once()
+        assert result["game"].squiggle_id == 40000
+
+    @pytest.mark.asyncio
+    async def test_completed_existing_row_is_never_adopted(self):
+        """A completed row is historical fact — the guard must not
+        re-point its squiggle_id even when teams/round match."""
+        db = AsyncMock(spec=AsyncSession)
+        completed = _make_game(game_id=1, season=2026, round_id=29)
+        completed.completed = True
+
+        no_dup = AsyncMock(return_value=None)
+        fresh_slug = AsyncMock(return_value="new-slug-2")
+        with patch.object(GameCRUD, "get_by_squiggle_id", no_dup), \
+                patch.object(GameCRUD, "_find_adoptable_duplicate", no_dup), \
+                patch.object(GameCRUD, "_generate_unique_slug", fresh_slug), \
+                patch.object(short_cache, "delete", AsyncMock(return_value=True)), \
+                patch.object(medium_cache, "delete", AsyncMock(return_value=True)):
+            result = await GameCRUD.create_or_update_with_tracking(
+                db, _make_game_data(id=50000, year=2026, round=29)
+            )
+
+        # Fell through to a normal create; the completed row untouched.
+        assert result["action"] == "created"
+        db.add.assert_called_once()
