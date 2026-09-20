@@ -39,11 +39,26 @@ def _ensure_aware(dt: Optional[datetime]) -> datetime:
     return dt
 
 
+def _ensure_naive_utc(dt: Optional[datetime]) -> Optional[datetime]:
+    """Normalise a cutoff for comparison against the naive-UTC
+    ``games.date`` column (TIMESTAMP WITHOUT TIME ZONE).
+
+    PROD FIX (2026-09-20): the previous aware cutoff made asyncpg raise
+    "can't subtract offset-naive and offset-aware datetimes" on every
+    query, so ``form`` and ``head_to_head`` were silently omitted from
+    ALL AI contexts (the defensive wrapper swallowed the error).  All
+    callers now compare naive-UTC on both sides.
+    """
+    if dt is None:
+        return None
+    return dt.replace(tzinfo=None) if dt.tzinfo else dt
+
+
 async def _recent_form(
     db: AsyncSession, team: str, before_date: Optional[datetime], limit: int
 ) -> Dict[str, Any]:
     """Recent win/loss form for ``team`` (last ``limit`` completed games)."""
-    cutoff = _ensure_aware(before_date)
+    cutoff = _ensure_naive_utc(before_date)
     result = await db.execute(
         select(Game)
         .where(
@@ -85,7 +100,7 @@ async def _head_to_head(
     db: AsyncSession, home_team: str, away_team: str, before_date: Optional[datetime]
 ) -> Dict[str, Any]:
     """Head-to-head record between the two teams (last ``_H2H_LOOKBACK``)."""
-    cutoff = _ensure_aware(before_date)
+    cutoff = _ensure_naive_utc(before_date)
     result = await db.execute(
         select(Game)
         .where(

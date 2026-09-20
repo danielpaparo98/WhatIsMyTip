@@ -8,7 +8,7 @@ functions and writes a structured :class:`GrandFinalReport`, stored in the
 
 Design constraints (mirroring ``services/match_analysis.py``):
 
-* Generation must NEVER break tip generation — every failure is logged
+* Generation must NEVER break tip generation â€” every failure is logged
   and ``None`` is returned.  No fabricated fallback report is produced.
 * Without an OpenRouter API key the service is inert (returns ``None``).
 * ``is_grand_final`` is a static helper so the API layer can gate on it
@@ -22,13 +22,13 @@ Pydantic AI API reference (verified 2026-09-19, pydantic-ai 2.46.0):
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from pydantic_ai import Agent, RunContext
-from pydantic_ai.models.openrouter import OpenRouterModel
+from pydantic_ai.models.openrouter import OpenRouterModel, OpenRouterModelSettings
 from pydantic_ai.providers.openrouter import OpenRouterProvider
-from pydantic_ai.settings import ModelSettings
+from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import UsageLimits
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -59,10 +59,18 @@ _REPORT_TYPE = "grand_final_pre_match"
 # Guardrails: cap the agent's research loop and output size so a run can
 # never spiral (B6).  Breaching either limit raises UsageLimitExceeded,
 # which is caught and reported as a failed generation (None).
-_REQUEST_LIMIT = 16
-_TOTAL_TOKEN_LIMIT = 12_000
+#
+# PROD FIX (2026-09-20): the observed healthy research pass consumes
+# ~40-60k total tokens â€” NOT because of reasoning, but because
+# pydantic-ai resends the full growing conversation (12 tool schemas +
+# accumulated tool results) on every one of the 16 research
+# round-trips, so input dominates deterministically.  The original 12k
+# budget tripped UsageLimitExceeded on every run.  At deepseek-flash
+# prices a 150k-token run costs a few cents, once a season.
+_REQUEST_LIMIT = 32
+_TOTAL_TOKEN_LIMIT = 150_000
 _TEMPERATURE = 0.3
-_MAX_TOKENS = 4_000
+_MAX_TOKENS = 8_000
 _AGENT_RETRIES = 2
 
 _FORM_LOOKBACK = 5
@@ -81,23 +89,64 @@ _FINALS_LABELS = {
 _AGENT_INSTRUCTIONS = (
     "You are an expert AFL analyst writing the PRE-MATCH grand final report "
     "for a footy-tipping website. This report is a PREDICTION of what is "
-    "anticipated to happen in the game — never a result recap. Call the "
+    "anticipated to happen in the game â€” never a result recap. Call the "
     "research tools to ground every claim in the app's own data: season "
     "summaries, recent form, head-to-head, finals paths, stat leaders, "
     "advanced player stats, injuries, weather, ELO ratings, model "
     "predictions, public tips and season accuracy. Cite the specific "
     "signals behind each judgement and stay honest about uncertainty. "
     "Write in a fan-friendly tone. NEVER invent statistics, injuries or "
-    "facts that the tools did not return — when a data source comes back "
-    "empty, either omit it or say it is unavailable."
+    "facts that the tools did not return â€” when a data source comes back "
+    "empty, either omit it or say it is unavailable.\n\n"
+    "RESEARCH EFFICIENCY RULES (strict):\n"
+    "- The two teams are named in the task below; use those EXACT names "
+    "for every tool's `team` argument. Never try alternative spellings.\n"
+    "- Call each tool AT MOST once per unique argument set. If a result "
+    "comes back empty or thin, do NOT retry â€” note it and move on.\n"
+    "- Aim to finish research in roughly 12-16 tool calls, then write "
+    "the report. Do not re-call a tool you already have the answer from."
 )
 
 
 @dataclass
 class GFDeps:
-    """Dependencies passed to every grand-final agent tool run."""
+    """Dependencies passed to every grand-final agent tool run.
+
+    ``tool_cache`` dedupes research calls: a reasoning model left to its
+    own devices re-called ``get_team_season_summary`` 48 times in one
+    prod-shaped run (name-variant retries), burning the whole token
+    budget.  Tools consult the cache and return the stored result with
+    a "do not call again" note on repeats.
+
+    ``tool_steps`` counts how many agent steps each tool has been
+    OFFERED in; once a tool exceeds its budget (``_budgeted`` prepare)
+    it is removed from the toolset entirely, so the model physically
+    cannot loop on it.
+    """
 
     db: AsyncSession
+    tool_cache: dict[str, Any] = field(default_factory=dict)
+    tool_steps: dict[str, int] = field(default_factory=dict)
+
+
+def _budgeted(tool_name: str, max_steps: int):
+    """Return a per-tool ``prepare`` hook that removes ``tool_name``
+    from the toolset after ``max_steps`` agent steps.
+
+    This is the hard loop-guard: returning ``None`` from ``prepare``
+    drops the tool, so a model stuck retrying a tool with name
+    variants (the observed failure mode) is forced to move on and
+    write the report from the data it already has.
+    """
+
+    async def _prepare(ctx: RunContext[GFDeps], tool_def: ToolDefinition):
+        used = ctx.deps.tool_steps.get(tool_name, 0)
+        if used >= max_steps:
+            return None
+        ctx.deps.tool_steps[tool_name] = used + 1
+        return tool_def
+
+    return _prepare
 
 
 def _has_known_teams(home: Any, away: Any) -> bool:
@@ -109,12 +158,12 @@ def _build_prompt(game: Game) -> str:
     """Build the user prompt for the grand-final report run."""
     return (
         f"Write the grand-final pre-match report for {game.home_team} vs "
-        f"{game.away_team} — season {game.season}, round {game.round_id}, "
+        f"{game.away_team} â€” season {game.season}, round {game.round_id}, "
         f"venue {game.venue}, kick-off {game.date}. Call the research tools "
         f"to gather both teams' season summaries, recent form, "
         f"head-to-head record, finals paths, stat leaders, advanced stats, "
         f"injuries, the weather forecast, ELO ratings, model predictions, "
-        f"public tips and season accuracy — then write the report."
+        f"public tips and season accuracy â€” then write the report."
     )
 
 
@@ -126,7 +175,7 @@ def _register_tools(agent: Agent[GFDeps, GrandFinalReport], game: Game) -> None:
     """
     season = game.season
 
-    @agent.tool
+    @agent.tool(prepare=_budgeted("get_team_season_summary", 3))
     async def get_team_season_summary(
         ctx: RunContext[GFDeps], team: str
     ) -> dict[str, Any]:
@@ -135,6 +184,16 @@ def _register_tools(agent: Agent[GFDeps, GrandFinalReport], game: Game) -> None:
         Args:
             team: Team name as it appears in the fixtures (e.g. "Brisbane").
         """
+        # DUP-GUARD (agent-loop defence): a reasoning model will retry
+        # this call with name variants when the result is thin â€”
+        # canonicalize the key and return cached results on repeats so
+        # the loop terminates.
+        canonical = canonical_team(team)
+        cache_key = f"season_summary:{canonical}"
+        cached = ctx.deps.tool_cache.get(cache_key)
+        if cached is not None:
+            return {**cached, "note": "cached result â€” do not call this tool again"}
+
         try:
             result = await ctx.deps.db.execute(
                 select(Game).where(
@@ -177,32 +236,60 @@ def _register_tools(agent: Agent[GFDeps, GrandFinalReport], game: Game) -> None:
                     else:
                         stats["draws"] += 1
 
-            if team not in table:
-                return {
+            # Lookup order: exact â†’ canonical â†’ case-insensitive, so a
+            # name-variant argument still finds the team's row instead
+            # of triggering a retry loop.
+            matched_team = team
+            if matched_team not in table:
+                matched_team = next(
+                    (name for name in table if canonical_team(name) == canonical),
+                    None,
+                )
+            if matched_team is None:
+                matched_team = next(
+                    (
+                        name
+                        for name in table
+                        if name.strip().lower() == team.strip().lower()
+                    ),
+                    None,
+                )
+
+            if matched_team is None:
+                summary = {
                     "team": team,
                     "season": season,
                     "note": "no completed games found for this team",
+                    "known_teams": sorted(table.keys())[:20],
                 }
-
-            # Ladder position: rank by wins among the teams that played
-            # this season (simple heuristic, consistent with the locator).
-            ranked = sorted(table.items(), key=lambda kv: kv[1]["wins"], reverse=True)
-            ladder_position = next(
-                (i + 1 for i, (name, _stats) in enumerate(ranked) if name == team),
-                None,
-            )
-            return {
-                "team": team,
-                "season": season,
-                "ladder_position": ladder_position,
-                "teams_in_competition": len(table),
-                **table[team],
-            }
+            else:
+                # Ladder position: rank by wins among the teams that played
+                # this season (simple heuristic, consistent with the locator).
+                ranked = sorted(
+                    table.items(), key=lambda kv: kv[1]["wins"], reverse=True
+                )
+                ladder_position = next(
+                    (
+                        i + 1
+                        for i, (name, _stats) in enumerate(ranked)
+                        if name == matched_team
+                    ),
+                    None,
+                )
+                summary = {
+                    "team": matched_team,
+                    "season": season,
+                    "ladder_position": ladder_position,
+                    "teams_in_competition": len(table),
+                    **table[matched_team],
+                }
+            ctx.deps.tool_cache[cache_key] = summary
+            return summary
         except Exception as e:  # noqa: BLE001 - defensive, must not break gen
             logger.debug(f"get_team_season_summary unavailable: {e}")
             return {"team": team, "season": season, "note": "unavailable"}
 
-    @agent.tool
+    @agent.tool(prepare=_budgeted("get_recent_form", 4))
     async def get_recent_form(
         ctx: RunContext[GFDeps], team: str, last_n: int = _FORM_LOOKBACK
     ) -> dict[str, Any]:
@@ -220,7 +307,7 @@ def _register_tools(agent: Agent[GFDeps, GrandFinalReport], game: Game) -> None:
             logger.debug(f"get_recent_form unavailable: {e}")
             return {"games": 0, "wins": 0, "losses": 0, "streak": "-", "avg_margin": 0}
 
-    @agent.tool
+    @agent.tool(prepare=_budgeted("get_head_to_head", 2))
     async def get_head_to_head(ctx: RunContext[GFDeps]) -> dict[str, Any]:
         """Head-to-head record between the two grand-final teams (last 10 meetings)."""
         try:
@@ -231,7 +318,7 @@ def _register_tools(agent: Agent[GFDeps, GrandFinalReport], game: Game) -> None:
             logger.debug(f"get_head_to_head unavailable: {e}")
             return {"games": 0, "home_wins": 0, "away_wins": 0}
 
-    @agent.tool
+    @agent.tool(prepare=_budgeted("get_finals_path", 4))
     async def get_finals_path(ctx: RunContext[GFDeps], team: str) -> list[str]:
         """The team's completed finals results this season, in round order.
 
@@ -288,7 +375,7 @@ def _register_tools(agent: Agent[GFDeps, GrandFinalReport], game: Game) -> None:
             logger.debug(f"get_finals_path unavailable: {e}")
             return []
 
-    @agent.tool
+    @agent.tool(prepare=_budgeted("get_team_stat_leaders", 8))
     async def get_team_stat_leaders(
         ctx: RunContext[GFDeps], team: str, stat: str, top_n: int = 5
     ) -> dict[str, Any]:
@@ -329,7 +416,7 @@ def _register_tools(agent: Agent[GFDeps, GrandFinalReport], game: Game) -> None:
             logger.debug(f"get_team_stat_leaders unavailable: {e}")
             return {"team": team, "stat": stat, "leaders": []}
 
-    @agent.tool
+    @agent.tool(prepare=_budgeted("get_player_advanced_note", 4))
     async def get_player_advanced_note(ctx: RunContext[GFDeps], team: str) -> list[dict[str, Any]]:
         """Top contested-possession / pressure-act players for one team this season.
 
@@ -365,7 +452,7 @@ def _register_tools(agent: Agent[GFDeps, GrandFinalReport], game: Game) -> None:
             logger.debug(f"get_player_advanced_note unavailable: {e}")
             return []
 
-    @agent.tool
+    @agent.tool(prepare=_budgeted("get_injuries", 4))
     async def get_injuries(ctx: RunContext[GFDeps], team: str) -> list[dict[str, Any]]:
         """Current injury list for one team (excludes Available/Test players).
 
@@ -373,7 +460,7 @@ def _register_tools(agent: Agent[GFDeps, GrandFinalReport], game: Game) -> None:
             team: Team name as it appears in the fixtures.
         """
         try:
-            # REVIEW-MINOR-4: canonicalize like the sibling tools — the
+            # REVIEW-MINOR-4: canonicalize like the sibling tools â€” the
             # injuries pipeline predates the 0004 canonical-name rewrite,
             # so a raw LLM-supplied team string may not match stored rows.
             canonical = canonical_team(team)
@@ -394,7 +481,7 @@ def _register_tools(agent: Agent[GFDeps, GrandFinalReport], game: Game) -> None:
             logger.debug(f"get_injuries unavailable: {e}")
             return []
 
-    @agent.tool
+    @agent.tool(prepare=_budgeted("get_weather", 2))
     async def get_weather(ctx: RunContext[GFDeps]) -> dict[str, Any]:
         """Weather forecast for the grand final venue (empty when unavailable)."""
         try:
@@ -417,7 +504,7 @@ def _register_tools(agent: Agent[GFDeps, GrandFinalReport], game: Game) -> None:
             logger.debug(f"get_weather unavailable: {e}")
             return {}
 
-    @agent.tool
+    @agent.tool(prepare=_budgeted("get_elo_ratings", 2))
     async def get_elo_ratings(ctx: RunContext[GFDeps]) -> dict[str, Any]:
         """Current ELO ratings for both grand-final teams plus the difference."""
         try:
@@ -439,7 +526,7 @@ def _register_tools(agent: Agent[GFDeps, GrandFinalReport], game: Game) -> None:
             logger.debug(f"get_elo_ratings unavailable: {e}")
             return {}
 
-    @agent.tool
+    @agent.tool(prepare=_budgeted("get_model_predictions", 2))
     async def get_model_predictions(ctx: RunContext[GFDeps]) -> list[dict[str, Any]]:
         """The app's internal model predictions for the grand final (winner/margin/confidence)."""
         try:
@@ -457,7 +544,7 @@ def _register_tools(agent: Agent[GFDeps, GrandFinalReport], game: Game) -> None:
             logger.debug(f"get_model_predictions unavailable: {e}")
             return []
 
-    @agent.tool
+    @agent.tool(prepare=_budgeted("get_tips", 2))
     async def get_tips(ctx: RunContext[GFDeps]) -> list[dict[str, Any]]:
         """The app's published heuristic tips for the grand final."""
         try:
@@ -475,7 +562,7 @@ def _register_tools(agent: Agent[GFDeps, GrandFinalReport], game: Game) -> None:
             logger.debug(f"get_tips unavailable: {e}")
             return []
 
-    @agent.tool
+    @agent.tool(prepare=_budgeted("get_season_accuracy", 2))
     async def get_season_accuracy(ctx: RunContext[GFDeps]) -> dict[str, Any]:
         """Per-heuristic tipping accuracy for the season (from backtest results)."""
         try:
@@ -569,7 +656,7 @@ class MatchReportService:
                 logger.info(f"Match report already exists for game {game.id}")
                 return existing.report
 
-            # Gate 5: without an OpenRouter key we cannot run the agent —
+            # Gate 5: without an OpenRouter key we cannot run the agent â€”
             # skip rather than fabricate a fallback report.
             if not (settings.openrouter_api_key or "").strip():
                 logger.warning(
@@ -606,9 +693,18 @@ class MatchReportService:
                     request_limit=_REQUEST_LIMIT,
                     total_tokens_limit=_TOTAL_TOKEN_LIMIT,
                 ),
-                model_settings=ModelSettings(
+                model_settings=OpenRouterModelSettings(
                     temperature=_TEMPERATURE,
                     max_tokens=_MAX_TOKENS,
+                    # PROD FIX: `deepseek-v4-flash` is a reasoning model â€”
+                    # without this it burns thousands of tokens thinking
+                    # between every tool call (16k-40k+ per run) and trips
+                    # the usage budget before writing a word of report.
+                    # `effort: "none"` maps to OpenRouter's
+                    # reasoning.effort=none (verified live 2026-09-20);
+                    # exclude keeps any residual thinking out of the
+                    # response payload.
+                    openrouter_reasoning={"effort": "none", "exclude": True},
                 ),
             )
             return result.output
@@ -645,7 +741,7 @@ class MatchReportService:
 
         The agent (and its underlying OpenRouter HTTP client) is built per
         generation call, so there is nothing durable to close; the method
-        exists for interface parity with ``MatchAnalysisService`` — callers
+        exists for interface parity with ``MatchAnalysisService`` â€” callers
         (tip generation, admin regenerate) await it unconditionally.
         """
         self._agent = None

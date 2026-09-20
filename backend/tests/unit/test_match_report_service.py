@@ -314,10 +314,10 @@ class TestGenerateAndStoreReportAgentRun:
         deps = run_kwargs["deps"]
         assert isinstance(deps, GFDeps)
         assert deps.db is session
-        assert run_kwargs["usage_limits"].total_tokens_limit == 12_000
-        assert run_kwargs["usage_limits"].request_limit == 16
+        assert run_kwargs["usage_limits"].total_tokens_limit == 150_000
+        assert run_kwargs["usage_limits"].request_limit == 32
         assert run_kwargs["model_settings"]["temperature"] == 0.3
-        assert run_kwargs["model_settings"]["max_tokens"] == 4_000
+        assert run_kwargs["model_settings"]["max_tokens"] == 8_000
 
     @pytest.mark.asyncio
     async def test_agent_failure_returns_none_and_stores_nothing(self, monkeypatch):
