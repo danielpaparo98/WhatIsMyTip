@@ -1,8 +1,6 @@
 from logging.config import fileConfig
 
-from sqlalchemy import engine_from_config
-from sqlalchemy import pool
-from sqlalchemy import text
+from sqlalchemy import engine_from_config, pool, text
 
 from alembic import context
 
@@ -11,15 +9,15 @@ from alembic import context
 from packages.shared.config import settings
 from packages.shared.db import Base
 from packages.shared.models import (  # noqa: F401
-    Game,
-    Tip,
-    ModelPrediction,
     BacktestResult,
+    EloCache,
+    Game,
     GenerationProgress,
     JobExecution,
     JobLock,
-    EloCache,
     MatchAnalysis,
+    ModelPrediction,
+    Tip,
 )
 
 # this is the Alembic Config object, which provides
@@ -39,7 +37,15 @@ config.set_main_option("sqlalchemy.url", database_url)
 
 # Interpret the config file for Python logging.
 # This line sets up loggers basically.
-if config.config_file_name is not None:
+#
+# DUP-MIG: when Alembic runs INSIDE the app (lifespan startup
+# auto-upgrade), fileConfig's ``disable_existing_loggers`` would tear
+# down the application's already-configured loggers mid-flight, so the
+# caller sets ``configure_logger = False`` via ``Config.attributes``.
+# CLI runs keep the default (configure).
+if config.config_file_name is not None and config.attributes.get(
+    "configure_logger", True
+):
     fileConfig(config.config_file_name)
 
 # add your model's MetaData object here
