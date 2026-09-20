@@ -23,7 +23,8 @@ Pydantic AI API reference (verified 2026-09-19, pydantic-ai 2.46.0):
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from datetime import datetime
+from typing import Any, Dict
 
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.models.openrouter import OpenRouterModel, OpenRouterModelSettings
@@ -88,7 +89,7 @@ _FINALS_LABELS = {
 _AGENT_INSTRUCTIONS = (
     "You are an expert AFL analyst writing the PRE-MATCH grand final report "
     "for a footy-tipping website. This report is a PREDICTION of what is "
-    "anticipated to happen in the game â€” never a result recap. Call the "
+    "anticipated to happen in the game — never a result recap. Call the "
     "research tools to ground every claim in the app's own data: season "
     "summaries, recent form, head-to-head, finals paths, stat leaders, "
     "advanced player stats, injuries, weather, ELO ratings, model "
@@ -102,7 +103,10 @@ _AGENT_INSTRUCTIONS = (
     "report field to null (weather_impact / x_factor) or omit the entry "
     "entirely — NEVER write filler prose like 'data was unavailable'.\n"
     "- NEVER create placeholder player entries (e.g. name='Unknown'). "
-    "Only name players the tools actually returned; omit the rest.\n\n"
+    "Only name players the tools actually returned; omit the rest.\n"
+    "- HEADLINE: at most 8 words, an editorial hook only. The teams, "
+    "venue, date and the words 'Grand Final' / 'Pre-Match Report' are "
+    "ALREADY displayed around it — do not repeat them.\n\n"
     "RESEARCH EFFICIENCY RULES (strict):\n"
     "- The two teams are named in the task below; use those EXACT names "
     "for every tool's `team` argument. Never try alternative spellings.\n"
@@ -152,6 +156,78 @@ def _budgeted(tool_name: str, max_steps: int):
         return tool_def
 
     return _prepare
+
+
+def _pick_hourly(hourly: Dict[str, Any], key: str, idx: int) -> Any:
+    """Pull ``key`` at index ``idx`` from an Open-Meteo hourly payload."""
+    values = hourly.get(key) or []
+    return values[idx] if idx < len(values) else None
+
+
+async def _ensure_weather(db: AsyncSession, game: Game) -> None:
+    """Fetch and store the forecast for ``game`` when no row exists.
+
+    GF-CONTENT FIX (2026-09-20): weather lived only in a MANUAL seed
+    script — nothing in the cron pipeline ever fetched it — so upcoming
+    games (the grand final!) had no ``match_weather`` row and the
+    report's weather section went blank.  The report generation now
+    self-serves: one Open-Meteo forecast call the first time it runs.
+    Defensive throughout: any failure is logged and skipped.
+    """
+    try:
+        existing = await db.execute(
+            select(MatchWeather).where(MatchWeather.game_id == game.id)
+        )
+        if existing.scalar_one_or_none() is not None:
+            return
+        if not game.venue or not game.date:
+            return
+
+        from ..weather.client import WeatherClient
+
+        async with WeatherClient() as client:
+            forecast = await client.get_forecast(game.venue, days=8)
+
+        hourly = (forecast or {}).get("hourly") or {}
+        times = hourly.get("time") or []
+        if not times:
+            logger.info(f"No forecast data available for venue {game.venue!r}")
+            return
+
+        # Index the hourly forecast at (or nearest to) kick-off.
+        kickoff = game.date.replace(tzinfo=None) if game.date.tzinfo else game.date
+        try:
+            idx = min(
+                range(len(times)),
+                key=lambda i: abs(
+                    datetime.fromisoformat(times[i]).replace(tzinfo=None) - kickoff
+                ),
+            )
+        except ValueError:
+            idx = len(times) // 2
+
+        db.add(
+            MatchWeather(
+                game_id=game.id,
+                venue=game.venue,
+                match_date=kickoff.date(),
+                temperature=_pick_hourly(hourly, "temperature_2m", idx),
+                precipitation=_pick_hourly(hourly, "precipitation", idx),
+                wind_speed=_pick_hourly(hourly, "windspeed_10m", idx),
+                wind_direction=_pick_hourly(hourly, "winddirection_10m", idx),
+                wind_gusts=_pick_hourly(hourly, "windgusts_10m", idx),
+                humidity=_pick_hourly(hourly, "relative_humidity_2m", idx),
+                weather_code=_pick_hourly(hourly, "weathercode", idx),
+                data_type="forecast",
+                raw_hourly=hourly,
+            )
+        )
+        await db.commit()
+        logger.info(
+            f"Stored forecast weather for game {game.id} ({game.venue!r})"
+        )
+    except Exception as e:  # noqa: BLE001 — weather must not break the report
+        logger.warning(f"Weather ensure failed for game {game.id} (non-fatal): {e}")
 
 
 def _has_known_teams(home: Any, away: Any) -> bool:
@@ -400,6 +476,14 @@ def _register_tools(agent: Agent[GFDeps, GrandFinalReport], game: Game) -> None:
             }
         try:
             stat_col = getattr(PlayerMatchStats, stat)
+            canonical = canonical_team(team)
+            # GF-CONTENT FIX (2026-09-20): `player_match_stats.team` was
+            # seeded from the games table BEFORE the 0004 canonical-name
+            # rewrite, so Brisbane rows may still read "Brisbane Lions".
+            # Exact-match on the canonical name returned zero rows and
+            # the report's Players section went blank for one side.  Match
+            # the canonical form via the column OR the player's
+            # current_team (always canonical).
             result = await ctx.deps.db.execute(
                 select(Player.name, func.sum(stat_col).label("total"))
                 .join(Game, PlayerMatchStats.game_id == Game.id)
@@ -407,7 +491,11 @@ def _register_tools(agent: Agent[GFDeps, GrandFinalReport], game: Game) -> None:
                 .where(
                     Game.season == season,
                     Game.completed.is_(True),
-                    PlayerMatchStats.team == team,
+                    or_(
+                        PlayerMatchStats.team == team,
+                        PlayerMatchStats.team == canonical,
+                        Player.current_team == canonical,
+                    ),
                 )
                 .group_by(Player.name)
                 .order_by(func.sum(stat_col).desc())
@@ -668,6 +756,10 @@ class MatchReportService:
                     "OpenRouter API key not configured; skipping grand-final match report"
                 )
                 return None
+
+            # GF-CONTENT: self-serve the forecast so the weather section
+            # has real data (nothing in the cron pipeline fetches it).
+            await _ensure_weather(db, game)
 
             report = await self._run_agent(db, game)
             if report is None:
