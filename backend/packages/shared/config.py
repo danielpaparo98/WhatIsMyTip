@@ -34,6 +34,13 @@ class Settings(BaseSettings):
     # OpenRouter Configuration
     openrouter_api_key: str = ""
     openrouter_model: str = "deepseek/deepseek-v4-flash"
+    # Model for the grand-final match-report research agent
+    # (GF-BUDGET, 2026-09-20): the user picked `ling-3.0-flash` — very
+    # cheap (~$0.02-0.06/M tokens) with a 262k context, well suited to
+    # the token-heavy research loop.  Falls back to ``openrouter_model``
+    # semantics only in the sense that it is its own knob; the nightly
+    # explanations/talking-points keep using ``openrouter_model``.
+    match_report_model: str = "inclusionai/ling-3.0-flash"
     openrouter_base_url: str = "https://openrouter.ai/api/v1"
 
     environment: str = "development"

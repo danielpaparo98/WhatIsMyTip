@@ -72,7 +72,15 @@ export default defineNuxtConfig({
         // plugins/umami.client.ts (FIX H-1 — the old static entry
         // rendered <script src=""> with an empty src when the env vars
         // were unset, making the browser fetch the page itself as JS).
-        { rel: 'icon', type: 'image/x-icon', href: '/favicon.ico' }
+        { rel: 'icon', type: 'image/x-icon', href: '/favicon.ico' },
+        // GF-FAVICON (2026-09-20): the full favicon set from the new
+        // brand assets — SVG for modern browsers, 96x96 PNG for
+        // classics, apple-touch for iOS, manifest for PWA installs.
+        // The .ico stays first as the universal fallback.
+        { rel: 'icon', type: 'image/svg+xml', href: '/favicon.svg' },
+        { rel: 'icon', type: 'image/png', sizes: '96x96', href: '/favicon-96x96.png' },
+        { rel: 'apple-touch-icon', sizes: '180x180', href: '/apple-touch-icon.png' },
+        { rel: 'manifest', href: '/site.webmanifest' }
       ],
       script: [
         {

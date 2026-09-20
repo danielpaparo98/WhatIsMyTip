@@ -301,7 +301,7 @@ class TestGenerateAndStoreReportAgentRun:
             ),
             patch(f"{SERVICE_MODULE}.MatchReportCRUD") as mock_crud,
             patch(f"{SERVICE_MODULE}.Agent", mock_agent_cls),
-            patch(f"{SERVICE_MODULE}.OpenRouterModel"),
+            patch(f"{SERVICE_MODULE}.OpenRouterModel") as mock_model_cls,
             patch(f"{SERVICE_MODULE}.OpenRouterProvider"),
         ):
             mock_crud.get_by_game_id = AsyncMock(return_value=None)
@@ -314,10 +314,15 @@ class TestGenerateAndStoreReportAgentRun:
         deps = run_kwargs["deps"]
         assert isinstance(deps, GFDeps)
         assert deps.db is session
-        assert run_kwargs["usage_limits"].total_tokens_limit == 150_000
-        assert run_kwargs["usage_limits"].request_limit == 32
+        assert run_kwargs["usage_limits"].total_tokens_limit == 300_000
+        assert run_kwargs["usage_limits"].request_limit == 40
         assert run_kwargs["model_settings"]["temperature"] == 0.3
-        assert run_kwargs["model_settings"]["max_tokens"] == 8_000
+        assert run_kwargs["model_settings"]["max_tokens"] == 16_000
+        # GF-BUDGET: no reasoning override — the model reasons by default.
+        assert "openrouter_reasoning" not in run_kwargs["model_settings"]
+        # GF-BUDGET: the report agent runs its own cheap model
+        # (ling-3.0-flash), not the shared nightly-explanations model.
+        assert mock_model_cls.call_args.args[0] == "inclusionai/ling-3.0-flash"
 
     @pytest.mark.asyncio
     async def test_agent_failure_returns_none_and_stores_nothing(self, monkeypatch):

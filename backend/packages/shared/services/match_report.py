@@ -60,17 +60,16 @@ _REPORT_TYPE = "grand_final_pre_match"
 # never spiral (B6).  Breaching either limit raises UsageLimitExceeded,
 # which is caught and reported as a failed generation (None).
 #
-# PROD FIX (2026-09-20): the observed healthy research pass consumes
-# ~40-60k total tokens â€” NOT because of reasoning, but because
-# pydantic-ai resends the full growing conversation (12 tool schemas +
-# accumulated tool results) on every one of the 16 research
-# round-trips, so input dominates deterministically.  The original 12k
-# budget tripped UsageLimitExceeded on every run.  At deepseek-flash
-# prices a 150k-token run costs a few cents, once a season.
-_REQUEST_LIMIT = 32
-_TOTAL_TOKEN_LIMIT = 150_000
+# GF-BUDGET (2026-09-20, user request): raised again for the switch to
+# `ling-3.0-flash` WITH reasoning enabled — reasoning burns extra
+# tokens between tool calls, and pydantic-ai resends the full growing
+# conversation on every research round-trip, so the honest budget for a
+# 12-tool loop is six figures.  At ling-flash prices (~$0.02-0.06/M)
+# even a 300k-token run costs well under a cent, once a season.
+_REQUEST_LIMIT = 40
+_TOTAL_TOKEN_LIMIT = 300_000
 _TEMPERATURE = 0.3
-_MAX_TOKENS = 8_000
+_MAX_TOKENS = 16_000
 _AGENT_RETRIES = 2
 
 _FORM_LOOKBACK = 5
@@ -696,15 +695,12 @@ class MatchReportService:
                 model_settings=OpenRouterModelSettings(
                     temperature=_TEMPERATURE,
                     max_tokens=_MAX_TOKENS,
-                    # PROD FIX: `deepseek-v4-flash` is a reasoning model â€”
-                    # without this it burns thousands of tokens thinking
-                    # between every tool call (16k-40k+ per run) and trips
-                    # the usage budget before writing a word of report.
-                    # `effort: "none"` maps to OpenRouter's
-                    # reasoning.effort=none (verified live 2026-09-20);
-                    # exclude keeps any residual thinking out of the
-                    # response payload.
-                    openrouter_reasoning={"effort": "none", "exclude": True},
+                    # GF-BUDGET (2026-09-20, user request): reasoning is
+                    # ALLOWED — no openrouter_reasoning override, so the
+                    # model thinks with its default effort.  The tool
+                    # call budgets (_budgeted prepare) are the loop
+                    # guard; the raised usage limits absorb the extra
+                    # reasoning tokens.
                 ),
             )
             return result.output
@@ -723,7 +719,10 @@ class MatchReportService:
         OpenRouter client exists until a generation actually runs.
         """
         model = OpenRouterModel(
-            settings.openrouter_model,
+            # GF-BUDGET (2026-09-20, user request): the report agent uses
+            # its own cheap-but-capable model (ling-3.0-flash, 262k
+            # context) instead of the shared nightly-explanations model.
+            settings.match_report_model,
             provider=OpenRouterProvider(api_key=settings.openrouter_api_key),
         )
         agent = Agent(
