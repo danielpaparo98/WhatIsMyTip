@@ -2,14 +2,16 @@
 
 import time
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..cache import invalidate_cache_pattern, medium_cache
 from ..config import settings
 from ..crud.games import GameCRUD
 from ..logger import get_logger
+from ..models import Game
 from ..models_ml.elo import EloModel
 from ..squiggle import SquiggleClient
 from ..squiggle.utils import parse_squiggle_complete
@@ -73,6 +75,9 @@ class MatchCompletionDetectorService:
             "games_no_change": 0,
             "errors": [],
         }
+        # GF-TRIGGER: rounds whose LAST game was completed during this
+        # pass (see _detect_rounds_completed).
+        newly_completed: List[Any] = []
 
         try:
             # Find games that might be completed
@@ -139,6 +144,7 @@ class MatchCompletionDetectorService:
 
                         if updated_game:
                             stats["games_completed"] += 1
+                            newly_completed.append(updated_game)
                             self.logger.info(
                                 f"Marked game {game.squiggle_id} as completed: "
                                 f"{game.home_team} {updated_game.home_score} - "
@@ -156,6 +162,12 @@ class MatchCompletionDetectorService:
                     self.logger.error(error_msg, exc_info=True)
                     stats["errors"].append(error_msg)
 
+            # GF-TRIGGER: a round whose last remaining game was just
+            # completed tonight → the caller schedules the night rerun.
+            stats["rounds_completed"] = await self._detect_rounds_completed(
+                newly_completed
+            )
+
             duration = time.time() - start_time
             stats["duration_seconds"] = duration
 
@@ -172,9 +184,61 @@ class MatchCompletionDetectorService:
             self.logger.error(error_msg, exc_info=True)
             stats["errors"].append(error_msg)
             stats["duration_seconds"] = time.time() - start_time
+            stats["rounds_completed"] = []
             raise
 
         return stats
+
+    async def _detect_rounds_completed(
+        self, newly_completed: List[Any]
+    ) -> List[Dict[str, Any]]:
+        """Detect rounds whose last remaining game was just completed.
+
+        For every (season, round) touched by a game completed during
+        THIS pass, count the games of that round that are still
+        uncompleted (TBC placeholder rows are ignored — a round with
+        only unplayed TBC rows is not "in progress").  A round with
+        zero uncompleted games is complete.
+
+        Returns a list of ``{"season": ..., "round_id": ...}`` dicts.
+        """
+        rounds: List[Dict[str, Any]] = []
+        seen: set[tuple[int, int]] = set()
+        for game in newly_completed:
+            season = getattr(game, "season", None)
+            round_id = getattr(game, "round_id", None)
+            if season is None or round_id is None:
+                continue
+            key = (season, round_id)
+            if key in seen:
+                continue
+            seen.add(key)
+            try:
+                result = await self.db.execute(
+                    select(func.count(Game.id)).where(
+                        Game.season == season,
+                        Game.round_id == round_id,
+                        Game.completed.is_(False),
+                        Game.home_team.isnot(None),
+                        Game.home_team != "",
+                        Game.away_team.isnot(None),
+                        Game.away_team != "",
+                    )
+                )
+                remaining = result.scalar() or 0
+            except Exception as e:  # noqa: BLE001 — defensive, never break the pass
+                self.logger.warning(
+                    f"Round-completion check failed for season {season} "
+                    f"round {round_id}: {e}"
+                )
+                continue
+            if remaining == 0:
+                self.logger.info(
+                    f"Round completed: season {season} round {round_id} "
+                    "(last game finished) — night rerun will be scheduled"
+                )
+                rounds.append({"season": season, "round_id": round_id})
+        return rounds
 
     async def check_single_game(self, squiggle_id: int) -> Optional[Dict[str, Any]]:
         """Check a single game for completion.
@@ -316,6 +380,9 @@ async def run_match_completion(session: AsyncSession) -> Dict[str, Any]:
             "games_not_ready": games_not_ready,
             "errors": error_count,
             "elo_cache_updated": elo_cache_updated,
+            # GF-TRIGGER: consumed by MatchCompletionJob to schedule the
+            # one-shot night rerun of tip generation.
+            "rounds_completed": completion_stats.get("rounds_completed", []),
         }
     finally:
         await squiggle_client.close()

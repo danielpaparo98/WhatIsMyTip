@@ -32,6 +32,80 @@ def _has_known_teams(game: "Game") -> bool:
     )
 
 
+async def _round_nlp_sweep(
+    session: AsyncSession, season: Optional[int], round_id: Optional[int]
+) -> Dict[str, int]:
+    """GF-TRIGGER: back-fill missing AI content for the target round.
+
+    The nightly pipeline historically gated AI content on
+    ``tips_created > 0`` — which, once tips existed for a round, meant
+    match analyses and the grand-final report could NEVER be generated
+    automatically (tips are created as soon as the fixture has teams,
+    days or weeks before they're needed).  This sweep runs after every
+    generation pass and generates any missing content regardless of
+    tip creation:
+
+    * match-analysis talking points (service skips when present)
+    * the grand-final pre-match report (grand-final games only)
+
+    Failure of any single item is logged and never fails the pass.
+    """
+    counts = {"match_analyses_created": 0, "match_reports_created": 0}
+    if season is None or round_id is None:
+        return counts
+
+    games = await GameCRUD.get_by_round(session, season, round_id, limit=50)
+
+    from ..crud.match_analysis import MatchAnalysisCRUD
+    from ..crud.match_report import MatchReportCRUD
+
+    for game in games:
+        if not _has_known_teams(game):
+            continue
+
+        # Match-analysis talking points (skip-if-exists inside service).
+        try:
+            if await MatchAnalysisCRUD.get_by_game_id(session, game.id) is None:
+                from .match_analysis import MatchAnalysisService
+
+                analysis_service = MatchAnalysisService()
+                try:
+                    if await analysis_service.generate_and_store_analysis(
+                        session, game
+                    ):
+                        counts["match_analyses_created"] += 1
+                finally:
+                    await analysis_service.close()
+        except Exception as e:  # noqa: BLE001
+            logger.warning(
+                f"NLP sweep: match analysis failed for game {game.id}: {e}"
+            )
+
+        # Grand-final pre-match report (GF-only gate inside service).
+        try:
+            from .match_report import MatchReportService
+
+            if await MatchReportService.is_grand_final(session, game):
+                if (
+                    await MatchReportCRUD.get_by_game_id(session, game.id)
+                    is None
+                ):
+                    report_service = MatchReportService()
+                    try:
+                        if await report_service.generate_and_store_report(
+                            session, game
+                        ):
+                            counts["match_reports_created"] += 1
+                    finally:
+                        await report_service.close()
+        except Exception as e:  # noqa: BLE001
+            logger.warning(
+                f"NLP sweep: match report failed for game {game.id}: {e}"
+            )
+
+    return counts
+
+
 # LO-004: share a single ModelOrchestrator across all
 # TipGenerationService instances.  Constructing the orchestrator
 # (and every model it lazily loads) is non-trivial; doing it once
@@ -583,6 +657,27 @@ async def run_tip_generation(session: AsyncSession) -> Dict[str, Any]:
         explanation_error = str(exc)
         summary_parts.append("Explanation generation failed (tips still saved)")
 
+    # GF-TRIGGER: back-fill any missing AI content (match analyses,
+    # grand-final report) for the round — independent of tips_created,
+    # so content generated days after the tips still lands.
+    nlp_sweep = {"match_analyses_created": 0, "match_reports_created": 0}
+    nlp_sweep_error: Optional[str] = None
+    try:
+        nlp_sweep = await _round_nlp_sweep(
+            session, gen_stats.get("season"), gen_stats.get("round_id")
+        )
+        if nlp_sweep["match_analyses_created"]:
+            summary_parts.append(
+                f"Generated {nlp_sweep['match_analyses_created']} match analyses"
+            )
+        if nlp_sweep["match_reports_created"]:
+            summary_parts.append(
+                f"Generated {nlp_sweep['match_reports_created']} grand-final report(s)"
+            )
+    except Exception as exc:  # noqa: BLE001
+        nlp_sweep_error = str(exc)
+        summary_parts.append("NLP sweep failed (tips still saved)")
+
     if error_count == 0 and games_processed == 0 and not base_message:
         # No upcoming round at all — still a success, surface a clear message
         if not summary_parts or "Generated tips" not in summary_parts[0]:
@@ -609,4 +704,9 @@ async def run_tip_generation(session: AsyncSession) -> Dict[str, Any]:
         "errors": error_count,
         "explanations_generated": explanations_generated,
         "explanation_error": explanation_error,
+        # GF-TRIGGER: AI-content back-fill results (site rebuild and
+        # the cron summary surface these).
+        "match_analyses_created": nlp_sweep["match_analyses_created"],
+        "match_reports_created": nlp_sweep["match_reports_created"],
+        "nlp_sweep_error": nlp_sweep_error,
     }

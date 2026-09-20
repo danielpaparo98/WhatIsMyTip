@@ -262,3 +262,57 @@ class TestGetGameReport:
         assert "/{slug}/report" in paths
         # Registered after /{slug}/detail (path order matches the docs).
         assert paths.index("/{slug}/report") > paths.index("/{slug}/detail")
+
+    def test_storage_error_degrades_to_404_not_500(self):
+        """GF-TRIGGER incident fix: a backend storage failure (e.g. the
+        ``match_reports`` table missing post-migrate, or a transient DB
+        error) MUST degrade to a 404 the frontend already handles —
+        never a 500, which would blank the entire grand-final page."""
+        mock_session = AsyncMock(spec=AsyncSession)
+        app = _build_app_with_games_router()
+        _override_db(app, mock_session)
+
+        with (
+            patch("app.api.games.GameCRUD") as mock_crud,
+            patch("app.api.games.MatchReportService") as mock_service,
+            patch("app.api.games.MatchReportCRUD") as mock_report_crud,
+        ):
+            mock_crud.get_by_slug = AsyncMock(return_value=_make_game_mock())
+            mock_service.is_grand_final = AsyncMock(return_value=True)
+            mock_report_crud.get_by_game_id = AsyncMock(
+                side_effect=RuntimeError(
+                    "relation \"match_reports\" does not exist"
+                )
+            )
+
+            client = TestClient(app)
+            resp = client.get("/api/games/abc123def4/report")
+
+        assert resp.status_code == 404
+        body = resp.json()
+        assert body["code"] == "not_found"
+        assert body["message"] == "Match report not yet generated"
+
+    def test_schema_validation_error_degrades_to_404_not_500(self):
+        """REVIEW-MINOR-2: a stored row whose JSONB predates a schema
+        change must 404 (with the error logged), not 500."""
+        mock_session = AsyncMock(spec=AsyncSession)
+        app = _build_app_with_games_router()
+        _override_db(app, mock_session)
+
+        stale_row = _make_report_row_mock(report={"headline": "old shape"})
+
+        with (
+            patch("app.api.games.GameCRUD") as mock_crud,
+            patch("app.api.games.MatchReportService") as mock_service,
+            patch("app.api.games.MatchReportCRUD") as mock_report_crud,
+        ):
+            mock_crud.get_by_slug = AsyncMock(return_value=_make_game_mock())
+            mock_service.is_grand_final = AsyncMock(return_value=True)
+            mock_report_crud.get_by_game_id = AsyncMock(return_value=stale_row)
+
+            client = TestClient(app)
+            resp = client.get("/api/games/abc123def4/report")
+
+        assert resp.status_code == 404
+        assert resp.json()["code"] == "not_found"
