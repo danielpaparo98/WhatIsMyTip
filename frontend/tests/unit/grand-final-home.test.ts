@@ -21,8 +21,11 @@ import { resolveHomeState, pickGrandFinalGame } from '~/composables/useLatestRou
 const FRONTEND_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..')
 
 const INDEX = readFileSync(resolve(FRONTEND_ROOT, 'pages/index.vue'), 'utf8')
+const LAYOUT = readFileSync(resolve(FRONTEND_ROOT, 'layouts/default.vue'), 'utf8')
 const GF_REPORT = readFileSync(resolve(FRONTEND_ROOT, 'components/GrandFinalReport.vue'), 'utf8')
 const CELEBRATION = readFileSync(resolve(FRONTEND_ROOT, 'components/OffSeasonCelebration.vue'), 'utf8')
+const CONFETTI = readFileSync(resolve(FRONTEND_ROOT, 'components/ConfettiEffect.vue'), 'utf8')
+const BANNER = readFileSync(resolve(FRONTEND_ROOT, 'components/OffSeasonBanner.vue'), 'utf8')
 const USE_API = readFileSync(resolve(FRONTEND_ROOT, 'composables/useApi.ts'), 'utf8')
 
 // ---------------------------------------------------------------------------
@@ -108,6 +111,37 @@ describe('index.vue state wiring', () => {
     // The static bake can lag the backend; one client-side refetch on
     // load makes the page current without waiting for the 5-min poll.
     expect(INDEX).toMatch(/if \(isGrandFinal\.value\) \{[\s\S]*?refreshGrandFinal\(\)/)
+  })
+
+  // ---------------------------------------------------------------------
+  // GF-DESIGN (2026-09-20, user direction)
+  // ---------------------------------------------------------------------
+  it('keeps the standard hero in the grand-final branch', () => {
+    // The GF branch renders the same hero the regular weeks use, with
+    // the report flowing below it.
+    expect(INDEX).toMatch(
+      /v-if="isGrandFinal"[\s\S]*?<section class="hero">[\s\S]*?<\/section>[\s\S]*?grandFinalPending/
+    )
+  })
+
+  it('confetti is home-page only and uses both teams\u2019 colours', () => {
+    // Mounted from index.vue with the two finalists' palettes...
+    expect(INDEX).toMatch(/<ConfettiEffect :colors="gfConfettiColors" \/>/)
+    expect(INDEX).toMatch(/getTeamColors\(game\.home_team\)/)
+    expect(INDEX).toMatch(/getTeamColors\(game\.away_team\)/)
+    // ...never from the site-wide layout.
+    expect(LAYOUT).not.toContain('<ConfettiEffect')
+  })
+
+  it('OffSeasonBanner no longer fires confetti', () => {
+    expect(BANNER).not.toContain('canvas-confetti')
+    expect(BANNER).not.toContain('fireCelebration')
+  })
+
+  it('heuristic tips are passed into the report', () => {
+    expect(INDEX).toMatch(/:tips="grandFinalDetail\?\.tips \?\? \[\]"/)
+    expect(GF_REPORT).toContain('The Tips')
+    expect(GF_REPORT).toMatch(/formatHeuristic\(tip\.heuristic\)/)
   })
 
   describe('pickGrandFinalGame (behavioural)', () => {
@@ -221,9 +255,10 @@ describe('GrandFinalReport component contract', () => {
     expect(GF_REPORT).toContain('Keys to the Game')
     expect(GF_REPORT).toContain('Players to Watch')
     expect(GF_REPORT).toContain('Injury Watch')
-    expect(GF_REPORT).toContain('Weather Impact')
-    expect(GF_REPORT).toContain('X-Factor')
+    expect(GF_REPORT).toContain('Conditions &amp; X-Factor')
     expect(GF_REPORT).toContain('Talking Points')
+    // GF-DESIGN: heuristic tips surface directly in the report
+    expect(GF_REPORT).toContain('The Tips')
   })
 
   it('is optional-safe: every list-backed section is guarded', () => {
@@ -232,7 +267,22 @@ describe('GrandFinalReport component contract', () => {
     expect(GF_REPORT).toMatch(/v-if="homePlayers\.length > 0 \|\| awayPlayers\.length > 0"/)
     expect(GF_REPORT).toMatch(/v-if="homeInjuries\.length > 0 \|\| awayInjuries\.length > 0"/)
     expect(GF_REPORT).toMatch(/v-if="talkingPoints\.length > 0"/)
-    expect(GF_REPORT).toMatch(/v-if="report\.weather_impact \|\| report\.x_factor"/)
+    expect(GF_REPORT).toMatch(/v-if="weatherVisible \|\| xFactorVisible"/)
+  })
+
+  it('GF-CONTENT: hides "unavailable" filler and placeholder players', () => {
+    // The agent once emitted a "Weather unavailable" paragraph and an
+    // "Unknown" player entry — both are filtered out defensively.
+    expect(GF_REPORT).toMatch(/isUnavailableNote/)
+    expect(GF_REPORT).toMatch(/isPlaceholderPlayer/)
+    expect(GF_REPORT).toMatch(/toLowerCase\(\) === 'unknown'/)
+  })
+
+  it('GF-DESIGN: editorial layout — no section cards, hairline sections', () => {
+    // Section = hairline rule + numbered label; no per-section card box.
+    expect(GF_REPORT).toMatch(/class="section-label"/)
+    expect(GF_REPORT).not.toMatch(/class="gf-section card/)
+    expect(GF_REPORT).toMatch(/border-top: 1px solid var\(--color-border\)/)
   })
 
   it('normalises talking-point copy with formatExplanationImpl', () => {

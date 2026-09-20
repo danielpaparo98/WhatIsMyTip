@@ -6,6 +6,14 @@
        standard detail experience for the game.
        ===================================================================== -->
   <template v-if="isGrandFinal">
+    <!-- GF-DESIGN (2026-09-20, user request): the standard site hero
+         stays; the grand-final content flows below it, in the same
+         place the regular weekly content sits. -->
+    <section class="hero">
+      <h1>AI-Powered<br>Footy Tipping</h1>
+      <p>Smart heuristics. Clear explanations. Better tips.</p>
+    </section>
+
     <div v-if="grandFinalPending" class="loading" role="status" aria-live="polite">
       <div class="spinner"></div>
     </div>
@@ -19,9 +27,10 @@
       v-else-if="grandFinalReport && grandFinalGame"
       :report="grandFinalReport.report"
       :game="grandFinalGame"
+      :tips="grandFinalDetail?.tips ?? []"
     />
 
-    <!-- Report not yet generated → standard detail experience -->
+    <!-- Report not yet generated — standard detail experience -->
     <div v-else-if="grandFinalDetail" class="section gf-fallback">
       <section class="gf-header">
         <span class="gf-eyebrow">Grand Final</span>
@@ -106,6 +115,11 @@
       <p>The grand final preview isn't available yet. Check back soon.</p>
       <button @click="refreshGrandFinal" class="btn">Retry</button>
     </div>
+
+    <!-- GF-DESIGN: confetti in the two finalists' kit colours — home
+         page only (mounted here, not in the layout).  Placed after the
+         v-if/v-else-if chain so it doesn't break branch adjacency. -->
+    <ConfettiEffect :colors="gfConfettiColors" />
   </template>
 
   <!-- =====================================================================
@@ -235,6 +249,7 @@ import type {
 } from '~/composables/useApi'
 import { HEURISTIC_ORDER } from '~/composables/useFormatters'
 import { AUTO_REFRESH_MS, pickGrandFinalGame, resolveHomeState, useLatestRound } from '~/composables/useLatestRound'
+import { GRAND_FINAL_COLORS, useTeamColors } from '~/composables/useTeamColors'
 const api = useApi()
 const { getLogoUrl, getTeamDisplayName } = useTeamLogos()
 const { formatHeuristic, formatDate: formatDateUtil, formatExplanation, getModelDisplayName } = useFormatters()
@@ -348,6 +363,16 @@ const {
 const grandFinalGame = computed<Game | null>(() => grandFinalData.value?.game ?? null)
 const grandFinalDetail = computed<GameDetailResponse | null>(() => grandFinalData.value?.detail ?? null)
 const grandFinalReport = computed<MatchReportResponse | null>(() => grandFinalData.value?.report ?? null)
+
+// GF-DESIGN: confetti in BOTH finalists' kit colours (user request).
+// The resolved GF game gives us the two teams; their canonical palettes
+// come from useTeamColors.
+const gfConfettiColors = computed<string[]>(() => {
+  const game = grandFinalGame.value
+  if (!game?.home_team || !game?.away_team) return GRAND_FINAL_COLORS
+  const { getTeamColors } = useTeamColors()
+  return [...getTeamColors(game.home_team), ...getTeamColors(game.away_team)]
+})
 
 const { data: gamesData, pending: loading, error: gamesError, refresh: refreshGames } =
   await useAsyncData<GamesWithTipsResponse>(
