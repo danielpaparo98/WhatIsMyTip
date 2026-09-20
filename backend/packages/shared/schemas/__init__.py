@@ -6,6 +6,18 @@ from .games import (
     WeatherResponse,
 )
 from .match_analysis import MatchAnalysisResponse
+from .match_report import (
+    GrandFinalReport,
+    InjuryNote,
+    InjuryWatch,
+    MatchReportResponse,
+    ModelConsensus,
+    PlayerSpotlight,
+    Prediction,
+    SeasonStory,
+    TeamPlayers,
+    TeamStory,
+)
 from .tips import TipCreate, TipListResponse, TipResponse
 
 # Rebuild GameDetailResponse to resolve forward references
@@ -40,6 +52,16 @@ __all__ = [
     "TipCreate",
     "TipListResponse",
     "MatchAnalysisResponse",
+    "GrandFinalReport",
+    "InjuryNote",
+    "InjuryWatch",
+    "MatchReportResponse",
+    "ModelConsensus",
+    "PlayerSpotlight",
+    "Prediction",
+    "SeasonStory",
+    "TeamPlayers",
+    "TeamStory",
     "BacktestResponse",
     "BacktestListResponse",
     "AvailableSeasonsResponse",

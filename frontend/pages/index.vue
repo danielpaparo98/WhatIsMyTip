@@ -1,5 +1,114 @@
 <template>
-  <section class="hero">
+  <!-- =====================================================================
+       STATE 1 — Grand-final week (is_grand_final && !is_post_season):
+       the home page becomes the pre-match grand-final report.  If the
+       report hasn't been generated yet (404) it falls back to the
+       standard detail experience for the game.
+       ===================================================================== -->
+  <template v-if="isGrandFinal">
+    <div v-if="grandFinalPending" class="loading" role="status" aria-live="polite">
+      <div class="spinner"></div>
+    </div>
+
+    <GrandFinalReport
+      v-else-if="grandFinalReport && grandFinalGame"
+      :report="grandFinalReport"
+      :game="grandFinalGame"
+    />
+
+    <!-- Report not yet generated → standard detail experience -->
+    <div v-else-if="grandFinalDetail" class="section gf-fallback">
+      <section class="gf-header">
+        <span class="gf-eyebrow">Grand Final</span>
+        <div class="teams">
+          <div class="team home">
+            <img :src="getLogoUrl(grandFinalDetail.game.home_team ?? 'TBD')" :alt="`${grandFinalDetail.game.home_team ?? 'TBD'} logo`" class="team-logo" loading="lazy" decoding="async" width="80" height="80" />
+            <span class="team-name">{{ getTeamDisplayName(grandFinalDetail.game.home_team) }}</span>
+          </div>
+          <span class="vs">VS</span>
+          <div class="team away">
+            <img :src="getLogoUrl(grandFinalDetail.game.away_team ?? 'TBD')" :alt="`${grandFinalDetail.game.away_team ?? 'TBD'} logo`" class="team-logo" loading="lazy" decoding="async" width="80" height="80" />
+            <span class="team-name">{{ getTeamDisplayName(grandFinalDetail.game.away_team) }}</span>
+          </div>
+        </div>
+        <div class="game-meta">
+          <div class="meta-item">
+            <span class="label">Venue:</span>
+            <span class="value">{{ grandFinalDetail.game.venue ?? 'TBD' }}</span>
+          </div>
+          <div class="meta-item">
+            <span class="label">Date:</span>
+            <span class="value">{{ grandFinalDetail.game.date ? formatDate(grandFinalDetail.game.date) : 'TBD' }}</span>
+          </div>
+        </div>
+      </section>
+
+      <section v-if="grandFinalDetail.weather" class="gf-section-block">
+        <h2 class="section-title">Weather Conditions</h2>
+        <WeatherCard :weather="grandFinalDetail.weather" />
+      </section>
+
+      <section class="gf-section-block">
+        <h2 class="section-title">Heuristic Tips</h2>
+        <div class="tips-grid">
+          <TipCard
+            v-for="tip in grandFinalDetail.tips"
+            :key="tip.id"
+            :heuristic="tip.heuristic"
+            :selected-team="tip.selected_team"
+            :margin="tip.margin"
+            :confidence="tip.confidence"
+            :explanation="tip.explanation"
+          />
+        </div>
+      </section>
+
+      <section class="gf-section-block">
+        <h2 class="section-title">Model Predictions</h2>
+        <div class="models-grid">
+          <div
+            v-for="prediction in grandFinalDetail.model_predictions"
+            :key="prediction.model_name"
+            class="model-card"
+          >
+            <div class="model-header">
+              <span class="model-name">{{ getModelDisplayName(prediction.model_name) }}</span>
+              <span class="confidence">{{ Math.round(prediction.confidence * 100) }}%</span>
+            </div>
+            <div class="model-body">
+              <h3>{{ prediction.winner }}</h3>
+              <p class="margin">Margin: {{ prediction.margin }} pts</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section v-if="grandFinalDetail.match_analysis" class="gf-section-block">
+        <h2 class="section-title">Match Analysis</h2>
+        <MatchAnalysisCard :analysis="grandFinalDetail.match_analysis" />
+      </section>
+    </div>
+
+    <div v-else class="section gf-unavailable">
+      <p>The grand final preview isn't available yet. Check back soon.</p>
+      <button @click="refreshGrandFinal" class="btn">Retry</button>
+    </div>
+  </template>
+
+  <!-- =====================================================================
+       STATE 2 — Post-season (is_post_season): off-season celebration.
+       ===================================================================== -->
+  <OffSeasonCelebration
+    v-else-if="isPostSeason"
+    :premier="round?.premier ?? null"
+    :season="round?.season ?? null"
+  />
+
+  <!-- =====================================================================
+       STATE 3 — Regular round: the original home page, unchanged.
+       ===================================================================== -->
+  <template v-else>
+      <section class="hero">
         <h1>AI-Powered<br>Footy Tipping</h1>
         <p>Smart heuristics. Clear explanations. Better tips.</p>
       </section>
@@ -96,18 +205,26 @@
               </div>
             </NuxtLink>
           </div>
-        </div>
+          </div>
         </Transition>
   </section>
+  </template>
 </template>
 
 <script setup lang="ts">
-import type { GameWithTip, GamesWithTipsResponse, LatestRoundResponse } from '~/composables/useApi'
+import type {
+  Game,
+  GameDetailResponse,
+  GameWithTip,
+  GamesWithTipsResponse,
+  LatestRoundResponse,
+  MatchReportResponse,
+} from '~/composables/useApi'
 import { HEURISTIC_ORDER } from '~/composables/useFormatters'
-import { AUTO_REFRESH_MS, useLatestRound } from '~/composables/useLatestRound'
+import { AUTO_REFRESH_MS, resolveHomeState, useLatestRound } from '~/composables/useLatestRound'
 const api = useApi()
 const { getLogoUrl, getTeamDisplayName } = useTeamLogos()
-const { formatHeuristic, formatDate: formatDateUtil, formatExplanation } = useFormatters()
+const { formatHeuristic, formatDate: formatDateUtil, formatExplanation, getModelDisplayName } = useFormatters()
 
 // ---------------------------------------------------------------------------
 // UI state (declared first — the fetch watcher below reads it)
@@ -146,6 +263,65 @@ const seasonRound = computed(() => ({
   season: round.value?.season ?? new Date().getFullYear(),
   round: round.value?.round_id ?? 1,
 }))
+
+// ---------------------------------------------------------------------------
+// Home-page state (grand-final uplift, 2026-09)
+//
+// The latest-round locator drives three mutually-exclusive states:
+//   1. grand_final — GF week (`is_grand_final && !is_post_season`): the
+//      page becomes the pre-match grand-final report.
+//   2. post_season — the GF round is fully completed: off-season
+//      celebration with the premier.
+//   3. regular — every other round: the original home page, unchanged.
+// Gating lives in the pure `resolveHomeState` helper so it stays
+// unit-testable without mounting this page.
+// ---------------------------------------------------------------------------
+const homeState = computed(() => resolveHomeState(round.value))
+const isGrandFinal = computed(() => homeState.value === 'grand_final')
+const isPostSeason = computed(() => homeState.value === 'post_season')
+
+interface GrandFinalView {
+  game: Game
+  detail: GameDetailResponse | null
+  report: MatchReportResponse | null
+}
+
+// Grand-final view: resolve the single GF game for the round, then load
+// its detail + pre-match report in parallel.  Watched on `seasonRound`
+// so a poller-driven round change refetches; `dedupe: 'cancel'` keeps a
+// slow stale response from overwriting a newer round (same contract as
+// the games-with-tips fetch below).
+const {
+  data: grandFinalData,
+  pending: grandFinalPending,
+  refresh: refreshGrandFinal,
+} = await useAsyncData<GrandFinalView | null>(
+  'grand-final-view',
+  async () => {
+    if (!isGrandFinal.value) return null
+    const games = (await api.getGames({
+      season: seasonRound.value.season,
+      round: seasonRound.value.round,
+    })) as Game[]
+    const game = games.find(g => g.home_team && g.away_team)
+    if (!game) return null
+    // A missing report (404) is expected pre-generation: getGameReport
+    // maps it to null and the page falls back to the detail experience.
+    const [detail, report] = await Promise.all([
+      api.getGameDetail(game.slug).catch(() => null),
+      api.getGameReport(game.slug),
+    ])
+    return { game, detail, report }
+  },
+  {
+    watch: [seasonRound],
+    dedupe: 'cancel',
+  },
+)
+
+const grandFinalGame = computed<Game | null>(() => grandFinalData.value?.game ?? null)
+const grandFinalDetail = computed<GameDetailResponse | null>(() => grandFinalData.value?.detail ?? null)
+const grandFinalReport = computed<MatchReportResponse | null>(() => grandFinalData.value?.report ?? null)
 
 const { data: gamesData, pending: loading, error: gamesError, refresh: refreshGames } =
   await useAsyncData<GamesWithTipsResponse>(
@@ -211,27 +387,68 @@ onUnmounted(() => {
 })
 
 // ---------------------------------------------------------------------------
-// SEO — FX-05 / FX-20 / H-2 (2026-09 review)
+// SEO — FX-05 / FX-20 / H-2 (2026-09 review) + grand-final uplift
 // ---------------------------------------------------------------------------
 // `useSeoMeta({ canonical })` was NOT a supported key — it silently
 // rendered nothing.  Canonicals are <link> elements and go through
-// useHead, using the siteUrl runtime config.
+// useHead, using the siteUrl runtime config (below).
+//
+// Grand-final uplift: title/description are now state-aware getters —
+// the grand-final week and post-season states each get their own meta,
+// and the regular-state strings are byte-identical to the previous
+// static meta.  titleTemplate (nuxt.config) already appends the site
+// name, so the title strings below deliberately omit it.
 const siteUrl = useRuntimeConfig().public.siteUrl as string
 
+const homeMeta = computed(() => {
+  if (isPostSeason.value) {
+    const name = round.value?.premier ? getTeamDisplayName(round.value.premier) : null
+    const season = round.value?.season
+    const title = name ? `${name} — ${season} AFL Premiers` : 'AFL Off Season'
+    const description = name
+      ? `Congratulations to the ${name}, ${season} AFL premiers. The season is in the books — AI-powered AFL tips return next season.`
+      : 'The AFL season is complete — AI-powered AFL tips and predictions return next season.'
+    return { title, ogTitle: title, description, ogDescription: description, twitterTitle: title, twitterDescription: description }
+  }
+  if (isGrandFinal.value) {
+    const g = grandFinalGame.value
+    const matchup = g?.home_team && g?.away_team
+      ? `${getTeamDisplayName(g.home_team)} vs ${getTeamDisplayName(g.away_team)}`
+      : null
+    const title = matchup
+      ? `${matchup} — AFL Grand Final Tips & Prediction`
+      : 'AFL Grand Final Tips & Prediction'
+    const description = grandFinalReport.value?.report.executive_summary
+      ?? 'The AFL grand final pre-match report: verdict, season story, keys to the game, players to watch and model consensus.'
+    return { title, ogTitle: title, description, ogDescription: description, twitterTitle: title, twitterDescription: description }
+  }
+  return {
+    title: 'AFL Tips & Predictions',
+    ogTitle: 'AFL Tips & Predictions | AI-Powered Footy Tipping',
+    description: 'Get AI-powered AFL tips and predictions for the current round. Expert footy tipping advice with smart heuristics, betting tips, and round predictions backed by machine learning models.',
+    ogDescription: 'Get AI-powered AFL tips and predictions for the current round. Expert footy tipping advice with smart heuristics.',
+    twitterTitle: 'AFL Tips & Predictions | AI-Powered Footy Tipping',
+    twitterDescription: 'Get AI-powered AFL tips and predictions for the current round. Expert footy tipping advice with smart heuristics.',
+  }
+})
+
+useSeoMeta({
+  title: () => homeMeta.value.title,
+  description: () => homeMeta.value.description,
+  ogTitle: () => homeMeta.value.ogTitle,
+  ogDescription: () => homeMeta.value.ogDescription,
+  twitterTitle: () => homeMeta.value.twitterTitle,
+  twitterDescription: () => homeMeta.value.twitterDescription,
+})
+
 useHead({
-  title: 'AFL Tips & Predictions',
   link: [
     { rel: 'canonical', href: siteUrl }
   ],
   meta: [
-    { name: 'description', content: 'Get AI-powered AFL tips and predictions for the current round. Expert footy tipping advice with smart heuristics, betting tips, and round predictions backed by machine learning models.' },
     { name: 'keywords', content: 'AFL tips, AFL predictions, AFL betting tips, AFL footy tips, AFL round predictions, AFL betting advice, footy tipping, AFL betting' },
     { property: 'og:type', content: 'website' },
-    { property: 'og:title', content: 'AFL Tips & Predictions | AI-Powered Footy Tipping' },
-    { property: 'og:description', content: 'Get AI-powered AFL tips and predictions for the current round. Expert footy tipping advice with smart heuristics.' },
-    { property: 'og:url', content: siteUrl },
-    { name: 'twitter:title', content: 'AFL Tips & Predictions | AI-Powered Footy Tipping' },
-    { name: 'twitter:description', content: 'Get AI-powered AFL tips and predictions for the current round. Expert footy tipping advice with smart heuristics.' }
+    { property: 'og:url', content: siteUrl }
   ],
   script: [
     {
@@ -694,5 +911,225 @@ useHead({
     font-size: 0.875rem;
   }
 
+}
+
+/* ---------------------------------------------------------------------
+   Grand-final fallback detail experience (report 404 → detail view).
+   Markup patterns mirror pages/game/[slug].vue so the fallback feels
+   identical to the game page it links to.
+   --------------------------------------------------------------------- */
+.gf-fallback {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.gf-header {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-left: 4px solid var(--color-text);
+  padding: 2rem;
+  text-align: center;
+}
+
+.gf-eyebrow {
+  display: inline-block;
+  font-size: 0.75rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.15em;
+  border: 1px solid var(--color-text);
+  padding: 0.375rem 0.875rem;
+  margin-bottom: 1.25rem;
+}
+
+.gf-header .teams {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 2rem;
+  margin-bottom: 1.25rem;
+}
+
+.gf-header .team {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.75rem;
+  flex: 1;
+}
+
+.gf-header .team-logo {
+  width: 80px;
+  height: 80px;
+  object-fit: contain;
+}
+
+.gf-header .team-name {
+  font-weight: 700;
+  font-size: 1.125rem;
+}
+
+.gf-header .vs {
+  font-size: 1.125rem;
+  font-weight: 700;
+  color: var(--color-muted);
+}
+
+.game-meta {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 1rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--color-border);
+}
+
+.meta-item {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.meta-item .label {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--color-muted);
+}
+
+.meta-item .value {
+  font-weight: 600;
+}
+
+.gf-section-block {
+  margin: 0;
+}
+
+.section-title {
+  font-size: 1.5rem;
+  font-weight: 700;
+  margin: 0 0 1.5rem;
+}
+
+.tips-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 1rem;
+}
+
+.models-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+  gap: 1rem;
+}
+
+.model-card {
+  border: 1px solid var(--color-border);
+  padding: 1.5rem;
+  transition: border-color 0.2s ease;
+}
+
+.model-card:hover {
+  border-color: var(--color-text);
+}
+
+.model-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 1rem;
+  padding-bottom: 0.75rem;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.model-name {
+  font-size: 0.6875rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--color-muted);
+}
+
+.model-header .confidence {
+  font-size: 0.8125rem;
+  font-weight: 700;
+}
+
+.model-body h3 {
+  font-size: 1.25rem;
+  margin-bottom: 0.5rem;
+}
+
+.model-body .margin {
+  font-size: 0.8125rem;
+  margin: 0;
+  color: var(--color-muted);
+}
+
+.gf-unavailable {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1rem;
+  text-align: center;
+}
+
+.gf-unavailable p {
+  margin: 0;
+  color: var(--color-muted);
+}
+
+@media (max-width: 640px) {
+  .gf-header {
+    padding: 1.5rem 1rem;
+  }
+
+  .gf-header .teams {
+    gap: 1rem;
+  }
+
+  .gf-header .team-logo {
+    width: 64px;
+    height: 64px;
+  }
+
+  .gf-header .team-name {
+    font-size: 1rem;
+  }
+
+  .gf-header .vs {
+    font-size: 1rem;
+  }
+
+  .tips-grid,
+  .models-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .section-title {
+    font-size: 1.25rem;
+  }
+}
+
+@media (min-width: 641px) and (max-width: 1024px) {
+  .gf-header .team-logo {
+    width: 72px;
+    height: 72px;
+  }
+}
+
+@media (min-width: 1025px) {
+  .gf-header {
+    padding: 2.5rem;
+  }
+
+  .gf-header .team-logo {
+    width: 96px;
+    height: 96px;
+  }
+
+  .gf-header .team-name {
+    font-size: 1.25rem;
+  }
 }
 </style>

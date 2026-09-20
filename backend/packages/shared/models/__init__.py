@@ -170,6 +170,21 @@ class MatchAnalysis(Base):
     game = relationship("Game", backref="match_analysis")
 
 
+class MatchReport(Base):
+    """Stored match reports (currently: grand-final pre-match report)."""
+
+    __tablename__ = "match_reports"
+
+    id = Column(Integer, primary_key=True, index=True)
+    game_id = Column(Integer, ForeignKey("games.id"), unique=True, nullable=False, index=True)
+    report_type = Column(String(50), nullable=False, default="grand_final_pre_match", index=True)
+    report = Column(JSONB, nullable=False)  # structured GrandFinalReport payload
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+
+    game = relationship("Game", backref="match_report")
+
+
 class Player(Base):
     __tablename__ = "players"
 

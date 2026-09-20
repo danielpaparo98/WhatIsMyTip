@@ -403,6 +403,26 @@ class TipGenerationService:
                     exc_info=True,
                 )
 
+        # Generate the grand-final pre-match report (Pydantic AI research
+        # agent).  The service self-gates (grand final only, pre-match
+        # only, teams known, API key configured), so this is a no-op for
+        # every non-GF game.  Failure must never break tip generation.
+        if not skip_nlp and game_stats["tips_created"] > 0:
+            try:
+                from .match_report import MatchReportService
+
+                match_report_service = MatchReportService()
+                report = await match_report_service.generate_and_store_report(self.db, game)
+                if report:
+                    self.logger.info(f"Generated grand-final match report for game {game.id}")
+                await match_report_service.close()
+            except Exception as e:
+                # Match report failure should not break tip generation
+                self.logger.warning(
+                    f"Match report generation failed for game {game.id}: {e}",
+                    exc_info=True,
+                )
+
         return game_stats
 
     async def generate_batch(self, games: List[Game], regenerate: bool = False) -> Dict[str, Any]:
