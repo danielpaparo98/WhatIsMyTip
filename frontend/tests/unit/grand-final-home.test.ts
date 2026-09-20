@@ -16,7 +16,7 @@ import { describe, it, expect } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { resolveHomeState } from '~/composables/useLatestRound'
+import { resolveHomeState, pickGrandFinalGame } from '~/composables/useLatestRound'
 
 const FRONTEND_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..')
 
@@ -90,10 +90,48 @@ describe('index.vue state wiring', () => {
   })
 
   it('resolves the round game then loads detail + report in parallel', () => {
-    expect(INDEX).toMatch(/api\.getGames\(\{/)
+    expect(INDEX).toMatch(/\.getGames\(\{/)
     expect(INDEX).toMatch(/Promise\.all\(\[/)
-    expect(INDEX).toMatch(/api\.getGameDetail\(game\.slug\)/)
-    expect(INDEX).toMatch(/api\.getGameReport\(game\.slug\)/)
+    expect(INDEX).toMatch(/api\.getGameDetail\(game\.slug\)\.catch\(\(\) => null\)/)
+    expect(INDEX).toMatch(/api\.getGameReport\(game\.slug\)\.catch\(\(\) => null\)/)
+  })
+
+  it('GF-VIEW FIX: resolves the game via pickGrandFinalGame, never .find on the raw payload', () => {
+    // PROD INCIDENT: getGames returns { games, count } — calling .find
+    // on it threw on every load and baked the "check back soon" page.
+    expect(INDEX).toMatch(/pickGrandFinalGame\(gamesPayload\)/)
+    expect(INDEX).not.toMatch(/as Game\[\]/)
+    expect(INDEX).toMatch(/api\s*\n\s*\.getGames\(\{[\s\S]*?\}\)\s*\n?\s*\.catch\(\(\) => null\)/)
+  })
+
+  it('GF-VIEW FIX: refreshes the grand-final view immediately on mount', () => {
+    // The static bake can lag the backend; one client-side refetch on
+    // load makes the page current without waiting for the 5-min poll.
+    expect(INDEX).toMatch(/if \(isGrandFinal\.value\) \{[\s\S]*?refreshGrandFinal\(\)/)
+  })
+
+  describe('pickGrandFinalGame (behavioural)', () => {
+    const valid = { slug: 'xo9e0w3dnv', home_team: 'Fremantle', away_team: 'Brisbane' }
+    const tbc = { slug: 'tbc12345', home_team: null, away_team: null }
+
+    it('handles the GameListResponse envelope ({ games, count })', () => {
+      expect(pickGrandFinalGame({ games: [tbc, valid], count: 2 })).toEqual(valid)
+    })
+
+    it('handles a bare array (defensive)', () => {
+      expect(pickGrandFinalGame([tbc, valid])).toEqual(valid)
+    })
+
+    it('returns null for null/undefined/missing games', () => {
+      expect(pickGrandFinalGame(null)).toBeNull()
+      expect(pickGrandFinalGame(undefined)).toBeNull()
+      expect(pickGrandFinalGame({})).toBeNull()
+      expect(pickGrandFinalGame({ games: [] })).toBeNull()
+    })
+
+    it('skips TBC rows and returns null when no game has both teams', () => {
+      expect(pickGrandFinalGame({ games: [tbc], count: 1 })).toBeNull()
+    })
   })
 
   it('GF-TRIGGER: a report fetch failure degrades to null, never blanks the page', () => {
@@ -111,7 +149,9 @@ describe('index.vue state wiring', () => {
 
   it('renders GrandFinalReport when the report is present', () => {
     expect(INDEX).toContain('<GrandFinalReport')
-    expect(INDEX).toContain(':report="grandFinalReport"')
+    // GF-VIEW FIX: pass the INNER report, not the MatchReportResponse
+    // envelope (the envelope rendered an empty skeleton in prod).
+    expect(INDEX).toContain(':report="grandFinalReport.report"')
     expect(INDEX).toContain(':game="grandFinalGame"')
   })
 

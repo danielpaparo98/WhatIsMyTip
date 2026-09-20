@@ -10,9 +10,14 @@
       <div class="spinner"></div>
     </div>
 
+    <!-- GF-VIEW FIX: getGameReport returns the MatchReportResponse
+         ENVELOPE ({ id, game_id, report_type, report, created_at });
+         the component expects the INNER GrandFinalReport.  Passing the
+         envelope rendered an empty skeleton (every section read
+         report.<field> off the envelope). -->
     <GrandFinalReport
       v-else-if="grandFinalReport && grandFinalGame"
-      :report="grandFinalReport"
+      :report="grandFinalReport.report"
       :game="grandFinalGame"
     />
 
@@ -229,7 +234,7 @@ import type {
   MatchReportResponse,
 } from '~/composables/useApi'
 import { HEURISTIC_ORDER } from '~/composables/useFormatters'
-import { AUTO_REFRESH_MS, resolveHomeState, useLatestRound } from '~/composables/useLatestRound'
+import { AUTO_REFRESH_MS, pickGrandFinalGame, resolveHomeState, useLatestRound } from '~/composables/useLatestRound'
 const api = useApi()
 const { getLogoUrl, getTeamDisplayName } = useTeamLogos()
 const { formatHeuristic, formatDate: formatDateUtil, formatExplanation, getModelDisplayName } = useFormatters()
@@ -307,11 +312,20 @@ const {
   'grand-final-view',
   async () => {
     if (!isGrandFinal.value) return null
-    const games = (await api.getGames({
-      season: seasonRound.value.season,
-      round: seasonRound.value.round,
-    })) as Game[]
-    const game = games.find(g => g.home_team && g.away_team)
+    // GF-VIEW FIX (2026-09-20): `getGames` returns the GameListResponse
+    // envelope ({ games, count }) — the old code called `.find()` on it
+    // directly, which threw on every load and permanently baked the
+    // "grand final preview isn't available yet" fallback.  The helper
+    // handles the envelope and never throws; the catch degrades a
+    // failed list lookup to the unavailable branch instead of an
+    // unhandled rejection.
+    const gamesPayload = await api
+      .getGames({
+        season: seasonRound.value.season,
+        round: seasonRound.value.round,
+      })
+      .catch(() => null)
+    const game = pickGrandFinalGame(gamesPayload)
     if (!game) return null
     // A missing report (404) is expected pre-generation: getGameReport
     // maps it to null and the page falls back to the detail experience.
@@ -372,6 +386,16 @@ onMounted(() => {
   const stored = localStorage.getItem('selected-heuristic')
   if (stored && HEURISTIC_ORDER.includes(stored) && stored !== selectedHeuristic.value) {
     selectedHeuristic.value = stored
+  }
+  // GF-VIEW freshness: the home page is statically generated, so the
+  // baked grand-final payload can lag the backend (the report may have
+  // been generated after the last build).  One immediate client-side
+  // refetch on every load makes the page current within a second of
+  // hydration; the poller below keeps it current after that.
+  if (isGrandFinal.value) {
+    refreshGrandFinal().catch((e) => {
+      if (import.meta.dev) console.error('Grand-final refresh failed:', e)
+    })
   }
 })
 
