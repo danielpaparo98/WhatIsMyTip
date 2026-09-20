@@ -96,6 +96,19 @@ describe('index.vue state wiring', () => {
     expect(INDEX).toMatch(/api\.getGameReport\(game\.slug\)/)
   })
 
+  it('GF-TRIGGER: a report fetch failure degrades to null, never blanks the page', () => {
+    // A 500 on /report must not reject the whole Promise.all and null
+    // the detail view too (the "check back soon" incident).
+    expect(INDEX).toMatch(/api\.getGameDetail\(game\.slug\)\.catch\(\(\) => null\)/)
+    expect(INDEX).toMatch(/api\.getGameReport\(game\.slug\)\.catch\(\(\) => null\)/)
+  })
+
+  it('GF-TRIGGER: the poller adopts the report once it lands', () => {
+    expect(INDEX).toMatch(
+      /if \(isGrandFinal\.value && !grandFinalReport\.value\) \{[\s\S]*?await refreshGrandFinal\(\)/
+    )
+  })
+
   it('renders GrandFinalReport when the report is present', () => {
     expect(INDEX).toContain('<GrandFinalReport')
     expect(INDEX).toContain(':report="grandFinalReport"')

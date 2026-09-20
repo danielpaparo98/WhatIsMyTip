@@ -15,13 +15,13 @@ from typing import Any, Optional
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 
+from app.core.scheduler_ref import clear_scheduler, set_scheduler
 from app.cron.daily_sync import DailySyncJob
 from app.cron.historic_refresh import HistoricRefreshJob
 from app.cron.match_completion import MatchCompletionJob
 from app.cron.model_retrain import ModelRetrainJob
 from app.cron.tip_generation import TipGenerationJob
 from packages.shared.config import settings
-
 
 # Mis-fire grace time (seconds) per job type.
 #
@@ -143,6 +143,9 @@ async def init_scheduler(
         The started :class:`AsyncIOScheduler`.
     """
     scheduler = existing if existing is not None else build_scheduler(session_factory)
+    # GF-TRIGGER: publish the reference so cron jobs can schedule
+    # one-shot follow-up runs (see MatchCompletionJob).
+    set_scheduler(scheduler)
     if not scheduler.running:
         scheduler.start()
     return scheduler
@@ -150,6 +153,7 @@ async def init_scheduler(
 
 async def shutdown_scheduler(scheduler: Optional[AsyncIOScheduler]) -> None:
     """Stop the scheduler. Idempotent — safe to call on a non-running scheduler."""
+    clear_scheduler()
     if scheduler is None:
         return
     if scheduler.running:

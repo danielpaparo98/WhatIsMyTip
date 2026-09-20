@@ -315,9 +315,13 @@ const {
     if (!game) return null
     // A missing report (404) is expected pre-generation: getGameReport
     // maps it to null and the page falls back to the detail experience.
+    // GF-TRIGGER incident fix: a 500/server hiccup must degrade the
+    // same way — without this catch, ONE failing report request
+    // rejects the whole Promise.all and nulls the detail view too,
+    // blanking the grand-final page down to "check back soon".
     const [detail, report] = await Promise.all([
       api.getGameDetail(game.slug).catch(() => null),
-      api.getGameReport(game.slug),
+      api.getGameReport(game.slug).catch(() => null),
     ])
     return { game, detail, report }
   },

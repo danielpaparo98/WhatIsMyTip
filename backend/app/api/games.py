@@ -31,7 +31,7 @@ from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.db_deps import get_db
-from app.core.exceptions import http_error
+from app.core.exceptions import BackendServiceError, http_error
 from packages.shared.config import settings
 from packages.shared.crud import (
     GameCRUD,
@@ -386,8 +386,23 @@ async def get_game_report(
             404, "not_found", "Match report is only available for the grand final"
         )
 
-    row = await MatchReportCRUD.get_by_game_id(db, game.id)
-    if row is None:
-        raise http_error(404, "not_found", "Match report not yet generated")
+    # REVIEW-MINOR-2 / GF-TRIGGER incident fix: a storage or validation
+    # problem on a read-only cosmetic endpoint degrades to 404 ("not
+    # yet generated") instead of a 500 — the frontend already treats
+    # 404 as "fall back to the detail experience", so a transient DB
+    # issue or an old-shape stored row never blanks the grand-final
+    # page.  The exception is still logged for observability.
+    try:
+        row = await MatchReportCRUD.get_by_game_id(db, game.id)
+        if row is None:
+            raise http_error(404, "not_found", "Match report not yet generated")
+        return MatchReportResponse.model_validate(row).model_dump(mode="json")
+    except BackendServiceError:
+        raise
+    except Exception:
+        from packages.shared.logger import get_logger
 
-    return MatchReportResponse.model_validate(row).model_dump(mode="json")
+        get_logger(__name__).exception(
+            "Match report unavailable for game %s (degrading to 404)", slug
+        )
+        raise http_error(404, "not_found", "Match report not yet generated")

@@ -32,12 +32,17 @@ logger = get_logger(__name__)
 _DO_API_BASE = "https://api.digitalocean.com/v2"
 
 
-async def trigger_site_rebuild(tips_created: int) -> Optional[Dict[str, Any]]:
+async def trigger_site_rebuild(
+    tips_created: int, extra: Optional[Dict[str, Any]] = None
+) -> Optional[Dict[str, Any]]:
     """Fire the site-rebuild trigger (if configured).
 
     Args:
         tips_created: Number of tips created by the generation run —
             included in the generic-webhook payload for observability.
+        extra: Optional additional content signals (tips updated, match
+            analyses / GF reports created) merged into the webhook
+            payload — GF-TRIGGER observability.
 
     Returns:
         ``None`` when no rebuild trigger is configured, otherwise a
@@ -45,16 +50,22 @@ async def trigger_site_rebuild(tips_created: int) -> Optional[Dict[str, Any]]:
         or ``{"triggered": False, "error": "..."}``).
     """
     if settings.site_rebuild_webhook_url:
-        return await _fire_generic_webhook(tips_created)
+        return await _fire_generic_webhook(tips_created, extra)
     if settings.site_rebuild_do_app_id and settings.site_rebuild_do_token:
         return await _fire_do_api_deployment()
     return None
 
 
-async def _fire_generic_webhook(tips_created: int) -> Dict[str, Any]:
+async def _fire_generic_webhook(
+    tips_created: int, extra: Optional[Dict[str, Any]] = None
+) -> Dict[str, Any]:
     """POST a JSON payload to the configured generic webhook URL."""
     url = settings.site_rebuild_webhook_url
-    payload = {"event": "tips_generated", "tips_created": tips_created}
+    payload: Dict[str, Any] = {
+        "event": "tips_generated",
+        "tips_created": tips_created,
+        **(extra or {}),
+    }
     timeout = settings.site_rebuild_timeout_seconds
 
     try:

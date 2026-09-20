@@ -92,6 +92,13 @@ class Settings(BaseSettings):
     match_completion_check_enabled: bool = True  # Enable/disable the job
     completion_check_timeout_seconds: int = 300  # 5 minutes
 
+    # Round-completion rerun (GF-TRIGGER): when the match-completion
+    # detector observes that a round's last game just finished, a
+    # one-shot tip-generation rerun is scheduled for that night at
+    # this hour (scheduler timezone, 24h clock).  Completions detected
+    # after the hour still rerun that night (30 min after detection).
+    round_completion_rerun_hour: int = 22
+
     # Tip Generation
     # Phase 4: cron expressions here are interpreted by the in-process
     # APScheduler (see app/core/scheduler.py) in the FastAPI app's
