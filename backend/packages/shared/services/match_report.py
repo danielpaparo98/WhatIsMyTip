@@ -119,7 +119,10 @@ _AGENT_INSTRUCTIONS = (
     "home and the away side.\n"
     "- HEADLINE: at most 8 words, an editorial hook only. The teams, "
     "venue, date and the words 'Grand Final' / 'Pre-Match Report' are "
-    "ALREADY displayed around it — do not repeat them.\n\n"
+    "ALREADY displayed around it — do not repeat them.\n"
+    "- NEUTRAL VENUE: the grand final has NO home team — never imply "
+    "either side has home-ground advantage (no 'home fortress', "
+    "'defend home', 'home crowd' framing).\n\n"
     "RESEARCH EFFICIENCY RULES (strict):\n"
     "- The two teams are named in the task below; use those EXACT names "
     "for every tool's `team` argument. Never try alternative spellings.\n"
@@ -193,10 +196,20 @@ _MOJIBAKE_MAP = {
 
 
 def _sanitize_mojibake(value: Any) -> Any:
-    """Recursively normalise double-encoded characters in a payload."""
+    """Recursively normalise double-encoded characters in a payload.
+
+    Mapping table for the known sequences, then a final sweep strips
+    stray C0/C1 control characters (the residue of mis-decoded UTF-8,
+    e.g. the artefact inside '15.7\u0097°C').
+    """
     if isinstance(value, str):
         for bad, good in _MOJIBAKE_MAP.items():
             value = value.replace(bad, good)
+        value = "".join(
+            ch
+            for ch in value
+            if not (ord(ch) <= 0x08 or (0x0E <= ord(ch) <= 0x1F) or (0x7F <= ord(ch) <= 0x9F))
+        )
         return value
     if isinstance(value, dict):
         return {k: _sanitize_mojibake(v) for k, v in value.items()}
