@@ -314,8 +314,8 @@ class TestGenerateAndStoreReportAgentRun:
         deps = run_kwargs["deps"]
         assert isinstance(deps, GFDeps)
         assert deps.db is session
-        assert run_kwargs["usage_limits"].total_tokens_limit == 300_000
-        assert run_kwargs["usage_limits"].request_limit == 40
+        assert run_kwargs["usage_limits"].total_tokens_limit == 1_000_000
+        assert run_kwargs["usage_limits"].request_limit == 60
         assert run_kwargs["model_settings"]["temperature"] == 0.3
         assert run_kwargs["model_settings"]["max_tokens"] == 16_000
         # GF-BUDGET: no reasoning override — the model reasons by default.

@@ -444,13 +444,18 @@ async def regenerate_match_report(
         await service.close()
 
     if report is None:
+        reason = (
+            "Report not generated: the game may not be an upcoming "
+            "grand final with known teams, the OpenRouter key may be "
+            "missing, or generation failed"
+        )
+        # OPS: surface the agent's own failure reason so a skipped
+        # regeneration is diagnosable without container logs.
+        if getattr(service, "last_error", None):
+            reason += f" — last error: {service.last_error}"
         return {
             "status": "skipped",
-            "reason": (
-                "Report not generated: the game may not be an upcoming "
-                "grand final with known teams, the OpenRouter key may be "
-                "missing, or generation failed"
-            ),
+            "reason": reason,
         }
     return {"status": "generated"}
 
