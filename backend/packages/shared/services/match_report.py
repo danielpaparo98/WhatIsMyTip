@@ -174,6 +174,34 @@ def _pick_hourly(hourly: Dict[str, Any], key: str, idx: int) -> Any:
     return values[idx] if idx < len(values) else None
 
 
+# GF-CONTENT: LLM output occasionally carries double-encoded characters
+# ("â€"" for an em dash, "Â°" for a degree sign).  Normalise the common
+# mojibake sequences so user-facing copy renders cleanly.
+_MOJIBAKE_MAP = {
+    "â€”": "—",
+    "â€“": "–",
+    "â€œ": '"',
+    "â€\x9d": '"',
+    "â€˜": "'",
+    "â€\x99": "'",
+    "Â°": "°",
+    "Â·": "·",
+}
+
+
+def _sanitize_mojibake(value: Any) -> Any:
+    """Recursively normalise double-encoded characters in a payload."""
+    if isinstance(value, str):
+        for bad, good in _MOJIBAKE_MAP.items():
+            value = value.replace(bad, good)
+        return value
+    if isinstance(value, dict):
+        return {k: _sanitize_mojibake(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_sanitize_mojibake(v) for v in value]
+    return value
+
+
 async def _ensure_weather(db: AsyncSession, game: Game) -> None:
     """Fetch and store the forecast for ``game`` when no row exists.
 
@@ -466,7 +494,7 @@ def _register_tools(agent: Agent[GFDeps, GrandFinalReport], game: Game) -> None:
             logger.debug(f"get_finals_path unavailable: {e}")
             return []
 
-    @agent.tool(prepare=_budgeted("get_team_stat_leaders", 8))
+    @agent.tool(prepare=_budgeted("get_team_stat_leaders", 12))
     async def get_team_stat_leaders(
         ctx: RunContext[GFDeps], team: str, stat: str, top_n: int = 5
     ) -> dict[str, Any]:
@@ -815,7 +843,9 @@ class MatchReportService:
                     openrouter_reasoning={"effort": "low"},
                 ),
             )
-            return result.output
+            # Store the sanitised payload (the JSONB blob is what the
+            # API serves; normalise mojibake once at write time).
+            return _sanitize_mojibake(result.output)
         except Exception as e:
             # OPS: keep the reason on the service so the admin endpoint
             # can surface WHY a regeneration was skipped without
