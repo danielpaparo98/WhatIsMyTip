@@ -262,6 +262,9 @@ class TestAdminTriggers:
         assert body["tips_created"] == 27
 
     def test_historic_refresh_trigger_success(self, monkeypatch):
+        """GF-OPS: the trigger now returns IMMEDIATELY with a detached
+        background run (the job outlives any proxy timeout); progress is
+        polled via GET /historic-refresh/progress."""
         mock_session = AsyncMock(spec=AsyncSession)
         mock_stats = {
             "seasons_processed": 1,
@@ -289,7 +292,9 @@ class TestAdminTriggers:
 
         assert resp.status_code == 200
         body = resp.json()
-        assert body["seasons_processed"] == 1
+        assert body["success"] is True
+        assert body["status"] == "triggered"
+        assert body["seasons"] == "2020-2025"
 
 
 # ---------------------------------------------------------------------------
@@ -726,7 +731,11 @@ class TestAdminHistoricRefreshResetProgress:
     def _stale_row(self, progress_id: int):
         from types import SimpleNamespace
 
-        return SimpleNamespace(id=progress_id, operation_type="historic_refresh", status="in_progress")
+        return SimpleNamespace(
+            id=progress_id,
+            operation_type="historic_refresh",
+            status="in_progress",
+        )
 
     def test_reset_route_registered(self):
         from app.api.admin import router
