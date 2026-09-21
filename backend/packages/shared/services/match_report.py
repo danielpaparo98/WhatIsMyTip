@@ -77,7 +77,11 @@ _REQUEST_LIMIT = 60
 _TOTAL_TOKEN_LIMIT = 1_000_000
 _TEMPERATURE = 0.3
 _MAX_TOKENS = 16_000
-_AGENT_RETRIES = 2
+# GF-CONTENT FIX: "Exceeded maximum output retries (2)" — with full-effort
+# reasoning the structured-output tool call truncated inside the token
+# budget and failed validation repeatedly.  A dedicated, larger OUTPUT
+# retry budget (4) gives the model more swings at valid JSON.
+_AGENT_RETRIES = {"output": 4}
 
 _FORM_LOOKBACK = 5
 _STAT_CHOICES = ("goals", "disposals", "marks", "tackles", "hitouts")
@@ -803,11 +807,12 @@ class MatchReportService:
                     temperature=_TEMPERATURE,
                     max_tokens=_MAX_TOKENS,
                     # GF-BUDGET (2026-09-20, user request): reasoning is
-                    # ALLOWED — no openrouter_reasoning override, so the
-                    # model thinks with its default effort.  The tool
-                    # call budgets (_budgeted prepare) are the loop
-                    # guard; the raised usage limits absorb the extra
-                    # reasoning tokens.
+                    # ALLOWED, capped at LOW effort — at default effort
+                    # the model burned most of the output budget
+                    # thinking and truncated the structured-output tool
+                    # call mid-JSON ("Exceeded maximum output retries").
+                    # Low effort keeps the thinking, fits the answer.
+                    openrouter_reasoning={"effort": "low"},
                 ),
             )
             return result.output
