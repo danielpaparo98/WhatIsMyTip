@@ -390,8 +390,15 @@ class EloModel(BaseModel):
         home_rating = ratings.get(game.home_team, 1500.0)
         away_rating = ratings.get(game.away_team, 1500.0)
 
-        # Apply home advantage
-        effective_home = home_rating + self.home_advantage
+        # Apply home advantage — UNLESS the game is neutral (GF-NEUTRAL,
+        # 2026-09-21): the grand final's "home" side is a fixture
+        # designation, and gifting it +50 Elo flipped neutral-venue picks.
+        from .neutral import is_grand_final
+
+        if await is_grand_final(db, game):
+            effective_home = home_rating
+        else:
+            effective_home = home_rating + self.home_advantage
 
         # Calculate expected probability
         expected_home = 1.0 / (1.0 + 10.0 ** ((away_rating - effective_home) / 400.0))
