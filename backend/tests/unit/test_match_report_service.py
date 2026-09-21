@@ -318,8 +318,13 @@ class TestGenerateAndStoreReportAgentRun:
         assert run_kwargs["usage_limits"].request_limit == 60
         assert run_kwargs["model_settings"]["temperature"] == 0.3
         assert run_kwargs["model_settings"]["max_tokens"] == 16_000
-        # GF-BUDGET: no reasoning override — the model reasons by default.
-        assert "openrouter_reasoning" not in run_kwargs["model_settings"]
+        # GF-BUDGET: reasoning allowed but capped at LOW effort so the
+        # structured-output tool call fits the token budget.
+        assert run_kwargs["model_settings"]["openrouter_reasoning"] == {
+            "effort": "low"
+        }
+        # GF-CONTENT: dedicated output-retry budget (constructor kwarg).
+        assert mock_agent_cls.call_args.kwargs["retries"] == {"output": 4}
         # GF-BUDGET: the report agent runs its own cheap model
         # (ling-3.0-flash), not the shared nightly-explanations model.
         assert mock_model_cls.call_args.args[0] == "inclusionai/ling-3.0-flash"
