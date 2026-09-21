@@ -712,3 +712,72 @@ class TestAdminVoidFixture:
         assert game.sync_version == 4
         db.commit.assert_awaited()
         db.refresh.assert_awaited()
+
+
+# ---------------------------------------------------------------------------
+# POST /historic-refresh/reset-progress  (OPS: stale-progress unblock)
+# ---------------------------------------------------------------------------
+
+
+class TestAdminHistoricRefreshResetProgress:
+    """Marks stale in_progress historic-refresh rows failed so the next
+    trigger stops aborting on the in-progress unique constraint."""
+
+    def _stale_row(self, progress_id: int):
+        from types import SimpleNamespace
+
+        return SimpleNamespace(id=progress_id, operation_type="historic_refresh", status="in_progress")
+
+    def test_reset_route_registered(self):
+        from app.api.admin import router
+
+        paths = {r.path for r in router.routes}
+        assert "/historic-refresh/reset-progress" in paths
+
+    def test_missing_api_key_returns_401(self, monkeypatch):
+        app = _build_app_with_admin_router(monkeypatch=monkeypatch)
+        _override_db(app, AsyncMock(spec=AsyncSession))
+        client = TestClient(app)
+        resp = client.post("/api/admin/historic-refresh/reset-progress")
+        assert resp.status_code == 401
+
+    def test_no_stale_rows_returns_nothing_to_reset(self, monkeypatch):
+        app = _build_app_with_admin_router(monkeypatch=monkeypatch)
+        _override_db(app, AsyncMock(spec=AsyncSession))
+
+        with patch(
+            "packages.shared.crud.generation_progress.GenerationProgressCRUD.get_in_progress_operations",
+            AsyncMock(return_value=[]),
+        ):
+            client = TestClient(app)
+            resp = client.post(
+                "/api/admin/historic-refresh/reset-progress",
+                headers=ADMIN_HEADERS,
+            )
+
+        assert resp.status_code == 200
+        assert resp.json() == {"status": "nothing_to_reset", "reset": []}
+
+    def test_stale_rows_marked_failed(self, monkeypatch):
+        app = _build_app_with_admin_router(monkeypatch=monkeypatch)
+        _override_db(app, AsyncMock(spec=AsyncSession))
+        stale = [self._stale_row(11), self._stale_row(12)]
+
+        with patch(
+            "packages.shared.crud.generation_progress.GenerationProgressCRUD.get_in_progress_operations",
+            AsyncMock(return_value=stale),
+        ), patch(
+            "packages.shared.crud.generation_progress.GenerationProgressCRUD.mark_failed",
+            new=AsyncMock(),
+        ) as mock_mark:
+            client = TestClient(app)
+            resp = client.post(
+                "/api/admin/historic-refresh/reset-progress",
+                headers=ADMIN_HEADERS,
+            )
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["status"] == "reset"
+        assert body["reset"] == [11, 12]
+        assert mock_mark.await_count == 2
