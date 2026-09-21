@@ -115,7 +115,20 @@ class HomeAdvantageModel(BaseModel):
         """Predict winner based on home advantage.
 
         Uses only historical data before the prediction game's date.
+
+        GF-NEUTRAL (2026-09-21): raises on neutral-venue games (the grand
+        final) so the orchestrator marks the model ABSTAINED — its venue
+        win-rate statistics describe the venue's tenants, not these two
+        teams, and voting them would be noise.
         """
+        from .neutral import is_grand_final
+
+        if await is_grand_final(db, game):
+            raise ValueError(
+                "Neutral venue (grand final): home advantage does not apply — "
+                "model abstains"
+            )
+
         await self._calculate_home_advantage(db, game)
 
         # Get venue-specific home advantage
