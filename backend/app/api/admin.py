@@ -118,7 +118,27 @@ async def trigger_job(
         return await _run_tip_generation(db, parsed)
     elif job_name == "historic-refresh":
         parsed = HistoricRefreshTriggerRequest.model_validate(body)
-        return await _run_historic_refresh(db, parsed)
+        # GF-OPS (2026-09-21): the refresh runs FAR longer than any
+        # proxy permits (DO ingress killed a 10-minute run with a 524).
+        # Fire it as a detached task on its OWN session (the
+        # request-scoped session closes with this response) and let
+        # operators poll GET /historic-refresh/progress — the endpoint
+        # designed for exactly this.
+        import asyncio
+
+        asyncio.create_task(_run_historic_refresh_detached(parsed))
+        return {
+            "success": True,
+            "status": "triggered",
+            "message": (
+                "Historic refresh started in the background. Poll "
+                "GET /api/admin/historic-refresh/progress until it "
+                "reports completed/failed."
+            ),
+            "seasons": parsed.seasons or settings.historic_refresh_seasons,
+            "round_id": parsed.round_id,
+            "regenerate_tips": parsed.regenerate_tips,
+        }
     # Unreachable — job_name is validated above
     raise http_error(500, "internal_error", "unreachable")
 
@@ -253,10 +273,53 @@ async def _run_tip_generation(
     }
 
 
+async def _run_historic_refresh_detached(
+    body: HistoricRefreshTriggerRequest,
+) -> None:
+    """Run the historic-refresh job detached from any request.
+
+    Opens its OWN DB session (the request's session is torn down when
+    the trigger response returns) and survives the caller: the ingress
+    may drop the HTTP connection, but the job keeps running and its
+    progress stays pollable.
+    """
+    seasons_str = body.seasons or settings.historic_refresh_seasons
+    round_id = body.round_id
+    regenerate_tips = body.regenerate_tips
+
+    from packages.shared.db import get_session
+
+    try:
+        async with get_session() as db:
+            refresh_service = HistoricDataRefreshService(
+                db_session=db,
+                seasons=None,
+                round_id=round_id,
+                regenerate_tips=regenerate_tips,
+            )
+            stats = await refresh_service.refresh_from_string(
+                seasons_str=seasons_str,
+                round_id=round_id,
+                regenerate_tips=regenerate_tips,
+            )
+        logging.getLogger(__name__).info(
+            "Detached historic refresh finished: %s seasons, %s games, %s errors",
+            stats.get("seasons_processed", 0),
+            stats.get("games_synced", 0),
+            len(stats.get("errors", [])),
+        )
+    except Exception:  # noqa: BLE001 — detached: log, nothing to bubble to
+        logging.getLogger(__name__).exception(
+            "Detached historic refresh failed"
+        )
+
+
 async def _run_historic_refresh(
     db: AsyncSession, body: HistoricRefreshTriggerRequest
 ) -> dict:
-    """Trigger the historic-data-refresh job."""
+    """Trigger the historic-data-refresh job (INLINE — retained for
+    direct/service use; the admin endpoint now uses the detached runner
+    so long runs survive proxy timeouts)."""
     seasons_str = body.seasons or settings.historic_refresh_seasons
     round_id = body.round_id
     regenerate_tips = body.regenerate_tips
