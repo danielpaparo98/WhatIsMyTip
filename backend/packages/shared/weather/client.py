@@ -58,6 +58,10 @@ class WeatherClient:
         "Skoda Stadium": "GMHBA Stadium",
         "York Park": "UTAS Stadium",
         "Aurora Stadium": "UTAS Stadium",
+        # GF-CONTENT FIX (2026-09-20): Squiggle feeds the dotted form —
+        # without this the grand-final forecast lookup returned unknown
+        # and the report's weather section went blank.
+        "M.C.G.": "MCG",
     }
 
     def __init__(self) -> None:
@@ -79,6 +83,10 @@ class WeatherClient:
     def _get_venue_coords(self, venue: str) -> Optional[Dict[str, float]]:
         """Resolve a venue name (including aliases) to coordinates.
 
+        Falls back to a punctuation-insensitive match so feed variants
+        like ``M.C.G.`` resolve to the canonical ``MCG`` entry even when
+        no explicit alias exists.
+
         Args:
             venue: Venue name (canonical or alias)
 
@@ -87,7 +95,27 @@ class WeatherClient:
         """
         # Resolve alias → canonical name
         canonical = self.VENUE_ALIASES.get(venue, venue)
-        return self.VENUE_COORDS.get(canonical)
+        coords = self.VENUE_COORDS.get(canonical)
+        if coords is not None:
+            return coords
+
+        # Normalised fallback: ignore punctuation/case ("M.C.G." == "MCG").
+        norm = self._normalize_venue(venue)
+        if norm:
+            for name, c in self.VENUE_COORDS.items():
+                if self._normalize_venue(name) == norm:
+                    return c
+            for alias, name in self.VENUE_ALIASES.items():
+                if self._normalize_venue(alias) == norm:
+                    return self.VENUE_COORDS.get(name)
+        return None
+
+    @staticmethod
+    def _normalize_venue(venue: str) -> str:
+        """Strip everything but letters/digits and uppercase, for matching."""
+        import re
+
+        return re.sub(r"[^A-Z0-9]", "", venue.upper())
 
     async def get_match_day_weather(
         self,
