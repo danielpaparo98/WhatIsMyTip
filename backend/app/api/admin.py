@@ -339,6 +339,48 @@ async def historic_refresh_progress(
 
 
 # ---------------------------------------------------------------------------
+# POST /historic-refresh/reset-progress  (OPS: stale-progress unblock)
+# ---------------------------------------------------------------------------
+
+
+@router.post("/historic-refresh/reset-progress")
+async def historic_refresh_reset_progress(
+    db: AsyncSession = Depends(get_db),
+):
+    """Mark stale ``in_progress`` historic-refresh rows as failed.
+
+    OPS unblock (2026-09-20): a client disconnect mid-run (or a crashed
+    run) leaves a ``generation_progress`` row stuck at ``in_progress``,
+    and the next trigger aborts with a UniqueViolation on the
+    in-progress constraint — every subsequent run becomes impossible
+    until the stale row is cleared.  This endpoint marks those rows
+    ``failed`` (with an explanatory error message) so the next trigger
+    starts clean.
+    """
+    from packages.shared.crud.generation_progress import GenerationProgressCRUD
+
+    stale = await GenerationProgressCRUD.get_in_progress_operations(
+        db, operation_type="historic_refresh"
+    )
+    reset_ids: list[int] = []
+    for row in stale:
+        await GenerationProgressCRUD.mark_failed(
+            db,
+            progress_id=row.id,
+            error_message="Marked failed by admin reset-progress (stale in_progress row)",
+        )
+        reset_ids.append(row.id)
+
+    if not reset_ids:
+        return {"status": "nothing_to_reset", "reset": []}
+
+    logging.getLogger(__name__).warning(
+        "Reset stale historic-refresh progress rows: %s", reset_ids
+    )
+    return {"status": "reset", "reset": reset_ids}
+
+
+# ---------------------------------------------------------------------------
 # GET /metrics
 # ---------------------------------------------------------------------------
 
