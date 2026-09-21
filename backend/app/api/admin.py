@@ -3,26 +3,27 @@
 A thin HTTP adapter over :mod:`packages.api.admin` that preserves URL
 paths and response field names 1:1.
 
-All admin endpoints require a valid ``X-API-Key`` header — the
+All admin endpoints require a valid ``X-API-Key`` header â€” the
 ``require_admin_key`` dependency is applied at the router level so it
 cannot be bypassed by adding new routes.
 
 Routes (mounted at ``/api/admin``):
 
-* ``POST /{job_name}/trigger``         — for ``daily-sync``,
+* ``POST /{job_name}/trigger``         â€” for ``daily-sync``,
                                         ``match-completion``,
                                         ``tip-generation``,
                                         ``historic-refresh`` (422 on
                                         unknown name)
-* ``POST /match-report/regenerate``    — delete + regenerate the
+* ``POST /match-report/regenerate``    â€” delete + regenerate the
                                         grand-final pre-match report
                                         for one game (``?slug=``)
-* ``GET  /historic-refresh/progress``  — current historic-refresh progress
-* ``GET  /metrics``                    — per-job execution metrics
+* ``GET  /historic-refresh/progress``  â€” current historic-refresh progress
+* ``GET  /metrics``                    â€” per-job execution metrics
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import platform
 from typing import Annotated, Any, Optional
@@ -122,9 +123,8 @@ async def trigger_job(
         # proxy permits (DO ingress killed a 10-minute run with a 524).
         # Fire it as a detached task on its OWN session (the
         # request-scoped session closes with this response) and let
-        # operators poll GET /historic-refresh/progress — the endpoint
+        # operators poll GET /historic-refresh/progress â€” the endpoint
         # designed for exactly this.
-        import asyncio
 
         asyncio.create_task(_run_historic_refresh_detached(parsed))
         return {
@@ -139,7 +139,7 @@ async def trigger_job(
             "round_id": parsed.round_id,
             "regenerate_tips": parsed.regenerate_tips,
         }
-    # Unreachable — job_name is validated above
+    # Unreachable â€” job_name is validated above
     raise http_error(500, "internal_error", "unreachable")
 
 
@@ -273,6 +273,12 @@ async def _run_tip_generation(
     }
 
 
+# GF-OPS: single-flight guard â€” repeated triggers must NOT stack
+# concurrent refresh jobs on the small instance (observed: three
+# overlapping runs starved the worker until the API went dark).
+_historic_refresh_lock = asyncio.Lock()
+
+
 async def _run_historic_refresh_detached(
     body: HistoricRefreshTriggerRequest,
 ) -> None:
@@ -287,37 +293,44 @@ async def _run_historic_refresh_detached(
     round_id = body.round_id
     regenerate_tips = body.regenerate_tips
 
+    if _historic_refresh_lock.locked():
+        logging.getLogger(__name__).warning(
+            "Historic refresh already running â€” skipping duplicate trigger"
+        )
+        return
+
     from packages.shared.db import get_session
 
-    try:
-        async with get_session() as db:
-            refresh_service = HistoricDataRefreshService(
-                db_session=db,
-                seasons=None,
-                round_id=round_id,
-                regenerate_tips=regenerate_tips,
+    async with _historic_refresh_lock:
+        try:
+            async with get_session() as db:
+                refresh_service = HistoricDataRefreshService(
+                    db_session=db,
+                    seasons=None,
+                    round_id=round_id,
+                    regenerate_tips=regenerate_tips,
+                )
+                stats = await refresh_service.refresh_from_string(
+                    seasons_str=seasons_str,
+                    round_id=round_id,
+                    regenerate_tips=regenerate_tips,
+                )
+            logging.getLogger(__name__).info(
+                "Detached historic refresh finished: %s seasons, %s games, %s errors",
+                stats.get("seasons_processed", 0),
+                stats.get("games_synced", 0),
+                len(stats.get("errors", [])),
             )
-            stats = await refresh_service.refresh_from_string(
-                seasons_str=seasons_str,
-                round_id=round_id,
-                regenerate_tips=regenerate_tips,
+        except Exception:  # noqa: BLE001 â€” detached: log, nothing to bubble to
+            logging.getLogger(__name__).exception(
+                "Detached historic refresh failed"
             )
-        logging.getLogger(__name__).info(
-            "Detached historic refresh finished: %s seasons, %s games, %s errors",
-            stats.get("seasons_processed", 0),
-            stats.get("games_synced", 0),
-            len(stats.get("errors", [])),
-        )
-    except Exception:  # noqa: BLE001 — detached: log, nothing to bubble to
-        logging.getLogger(__name__).exception(
-            "Detached historic refresh failed"
-        )
 
 
 async def _run_historic_refresh(
     db: AsyncSession, body: HistoricRefreshTriggerRequest
 ) -> dict:
-    """Trigger the historic-data-refresh job (INLINE — retained for
+    """Trigger the historic-data-refresh job (INLINE â€” retained for
     direct/service use; the admin endpoint now uses the detached runner
     so long runs survive proxy timeouts)."""
     seasons_str = body.seasons or settings.historic_refresh_seasons
@@ -415,7 +428,7 @@ async def historic_refresh_reset_progress(
     OPS unblock (2026-09-20): a client disconnect mid-run (or a crashed
     run) leaves a ``generation_progress`` row stuck at ``in_progress``,
     and the next trigger aborts with a UniqueViolation on the
-    in-progress constraint — every subsequent run becomes impossible
+    in-progress constraint â€” every subsequent run becomes impossible
     until the stale row is cleared.  This endpoint marks those rows
     ``failed`` (with an explanatory error message) so the next trigger
     starts clean.
@@ -493,7 +506,7 @@ async def metrics(
         metrics_payload[job_name] = fresh
 
         # Best-effort write.  Failures are logged but never bubble up
-        # — the response is still correct.
+        # â€” the response is still correct.
         try:
             await short_cache.set(
                 cache_key, fresh, ttl=_METRICS_CACHE_TTL_S
@@ -557,7 +570,7 @@ async def regenerate_match_report(
         # OPS: surface the agent's own failure reason so a skipped
         # regeneration is diagnosable without container logs.
         if getattr(service, "last_error", None):
-            reason += f" — last error: {service.last_error}"
+            reason += f" â€” last error: {service.last_error}"
         return {
             "status": "skipped",
             "reason": reason,
@@ -586,7 +599,7 @@ async def void_fixture(
     TBC placeholders already exclude them, and the sync will never
     feed the orphan a final score anyway.
 
-    Team columns are set to NULL rather than deleting the row — tips,
+    Team columns are set to NULL rather than deleting the row â€” tips,
     predictions and analyses reference it and there is no cascade.
     Refuses (409) for completed games: history is never rewritten.
     """
@@ -602,7 +615,7 @@ async def void_fixture(
         raise http_error(
             409,
             "game_completed",
-            "Refusing to void a completed game — scores are historical fact",
+            "Refusing to void a completed game â€” scores are historical fact",
         )
 
     game.home_team = None
@@ -614,7 +627,7 @@ async def void_fixture(
 
     try:
         await _invalidate_game_cache(game)
-    except Exception:  # noqa: BLE001 — cache cleanup is best-effort
+    except Exception:  # noqa: BLE001 â€” cache cleanup is best-effort
         logging.getLogger(__name__).exception(
             "Cache invalidation after voiding %s failed (non-fatal)", slug
         )
