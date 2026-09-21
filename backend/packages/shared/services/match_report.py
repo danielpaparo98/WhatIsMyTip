@@ -67,8 +67,14 @@ _REPORT_TYPE = "grand_final_pre_match"
 # conversation on every research round-trip, so the honest budget for a
 # 12-tool loop is six figures.  At ling-flash prices (~$0.02-0.06/M)
 # even a 300k-token run costs well under a cent, once a season.
-_REQUEST_LIMIT = 40
-_TOTAL_TOKEN_LIMIT = 300_000
+# GF-BUDGET v3 (2026-09-20): with reasoning ENABLED on ling-flash the
+# research loop regularly exceeds 150k tokens and the old budget tripped
+# UsageLimitExceeded mid-run (prod regens failed after 71s/222s).  At
+# ling prices (~$0.02-0.06/M) even a full 1M-token run costs a few
+# cents, once a season — so the token ceiling is generous and the REAL
+# runaway guard is the request cap (60 LLM round-trips max).
+_REQUEST_LIMIT = 60
+_TOTAL_TOKEN_LIMIT = 1_000_000
 _TEMPERATURE = 0.3
 _MAX_TOKENS = 16_000
 _AGENT_RETRIES = 2
@@ -696,6 +702,9 @@ class MatchReportService:
         # never at construction time so the API layer can use the static
         # helpers freely.
         self._agent: Agent[GFDeps, GrandFinalReport] | None = None
+        # OPS: last agent failure reason (surfaced by the admin
+        # regenerate endpoint's "skipped" response).
+        self.last_error: str | None = None
 
     @staticmethod
     async def is_grand_final(db: AsyncSession, game: Game) -> bool:
@@ -803,6 +812,10 @@ class MatchReportService:
             )
             return result.output
         except Exception as e:
+            # OPS: keep the reason on the service so the admin endpoint
+            # can surface WHY a regeneration was skipped without
+            # trawling container logs.
+            self.last_error = str(e)
             logger.error(
                 f"Grand-final report agent run failed for game {game.id}: {e}",
                 exc_info=True,
