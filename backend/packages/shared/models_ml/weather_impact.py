@@ -281,6 +281,8 @@ class WeatherImpactModel(BaseModel):
 
             return winner, confidence, margin
 
-        except Exception as e:
-            logger.error(f"WeatherImpactModel: Prediction failed: {e}")
-            return game.home_team, 0.55, 12
+        except Exception:
+            # P0-3: never convert an internal failure into a confident-
+            # looking home-team vote — re-raise so the orchestrator
+            # records an abstention (ORCH-M7).
+            raise
