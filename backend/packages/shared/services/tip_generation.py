@@ -354,8 +354,15 @@ class TipGenerationService:
         existing_tips = await TipCRUD.get_by_game(self.db, game.id)
         existing_heuristics = {tip.heuristic for tip in existing_tips}
 
-        # Get available heuristics
+        # P0-2: run every model exactly ONCE via predict_all, then derive
+        # both the heuristic tips AND the stored model predictions from
+        # that single sweep.  (The previous flow re-ran all models once
+        # per heuristic and once more for persistence — 3×8+8 = 32 model
+        # executions per game instead of 8, and stateful models could
+        # answer differently between the sweep that decided the tip and
+        # the run that got persisted.)
         heuristics_to_use = self.orchestrator.get_available_heuristics()
+        sweep = await self.orchestrator.predict_all(game, self.db)
 
         # Generate tips for each heuristic
         for heuristic in heuristics_to_use:
@@ -372,11 +379,9 @@ class TipGenerationService:
                     game_stats["tips_skipped"] += 1
                     continue
 
-            # Generate prediction using the heuristic
+            # Take the heuristic's tip from the sweep.
             try:
-                winner, confidence, margin = await self.orchestrator.predict(
-                    game, heuristic, self.db
-                )
+                winner, confidence, margin = sweep[heuristic]["tip"]
 
                 # Create the tip
                 await TipCRUD.create(
@@ -397,22 +402,24 @@ class TipGenerationService:
                 )
                 raise
 
-        # Generate and store model predictions for this game
+        # Persist the model predictions from the same sweep — the exact
+        # values the heuristics consumed, not a second model run.
+        # Models that failed during the sweep abstained (absent from
+        # model_predictions) and are simply not persisted.
         # Fetch all existing predictions once (N+1 fix)
         existing_predictions = await ModelPredictionCRUD.get_by_game(self.db, game.id)
         existing_by_model = {p.model_name: p for p in existing_predictions}
+        model_predictions = next(iter(sweep.values()))["model_predictions"]
 
-        for model in self.orchestrator.models:
+        for model_name, (winner, confidence, margin) in model_predictions.items():
             try:
-                winner, confidence, margin = await model.predict(game, self.db)
-
-                if model.get_name() in existing_by_model:
+                if model_name in existing_by_model:
                     if regenerate:
                         # Update existing prediction
                         await ModelPredictionCRUD.create_or_update(
                             db=self.db,
                             game_id=game.id,
-                            model_name=model.get_name(),
+                            model_name=model_name,
                             winner=winner,
                             confidence=confidence,
                             margin=margin,
@@ -426,7 +433,7 @@ class TipGenerationService:
                     await ModelPredictionCRUD.create(
                         db=self.db,
                         game_id=game.id,
-                        model_name=model.get_name(),
+                        model_name=model_name,
                         winner=winner,
                         confidence=confidence,
                         margin=margin,
@@ -435,7 +442,7 @@ class TipGenerationService:
 
             except Exception as e:
                 self.logger.error(
-                    f"Error generating prediction for model {model.get_name()} "
+                    f"Error storing prediction for model {model_name} "
                     f"for game {game.id}: {str(e)}",
                     exc_info=True,
                 )
