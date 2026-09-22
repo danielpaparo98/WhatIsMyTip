@@ -210,7 +210,10 @@ class TestEloNeutralVenue:
         with _patch_neutral(False), patches, ExitStack() as stack:
             stack.enter_context(
                 patch.object(
-                    type(model), "_LEARNED_HOME_ADVANTAGE", new=80.0
+                    type(model),
+                    "_LEARNED_HOME_ADVANTAGE",
+                    # P2-5: the store is per-sport; this model's context is AFL.
+                    new={"afl": 80.0},
                 )
             )
             winner, _confidence, margin = await model.predict(game, db)

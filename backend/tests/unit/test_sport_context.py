@@ -74,3 +74,50 @@ class TestOrchestratorContext:
 
         custom = dataclasses.replace(AFL, cache_namespace="test-sport")
         assert EloModel(context=custom).redis_cache_key == "wimt:test-sport:elo_ratings"
+
+
+class TestEloLearnedHomeAdvantageScoping:
+    """P2-5: the learned home-advantage store must be keyed per sport —
+    one sport's measured HA must never leak into another's predictions."""
+
+    def test_store_is_keyed_by_sport(self):
+        from packages.shared.models_ml.elo import EloModel
+
+        assert isinstance(EloModel._LEARNED_HOME_ADVANTAGE, dict), (
+            "_LEARNED_HOME_ADVANTAGE must be a per-sport dict, not a shared float"
+        )
+
+    def test_values_do_not_leak_across_sports(self):
+        from packages.shared.models_ml.elo import EloModel
+
+        tennis = dataclasses.replace(
+            AFL, sport_id="tennis", cache_namespace="tennis"
+        )
+        afl_model = EloModel(context=AFL)
+        tennis_model = EloModel(context=tennis)
+
+        # Simulate the AFL rating walk learning a measured HA.
+        type(afl_model)._LEARNED_HOME_ADVANTAGE["afl"] = 63.0
+        try:
+            assert type(tennis_model)._LEARNED_HOME_ADVANTAGE.get("tennis") is None
+            assert type(afl_model)._LEARNED_HOME_ADVANTAGE.get("afl") == 63.0
+        finally:
+            type(afl_model)._LEARNED_HOME_ADVANTAGE.pop("afl", None)
+
+    def test_instance_read_scopes_by_context(self):
+        """predict() reads the learned HA for ITS context, not a global."""
+        import inspect
+
+        from packages.shared.models_ml.elo import EloModel
+
+        src = inspect.getsource(EloModel.predict)
+        assert "self.context.sport_id" in src, (
+            "EloModel.predict must scope its learned-HA lookup by sport"
+        )
+
+    def test_update_cache_accepts_context(self):
+        from inspect import signature
+
+        from packages.shared.models_ml.elo import EloModel
+
+        assert "context" in signature(EloModel.update_cache).parameters
