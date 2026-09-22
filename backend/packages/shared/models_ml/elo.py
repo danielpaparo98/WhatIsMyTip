@@ -246,11 +246,15 @@ class EloModel(BaseModel):
         """Compute Elo ratings from the database (full scan of completed games)."""
         # Get all teams
         result = await db.execute(
-            select(Game.home_team).distinct().where(Game.home_team is not None)
+            select(Game.home_team)
+            .distinct()
+            .where(Game.home_team.is_not(None))
         )
         home_teams = set(r[0] for r in result.all())
         result = await db.execute(
-            select(Game.away_team).distinct().where(Game.away_team is not None)
+            select(Game.away_team)
+            .distinct()
+            .where(Game.away_team.is_not(None))
         )
         away_teams = set(r[0] for r in result.all())
         all_teams = home_teams.union(away_teams)
