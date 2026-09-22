@@ -129,9 +129,13 @@ class Settings(BaseSettings):
     # See note above — the expression is in the FastAPI app's local
     # timezone (default Australia/Perth).
     historic_refresh_enabled: bool = True
-    historic_refresh_seasons: str = "2010-2025"
+    # P0-6: derived default ([current-16, current) as a string) so the
+    # admin-trigger fallback advances with the year.  An explicit
+    # ``HISTORIC_REFRESH_SEASONS`` env var still overrides it.
+    historic_refresh_seasons: str = Field(
+        default_factory=lambda: f"{datetime.now().year - 16}-{datetime.now().year - 1}",
+    )
     historic_refresh_regenerate_tips: bool = False
-    historical_refresh_start_year: int = 2010
     historical_refresh_timeout_seconds: int = 900  # 15 minutes (safety cap for in-process scheduler)
 
     # Model Retrain (weekly ``weighted_tip`` scikit-learn refit)
