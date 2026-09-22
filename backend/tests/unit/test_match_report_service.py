@@ -18,7 +18,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from packages.shared.config import settings
 from packages.shared.schemas.match_report import GrandFinalReport
-from packages.shared.services.match_report import GFDeps, MatchReportService
+from packages.shared.services.match_report import (
+    GFDeps,
+    MatchReportService,
+    _anchor_prediction_to_weighted_tip,
+    _normalize_sides,
+)
 
 SERVICE_MODULE = "packages.shared.services.match_report"
 
@@ -382,3 +387,126 @@ class TestGenerateAndStoreReportAgentRun:
         await service.close()
 
         assert service._agent is None
+
+# ---------------------------------------------------------------------------
+# GF-SIDES FIX + GF-VERDICT FIX (2026-09-21, user report)
+# ---------------------------------------------------------------------------
+
+
+def _swapped_report() -> GrandFinalReport:
+    """Agent output with the sides INVERTED: Brisbane (the fixture's
+    away team) sits in ``home`` slots with Fremantle players under it,
+    and Fremantle players sit in ``away``."""
+    return GrandFinalReport(
+        headline="Lions roar into the decider",
+        executive_summary="Brisbane's forward line against Fremantle's wall.",
+        season_story={
+            "home": {  # INVERTED: Brisbane is the fixture AWAY team
+                "team": "Brisbane",
+                "narrative": "Brisbane story",
+                "finals_path": ["PF: beat Hawthorn"],
+            },
+            "away": {  # INVERTED: Fremantle is the fixture HOME team
+                "team": "Fremantle",
+                "narrative": "Fremantle story",
+                "finals_path": ["PF: beat Sydney"],
+            },
+        },
+        keys_to_the_game=["Stoppage battle"],
+        key_players={
+            "home": [  # INVERTED: Brisbane players in the home slot
+                {"name": "Dunkley", "team": "Brisbane", "note": "Contested beast"},
+            ],
+            "away": [  # INVERTED: Fremantle players in the away slot
+                {"name": "Amiss, Jye", "team": "Fremantle", "note": "32 goals"},
+                {"name": "Treacy, Josh", "team": "Fremantle", "note": "92 marks"},
+            ],
+        },
+        injury_watch={"home": [], "away": []},
+        model_consensus={
+            "summary": "Models lean Brisbane",
+            "models_picking_home": 6,
+            "models_picking_away": 2,
+            "season_accuracy_note": "best_bet 63%",
+        },
+        weather_impact=None,
+        x_factor=None,
+        # The agent's own invented blend (NOT the weighted tip):
+        prediction={"winner": "Fremantle", "margin": 15, "confidence": 0.55},
+        talking_points=["Midfield arm wrestle."],
+    )
+
+
+class TestNormalizeSides:
+    def test_inverted_sides_are_remapped_to_the_fixture(self):
+        game = SimpleNamespace(home_team="Fremantle", away_team="Brisbane")
+        report = _swapped_report()
+
+        fixed = _normalize_sides(game, report)
+
+        # Season story now matches the fixture.
+        assert fixed.season_story.home.team == "Fremantle"
+        assert fixed.season_story.away.team == "Brisbane"
+        # Players remapped: Fremantle under home, Brisbane under away.
+        assert [p.name for p in fixed.key_players.home] == [
+            "Amiss, Jye",
+            "Treacy, Josh",
+        ]
+        assert [p.name for p in fixed.key_players.away] == ["Dunkley"]
+
+    def test_entries_matching_neither_side_are_dropped(self):
+        from packages.shared.schemas.match_report import PlayerSpotlight
+
+        game = SimpleNamespace(home_team="Fremantle", away_team="Brisbane")
+        report = _swapped_report()
+        report.key_players.home = []
+        report.key_players.away = [
+            PlayerSpotlight(name="Mystery", team="Gold Coast", note="n")
+        ]
+
+        fixed = _normalize_sides(game, report)
+        assert fixed.key_players.home == []
+        assert fixed.key_players.away == []
+
+
+class TestAnchorPredictionToWeightedTip:
+    @pytest.mark.asyncio
+    async def test_prediction_overridden_with_weighted_tip(self):
+        """GF-VERDICT: the site's verdict IS the weighted tip (user's
+        preferred heuristic) - not the agent's invented blend."""
+        game = SimpleNamespace(id=101, home_team="Fremantle", away_team="Brisbane")
+        report = _swapped_report()
+        weighted = SimpleNamespace(
+            heuristic="weighted_tip",
+            selected_team="Brisbane",
+            margin=21,
+            confidence=0.72,
+        )
+
+        with patch(
+            "packages.shared.crud.tips.TipCRUD.get_by_game",
+            AsyncMock(return_value=[weighted]),
+        ):
+            fixed = await _anchor_prediction_to_weighted_tip(
+                AsyncMock(spec=AsyncSession), game, report
+            )
+
+        assert fixed.prediction.winner == "Brisbane"
+        assert fixed.prediction.margin == 21
+        assert fixed.prediction.confidence == 0.72
+
+    @pytest.mark.asyncio
+    async def test_no_weighted_tip_keeps_agent_verdict(self):
+        game = SimpleNamespace(id=101, home_team="Fremantle", away_team="Brisbane")
+        report = _swapped_report()
+        before = report.prediction.model_dump()
+
+        with patch(
+            "packages.shared.crud.tips.TipCRUD.get_by_game",
+            AsyncMock(return_value=[]),
+        ):
+            fixed = await _anchor_prediction_to_weighted_tip(
+                AsyncMock(spec=AsyncSession), game, report
+            )
+
+        assert fixed.prediction.model_dump() == before
