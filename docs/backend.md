@@ -332,14 +332,14 @@ For runtime monitoring and on-call procedures, see [`docs/operations.md`](operat
 Database connections are managed by [`packages/shared/db.py`](../backend/packages/shared/db.py:1), which provides:
 
 - **Async SQLAlchemy engine** using the asyncpg driver (`postgresql+asyncpg://`)
-- **Session factory** (`factory()`) — context manager that yields an `AsyncSession`
+- **Session factory** (`get_session()`) — returns an `AsyncSession`, which is itself an async context manager
 - **Engine disposal** — `dispose_engine(force=...)` for shutdown
 
 ```python
-from packages.shared.db import factory
+from packages.shared.db import get_session
 
 async def do_work():
-    async with factory() as session:
+    async with get_session() as session:
         # session is automatically committed on success
         # and rolled back on exception
         ...
@@ -364,11 +364,19 @@ SQLAlchemy models are defined in [`packages/shared/models/`](../backend/packages
 - **Tip** — Generated tips (team, confidence, margin, heuristic)
 - **ModelPrediction** — Individual model predictions per game
 - **MatchAnalysis** — Detailed match analysis (weather, injuries, player data)
+- **MatchReport** — Grand-final pre-match report payloads (JSONB)
 - **JobExecution** — Cron job execution records (status, timing, error details)
 - **JobLock** — Advisory locks for preventing concurrent job runs
 - **EloCache** — Cached Elo ratings for teams
 - **GenerationProgress** — Tip generation progress tracking
 - **BacktestResult** — Backtesting performance metrics
+- **Player** — Player roster information
+- **MatchWeather** — Match-day weather observations
+- **PlayerMatchStats** — Per-match player statistics
+- **PlayerAdvancedStats** — Advanced (FootyWire) player statistics
+- **Injury** — Injury list entries
+- **ModelVersion** — Active versioned model metadata + metrics
+- **ModelCoefficient** — Learned weighted-tip coefficients per model version
 
 ### Migrations
 

@@ -49,6 +49,7 @@ from ..models import (
     PlayerAdvancedStats,
     PlayerMatchStats,
 )
+from ..models_ml.neutral import is_grand_final as _is_grand_final
 from ..schemas.match_report import GrandFinalReport, Prediction
 from ..teams import canonical_team
 from .match_context import _head_to_head, _recent_form
@@ -830,17 +831,13 @@ class MatchReportService:
     async def is_grand_final(db: AsyncSession, game: Game) -> bool:
         """True when ``game`` is the last round of its season (grand final).
 
-        Same heuristic as the ``GET /api/games?latest=true`` locator:
-        the grand final is the game whose round_id equals the season's
-        max round_id.
+        P0-8: delegates to :func:`packages.shared.models_ml.neutral.is_grand_final`
+        — the single implementation of the heuristic (also used by the Elo
+        and home-advantage models).  The round locator in
+        ``app/api/games.py`` derives the same flag from its own max-round
+        query because it needs ``max_round_id`` for the post-season check.
         """
-        if game.round_id is None or game.season is None:
-            return False
-        result = await db.execute(
-            select(func.max(Game.round_id)).where(Game.season == game.season)
-        )
-        max_round = result.scalar()
-        return bool(max_round is not None and game.round_id == max_round)
+        return await _is_grand_final(db, game)
 
     async def generate_and_store_report(
         self, db: AsyncSession, game: Game

@@ -217,3 +217,25 @@ class TestEloNeutralVenue:
 
         assert winner == game.home_team
         assert margin == 8
+
+
+class TestGrandFinalHeuristicSingleSource:
+    """P0-8: the ``max(round_id)`` heuristic must live in exactly one
+    implementation (``models_ml/neutral.is_grand_final``).  The match
+    report service delegates to it; the round locator derives the same
+    flag from its own query because it also needs ``max_round_id``.
+    """
+
+    def test_match_report_service_delegates_to_neutral(self):
+        import inspect
+
+        from packages.shared.services import match_report
+
+        src = inspect.getsource(match_report.MatchReportService.is_grand_final)
+        assert "_is_grand_final" in src, (
+            "MatchReportService.is_grand_final must delegate to "
+            "models_ml.neutral.is_grand_final, not re-implement the heuristic"
+        )
+        assert "func.max" not in src, (
+            "MatchReportService.is_grand_final must not duplicate the SQL"
+        )
