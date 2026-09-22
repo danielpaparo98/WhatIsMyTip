@@ -371,12 +371,11 @@ class TestUpgradeCreatesTables:
 
         mc_constraints = await _constraint_names(async_dsn, "model_coefficients")
         assert "uq_model_coefficients_version_feature" in mc_constraints
-        # The FK constraint (ON DELETE CASCADE) is present.
-        fk_constraints = {
-            c for c in mc_constraints if c.startswith("model_coefficients_")
-        }
-        assert len(fk_constraints) >= 1, (
-            "expected FK on model_coefficients.model_version_id"
+        # The FK constraint (ON DELETE CASCADE) is present.  It is unnamed
+        # in the 0005 DDL, so alembic names it via the Base.metadata
+        # naming convention (P1-2) — deterministic across environments.
+        assert "fk_model_coefficients_model_version_id_model_versions" in mc_constraints, (
+            f"FK missing; constraints found: {sorted(mc_constraints)}"
         )
 
 
