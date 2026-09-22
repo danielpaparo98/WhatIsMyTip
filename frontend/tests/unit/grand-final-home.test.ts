@@ -175,9 +175,12 @@ describe('index.vue state wiring', () => {
     expect(INDEX).toMatch(/api\.getGameReport\(game\.slug\)\.catch\(\(\) => null\)/)
   })
 
-  it('GF-TRIGGER: the poller adopts the report once it lands', () => {
+  it('GF-STALE: the poller always refreshes the GF view so tabs converge', () => {
+    // A present-but-STALE report (baked before a regeneration) must
+    // still be refreshed - the old `&& !grandFinalReport.value` guard
+    // froze open tabs on outdated verdicts forever.
     expect(INDEX).toMatch(
-      /if \(isGrandFinal\.value && !grandFinalReport\.value\) \{[\s\S]*?await refreshGrandFinal\(\)/
+      /if \(isGrandFinal\.value\) \{\s*await refreshGrandFinal\(\)/
     )
   })
 
