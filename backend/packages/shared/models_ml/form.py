@@ -39,27 +39,28 @@ class FormModel(BaseModel):
 
         wins = 0
         losses = 0
+        draws = 0
         score_diffs = []
 
         for game in games:
             if game.home_team == team:
                 score_diff = (game.home_score or 0) - (game.away_score or 0)
-                if score_diff > 0:
-                    wins += 1
-                else:
-                    losses += 1
             else:
                 score_diff = (game.away_score or 0) - (game.home_score or 0)
-                if score_diff > 0:
-                    wins += 1
-                else:
-                    losses += 1
+
+            if score_diff > 0:
+                wins += 1
+            elif score_diff < 0:
+                losses += 1
+            else:
+                draws += 1
 
             score_diffs.append(abs(score_diff))
 
         return {
             "wins": wins,
             "losses": losses,
+            "draws": draws,
             "avg_score_diff": sum(score_diffs) / len(score_diffs) if score_diffs else 0,
             "games": len(games),
         }
@@ -69,14 +70,17 @@ class FormModel(BaseModel):
         home_form = await self._get_recent_form(db, game.home_team, game.date)
         away_form = await self._get_recent_form(db, game.away_team, game.date)
 
-        # Calculate form scores
+        # Calculate form scores (a draw is worth half a win, so it
+        # contributes +1 under the ×2 win weighting)
         home_score = (
             home_form["wins"] * 2
+            + home_form["draws"]
             - home_form["losses"]
             + home_form["avg_score_diff"] / 10
         )
         away_score = (
             away_form["wins"] * 2
+            + away_form["draws"]
             - away_form["losses"]
             + away_form["avg_score_diff"] / 10
         )

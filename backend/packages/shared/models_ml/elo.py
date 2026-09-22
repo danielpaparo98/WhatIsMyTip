@@ -155,9 +155,14 @@ class EloModel(BaseModel):
             )
             expected_away = 1.0 - expected_home
 
-            # Actual scores
+            # Actual scores (a draw is the standard 0.5 for each side)
             if game.home_score is not None and game.away_score is not None:
-                actual_home = 1.0 if game.home_score > game.away_score else 0.0
+                if game.home_score > game.away_score:
+                    actual_home = 1.0
+                elif game.away_score > game.home_score:
+                    actual_home = 0.0
+                else:
+                    actual_home = 0.5
                 actual_away = 1.0 - actual_home
 
                 # Update ratings
