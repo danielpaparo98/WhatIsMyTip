@@ -56,9 +56,16 @@ async def test_predict_all_real_models_real_postgres(seeded_db):
     factory = seeded_db  # async_sessionmaker bound to the testcontainer
 
     # Persist a game row (models query the games table for history).
+    # A round-2 game is also seeded: the grand-final heuristic treats a
+    # season's MAX round as the grand final, so without it every round-1
+    # game IS a grand final and HomeAdvantageModel deliberately abstains
+    # (GF-NEUTRAL) — failing the strict failed == [] contract.
+    game = _make_game(2, "orchtest0002", "Brisbane", "Collingwood")
+    later_round = _make_game(9, "orchtest0009", "Carlton", "Essendon")
+    later_round.round_id = 2  # season max must exceed the game under test
     async with factory() as session:
-        game = _make_game(2, "orchtest0002", "Brisbane", "Collingwood")
         session.add(game)
+        session.add(later_round)
         await session.commit()
 
     orchestrator = ModelOrchestrator(session_factory=factory)

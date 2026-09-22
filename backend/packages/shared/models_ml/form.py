@@ -35,7 +35,7 @@ class FormModel(BaseModel):
         games = result.scalars().all()
 
         if not games:
-            return {"wins": 0, "losses": 0, "avg_score_diff": 0, "games": 0}
+            return {"wins": 0, "losses": 0, "draws": 0, "avg_score_diff": 0, "games": 0}
 
         wins = 0
         losses = 0
