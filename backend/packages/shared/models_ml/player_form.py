@@ -8,7 +8,7 @@ Cold-start: returns (home_team, 0.55, 6) when insufficient data.
 """
 
 import json
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Tuple
 
 from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -160,22 +160,6 @@ class PlayerFormModel(BaseModel):
     # ------------------------------------------------------------------
     # Caching
     # ------------------------------------------------------------------
-
-    async def _check_cache(self, game: Game) -> Optional[dict]:
-        """Check Redis cache for a previously computed prediction."""
-        try:
-            client = _get_client()
-            cache_key = (
-                f"{_CACHE_PREFIX}"
-                f"{game.home_team}:{game.away_team}:"
-                f"{game.date.isoformat() if game.date else 'all'}"
-            )
-            raw = await client.get(cache_key)
-            if raw is not None:
-                return json.loads(raw)
-        except Exception as e:
-            logger.warning(f"PlayerFormModel: Redis cache read error: {e}")
-        return None
 
     async def _store_cache(self, game: Game, data: dict) -> None:
         """Store computed prediction data in Redis."""

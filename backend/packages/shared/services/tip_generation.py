@@ -600,15 +600,7 @@ async def run_tip_generation(session: AsyncSession) -> Dict[str, Any]:
           ``model_predictions_created``, ``errors``, ``explanations_generated``.
     """
     generation_service = TipGenerationService(db_session=session)
-    try:
-        gen_stats = await generation_service.generate_for_next_upcoming_round()
-    except Exception:
-        # Ensure the service is closed even on failure
-        try:
-            await generation_service.close()  # type: ignore[attr-defined]
-        except Exception:  # noqa: BLE001
-            pass
-        raise
+    gen_stats = await generation_service.generate_for_next_upcoming_round()
 
     games_processed = gen_stats.get("games_processed", 0)
     tips_created = gen_stats.get("tips_created", 0)

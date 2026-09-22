@@ -8,7 +8,7 @@ Cold-start: returns (home_team, 0.55, 8) when insufficient historical data.
 """
 
 import json
-from typing import Optional, Tuple
+from typing import Tuple
 
 from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -182,23 +182,6 @@ class MatchupModel(BaseModel):
     # ------------------------------------------------------------------
     # Caching
     # ------------------------------------------------------------------
-
-    async def _check_cache(self, game: Game) -> Optional[dict]:
-        """Check Redis cache for a previously computed prediction."""
-        try:
-            client = _get_client()
-            teams_sorted = sorted([game.home_team, game.away_team])
-            cache_key = (
-                f"{_CACHE_PREFIX}{teams_sorted[0]}:{teams_sorted[1]}:"
-                f"{game.venue}:"
-                f"{game.date.isoformat() if game.date else 'all'}"
-            )
-            raw = await client.get(cache_key)
-            if raw is not None:
-                return json.loads(raw)
-        except Exception as e:
-            logger.warning(f"MatchupModel: Redis cache read error: {e}")
-        return None
 
     async def _store_cache(self, game: Game, data: dict) -> None:
         """Store computed prediction data in Redis."""
