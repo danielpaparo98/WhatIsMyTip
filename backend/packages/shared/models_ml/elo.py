@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..cache import _get_client
 from ..logger import get_logger
 from ..models import Game
+from ..sport_context import DEFAULT_CONTEXT, SportContext
 from ..utils import ensure_datetime
 from .base import BaseModel
 from .prediction import Prediction
@@ -17,7 +18,7 @@ from .prediction import Prediction
 logger = get_logger(__name__)
 
 # Redis key for storing computed Elo ratings
-_ELO_RATINGS_REDIS_KEY = "wimt:elo_ratings"
+_LEGACY_ELO_RATINGS_REDIS_KEY = "wimt:elo_ratings"  # pre-P2-2 key (AFL default, no namespace)
 # TTL for Elo ratings in Redis (1 hour — recomputed on update_cache)
 _ELO_RATINGS_TTL = 3600
 
@@ -47,12 +48,24 @@ class EloModel(BaseModel):
     # within a single function invocation
     _cache_lock = asyncio.Lock()
 
-    def __init__(self, k_factor: float = 32.0, home_advantage: float = 50.0):
+    def __init__(
+        self,
+        k_factor: float = 32.0,
+        home_advantage: float = 50.0,
+        context: Optional["SportContext"] = None,
+    ):
         self.k_factor = k_factor
         self.home_advantage = home_advantage
         # Instance-level ratings for backward compatibility (backtesting)
         self.ratings: Dict[str, float] = {}
         self._lock = asyncio.Lock()
+        # P2-2: sport-scoped cache namespace — ratings for two sports
+        # (or two competitions) can never cross-contaminate by name.
+        self.context = context or DEFAULT_CONTEXT
+
+    @property
+    def redis_cache_key(self) -> str:
+        return self.context.cache_key("elo_ratings")
 
     def get_name(self) -> str:
         return "elo"
@@ -189,7 +202,7 @@ class EloModel(BaseModel):
         """
         try:
             client = _get_client()
-            raw = await client.get(_ELO_RATINGS_REDIS_KEY)
+            raw = await client.get(self.redis_cache_key)
             if raw is not None:
                 ratings = json.loads(raw)
                 logger.info(f"EloModel: Loaded {len(ratings)} ratings from Redis")
@@ -204,7 +217,7 @@ class EloModel(BaseModel):
         try:
             client = _get_client()
             await client.set(
-                _ELO_RATINGS_REDIS_KEY,
+                self.redis_cache_key,
                 json.dumps(ratings),
                 ex=_ELO_RATINGS_TTL,
             )
