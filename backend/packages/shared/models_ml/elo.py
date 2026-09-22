@@ -35,6 +35,13 @@ class EloModel(BaseModel):
     _DEFAULT_K_FACTOR = 32.0
     _DEFAULT_HOME_ADVANTAGE = 50.0
 
+    # GF-HA LEARNED (2026-09-21): the home advantage is MEASURED from
+    # completed games (avg home margin x 10 Elo-per-point, grand finals
+    # excluded) instead of assumed at a fixed 50.  Set whenever ratings
+    # are computed from a game list; predict prefers it over the
+    # hard-coded default and DROPS it entirely at neutral venues.
+    _LEARNED_HOME_ADVANTAGE: Optional[float] = None
+
     # Lock for coordinating cache initialisation across concurrent coroutines
     # within a single function invocation
     _cache_lock = asyncio.Lock()
@@ -53,12 +60,66 @@ class EloModel(BaseModel):
     # Shared computation (pure function — no I/O)
     # ------------------------------------------------------------------
 
+    # GF-NEUTRAL: Elo points per score-point (mirrors the predict margin
+    # convention margin = elo_diff / 10).
+    _ELO_PER_POINT = 10.0
+
+    @staticmethod
+    def learn_home_advantage(
+        games: Sequence[Game],
+    ) -> Tuple[Optional[float], set]:
+        """MEASURE the home advantage from completed games.
+
+        GF-HA (2026-09-21, user request: "does the 50 Elo bump ever make
+        sense?"): the old code ASSUMED 50 Elo.  This estimates it from
+        the data: average home margin over completed games, EXCLUDING
+        each season's grand final (neutral — no home side), converted to
+        Elo points via the model's own margin convention (1 pt = 10 Elo)
+        and clamped to a sane 2-10 point band.
+
+        Returns:
+            (learned_home_advantage_or_None, neutral_keys) where
+            neutral_keys is the set of (season, round_id) pairs that are
+            grand finals — pass it to ``_compute_ratings_from_games`` so
+            the rating walk skips the HA bonus on those games too.
+        """
+        neutral_keys: set = set()
+        margins: list = []
+
+        if not games:
+            return None, neutral_keys
+
+        # Season -> max round (the grand-final round), from THIS sample.
+        max_rounds: dict = {}
+        for g in games:
+            if g.season is not None and g.round_id is not None:
+                if g.season not in max_rounds or g.round_id > max_rounds[g.season]:
+                    max_rounds[g.season] = g.round_id
+
+        for g in games:
+            if g.season is None or g.round_id is None:
+                continue
+            if g.round_id == max_rounds.get(g.season):
+                neutral_keys.add((g.season, g.round_id))
+                continue
+            if g.home_score is not None and g.away_score is not None:
+                margins.append(g.home_score - g.away_score)
+
+        if len(margins) < 50:
+            # Too thin a sample to trust — caller falls back to default.
+            return None, neutral_keys
+
+        avg_margin = sum(margins) / len(margins)
+        learned = max(20.0, min(100.0, avg_margin * EloModel._ELO_PER_POINT))
+        return learned, neutral_keys
+
     @staticmethod
     def _compute_ratings_from_games(
         games: Sequence[Game],
         initial_ratings: Dict[str, float],
         k_factor: float = 32.0,
         home_advantage: float = 50.0,
+        neutral_keys: Optional[set] = None,
     ) -> Dict[str, float]:
         """Compute Elo ratings by processing a list of games.
 
@@ -70,17 +131,27 @@ class EloModel(BaseModel):
             initial_ratings: Starting ratings dict (modified in-place and returned)
             k_factor: Elo K-factor for rating updates
             home_advantage: Home advantage bonus in Elo points
+            neutral_keys: Optional set of (season, round_id) pairs that are
+                NEUTRAL-venue games (grand finals) — the HA bonus is skipped
+                for those games (GF-NEUTRAL).
 
         Returns:
             Updated ratings dictionary (same object as initial_ratings)
         """
+        neutral_keys = neutral_keys or set()
         for game in games:
+            # getattr: the pure function also accepts lightweight
+            # game-like fakes in unit tests (no ORM machinery).
+            game_key = (getattr(game, "season", None), getattr(game, "round_id", None))
+            is_neutral = game_key in neutral_keys
+
             home_rating = initial_ratings.get(game.home_team, 1500.0)
             away_rating = initial_ratings.get(game.away_team, 1500.0)
 
-            # Expected scores
+            # Expected scores — HA bonus skipped at neutral venues.
+            ha = 0.0 if is_neutral else home_advantage
             expected_home = 1.0 / (
-                1.0 + 10.0 ** ((away_rating - home_rating - home_advantage) / 400.0)
+                1.0 + 10.0 ** ((away_rating - home_rating - ha) / 400.0)
             )
             expected_away = 1.0 - expected_home
 
@@ -193,12 +264,19 @@ class EloModel(BaseModel):
 
         logger.info(f"EloModel: Loaded {len(games)} completed games from database")
 
+        # GF-HA: measure home advantage from the sample; skip HA on the
+        # grand-final rounds (neutral venues) in the rating walk.
+        learned, neutral_keys = cls.learn_home_advantage(games)
+        if learned is not None:
+            cls._LEARNED_HOME_ADVANTAGE = learned
+
         # Process games in chronological order
         cls._compute_ratings_from_games(
             games,
             ratings,
             k_factor=cls._DEFAULT_K_FACTOR,
-            home_advantage=cls._DEFAULT_HOME_ADVANTAGE,
+            home_advantage=learned if learned is not None else cls._DEFAULT_HOME_ADVANTAGE,
+            neutral_keys=neutral_keys,
         )
 
         return ratings
@@ -390,15 +468,23 @@ class EloModel(BaseModel):
         home_rating = ratings.get(game.home_team, 1500.0)
         away_rating = ratings.get(game.away_team, 1500.0)
 
-        # Apply home advantage — UNLESS the game is neutral (GF-NEUTRAL,
+        # Apply home advantage — MEASURED where available (GF-HA: learned
+        # from the historical sample during rating computation), falling
+        # back to the hard-coded default only when no sample exists —
+        # and DROPPED entirely at neutral venues (GF-NEUTRAL,
         # 2026-09-21): the grand final's "home" side is a fixture
         # designation, and gifting it +50 Elo flipped neutral-venue picks.
         from .neutral import is_grand_final
 
         if await is_grand_final(db, game):
-            effective_home = home_rating
+            ha = 0.0
         else:
-            effective_home = home_rating + self.home_advantage
+            # GF-HA: prefer the MEASURED advantage over the hard-coded
+            # default (falls back to 50 when no sample has been seen).
+            ha = type(self)._LEARNED_HOME_ADVANTAGE
+            if ha is None:
+                ha = self.home_advantage
+        effective_home = home_rating + ha
 
         # Calculate expected probability
         expected_home = 1.0 / (1.0 + 10.0 ** ((away_rating - effective_home) / 400.0))
@@ -456,12 +542,22 @@ class EloModel(BaseModel):
             f"(query took {query_time:.4f}s)"
         )
 
+        # GF-HA: MEASURE the home advantage from the historical sample
+        # (grand finals excluded) instead of assuming a fixed +50.
+        learned, neutral_keys = self.learn_home_advantage(games)
+        if learned is not None:
+            type(self)._LEARNED_HOME_ADVANTAGE = learned
+            ha_to_use = learned
+        else:
+            ha_to_use = self.home_advantage
+
         # Process games using shared computation
         self._compute_ratings_from_games(
             games,
             ratings,
             k_factor=self._DEFAULT_K_FACTOR,
-            home_advantage=self._DEFAULT_HOME_ADVANTAGE,
+            home_advantage=ha_to_use,
+            neutral_keys=neutral_keys,
         )
 
         return ratings
