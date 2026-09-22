@@ -24,7 +24,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.models.openrouter import OpenRouterModel, OpenRouterModelSettings
@@ -49,7 +49,7 @@ from ..models import (
     PlayerAdvancedStats,
     PlayerMatchStats,
 )
-from ..schemas.match_report import GrandFinalReport
+from ..schemas.match_report import GrandFinalReport, Prediction
 from ..teams import canonical_team
 from .match_context import _head_to_head, _recent_form
 
@@ -282,6 +282,78 @@ async def _ensure_weather(db: AsyncSession, game: Game) -> None:
         )
     except Exception as e:  # noqa: BLE001 — weather must not break the report
         logger.warning(f"Weather ensure failed for game {game.id} (non-fatal): {e}")
+
+
+def _normalize_sides(game: Game, report: GrandFinalReport) -> GrandFinalReport:
+    """GF-SIDES FIX (2026-09-21, user report): the agent swapped the
+    sides between sections — Fremantle's players appeared under
+    Brisbane's "Players to Watch" column.  Every sided object carries a
+    ``team`` field, so remap each section against the REAL fixture
+    (canonical comparison) and drop entries that match neither side.
+
+    season_story: swapped wholesale when its home/away teams are
+    inverted.  key_players: rebuilt per side.  injury_watch has no
+    team field (undetectable) and is passed through as-is.
+    """
+    canonical_home = canonical_team(game.home_team or "")
+    canonical_away = canonical_team(game.away_team or "")
+
+    def _side_of(team_name: Optional[str]) -> Optional[str]:
+        if not team_name:
+            return None
+        t = canonical_team(team_name)
+        if t == canonical_home:
+            return "home"
+        if t == canonical_away:
+            return "away"
+        return None
+
+    # Season story: swap if the agent inverted the sides.
+    story = report.season_story
+    if story and story.home and story.away:
+        home_side = _side_of(story.home.team)
+        away_side = _side_of(story.away.team)
+        if home_side == "away" and away_side == "home":
+            story.home, story.away = story.away, story.home
+
+    # Key players: remap every entry by its own ``team`` field.
+    entries = list(report.key_players.home) + list(report.key_players.away)
+    rebuilt_home: list = []
+    rebuilt_away: list = []
+    for entry in entries:
+        side = _side_of(entry.team)
+        if side == "home":
+            rebuilt_home.append(entry)
+        elif side == "away":
+            rebuilt_away.append(entry)
+        # Entries matching neither side are dropped (mis-attributed).
+    report.key_players.home = rebuilt_home
+    report.key_players.away = rebuilt_away
+
+    return report
+
+
+async def _anchor_prediction_to_weighted_tip(
+    db: AsyncSession, game: Game, report: GrandFinalReport
+) -> GrandFinalReport:
+    """GF-VERDICT FIX (2026-09-21, user request): the site's verdict is
+    the WEIGHTED TIP — the user's preferred heuristic — not the agent's
+    own invented blend of signals.  Overwrite ``report.prediction`` with
+    the stored weighted tip's exact selection.  Defensive: without a
+    weighted tip the agent's prediction stands.
+    """
+    try:
+        tips = await TipCRUD.get_by_game(db, game.id)
+        weighted = next((t for t in tips if t.heuristic == "weighted_tip"), None)
+        if weighted is not None:
+            report.prediction = Prediction(
+                winner=weighted.selected_team,
+                margin=weighted.margin or 0,
+                confidence=float(weighted.confidence or 0.0),
+            )
+    except Exception as e:  # noqa: BLE001 — keep the agent's verdict on failure
+        logger.warning(f"Weighted-tip anchor failed (keeping agent verdict): {e}")
+    return report
 
 
 def _has_known_teams(home: Any, away: Any) -> bool:
@@ -860,8 +932,13 @@ class MatchReportService:
                 ),
             )
             # Store the sanitised payload (the JSONB blob is what the
-            # API serves; normalise mojibake once at write time).
-            return _sanitize_mojibake(result.output)
+            # API serves; normalise mojibake once at write time), with
+            # sided sections pinned to the REAL fixture sides and the
+            # verdict anchored to the weighted tip.
+            output = _sanitize_mojibake(result.output)
+            output = _normalize_sides(game, output)
+            output = await _anchor_prediction_to_weighted_tip(db, game, output)
+            return output
         except Exception as e:
             # OPS: keep the reason on the service so the admin endpoint
             # can surface WHY a regeneration was skipped without
