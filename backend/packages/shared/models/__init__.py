@@ -359,3 +359,23 @@ class ModelCoefficient(Base):
             name="uq_model_coefficients_version_feature",
         ),
     )
+
+
+# Sport-generic domain model (ADR 0001 / migration 0010).  Imported here
+# so ``Base.metadata`` registers every table for alembic autogenerate.
+from .multisport import (  # noqa: E402,F401
+    Competition,
+    Event,
+    EventParticipant,
+    EventSourceRef,
+    Individual,
+    Participant,
+    ParticipantMatchStats,
+    ParticipantSourceRef,
+    RatingSnapshot,
+    Roster,
+    Season,
+    Sport,
+    Team,
+    TeamAlias,
+)

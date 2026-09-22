@@ -371,11 +371,11 @@ def test_migration_0008_downgrade_drops_table():
     assert "ix_match_reports_game_id" in src
 
 
-def test_migration_head_is_0009():
-    """After adding 0009 (generation_progress sequence resync), the
-    migration tree must have exactly one head: 0009_fix_generation_progress_seq.
+def test_migration_head_is_0010():
+    """After adding 0010 (ADR 0001 multi-sport schema), the migration
+    tree must have exactly one head: 0010_consolidated_multisport.
     """
     revisions = _all_migrations()
     heads = [rev for rev in revisions if rev not in set(revisions.values())]
-    assert "0009_fix_generation_progress_seq" in heads
+    assert "0010_consolidated_multisport" in heads
     assert len(heads) == 1, f"expected a single head, got {heads}"
