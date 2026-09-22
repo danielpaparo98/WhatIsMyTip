@@ -47,7 +47,9 @@ class Tip(Base):
     __tablename__ = "tips"
 
     id = Column(Integer, primary_key=True, index=True)
-    game_id = Column(Integer, index=True)
+    # P1-2: FK declared to match the DB (0001 created it ON DELETE CASCADE);
+    # metadata drift here made alembic autogenerate want to drop it.
+    game_id = Column(Integer, ForeignKey("games.id", ondelete="CASCADE"), index=True)
     heuristic = Column(String(50), index=True)  # best_bet, yolo, weighted_tip
     selected_team = Column(String(100))
     margin = Column(Integer)
@@ -62,7 +64,8 @@ class ModelPrediction(Base):
     __tablename__ = "model_predictions"
 
     id = Column(Integer, primary_key=True, index=True)
-    game_id = Column(Integer, index=True)
+    # P1-2: FK declared to match the DB (0001 created it ON DELETE CASCADE).
+    game_id = Column(Integer, ForeignKey("games.id", ondelete="CASCADE"), index=True)
     model_name = Column(String(50), index=True)  # elo, form, home_advantage, value
     winner = Column(String(100))
     confidence = Column(Float)
