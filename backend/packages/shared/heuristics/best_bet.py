@@ -2,6 +2,7 @@ from collections import Counter
 from typing import Dict, Tuple
 
 from ..models import Game
+from ..models_ml.prediction import Prediction
 from .base import BaseHeuristic
 
 
@@ -24,7 +25,7 @@ class BestBetHeuristic(BaseHeuristic):
         """Apply best bet heuristic."""
         if not model_predictions:
             # Fallback to home team if no predictions
-            return game.home_team, 0.55, 15
+            return Prediction(game.home_team, 0.55, 15)
 
         # Count votes for each team
         votes = Counter()
@@ -54,4 +55,4 @@ class BestBetHeuristic(BaseHeuristic):
         # Conservative margin adjustment
         adjusted_margin = max(5, int(avg_margin * 0.8))
 
-        return winner, adjusted_confidence, adjusted_margin
+        return Prediction(winner, adjusted_confidence, adjusted_margin)

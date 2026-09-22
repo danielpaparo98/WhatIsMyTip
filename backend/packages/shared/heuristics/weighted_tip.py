@@ -55,8 +55,9 @@ for _n in MODEL_NAMES:
     FEATURE_NAMES.append(f"{_n}_conf")  # that model's confidence 0..1
 
 
-# A prediction tuple is ``(winner, confidence, margin)``.
-Prediction = Tuple[str, float, int]
+# The typed prediction contract (P2-1).  ``Prediction`` is a NamedTuple
+# whose positional order matches the legacy ``(winner, confidence, margin)``.
+from ..models_ml.prediction import Prediction  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -139,7 +140,7 @@ def home_margin_to_tip(
     winner = home_team if y_pred >= 0 else away_team
     margin = max(1, int(round(abs(y_pred))))
     confidence = round(min(0.95, max(0.50, 0.50 + abs(y_pred) * 0.015)), 3)
-    return winner, confidence, margin
+    return Prediction(winner, confidence, margin)
 
 
 # ---------------------------------------------------------------------------
@@ -179,7 +180,7 @@ def weighted_tip_fallback(
     ``(away_team, 0.55, 6)`` so callers always get a sane answer.
     """
     if not model_predictions:
-        return away_team, 0.55, 6
+        return Prediction(away_team, 0.55, 6)
 
     home_votes = 0
     away_votes = 0
@@ -197,7 +198,7 @@ def weighted_tip_fallback(
         margin = max(1, int(round(statistics.fmean(margins))))
     else:
         margin = 6
-    return winner, confidence, margin
+    return Prediction(winner, confidence, margin)
 
 
 # ---------------------------------------------------------------------------
@@ -255,6 +256,6 @@ class WeightedTipHeuristic(BaseHeuristic):
         # No trained model yet — majority-vote fallback.  Guard the empty
         # cold-start case explicitly to match the old behaviour.
         if not model_predictions:
-            return away_team, 0.55, 6
+            return Prediction(away_team, 0.55, 6)
 
         return weighted_tip_fallback(model_predictions, home_team, away_team)

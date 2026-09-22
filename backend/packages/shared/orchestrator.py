@@ -19,6 +19,7 @@ from .models_ml import (
     ValueModel,
     WeatherImpactModel,
 )
+from .models_ml.prediction import Abstained, is_abstained
 
 logger = get_logger(__name__)
 
@@ -132,7 +133,7 @@ class ModelOrchestrator:
 
     async def _predict_one(
         self, model: BaseModel, game: Game, ctx: str
-    ) -> Tuple[str, Optional[Tuple[str, float, int]]]:
+    ) -> Tuple[str, Optional[object]]:
         """Run ONE model in its OWN session.
 
         Opens a fresh session from the session factory (never shares the
@@ -142,17 +143,27 @@ class ModelOrchestrator:
         home-team default (ORCH-M7).
 
         Returns:
-            ``(model_name, prediction_or_None)``
+            ``(model_name, result)`` where ``result`` is a
+            :class:`Prediction`, the ``ABSTAINED`` singleton (explicit
+            "no opinion" — P2-1), or ``None`` (internal failure).
         """
         model_predict_start = time.time()
         try:
             async with self._session_factory() as session:
                 result = await model.predict(game, session)
             model_predict_time = time.time() - model_predict_start
-            logger.debug(
-                f"ModelOrchestrator.{ctx}: {model.get_name()} "
-                f"model took {model_predict_time:.4f}s"
-            )
+            if isinstance(result, Abstained):
+                # Explicit abstention (P2-1): the model has no usable
+                # opinion — excluded from consensus, not a failure.
+                logger.info(
+                    f"ModelOrchestrator.{ctx}: {model.get_name()} "
+                    f"abstained (no usable opinion)"
+                )
+            else:
+                logger.debug(
+                    f"ModelOrchestrator.{ctx}: {model.get_name()} "
+                    f"model took {model_predict_time:.4f}s"
+                )
             return model.get_name(), result
         except Exception as e:
             model_predict_time = time.time() - model_predict_start
@@ -166,23 +177,27 @@ class ModelOrchestrator:
 
     async def _gather_model_predictions(
         self, game: Game, ctx: str
-    ) -> Tuple[Dict[str, Tuple[str, float, int]], List[str]]:
+    ) -> Tuple[Dict[str, object], List[str]]:
         """Run all models concurrently, each in its own session.
 
         Returns:
             ``(model_predictions, failed_models)`` — the predictions dict
-            contains only models that succeeded; ``failed_models`` lists
-            the names of models that raised (they abstain).
+            contains only models that produced a :class:`Prediction`;
+            explicit ``ABSTAINED`` results are excluded but NOT failures;
+            ``failed_models`` lists the names of models that raised.
         """
         model_start = time.time()
 
         tasks = [self._predict_one(model, game, ctx) for model in self.models]
         results = await asyncio.gather(*tasks)
 
-        model_predictions: Dict[str, Tuple[str, float, int]] = {}
+        model_predictions: Dict[str, object] = {}
         failed_models: List[str] = []
+        abstained_models: List[str] = []
         for model_name, prediction in results:
-            if prediction is None:
+            if isinstance(prediction, Abstained):
+                abstained_models.append(model_name)
+            elif prediction is None:
                 failed_models.append(model_name)
             else:
                 model_predictions[model_name] = prediction
@@ -194,6 +209,11 @@ class ModelOrchestrator:
             logger.warning(
                 f"ModelOrchestrator.{ctx}: {len(failed_models)}/{len(self.models)} "
                 f"models failed and abstained: {sorted(failed_models)}"
+            )
+        if abstained_models:
+            logger.info(
+                f"ModelOrchestrator.{ctx}: {len(abstained_models)}/{len(self.models)} "
+                f"models abstained (no usable opinion): {sorted(abstained_models)}"
             )
 
         return model_predictions, failed_models

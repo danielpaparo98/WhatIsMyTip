@@ -1,6 +1,7 @@
 from typing import Dict, Tuple
 
 from ..models import Game
+from ..models_ml.prediction import Prediction
 from .base import BaseHeuristic
 
 
@@ -23,7 +24,7 @@ class YOLOHeuristic(BaseHeuristic):
         """Apply YOLO heuristic."""
         if not model_predictions:
             # Fallback to home team if no predictions
-            return game.home_team, 0.6, 20
+            return Prediction(game.home_team, 0.6, 20)
 
         # Find the prediction with highest confidence
         best_model = max(
@@ -39,4 +40,4 @@ class YOLOHeuristic(BaseHeuristic):
         # Use full margin
         adjusted_margin = max(10, margin)
 
-        return winner, boosted_confidence, adjusted_margin
+        return Prediction(winner, boosted_confidence, adjusted_margin)

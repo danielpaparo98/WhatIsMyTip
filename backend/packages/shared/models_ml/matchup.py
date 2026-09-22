@@ -17,6 +17,7 @@ from ..cache import _get_client
 from ..logger import get_logger
 from ..models import Game
 from .base import BaseModel
+from .prediction import Prediction
 
 logger = get_logger(__name__)
 
@@ -203,7 +204,7 @@ class MatchupModel(BaseModel):
 
     async def predict(
         self, game: Game, db: AsyncSession
-    ) -> Tuple[str, float, int]:
+    ) -> Prediction:
         """Predict winner based on head-to-head history and venue records.
 
         Returns:
@@ -227,7 +228,7 @@ class MatchupModel(BaseModel):
                     f"MatchupModel: Only {game_count} H2H games, "
                     "using cold-start default"
                 )
-                return game.home_team, 0.55, 8
+                return Prediction(game.home_team, 0.55, 8)
 
             # 3. Get venue records for both teams
             home_venue_wr = await self._get_venue_record(
@@ -278,7 +279,7 @@ class MatchupModel(BaseModel):
                 "game_count": game_count,
             })
 
-            return winner, confidence, margin
+            return Prediction(winner, confidence, margin)
 
         except Exception:
             # P0-3: never convert an internal failure into a confident-

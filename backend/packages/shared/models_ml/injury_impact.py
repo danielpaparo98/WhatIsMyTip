@@ -17,6 +17,7 @@ from ..cache import _get_client
 from ..logger import get_logger
 from ..models import Game, Injury, Player, PlayerMatchStats
 from .base import BaseModel
+from .prediction import Prediction
 
 logger = get_logger(__name__)
 
@@ -232,7 +233,7 @@ class InjuryImpactModel(BaseModel):
 
     async def predict(
         self, game: Game, db: AsyncSession
-    ) -> Tuple[str, float, int]:
+    ) -> Prediction:
         """Predict winner based on injury impact.
 
         Returns:
@@ -247,7 +248,7 @@ class InjuryImpactModel(BaseModel):
                     f"InjuryImpactModel: No injuries for game {game.id}, "
                     "using cold-start default"
                 )
-                return game.home_team, 0.52, 8
+                return Prediction(game.home_team, 0.52, 8)
 
             # 2. Resolve player IDs
             injured_player_ids = [
@@ -323,7 +324,7 @@ class InjuryImpactModel(BaseModel):
                 "away_impact": away_impact,
             })
 
-            return winner, confidence, margin
+            return Prediction(winner, confidence, margin)
 
         except Exception:
             # P0-3: never convert an internal failure into a confident-

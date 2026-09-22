@@ -12,6 +12,7 @@ from ..logger import get_logger
 from ..models import Game
 from ..utils import ensure_datetime
 from .base import BaseModel
+from .prediction import Prediction
 
 logger = get_logger(__name__)
 
@@ -420,7 +421,7 @@ class EloModel(BaseModel):
     # Prediction
     # ------------------------------------------------------------------
 
-    async def predict(self, game: Game, db: AsyncSession) -> Tuple[str, float, int]:
+    async def predict(self, game: Game, db: AsyncSession) -> Prediction:
         """Predict winner using Elo ratings with point-in-time data.
 
         For current predictions (non-backtesting), uses the Redis-backed cache
@@ -518,7 +519,7 @@ class EloModel(BaseModel):
             f"| winner={winner}, confidence={confidence:.2f}, margin={margin}"
         )
 
-        return winner, confidence, margin
+        return Prediction(winner, confidence, margin)
 
     async def _compute_point_in_time_ratings(
         self, db: AsyncSession, game: Game

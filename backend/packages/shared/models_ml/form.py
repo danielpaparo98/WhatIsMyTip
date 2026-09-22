@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..models import Game
 from .base import BaseModel
+from .prediction import Prediction
 
 
 class FormModel(BaseModel):
@@ -65,7 +66,7 @@ class FormModel(BaseModel):
             "games": len(games),
         }
 
-    async def predict(self, game: Game, db: AsyncSession) -> Tuple[str, float, int]:
+    async def predict(self, game: Game, db: AsyncSession) -> Prediction:
         """Predict winner based on recent form."""
         home_form = await self._get_recent_form(db, game.home_team, game.date)
         away_form = await self._get_recent_form(db, game.away_team, game.date)
@@ -107,4 +108,4 @@ class FormModel(BaseModel):
         confidence = max(0.5, min(0.95, confidence))
         margin = max(1, min(100, margin))
 
-        return winner, confidence, margin
+        return Prediction(winner, confidence, margin)

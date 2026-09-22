@@ -17,6 +17,7 @@ from ..cache import _get_client
 from ..logger import get_logger
 from ..models import Game, PlayerAdvancedStats, PlayerMatchStats
 from .base import BaseModel
+from .prediction import Prediction
 
 logger = get_logger(__name__)
 
@@ -180,7 +181,7 @@ class PlayerFormModel(BaseModel):
 
     async def predict(
         self, game: Game, db: AsyncSession
-    ) -> Tuple[str, float, int]:
+    ) -> Prediction:
         """Predict winner based on recent player form.
 
         Returns:
@@ -207,7 +208,7 @@ class PlayerFormModel(BaseModel):
                     "PlayerFormModel: No recent games for either team, "
                     "using cold-start default"
                 )
-                return game.home_team, 0.55, 6
+                return Prediction(game.home_team, 0.55, 6)
 
             # 3. Get advanced stats
             home_stats = (
@@ -231,7 +232,7 @@ class PlayerFormModel(BaseModel):
                     "PlayerFormModel: No advanced stats available, "
                     "using cold-start default"
                 )
-                return game.home_team, 0.55, 6
+                return Prediction(game.home_team, 0.55, 6)
 
             # 5. Calculate form scores
             home_score = self._calculate_form_score(home_stats)
@@ -277,7 +278,7 @@ class PlayerFormModel(BaseModel):
                 "away_games": len(away_game_ids),
             })
 
-            return winner, confidence, margin
+            return Prediction(winner, confidence, margin)
 
         except Exception:
             # P0-3: never convert an internal failure into a confident-

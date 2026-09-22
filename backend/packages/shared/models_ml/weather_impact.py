@@ -17,6 +17,7 @@ from ..cache import _get_client
 from ..logger import get_logger
 from ..models import Game, MatchWeather
 from .base import BaseModel
+from .prediction import Prediction
 
 logger = get_logger(__name__)
 
@@ -176,7 +177,7 @@ class WeatherImpactModel(BaseModel):
 
     async def predict(
         self, game: Game, db: AsyncSession
-    ) -> Tuple[str, float, int]:
+    ) -> Prediction:
         """Predict winner based on weather conditions.
 
         Returns:
@@ -191,7 +192,7 @@ class WeatherImpactModel(BaseModel):
                     "WeatherImpactModel: No weather data for game "
                     f"{game.id}, using cold-start default"
                 )
-                return game.home_team, 0.55, 12
+                return Prediction(game.home_team, 0.55, 12)
 
             # 2. Classify weather tier
             current_tier = self._classify_weather(weather)
@@ -223,7 +224,7 @@ class WeatherImpactModel(BaseModel):
                     "WeatherImpactModel: No historical weather data, "
                     "using cold-start default"
                 )
-                return game.home_team, 0.55, 12
+                return Prediction(game.home_team, 0.55, 12)
 
             # 5. Weather resilience differential
             diff = home_wr - away_wr
@@ -263,7 +264,7 @@ class WeatherImpactModel(BaseModel):
                 "tier": current_tier,
             })
 
-            return winner, confidence, margin
+            return Prediction(winner, confidence, margin)
 
         except Exception:
             # P0-3: never convert an internal failure into a confident-
