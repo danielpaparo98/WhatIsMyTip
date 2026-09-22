@@ -652,6 +652,8 @@ class GameCRUD:
         await invalidate_cache_pattern(short_cache, "upcoming_games:")
         await invalidate_cache_pattern(medium_cache, "games_by_season:")
 
+        return game
+
     @staticmethod
     async def _generate_unique_slug(db: AsyncSession, max_attempts: int = 10) -> str:
         """Generate a unique slug, retrying if collisions occur.

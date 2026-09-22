@@ -468,3 +468,104 @@ class TestDuplicateFixtureAdoption:
         # Fell through to a normal create; the completed row untouched.
         assert result["action"] == "created"
         db.add.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# update_game_completion return contract (P0-1)
+# ---------------------------------------------------------------------------
+
+
+def _make_incomplete_game(*, game_id: int = 7) -> SimpleNamespace:
+    """A stand-in Game row that has not been completed yet."""
+    return SimpleNamespace(
+        id=game_id,
+        slug="xyz-67890",
+        season=2026,
+        round_id=5,
+        home_team="Home",
+        away_team="Away",
+        home_score=None,
+        away_score=None,
+        venue="MCG",
+        date=__import__("datetime").datetime.fromisoformat(
+            "2026-04-18T10:00:00+00:00"
+        ),
+        completed=False,
+        last_synced_at=None,
+        sync_version=0,
+    )
+
+
+class TestUpdateGameCompletionReturn:
+    """``update_game_completion`` documents ``Optional[Game]`` but its
+    success path fell off the end of the function, returning ``None``
+    to callers after a *successful* completion update (P0-1)."""
+
+    @pytest.mark.asyncio
+    async def test_success_path_returns_updated_game(self):
+        db = AsyncMock(spec=AsyncSession)
+        result_mock = MagicMock()
+        result_mock.scalar_one_or_none.return_value = _make_incomplete_game()
+        db.execute = AsyncMock(return_value=result_mock)
+
+        pattern_invalidate_mock = AsyncMock(return_value=0)
+        squiggle_data = {"complete": 100, "hscore": 88, "ascore": 71}
+
+        with patch(
+            "packages.shared.cache.invalidate_cache_pattern",
+            pattern_invalidate_mock,
+        ):
+            game = await GameCRUD.update_game_completion(db, 7, squiggle_data)
+
+        # The updated game object must be returned, not None.
+        assert game is not None
+        assert game.completed is True
+        assert game.home_score == 88
+        assert game.away_score == 71
+        assert game.sync_version == 1
+        db.commit.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_already_completed_returns_game(self):
+        """Existing contract: completed game ⇒ returned untouched."""
+        db = AsyncMock(spec=AsyncSession)
+        done = _make_incomplete_game()
+        done.completed = True
+        result_mock = MagicMock()
+        result_mock.scalar_one_or_none.return_value = done
+        db.execute = AsyncMock(return_value=result_mock)
+
+        game = await GameCRUD.update_game_completion(
+            db, 7, {"complete": 100, "hscore": 1, "ascore": 2}
+        )
+
+        assert game is done
+        db.commit.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_unknown_game_returns_none(self):
+        db = AsyncMock(spec=AsyncSession)
+        result_mock = MagicMock()
+        result_mock.scalar_one_or_none.return_value = None
+        db.execute = AsyncMock(return_value=result_mock)
+
+        game = await GameCRUD.update_game_completion(
+            db, 999, {"complete": 100, "hscore": 1, "ascore": 2}
+        )
+
+        assert game is None
+
+    @pytest.mark.asyncio
+    async def test_incomplete_squiggle_data_returns_none(self):
+        """Feed says the game is not final ⇒ no update, returns None."""
+        db = AsyncMock(spec=AsyncSession)
+        result_mock = MagicMock()
+        result_mock.scalar_one_or_none.return_value = _make_incomplete_game()
+        db.execute = AsyncMock(return_value=result_mock)
+
+        game = await GameCRUD.update_game_completion(
+            db, 7, {"complete": 0, "hscore": 1, "ascore": 2}
+        )
+
+        assert game is None
+        db.commit.assert_not_awaited()
