@@ -1,6 +1,6 @@
 """GF-NEUTRAL: neutral-venue handling in the models.
 
-The grand final's ``home_team`` is a fixture designation — the Elo model
+The grand final's ``home_team`` is a fixture designation â€” the Elo model
 must not gift it +50 rating points, and the home-advantage model must
 abstain entirely (its venue win-rates describe the venue's tenants, not
 these two teams).
@@ -14,6 +14,49 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from packages.shared.models import Game
 from packages.shared.models_ml.elo import EloModel
 from packages.shared.models_ml.home_advantage import HomeAdvantageModel
+
+
+def _hist_game(season: int, round_id: int, home_score: int, away_score: int):
+    """A completed HISTORICAL game (for the HA learning sample)."""
+    g = MagicMock(spec=Game)
+    g.season = season
+    g.round_id = round_id
+    g.home_score = home_score
+    g.away_score = away_score
+    g.completed = True
+    return g
+
+
+class TestLearnHomeAdvantage:
+    def test_measures_mean_margin_in_elo_points(self):
+        """2026 sample (60 games): home wins every game by 8 points ->
+        HA = 80 Elo (the model's own convention: 1 pt = 10 Elo).  The
+        max round (60) is the GF and is excluded from the sample."""
+        games = [_hist_game(2026, r, 90, 82) for r in range(1, 61)]
+        learned, neutral = EloModel.learn_home_advantage(games)
+        assert learned == 80.0
+        assert neutral == {(2026, 60)}  # the max round IS the GF
+
+    def test_grand_final_excluded_from_sample(self):
+        """The GF is neutral: its result must not feed the HA estimate.
+        Season: rounds 1-55 home wins by 8, round 56 (GF) home LOSES by
+        30.  With the GF included the mean would drop by ~2.4 points."""
+        games = [_hist_game(2026, r, 90, 82) for r in range(1, 56)]
+        games.append(_hist_game(2026, 56, 50, 80))  # the neutral GF
+        learned, neutral = EloModel.learn_home_advantage(games)
+        assert (2026, 56) in neutral
+        # HA is measured from the 55 non-GF games only: +8 avg -> 80 Elo.
+        assert learned == 80.0
+
+    def test_too_small_sample_returns_none(self):
+        games = [_hist_game(2026, 1, 90, 80) for _ in range(10)]  # 10 < 50
+        learned, _neutral = EloModel.learn_home_advantage(games)
+        assert learned is None
+
+    def test_empty_sample_returns_none(self):
+        learned, neutral = EloModel.learn_home_advantage([])
+        assert learned is None
+        assert neutral == set()
 
 
 def _make_game(*, round_id: int = 29, season: int = 2026) -> Game:
@@ -41,7 +84,7 @@ class TestHomeAdvantageNeutralAbstention:
     @pytest.mark.asyncio
     async def test_abstains_at_grand_final(self):
         """The model must ABSTAIN (raise) at a neutral venue so the
-        orchestrator excludes it from consensus — its premise (venue
+        orchestrator excludes it from consensus â€” its premise (venue
         tenants win at home) is meaningless there."""
         model = HomeAdvantageModel()
         game = _make_game()
@@ -127,7 +170,7 @@ class TestEloNeutralVenue:
             winner, _confidence, _margin = await model.predict(game, db)
 
         # Equal ratings, zero HA -> even odds; the tie-break falls to the
-        # away side in the formula — the point is Fremantle gets no +50.
+        # away side in the formula â€” the point is Fremantle gets no +50.
         assert winner == game.away_team
 
     @pytest.mark.asyncio
@@ -142,6 +185,7 @@ class TestEloNeutralVenue:
         # +50 HA tips the even matchup to the nominal home side.
         assert winner == game.home_team
 
+
     @pytest.mark.asyncio
     async def test_neutral_ratings_still_decide_when_unequal(self):
         """Neutral venue does not mean 'no prediction' — genuine rating
@@ -153,3 +197,23 @@ class TestEloNeutralVenue:
             winner, _confidence, _margin = await model.predict(game, db)
 
         assert winner == game.away_team  # Brisbane is 200 points stronger
+
+    @pytest.mark.asyncio
+    async def test_learned_ha_stored_on_class_and_used_by_predict(self):
+        """A measured HA (80) overrides the hard-coded 50 at predict
+        time: equal ratings + HA 80 -> margin = 80/10 = 8 pts."""
+        from contextlib import ExitStack
+
+        model, game, db, _ = self._elo_with_ratings(None)
+        patches = self._isolated(model, {"Fremantle": 1600.0, "Brisbane": 1600.0})
+
+        with _patch_neutral(False), patches, ExitStack() as stack:
+            stack.enter_context(
+                patch.object(
+                    type(model), "_LEARNED_HOME_ADVANTAGE", new=80.0
+                )
+            )
+            winner, _confidence, margin = await model.predict(game, db)
+
+        assert winner == game.home_team
+        assert margin == 8
