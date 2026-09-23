@@ -27,24 +27,19 @@ import statistics
 from typing import Dict, List, Mapping, Tuple
 
 from ..models import Game
+from ..models_ml.prediction import Prediction
+from ..models_ml.registry import build_default_registry
 from .base import BaseHeuristic
 
 # ---------------------------------------------------------------------------
 # Canonical feature ordering (the training/prediction contract)
 # ---------------------------------------------------------------------------
 
-#: The eight underlying ML models, in fixed order.  ``get_name()`` of each
-#: model in :mod:`packages.shared.models_ml` matches these strings.
-MODEL_NAMES: List[str] = [
-    "elo",
-    "form",
-    "home_advantage",
-    "value",
-    "weather_impact",
-    "injury_impact",
-    "matchup",
-    "player_form",
-]
+#: The eight underlying ML models, in fixed order.  P2-3: derived from
+#: the model registry — the single source of truth — instead of a
+#: hardcoded list.  The resulting order is identical (it IS the
+#: weighted-tip feature contract for the AFL bootstrap set).
+MODEL_NAMES: List[str] = build_default_registry().names()
 
 #: The 16-length ordered feature list.  For each model we emit the signed
 #: margin toward the home team first, then that model's confidence.
@@ -57,7 +52,6 @@ for _n in MODEL_NAMES:
 
 # The typed prediction contract (P2-1).  ``Prediction`` is a NamedTuple
 # whose positional order matches the legacy ``(winner, confidence, margin)``.
-from ..models_ml.prediction import Prediction  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -68,6 +62,7 @@ def build_feature_vector(
     model_predictions: Mapping[str, Prediction],
     home_team: str,
     away_team: str,
+    model_names: List[str] | None = None,
 ) -> List[float]:
     """Build the 16-length ordered feature vector for one game.
 
@@ -80,7 +75,7 @@ def build_feature_vector(
     Pure and side-effect-free.
     """
     features: List[float] = []
-    for name in MODEL_NAMES:
+    for name in model_names if model_names is not None else MODEL_NAMES:
         entry = model_predictions.get(name)
         if entry is None:
             features.append(0.0)  # margin
@@ -153,9 +148,10 @@ def weighted_tip_predict(
     model_predictions: Mapping[str, Prediction],
     home_team: str,
     away_team: str,
+    model_names: List[str] | None = None,
 ) -> Prediction:
     """Convenience pure function composing A2 → A3 → A4."""
-    features = build_feature_vector(model_predictions, home_team, away_team)
+    features = build_feature_vector(model_predictions, home_team, away_team, model_names=model_names)
     y_pred = predict_home_margin(features, intercept, coefficients)
     return home_margin_to_tip(y_pred, home_team, away_team)
 
@@ -168,6 +164,7 @@ def weighted_tip_fallback(
     model_predictions: Mapping[str, Prediction],
     home_team: str,
     away_team: str,
+    model_names: List[str] | None = None,
 ) -> Prediction:
     """Majority-vote fallback used before the first weekly retrain runs.
 
@@ -221,6 +218,12 @@ class WeightedTipHeuristic(BaseHeuristic):
 
     def __init__(self, models):
         self.models = models
+        # P2-3: per-instance model names derived from the injected
+        # models — the registry (not a hardcoded list) decides which
+        # models exist, and the feature vector follows.
+        self.model_names: List[str] = (
+            [m.get_name() for m in models] if models else list(MODEL_NAMES)
+        )
         self._intercept: float | None = None
         self._coefficients: Dict[str, float] | None = None
 
@@ -251,6 +254,7 @@ class WeightedTipHeuristic(BaseHeuristic):
                 model_predictions,
                 home_team,
                 away_team,
+                model_names=self.model_names,
             )
 
         # No trained model yet — majority-vote fallback.  Guard the empty
@@ -258,4 +262,6 @@ class WeightedTipHeuristic(BaseHeuristic):
         if not model_predictions:
             return Prediction(away_team, 0.55, 6)
 
-        return weighted_tip_fallback(model_predictions, home_team, away_team)
+        return weighted_tip_fallback(
+            model_predictions, home_team, away_team, model_names=self.model_names
+        )

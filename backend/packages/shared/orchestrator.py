@@ -8,17 +8,8 @@ from .crud.model_versions import get_active_coefficients
 from .heuristics import BaseHeuristic, BestBetHeuristic, WeightedTipHeuristic, YOLOHeuristic
 from .logger import get_logger
 from .models import Game
-from .models_ml import (
-    BaseModel,
-    EloModel,
-    FormModel,
-    HomeAdvantageModel,
-    InjuryImpactModel,
-    MatchupModel,
-    PlayerFormModel,
-    ValueModel,
-    WeatherImpactModel,
-)
+from .models_ml import BaseModel
+from .models_ml.registry import ModelRegistry, build_default_registry
 from .models_ml.prediction import Abstained, is_abstained
 from .sport_context import DEFAULT_CONTEXT, SportContext
 
@@ -69,24 +60,19 @@ class ModelOrchestrator:
         self,
         session_factory: Optional[SessionFactory] = None,
         context: Optional["SportContext"] = None,
+        registry: Optional["ModelRegistry"] = None,
     ):
         self._session_factory = session_factory or _default_session_factory
         # P2-2: the per-sport context.  AFL is the bootstrap default —
         # the existing behaviour, made explicit.  A second sport gets
         # its own orchestrator + context, not new code branches.
         self.context = context or DEFAULT_CONTEXT
+        # P2-3: the model set comes from the registry (registration
+        # order = weighted-tip feature order for the sport).
+        self._registry = registry or build_default_registry()
 
         # Initialize ML models
-        self.models: List[BaseModel] = [
-            EloModel(context=self.context),
-            FormModel(),
-            HomeAdvantageModel(),
-            ValueModel(),
-            WeatherImpactModel(),
-            InjuryImpactModel(),
-            MatchupModel(),
-            PlayerFormModel(),
-        ]
+        self.models: List[BaseModel] = self._registry.create(self.context)
 
         # Initialize heuristics
         self.heuristics: Dict[str, BaseHeuristic] = {
