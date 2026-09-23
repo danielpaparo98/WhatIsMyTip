@@ -39,13 +39,15 @@ class TestBuildScheduler:
     def test_registers_all_scheduled_jobs(self):
         scheduler = build_scheduler(_make_session_factory())
         job_ids = {job.id for job in scheduler.get_jobs()}
-        # 5 jobs registered with these IDs (model-retrain is enabled by default)
+        # 6 jobs registered with these IDs (model-retrain and
+        # supplementary-sync are enabled by default)
         assert "daily-sync" in job_ids
         assert "match-completion" in job_ids
         assert "tip-generation" in job_ids
         assert "historic-refresh" in job_ids
         assert "model-retrain" in job_ids
-        assert len(job_ids) == 5
+        assert "supplementary-sync" in job_ids
+        assert len(job_ids) == 6
 
     def test_jobs_use_cron_triggers(self):
         scheduler = build_scheduler(_make_session_factory())

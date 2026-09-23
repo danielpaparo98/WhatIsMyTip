@@ -20,6 +20,7 @@ from app.cron.daily_sync import DailySyncJob
 from app.cron.historic_refresh import HistoricRefreshJob
 from app.cron.match_completion import MatchCompletionJob
 from app.cron.model_retrain import ModelRetrainJob
+from app.cron.supplementary_sync import SupplementarySyncJob
 from app.cron.tip_generation import TipGenerationJob
 from packages.shared.config import settings
 
@@ -50,6 +51,7 @@ _MISFIRE_GRACE = {
     "tip-generation": 1200,   # 20 min — was 10 min; bumped
     "historic-refresh": 3600, # 1 hour — weekly batch job
     "model-retrain": 3600,    # 1 hour — weekly retrain job
+    "supplementary-sync": 900, # 15 min — daily injuries/weather refresh
 }
 
 
@@ -123,6 +125,18 @@ def build_scheduler(session_factory: Any) -> AsyncIOScheduler:
             max_instances=1,
             coalesce=True,
             misfire_grace_time=_MISFIRE_GRACE["model-retrain"],
+        )
+    if settings.supplementary_sync_enabled:
+        scheduler.add_job(
+            SupplementarySyncJob(session_factory).execute,
+            CronTrigger.from_crontab(
+                settings.supplementary_sync_cron, timezone=settings.cron_timezone
+            ),
+            id="supplementary-sync",
+            name="Supplementary data sync (injuries + weather)",
+            max_instances=1,
+            coalesce=True,
+            misfire_grace_time=_MISFIRE_GRACE["supplementary-sync"],
         )
     return scheduler
 

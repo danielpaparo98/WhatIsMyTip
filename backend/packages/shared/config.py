@@ -144,6 +144,15 @@ class Settings(BaseSettings):
     # register/skip the job in the scheduler.
     model_retrain_enabled: bool = True
 
+    # Supplementary Data Sync (P3-3): scheduled refresh of the injury
+    # (FootyWire) and weather (Open-Meteo) feeds.  These were previously
+    # MANUAL-script-only — the injury model's point-in-time guard
+    # silently starved as scraped data aged.  ``staleness_days`` trips
+    # an alert when the newest scraped injury row is older than this.
+    supplementary_sync_enabled: bool = True
+    supplementary_sync_cron: str = "45 5 * * *"  # daily 05:45 app-tz
+    supplementary_sync_staleness_days: int = 3
+
     # Retry Configuration
     job_timeout_seconds: int = 3600
     # Default lock expiry when a caller does not supply one.  Callers
