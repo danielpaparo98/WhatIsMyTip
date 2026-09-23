@@ -166,6 +166,7 @@ from app.api.games import router as games_router
 from app.api.tips import router as tips_router
 from app.api.backtest import router as backtest_router
 from app.api.admin import router as admin_router
+from app.api.sports import router as sports_router
 
 # NOTE — DigitalOcean App Platform ingress path-prefix routing trims the
 # matched prefix before the request reaches this service: a public
@@ -189,3 +190,7 @@ app.include_router(backtest_router, prefix="/api/backtest", tags=["backtest"])
 app.include_router(backtest_router, prefix="/backtest", tags=["backtest"], include_in_schema=False)
 app.include_router(admin_router, prefix="/api/admin", tags=["admin"])
 app.include_router(admin_router, prefix="/admin", tags=["admin"], include_in_schema=False)
+
+# P4-1 — multi-sport discovery surface (ADR 0001)
+app.include_router(sports_router, prefix="/api/sports", tags=["sports"])
+app.include_router(sports_router, prefix="/sports", tags=["sports"], include_in_schema=False)

@@ -12,12 +12,14 @@ from .model_versions import (
     get_model_coefficients,
     next_version_number,
 )
+from .sports import SportsCRUD
 from .tips import TipCRUD
 
 __all__ = [
     "GameCRUD",
     "TipCRUD",
     "BacktestCRUD",
+    "SportsCRUD",
     "ModelPredictionCRUD",
     "GenerationProgressCRUD",
     "EloCacheCRUD",

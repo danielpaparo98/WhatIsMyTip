@@ -80,6 +80,48 @@ Check the liveness of the API.  Returns 200 in all cases (degraded/healthy) — 
 | `version` | string | App version |
 | `request_id` | string | Correlates with `X-Request-ID` response header |
 
+### Sports (multi-sport discovery, P4-1)
+
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| `GET` | `/api/sports` | public | List sports with their competitions and seasons (ADR 0001 framework tables) |
+
+**Example**:
+
+```bash
+curl http://localhost:8000/api/sports
+```
+
+```json
+{
+  "sports": [
+    {
+      "id": "afl",
+      "display_name": "Australian Football",
+      "competitions": [
+        {
+          "id": 1,
+          "sport_id": "afl",
+          "name": "Australian Football League",
+          "tier": "national",
+          "format": "rounds",
+          "timezone": "Australia/Perth",
+          "seasons": [
+            {"id": 7, "label": "2026", "start_date": null, "end_date": null, "is_current": true}
+          ]
+        }
+      ]
+    }
+  ]
+}
+```
+
+Multi-sport clients should discover competitions/seasons here first, then
+scope other queries accordingly.  Game responses now also carry a
+`source` field (the feed provider id, `"squiggle"` today); the legacy
+`squiggle_id` field is **deprecated** and will be removed after a
+deprecation window (P3-2 / ADR 0001).
+
 ### Games
 
 | Method | Path | Auth | Description |

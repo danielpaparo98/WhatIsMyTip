@@ -5,6 +5,12 @@ from .games import (
     ModelPrediction,
     WeatherResponse,
 )
+from .sports import (
+    CompetitionResponse,
+    SeasonResponse,
+    SportResponse,
+    SportsListResponse,
+)
 from .match_analysis import MatchAnalysisResponse
 from .match_report import (
     GrandFinalReport,
