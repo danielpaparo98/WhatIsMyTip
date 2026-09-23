@@ -38,10 +38,18 @@ class SportContext:
     #: ``wimt:{cache_namespace}:...`` so ratings/margins never
     #: cross-contaminate by name.
     cache_namespace: str
+    #: Months (1-12) in which the sport is OFF-season — used by the
+    #: daily-sync noise-reduction policy (reduced run window).  Empty
+    #: for year-round sports (golf, tennis) which never skip.
+    off_season_months: frozenset = frozenset()
 
     def cache_key(self, *parts: str) -> str:
         """Build a namespaced cache key, e.g. ``wimt:afl:elo_ratings``."""
         return ":".join(("wimt", self.cache_namespace, *parts))
+
+    def is_off_season_month(self, month: int) -> bool:
+        """True when ``month`` falls in this sport's off-season."""
+        return month in self.off_season_months
 
 
 AFL = SportContext(
@@ -53,6 +61,7 @@ AFL = SportContext(
     scoring_unit="points",
     cron_timezone="Australia/Perth",
     cache_namespace="afl",
+    off_season_months=frozenset({10, 11, 12, 1, 2}),
 )
 
 DEFAULT_CONTEXT = AFL

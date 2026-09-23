@@ -23,6 +23,19 @@ class TestSportContext:
         with pytest.raises(dataclasses.FrozenInstanceError):
             AFL.sport_id = "rugby"  # type: ignore[misc]
 
+    def test_afl_off_season_months(self):
+        """P3-4: the AFL calendar (Oct–Feb off-season) lives on the
+        context, not hardcoded in the sync service."""
+        for month in (10, 11, 12, 1, 2):
+            assert AFL.is_off_season_month(month)
+        for month in (3, 4, 5, 6, 7, 8, 9):
+            assert not AFL.is_off_season_month(month)
+
+    def test_year_round_sport_has_no_off_season(self):
+        year_round = dataclasses.replace(AFL, sport_id="golf", off_season_months=frozenset())
+        assert year_round.off_season_months == frozenset()
+        assert not any(year_round.is_off_season_month(m) for m in range(1, 13))
+
     def test_cache_key_namespacing(self):
         assert AFL.cache_key("elo_ratings") == "wimt:afl:elo_ratings"
         assert AFL.cache_key("ratings", "2026") == "wimt:afl:ratings:2026"
