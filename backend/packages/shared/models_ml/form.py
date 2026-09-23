@@ -1,39 +1,44 @@
-from typing import Dict, Tuple
+from typing import Dict, Optional, Tuple
 
-from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..models import Game
 from .base import BaseModel
 from .prediction import Prediction
+from .repository import GameHistoryRepository, SqlGameHistoryRepository
 
 
 class FormModel(BaseModel):
-    """Form-based model using recent team performance."""
+    """Form-based model using recent team performance.
 
-    def __init__(self, games_to_consider: int = 5):
+    P2-4: game history flows through a :class:`GameHistoryRepository` —
+    the point-in-time (no-leakage) rule lives in the repository, not
+    here.  When no repository is injected, one is built around the
+    legacy ``db`` argument so the ABC signature stays stable during the
+    cutover.
+    """
+
+    def __init__(
+        self,
+        games_to_consider: int = 5,
+        repository: Optional[GameHistoryRepository] = None,
+    ):
         self.games_to_consider = games_to_consider
+        self._repository = repository
 
     def get_name(self) -> str:
         return "form"
+
+    def _repository_for(self, db: AsyncSession) -> GameHistoryRepository:
+        return self._repository or SqlGameHistoryRepository(db)
 
     async def _get_recent_form(
         self, db: AsyncSession, team: str, before_date
     ) -> Dict[str, float]:
         """Calculate recent form statistics for a team."""
-        result = await db.execute(
-            select(Game)
-            .where(
-                and_(
-                    Game.completed,
-                    (Game.home_team == team) | (Game.away_team == team),
-                    Game.date < before_date,
-                )
-            )
-            .order_by(Game.date.desc())
-            .limit(self.games_to_consider)
+        games = await self._repository_for(db).recent_games_for_participant(
+            team, before=before_date, limit=self.games_to_consider
         )
-        games = result.scalars().all()
 
         if not games:
             return {"wins": 0, "losses": 0, "draws": 0, "avg_score_diff": 0, "games": 0}
