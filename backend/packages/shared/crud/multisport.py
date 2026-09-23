@@ -12,7 +12,7 @@ tables, with the teams.py canonical map as a transitional AFL fallback
 until aliases are fully seeded (ADR 0001 / P1-6).
 """
 
-from typing import Iterable, Optional
+from typing import TYPE_CHECKING, Iterable, Optional
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -20,6 +20,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..logger import get_logger
 from ..models import (
     Event,
+    EventParticipant,
+    EventSourceRef,
     Participant,
     Season,
     Team,
@@ -84,6 +86,159 @@ class EventCRUD:
             select(EventParticipant).where(EventParticipant.event_id == event_id)
         )
         return list(result.scalars().all())  # type: ignore[return-value]
+
+    @staticmethod
+    async def upsert_fixture(
+        db: AsyncSession,
+        *,
+        season_id: int,
+        fixture: "FixtureDTO",
+        home_participant_id: Optional[int],
+        away_participant_id: Optional[int],
+    ) -> Optional[Event]:
+        """Insert or update an event from a canonical fixture DTO.
+
+        Phase 5: the FIRST write path onto the events tables — used by
+        the local-competition sync (WAFL pilot).
+
+        Resolution order:
+          1. source ref ``(fixture.source, fixture.external_id)``;
+          2. natural key ``(season_id, 'match', round_id, starts_at, venue)``;
+          3. create new.
+
+        ``fixture.starts_at`` must already be converted to the
+        competition's venue-local naive form (the sync service does the
+        tz conversion — this layer stays tz-agnostic).  Idempotent:
+        re-syncing updates in place and never duplicates.
+        """
+        import hashlib
+        from datetime import datetime, timezone
+
+        from ..models import EventParticipant, EventSourceRef
+
+        now = datetime.now(timezone.utc)
+        event: Optional[Event] = None
+
+        # 1. source ref (fast path on re-sync)
+        if fixture.external_id is not None:
+            ref = (
+                await db.execute(
+                    select(EventSourceRef).where(
+                        EventSourceRef.source == fixture.source,
+                        EventSourceRef.external_id == str(fixture.external_id),
+                    )
+                )
+            ).scalar_one_or_none()
+            if ref is not None:
+                event = (
+                    await db.execute(select(Event).where(Event.id == ref.event_id))
+                ).scalar_one_or_none()
+
+        # 2. natural key
+        if event is None:
+            event = (
+                await db.execute(
+                    select(Event).where(
+                        Event.season_id == season_id,
+                        Event.event_type == "match",
+                        Event.round_id == fixture.round_id,
+                        Event.starts_at == fixture.starts_at,
+                        Event.venue == fixture.venue,
+                    )
+                )
+            ).scalar_one_or_none()
+
+        has_result = (
+            fixture.home_score is not None
+            and fixture.away_score is not None
+            and fixture.home_score != fixture.away_score
+        )
+        winning_side = None
+        if has_result:
+            winning_side = (
+                "home" if fixture.home_score > fixture.away_score else "away"
+            )
+
+        if event is not None:
+            # ---- update in place -----------------------------------
+            # NOTE: scores live on EventParticipant sides, never on the
+            # event row (ADR 0001).
+            changed = False
+            new_completed = bool(fixture.completed)
+            if event.completed != new_completed:
+                event.completed = new_completed
+                changed = True
+            new_status = "completed" if fixture.completed else "scheduled"
+            if event.status != new_status:
+                event.status = new_status
+                changed = True
+            if changed:
+                event.sync_version = (event.sync_version or 0) + 1
+            event.last_synced_at = now
+        else:
+            # ---- create --------------------------------------------
+            digest = hashlib.sha1(
+                f"{fixture.source}:{fixture.external_id}".encode()
+            ).hexdigest()[:8]
+            slug = f"{fixture.source[:4]}-{digest}"
+            event = Event(
+                season_id=season_id,
+                event_type="match",
+                round_id=fixture.round_id,
+                venue=fixture.venue,
+                starts_at=fixture.starts_at,
+                status="completed" if fixture.completed else "scheduled",
+                completed=bool(fixture.completed),
+                slug=slug,
+                last_synced_at=now,
+                sync_version=1,
+            )
+            db.add(event)
+            await db.flush()
+
+            if fixture.external_id is not None:
+                db.add(
+                    EventSourceRef(
+                        event_id=event.id,
+                        source=fixture.source,
+                        external_id=str(fixture.external_id),
+                    )
+                )
+
+        # ---- event participants (sides) ----------------------------
+        existing_sides = (
+            await db.execute(
+                select(EventParticipant).where(
+                    EventParticipant.event_id == event.id
+                )
+            )
+        ).scalars().all()
+        sides_by_participant = {s.participant_id: s for s in existing_sides}
+
+        for side, name, score, pid in (
+            ("home", fixture.home_participant, fixture.home_score, home_participant_id),
+            ("away", fixture.away_participant, fixture.away_score, away_participant_id),
+        ):
+            if pid is None:
+                continue  # TBC side — no participant identity yet
+            is_winner = (side == winning_side) if has_result else None
+            row = sides_by_participant.get(pid)
+            if row is not None:
+                row.score = score
+                row.is_winner = is_winner
+            else:
+                db.add(
+                    EventParticipant(
+                        event_id=event.id,
+                        participant_id=pid,
+                        side=side,
+                        score=score,
+                        is_winner=is_winner,
+                    )
+                )
+
+        await db.flush()
+        return event
 
 
 class ParticipantResolver:
