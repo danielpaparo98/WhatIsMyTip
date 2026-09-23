@@ -103,33 +103,8 @@ def discover_csv_dir(candidates: List[str]) -> Optional[str]:
 # Game ID matching
 # ---------------------------------------------------------------------------
 
-# Canonical team name → all known aliases (Squiggle uses some, AFL Tables others)
-_TEAM_NAME_SETS: Dict[str, Set[str]] = {
-    "Adelaide": {"Adelaide", "Adelaide Crows"},
-    "Brisbane": {"Brisbane", "Brisbane Lions"},
-    "Carlton": {"Carlton"},
-    "Collingwood": {"Collingwood"},
-    "Essendon": {"Essendon"},
-    "Fremantle": {"Fremantle", "Fremantle Dockers"},
-    "Geelong": {"Geelong"},
-    "Giants": {"Giants", "GWS", "Greater Western Sydney", "GWS Giants"},
-    "GoldCoast": {"GoldCoast", "Gold Coast", "Gold Coast Suns"},
-    "Hawthorn": {"Hawthorn"},
-    "Melbourne": {"Melbourne"},
-    "NorthMelbourne": {"NorthMelbourne", "North Melbourne", "Kangaroos"},
-    "PortAdelaide": {"PortAdelaide", "Port Adelaide", "Port Power"},
-    "Richmond": {"Richmond"},
-    "StKilda": {"StKilda", "St Kilda"},
-    "Sydney": {"Sydney", "Sydney Swans"},
-    "WestCoast": {"WestCoast", "West Coast", "West Coast Eagles"},
-    "Bulldogs": {"Bulldogs", "Western Bulldogs", "Footscray"},
-}
-
-# Reverse map: any alias → canonical (Squiggle) name
-_ALIAS_TO_CANONICAL: Dict[str, str] = {}
-for canonical, aliases in _TEAM_NAME_SETS.items():
-    for alias in aliases:
-        _ALIAS_TO_CANONICAL[alias.lower()] = canonical
+# Canonical team name → all known aliases (single source of truth: teams.py — P3-5)
+from packages.shared.teams import TEAM_NAME_SETS as _TEAM_NAME_SETS  # noqa: E402
 
 
 # Australian Eastern timezone for date conversion
@@ -169,7 +144,9 @@ def _date_match(db_date: Any, match_date: Any, tolerance_days: int = 1) -> bool:
 
 def _canonical_team(name: str) -> str:
     """Map any team name to its canonical (Squiggle) form."""
-    return _ALIAS_TO_CANONICAL.get(name.strip().lower(), name.strip())
+    from packages.shared.teams import canonical_team
+
+    return canonical_team(name)
 
 
 async def match_games(session: AsyncSession, input_dir: str, verbose: bool = False) -> int:

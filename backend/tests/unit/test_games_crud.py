@@ -22,6 +22,7 @@ from packages.shared.cache import (
     short_cache,
 )
 from packages.shared.crud.games import GameCRUD
+from packages.shared.ingestion.squiggle_provider import fixture_from_squiggle
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -113,7 +114,7 @@ class TestTargetedCacheInvalidation:
              patch("packages.shared.cache.invalidate_cache_pattern", pattern_invalidate_mock), \
              patch.object(short_cache, "delete", short_delete_mock), \
              patch.object(medium_cache, "delete", medium_delete_mock):
-            await GameCRUD.create_or_update_with_tracking(db, game_data)
+            await GameCRUD.create_or_update_with_tracking(db, fixture_from_squiggle(game_data))
 
         # The pattern-invalidator must NOT have been called — it would
         # SCAN the whole cache.
@@ -155,7 +156,7 @@ class TestTargetedCacheInvalidation:
              patch("packages.shared.cache.invalidate_cache_pattern", pattern_invalidate_mock), \
              patch.object(short_cache, "delete", AsyncMock(return_value=True)), \
              patch.object(medium_cache, "delete", AsyncMock(return_value=True)):
-            await GameCRUD.create_or_update_with_tracking(db, game_data)
+            await GameCRUD.create_or_update_with_tracking(db, fixture_from_squiggle(game_data))
 
         # Critical assertion: no blanket pattern invalidation.
         assert pattern_invalidate_mock.await_count == 0
@@ -193,7 +194,7 @@ class TestTeamNameCanonicalisation:
                 patch.object(GameCRUD, "_generate_unique_slug", AsyncMock(return_value="abc-12345")), \
                 patch.object(short_cache, "delete", AsyncMock(return_value=True)), \
                 patch.object(medium_cache, "delete", AsyncMock(return_value=True)):
-            result = await GameCRUD.create_or_update_with_tracking(db, game_data)
+            result = await GameCRUD.create_or_update_with_tracking(db, fixture_from_squiggle(game_data))
 
         game = result["game"]
         assert game.home_team == "Bulldogs"
@@ -222,7 +223,7 @@ class TestTeamNameCanonicalisation:
         with patch.object(GameCRUD, "get_by_squiggle_id", AsyncMock(return_value=existing)), \
                 patch.object(short_cache, "delete", AsyncMock(return_value=True)), \
                 patch.object(medium_cache, "delete", AsyncMock(return_value=True)):
-            await GameCRUD.create_or_update_with_tracking(db, game_data)
+            await GameCRUD.create_or_update_with_tracking(db, fixture_from_squiggle(game_data))
 
         assert existing.home_team == "GoldCoast"
         assert existing.away_team == "NorthMelbourne"
@@ -333,7 +334,7 @@ class TestPlaceholderGameSyncSkipping:
                 patch.object(short_cache, "delete", AsyncMock(return_value=True)), \
                 patch.object(medium_cache, "delete", AsyncMock(return_value=True)):
             result = await GameCRUD.create_or_update_with_tracking(
-                db, _make_game_data(hteam=None, ateam=None)
+                db, fixture_from_squiggle(_make_game_data(hteam=None, ateam=None))
             )
 
         assert result["action"] == "skipped_no_teams"
@@ -351,7 +352,7 @@ class TestPlaceholderGameSyncSkipping:
                 patch.object(short_cache, "delete", AsyncMock(return_value=True)), \
                 patch.object(medium_cache, "delete", AsyncMock(return_value=True)):
             result = await GameCRUD.create_or_update_with_tracking(
-                db, _make_game_data(hteam="", ateam="")
+                db, fixture_from_squiggle(_make_game_data(hteam="", ateam=""))
             )
 
         assert result["action"] == "skipped_no_teams"
@@ -370,7 +371,7 @@ class TestPlaceholderGameSyncSkipping:
                 patch.object(short_cache, "delete", AsyncMock(return_value=True)), \
                 patch.object(medium_cache, "delete", AsyncMock(return_value=True)):
             result = await GameCRUD.create_or_update_with_tracking(
-                db, _make_game_data(hteam="Hawthorn", ateam="")
+                db, fixture_from_squiggle(_make_game_data(hteam="Hawthorn", ateam=""))
             )
 
         assert result["action"] == "created"
@@ -390,7 +391,7 @@ class TestPlaceholderGameSyncSkipping:
                 patch.object(short_cache, "delete", AsyncMock(return_value=True)), \
                 patch.object(medium_cache, "delete", AsyncMock(return_value=True)):
             await GameCRUD.create_or_update_with_tracking(
-                db, _make_game_data(id=42, hteam="", ateam="")
+                db, fixture_from_squiggle(_make_game_data(id=42, hteam="", ateam=""))
             )
 
         assert existing.home_team == "Hawthorn"
@@ -409,7 +410,7 @@ class TestDuplicateFixtureAdoption:
         existing.completed = False
         existing.squiggle_id = 38729
         # The incoming feed carries the NEW id (39880) for the same fixture.
-        game_data = _make_game_data(id=39880, year=2026, round=29)
+        game_data = fixture_from_squiggle(_make_game_data(id=39880, year=2026, round=29))
 
         adoptable = AsyncMock(return_value=existing)
         with patch.object(GameCRUD, "get_by_squiggle_id", AsyncMock(return_value=None)), \
@@ -439,7 +440,7 @@ class TestDuplicateFixtureAdoption:
                 patch.object(short_cache, "delete", AsyncMock(return_value=True)), \
                 patch.object(medium_cache, "delete", AsyncMock(return_value=True)):
             result = await GameCRUD.create_or_update_with_tracking(
-                db, _make_game_data(id=40000)
+                db, fixture_from_squiggle(_make_game_data(id=40000))
             )
 
         assert result["action"] == "created"
@@ -462,7 +463,7 @@ class TestDuplicateFixtureAdoption:
                 patch.object(short_cache, "delete", AsyncMock(return_value=True)), \
                 patch.object(medium_cache, "delete", AsyncMock(return_value=True)):
             result = await GameCRUD.create_or_update_with_tracking(
-                db, _make_game_data(id=50000, year=2026, round=29)
+                db, fixture_from_squiggle(_make_game_data(id=50000, year=2026, round=29))
             )
 
         # Fell through to a normal create; the completed row untouched.
