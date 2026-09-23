@@ -15,7 +15,6 @@ from ..logger import get_logger
 from ..models import Game, Tip
 from ..schemas.games import GameResponse
 from ..ingestion import FixtureDTO
-from ..squiggle.utils import parse_squiggle_complete  # transitional: update_game_completion (match-completion rework pending)
 from ..teams import canonical_team
 from ..utils import generate_slug
 
@@ -569,12 +568,15 @@ class GameCRUD:
     async def update_game_completion(
         db: AsyncSession,
         game_id: int,
-        squiggle_data: dict
+        fixture: "FixtureDTO",
     ) -> Optional[Game]:
-        """Update game with final scores from Squiggle data.
+        """Update game with final scores from a canonical fixture DTO.
+
+        P3-1: consumes a canonical :class:`FixtureDTO` — the vendor
+        dialect lives in the feed provider.
 
         Updates game with:
-        - Final scores from Squiggle
+        - Final scores from the fixture
         - Sets completed = True
         - Updates last_synced_at timestamp
         - Increments sync_version
@@ -582,13 +584,11 @@ class GameCRUD:
         Args:
             db: Database session
             game_id: Database ID of the game
-            squiggle_data: Game data from Squiggle API
+            fixture: Canonical fixture DTO from a FeedProvider
 
         Returns:
             Updated Game object or None if game not found
         """
-        from datetime import datetime
-
         from ..cache import invalidate_cache_pattern
 
         # Get the game
@@ -604,21 +604,15 @@ class GameCRUD:
         if game.completed:
             return game
 
-        # Parse complete status
-        is_complete = parse_squiggle_complete(squiggle_data.get("complete", False))
-
-        # Only update if Squiggle says it's complete
-        if not is_complete:
+        # Only update if the provider says it's complete
+        if not fixture.completed:
             return None
 
         # Update scores
-        home_score_val = squiggle_data.get("hscore")
-        away_score_val = squiggle_data.get("ascore")
-
-        if home_score_val is not None:
-            game.home_score = home_score_val
-        if away_score_val is not None:
-            game.away_score = away_score_val
+        if fixture.home_score is not None:
+            game.home_score = fixture.home_score
+        if fixture.away_score is not None:
+            game.away_score = fixture.away_score
 
         # Mark as completed
         game.completed = True

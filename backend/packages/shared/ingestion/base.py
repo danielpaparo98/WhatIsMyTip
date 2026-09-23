@@ -31,5 +31,9 @@ class FeedProvider(Protocol):
         """Fetch fixtures for a season (optionally narrowed)."""
         ...
 
+    async def get_fixture(self, external_id: int) -> FixtureDTO | None:
+        """Fetch a single fixture by its provider-assigned id."""
+        ...
+
 
 __all__ = ["FeedProvider"]

@@ -500,7 +500,23 @@ def _make_incomplete_game(*, game_id: int = 7) -> SimpleNamespace:
 class TestUpdateGameCompletionReturn:
     """``update_game_completion`` documents ``Optional[Game]`` but its
     success path fell off the end of the function, returning ``None``
-    to callers after a *successful* completion update (P0-1)."""
+    to callers after a *successful* completion update (P0-1).  P3-1:
+    it consumes a canonical FixtureDTO, not a vendor dict."""
+
+    @staticmethod
+    def _completed_fixture(**overrides):
+        from packages.shared.ingestion.squiggle_provider import (
+            fixture_from_squiggle,
+        )
+
+        data = {
+            "id": 555,
+            "complete": 100,
+            "hscore": 88,
+            "ascore": 71,
+        }
+        data.update(overrides)
+        return fixture_from_squiggle(data)
 
     @pytest.mark.asyncio
     async def test_success_path_returns_updated_game(self):
@@ -510,13 +526,14 @@ class TestUpdateGameCompletionReturn:
         db.execute = AsyncMock(return_value=result_mock)
 
         pattern_invalidate_mock = AsyncMock(return_value=0)
-        squiggle_data = {"complete": 100, "hscore": 88, "ascore": 71}
 
         with patch(
             "packages.shared.cache.invalidate_cache_pattern",
             pattern_invalidate_mock,
         ):
-            game = await GameCRUD.update_game_completion(db, 7, squiggle_data)
+            game = await GameCRUD.update_game_completion(
+                db, 7, self._completed_fixture()
+            )
 
         # The updated game object must be returned, not None.
         assert game is not None
@@ -537,7 +554,7 @@ class TestUpdateGameCompletionReturn:
         db.execute = AsyncMock(return_value=result_mock)
 
         game = await GameCRUD.update_game_completion(
-            db, 7, {"complete": 100, "hscore": 1, "ascore": 2}
+            db, 7, self._completed_fixture()
         )
 
         assert game is done
@@ -551,13 +568,13 @@ class TestUpdateGameCompletionReturn:
         db.execute = AsyncMock(return_value=result_mock)
 
         game = await GameCRUD.update_game_completion(
-            db, 999, {"complete": 100, "hscore": 1, "ascore": 2}
+            db, 999, self._completed_fixture()
         )
 
         assert game is None
 
     @pytest.mark.asyncio
-    async def test_incomplete_squiggle_data_returns_none(self):
+    async def test_incomplete_fixture_returns_none(self):
         """Feed says the game is not final ⇒ no update, returns None."""
         db = AsyncMock(spec=AsyncSession)
         result_mock = MagicMock()
@@ -565,7 +582,7 @@ class TestUpdateGameCompletionReturn:
         db.execute = AsyncMock(return_value=result_mock)
 
         game = await GameCRUD.update_game_completion(
-            db, 7, {"complete": 0, "hscore": 1, "ascore": 2}
+            db, 7, self._completed_fixture(complete=0, hscore=1, ascore=2)
         )
 
         assert game is None

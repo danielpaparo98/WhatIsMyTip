@@ -101,3 +101,24 @@ class TestFeedProviderProtocol:
 
     def test_provider_sport_id(self):
         assert SquiggleProvider(client=AsyncMock()).sport_id == "afl"
+
+    @pytest.mark.asyncio
+    async def test_provider_get_fixture_single(self):
+        client = AsyncMock()
+        client.get_game = AsyncMock(return_value=_squiggle_game(id=777))
+
+        provider = SquiggleProvider(client=client)
+        dto = await provider.get_fixture(777)
+
+        client.get_game.assert_awaited_once_with(777)
+        assert dto is not None
+        assert dto.external_id == 777
+        assert dto.completed is True
+
+    @pytest.mark.asyncio
+    async def test_provider_get_fixture_missing_returns_none(self):
+        client = AsyncMock()
+        client.get_game = AsyncMock(return_value=None)
+
+        provider = SquiggleProvider(client=client)
+        assert await provider.get_fixture(404) is None

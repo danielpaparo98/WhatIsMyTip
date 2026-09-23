@@ -77,5 +77,11 @@ class SquiggleProvider:
         )
         return [fixture_from_squiggle(game) for game in raw]
 
+    async def get_fixture(self, external_id: int) -> Optional[FixtureDTO]:
+        raw = await self._client.get_game(external_id)
+        if not raw:
+            return None
+        return fixture_from_squiggle(raw)
+
 
 __all__ = ["SquiggleProvider", "fixture_from_squiggle"]
