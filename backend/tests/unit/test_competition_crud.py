@@ -45,7 +45,7 @@ class TestEnsureCompetition:
         db = AsyncMock(spec=AsyncSession)
         db.execute = AsyncMock(
             side_effect=[
-                _result(scalar_return=None),  # sport exists
+                _result(scalar_return=SimpleNamespace(id="afl")),  # sport exists
                 _result(scalar_return=None),  # competition lookup (miss)
             ]
         )
