@@ -82,7 +82,7 @@ class TestFormModelUsesRepository:
     async def test_predict_flows_through_injected_repository(self):
         """The model must use the injected repository — no raw session
         queries — and pass the game's date as the point-in-time bound."""
-        captured: list = {}
+        captured: list = []
 
         class FakeRepository:
             async def recent_games_for_participant(self, participant, *, before, limit):
