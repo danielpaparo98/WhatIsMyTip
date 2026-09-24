@@ -16,8 +16,10 @@ import pytest
 from zoneinfo import ZoneInfo
 
 from packages.shared.ingestion import FixtureDTO
+from packages.shared.ingestion.state_leagues import LeagueConfig
 from packages.shared.services.local_competition_sync import (
     LocalCompetitionSyncService,
+    run_all_leagues_sync,
 )
 
 
@@ -341,3 +343,179 @@ class TestLocalCompetitionSync:
 
         for call in resolver_cls.return_value.ensure_team.await_args_list:
             assert call.kwargs["logo_url"] is None
+
+
+def _league_config(
+    status: str = "live",
+    has_provider: bool = True,
+    name: str = "X",
+) -> LeagueConfig:
+    """A STATE_LEAGUES registry entry for iteration tests."""
+    return LeagueConfig(
+        name=name,
+        timezone="Australia/Perth",
+        provider_factory=(lambda: MagicMock()) if has_provider else None,
+        status=status,
+        source_note="test",
+    )
+
+
+def _league_stats(key: str, fixtures: int = 0) -> dict:
+    return {
+        "league": key,
+        "competition": key.upper(),
+        "fixtures_synced": fixtures,
+        "errors": [],
+        "status": "success",
+    }
+
+
+class TestRunAllLeaguesSync:
+    """``run_all_leagues_sync`` — the multi-league cron/script core."""
+
+    @pytest.mark.asyncio
+    async def test_runs_every_live_league_for_current_season(self, monkeypatch):
+        """Only registry entries whose status starts with 'live' run, on
+        the current season when none is given.  Provider-less leagues
+        (e.g. TSL, 'source-unknown') are never attempted."""
+        from packages.shared.config import settings
+
+        monkeypatch.setattr(settings, "current_season", 2027)
+        registry = {
+            "wafl": _league_config(name="WAFL"),
+            "tsl": _league_config(
+                status="source-unknown", has_provider=False, name="TSL"
+            ),
+            "nwfl": _league_config(name="NWFL"),
+        }
+        mock_sync = AsyncMock(
+            side_effect=lambda session, key, season: _league_stats(key)
+        )
+        with patch(
+            "packages.shared.ingestion.state_leagues.STATE_LEAGUES", registry
+        ), patch(
+            "packages.shared.ingestion.state_leagues.run_league_sync", mock_sync
+        ):
+            result = await run_all_leagues_sync(AsyncMock())
+
+        assert mock_sync.await_count == 2
+        awaited_keys = [call.args[1] for call in mock_sync.await_args_list]
+        assert awaited_keys == ["wafl", "nwfl"]
+        # Current season pulled from settings, mark_current defaults on.
+        assert all(call.args[2] == 2027 for call in mock_sync.await_args_list)
+        assert result["season"] == 2027
+        assert result["leagues_synced"] == ["wafl", "nwfl"]
+        assert result["leagues_failed"] == []
+        assert result["status"] == "success"
+
+    @pytest.mark.asyncio
+    async def test_explicit_leagues_and_season_are_respected(self):
+        """An explicit ``leagues`` subset + ``season`` overrides the
+        registry derivation (backfills a single league-season)."""
+        registry = {
+            "wafl": _league_config(name="WAFL"),
+            "nwfl": _league_config(name="NWFL"),
+            "sfl": _league_config(name="SFL"),
+        }
+        mock_sync = AsyncMock(
+            side_effect=lambda session, key, season: _league_stats(key)
+        )
+        with patch(
+            "packages.shared.ingestion.state_leagues.STATE_LEAGUES", registry
+        ), patch(
+            "packages.shared.ingestion.state_leagues.run_league_sync", mock_sync
+        ):
+            result = await run_all_leagues_sync(
+                AsyncMock(), season=2024, leagues=["nwfl", "sfl"]
+            )
+
+        awaited = [(c.args[1], c.args[2]) for c in mock_sync.await_args_list]
+        assert awaited == [("nwfl", 2024), ("sfl", 2024)]
+        assert result["leagues_synced"] == ["nwfl", "sfl"]
+
+    @pytest.mark.asyncio
+    async def test_league_error_does_not_abort_the_sweep(self):
+        """A failing league (network, provider bug, …) is recorded and
+        the remaining leagues still sync."""
+        registry = {
+            "wafl": _league_config(name="WAFL"),
+            "nwfl": _league_config(name="NWFL"),
+            "sfl": _league_config(name="SFL"),
+        }
+
+        async def _sync(session, key, season):
+            if key == "nwfl":
+                raise RuntimeError("playhq exploded")
+            return _league_stats(key)
+
+        mock_sync = AsyncMock(side_effect=_sync)
+        with patch(
+            "packages.shared.ingestion.state_leagues.STATE_LEAGUES", registry
+        ), patch(
+            "packages.shared.ingestion.state_leagues.run_league_sync", mock_sync
+        ):
+            result = await run_all_leagues_sync(AsyncMock())
+
+        assert mock_sync.await_count == 3, "all leagues attempted"
+        assert result["leagues_synced"] == ["wafl", "sfl"]
+        assert result["leagues_failed"] == ["nwfl"]
+        assert len(result["errors"]) == 1
+        assert "nwfl" in result["errors"][0]
+        assert result["status"] == "partial"
+
+    @pytest.mark.asyncio
+    async def test_aggregates_fixture_counts_and_per_league_stats(self):
+        """Top-level fixtures_synced sums the per-league totals and the
+        full per-league stats dicts are retained."""
+        registry = {
+            "wafl": _league_config(name="WAFL"),
+            "nwfl": _league_config(name="NWFL"),
+        }
+        mock_sync = AsyncMock(
+            side_effect=lambda session, key, season: _league_stats(
+                key, fixtures=5 if key == "wafl" else 7
+            )
+        )
+        with patch(
+            "packages.shared.ingestion.state_leagues.STATE_LEAGUES", registry
+        ), patch(
+            "packages.shared.ingestion.state_leagues.run_league_sync", mock_sync
+        ):
+            result = await run_all_leagues_sync(AsyncMock())
+
+        assert result["fixtures_synced"] == 12
+        assert result["results"]["wafl"]["fixtures_synced"] == 5
+        assert result["results"]["nwfl"]["fixtures_synced"] == 7
+
+    @pytest.mark.asyncio
+    async def test_unknown_and_providerless_league_keys_are_skipped(self):
+        """Explicit keys that are not in the registry — or registered
+        without a provider (the Tasmania case if the provider list
+        changes) — are recorded as failures, never raise."""
+        registry = {
+            "wafl": _league_config(name="WAFL"),
+            "tsl": _league_config(
+                status="source-unknown", has_provider=False, name="TSL"
+            ),
+        }
+
+        async def _sync(session, key, season):
+            raise NotImplementedError(f"{key}: no provider yet")
+
+        mock_sync = AsyncMock(side_effect=_sync)
+        with patch(
+            "packages.shared.ingestion.state_leagues.STATE_LEAGUES", registry
+        ), patch(
+            "packages.shared.ingestion.state_leagues.run_league_sync", mock_sync
+        ):
+            result = await run_all_leagues_sync(
+                AsyncMock(), leagues=["nope", "tsl"]
+            )
+
+        # Only the registered key is attempted; the unknown key is
+        # rejected before any provider lookup.
+        assert mock_sync.await_count == 1
+        assert mock_sync.await_args.args[1] == "tsl"
+        assert result["leagues_synced"] == []
+        assert result["leagues_failed"] == ["nope", "tsl"]
+        assert result["status"] == "partial"

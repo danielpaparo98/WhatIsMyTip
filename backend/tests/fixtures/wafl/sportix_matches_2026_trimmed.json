@@ -1,0 +1,60 @@
+{
+  "season": {"id": "s-2026", "name": "2026", "slug": "2026"},
+  "competitions": [
+    {
+      "id": "comp-league",
+      "name": "League",
+      "slug": "league",
+      "matches": [
+        {
+          "id": 1,
+          "slug": "league-peel-thunder-v-east-fremantle-round-1-2026",
+          "start_datetime": "2026-04-03T05:10:00.000000Z",
+          "venue": {"id": "v-1", "name": "Lane Group Stadium", "slug": "lane-group-stadium"},
+          "round": {"id": "r-1", "name": "Round 1", "slug": "round-1"},
+          "home": {"id": "632ebb80-4bd7-11e9-9660-19fd5993277e", "name": "Peel Thunder", "slug": "peel-thunder"},
+          "away": {"id": "63274850-4bd7-11e9-a29d-bd0ecec49dc9", "name": "East Fremantle", "slug": "east-fremantle"},
+          "completed": true,
+          "bye": false
+        },
+        {
+          "id": 2,
+          "slug": "league-perth-v-west-coast-round-1-2026",
+          "start_datetime": "2026-04-03T06:10:00.000000Z",
+          "venue": {"id": "v-2", "name": "Mineral Resources Park", "slug": "mineral-resources-park"},
+          "round": {"id": "r-1", "name": "Round 1", "slug": "round-1"},
+          "home": {"id": "63326060-4bd7-11e9-995e-1be5c911bb6e", "name": "Perth", "slug": "perth"},
+          "away": {"id": "63a5abf0-4bd7-11e9-acd2-39cf2c564a87", "name": "West Coast", "slug": "west-coast"},
+          "completed": true,
+          "bye": false
+        },
+        {
+          "id": 3,
+          "slug": "league-claremont-v-peel-thunder-round-2-2026",
+          "start_datetime": "2026-04-11T05:10:00.000000Z",
+          "venue": {"id": "v-3", "name": "Revo Fitness Stadium", "slug": "revo-fitness-stadium"},
+          "round": {"id": "r-2", "name": "Round 2", "slug": "round-2"},
+          "home": {"id": "6327a370-4bd7-11e9-b51a-e14a4ceeb04d", "name": "Claremont", "slug": "claremont"},
+          "away": {"id": "632ebb80-4bd7-11e9-9660-19fd5993277e", "name": "Peel Thunder", "slug": "peel-thunder"},
+          "completed": true,
+          "bye": false
+        }
+      ]
+    },
+    {
+      "id": "comp-waflw",
+      "name": "WAFLW",
+      "slug": "waflw",
+      "matches": [
+        {
+          "id": 99,
+          "slug": "waflw-peek-v-other-2026",
+          "home": {"id": "other-club-1", "name": "Not Our Competition FC", "slug": "other"},
+          "away": null,
+          "completed": true,
+          "bye": false
+        }
+      ]
+    }
+  ]
+}

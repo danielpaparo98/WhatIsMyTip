@@ -296,6 +296,41 @@ class TestAdminTriggers:
         assert body["status"] == "triggered"
         assert body["seasons"] == "2020-2025"
 
+    def test_league_sync_trigger_success(self, monkeypatch):
+        """``league-sync`` is a manually-triggerable ALLOWED_JOB_NAME."""
+        mock_session = AsyncMock(spec=AsyncSession)
+        mock_stats = {
+            "season": 2026,
+            "leagues": ["nwfl", "sfl"],
+            "leagues_synced": ["nwfl", "sfl"],
+            "leagues_failed": [],
+            "fixtures_synced": 42,
+            "errors": [],
+            "results": {},
+            "status": "success",
+        }
+
+        app = _build_app_with_admin_router(monkeypatch=monkeypatch)
+        _override_db(app, mock_session)
+
+        with patch(
+            "app.api.admin.run_all_leagues_sync", new_callable=AsyncMock
+        ) as mock_run:
+            mock_run.return_value = mock_stats
+
+            client = TestClient(app)
+            resp = client.post(
+                "/api/admin/league-sync/trigger",
+                json={"season": 2026, "leagues": ["nwfl", "sfl"]},
+                headers=ADMIN_HEADERS,
+            )
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["success"] is True
+        assert body["fixtures_synced"] == 42
+        assert body["leagues_synced"] == ["nwfl", "sfl"]
+
 
 # ---------------------------------------------------------------------------
 # GET /historic-refresh/progress
@@ -477,12 +512,13 @@ class TestAdminMetrics:
         assert "metrics" in body
         assert "system" in body
         assert "alerting_enabled" in body
-        # Four job names, all populated
+        # Five job names, all populated
         assert set(body["metrics"].keys()) == {
             "daily-sync",
             "match-completion",
             "tip-generation",
             "historic-refresh",
+            "league-sync",
         }
         for name, metric in body["metrics"].items():
             assert metric["job_name"] == name

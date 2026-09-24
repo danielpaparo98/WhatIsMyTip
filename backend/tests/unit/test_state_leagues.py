@@ -268,8 +268,11 @@ class TestTeamIdentityWiring:
 
     @pytest.mark.asyncio
     async def test_wafl_league_sync_stays_without_metadata(self):
-        """Sportix exposes no stable crests — WAFL keeps team_metadata
-        None (non-breaking default)."""
+        """A provider with NO ``get_team_metadata`` (or one that blows
+        up mid-await) keeps team_metadata None — the non-breaking
+        default.  (Sportix itself DOES expose crests now — see
+        test_wafl_league_sync_threads_sportix_metadata, which uses the
+        real provider.)"""
         from types import SimpleNamespace
 
         session = AsyncMock()
@@ -304,5 +307,91 @@ class TestTeamIdentityWiring:
 
         assert stats["status"] == "success"
         assert stats["fixtures_synced"] == 0
+
+    @pytest.mark.asyncio
+    async def test_wafl_league_sync_threads_sportix_metadata(self):
+        """The REAL SportixProvider (mocked transport) — its
+        get_team_metadata crests flow through build_team_metadata_lookup
+        into the sync service's team_metadata untouched."""
+        import json as _json
+        import os
+        from types import SimpleNamespace
+
+        from packages.shared.ingestion import state_leagues
+        from packages.shared.ingestion.sportix_provider import SportixProvider
+
+        fixture = os.path.join(
+            os.path.dirname(__file__), "..", "fixtures", "wafl",
+            "sportix_matches_2026_trimmed.json",
+        )
+        club_logos = {
+            "632ebb80-4bd7-11e9-9660-19fd5993277e": (
+                "clubs/peel-thunder-145-LCdnaJ.png"
+            ),
+        }
+
+        async def fake_fetch(path, params=None):
+            if path.startswith("clubs/"):
+                club_id = path.split("/", 1)[1]
+                return {"id": club_id, "logo": club_logos.get(club_id)}
+            if params and params.get("season_slug"):
+                with open(fixture, encoding="utf-8") as f:
+                    return _json.load(f)
+            raise AssertionError(f"unexpected fetch: {path} {params}")
+
+        provider = SportixProvider(
+            source="sportix-wafl",
+            competition_name="League",
+            fetch_json=fake_fetch,
+        )
+
+        def _factory():
+            return provider
+
+        fake_config = SimpleNamespace(
+            name="West Australian Football League",
+            timezone="Australia/Perth",
+            provider_factory=_factory,
+        )
+
+        session = AsyncMock()
+        session.commit = AsyncMock()
+
+        with patch(
+            "packages.shared.services.local_competition_sync.CompetitionCRUD"
+        ) as crud, patch(
+            "packages.shared.services.local_competition_sync.ParticipantResolver"
+        ) as resolver_cls, patch(
+            "packages.shared.services.local_competition_sync.EventCRUD"
+        ) as event_crud, patch.object(
+            state_leagues, "LocalCompetitionSyncService",
+            wraps=state_leagues.LocalCompetitionSyncService,
+        ) as service_cls, patch.object(
+            state_leagues, "get_league", return_value=fake_config
+        ):
+            competition = SimpleNamespace(id=9, timezone="Australia/Perth")
+            season = SimpleNamespace(id=21, label="2026")
+            crud.ensure_competition = AsyncMock(return_value=competition)
+            crud.ensure_season = AsyncMock(return_value=season)
+            resolver_cls.return_value.ensure_team = AsyncMock(
+                return_value=SimpleNamespace(id=1)
+            )
+            event_crud.upsert_fixture = AsyncMock(
+                return_value=SimpleNamespace(id=1)
+            )
+            provider.get_fixtures = AsyncMock(return_value=[])
+
+            stats = await run_league_sync(session, "wafl", 2026)
+
+        assert stats["status"] == "success"
+        lookup = service_cls.call_args.kwargs["team_metadata"]
+        assert lookup is not None
+        assert lookup("Peel Thunder") == {
+            "logo_url": (
+                "https://storage-cdn.sportix.cloud"
+                "/clubs/peel-thunder-145-LCdnaJ.png"
+            )
+        }
+        assert lookup("East Fremantle") is None  # crest not on file here
 
 

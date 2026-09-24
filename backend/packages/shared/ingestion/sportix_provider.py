@@ -18,16 +18,17 @@ rounds (``finals-week-1`` → 101, …, ``grand-final`` → 104) so the
 max(round) grand-final heuristic keeps working.  UTC datetimes are
 converted to venue-local naive form by the sync service, not here.
 
-Team identity (migration 0011, verified live 2026-09-24): the matches
-payload exposes NO club crests — ``home``/``away`` carry only
-id/name/slug, and the single ``logo`` key in the payload belongs to
-the match *broadcasters*.  ``GET /public/clubs/{id}`` DOES return a
-``logo`` path (e.g. ``"clubs/peel-thunder-145-LCdnaJ.png"``), but the
-filename is content-hashed (a Nuxt build asset): it changes on
-platform redeploys, so a URL stored today rots silently.  Per the
-no-guessing policy, Sportix enrichment is SKIPPED: this provider
-offers no ``get_team_metadata``, team identity stays NULL, and the
-frontend fallbacks apply (WAFL sync is unaffected).
+Team identity (migration 0011 follow-up, verified live 2026-09-24):
+the matches payload carries NO club crests — ``home``/``away`` carry
+only id/name/slug — but ``GET /public/clubs/{id}`` returns a ``logo``
+path (e.g. ``"clubs/peel-thunder-145-LCdnaJ.png"``) resolved against
+the S3 base ``https://storage-cdn.sportix.cloud``.  The filename is
+content-hashed, but per-club-asset: the hash captured in the original
+recon is still the one served today, and because crests are captured
+at EVERY sync via :meth:`get_team_metadata` (not stored as constants),
+a platform redeploy that rehashes self-heals on the next pass.
+``get_team_metadata`` costs 1 discovery call + ≤1 call per distinct
+club, all through the retrying ``_fetch_json``.
 """
 
 from __future__ import annotations
@@ -68,6 +69,10 @@ class SportixProvider:
     """FeedProvider for a competition on a Sportix-platform tenant."""
 
     sport_id = "afl"
+
+    #: Base for the club-scoped logo paths the ``/public/clubs/{id}``
+    #: payload carries (verified live 2026-09-24, HTTP 200 on the PNG).
+    TEAM_LOGO_BASE_URL = "https://storage-cdn.sportix.cloud"
 
     def __init__(
         self,
@@ -170,6 +175,49 @@ class SportixProvider:
             "Single-fixture lookup is not part of the Sportix public surface; "
             "completion is detected by batch season re-sync."
         )
+
+    async def get_team_metadata(self, season: int) -> Dict[str, Dict[str, str]]:
+        """Club crests for the configured competition, as
+        ``{club_name: {logo_url}}`` (migration 0011 shape).
+
+        One ``matches?season_slug=`` discovery call collects the
+        distinct ``home``/``away`` club ids for THIS competition (other
+        competitions sharing the tenant-season are ignored), then one
+        ``clubs/{id}`` call per distinct club — request count is 1 + ≤
+        club count.  Clubs without a ``logo`` (or whose fetch fails —
+        the edge 522s under load) are simply left out: identity capture
+        is best-effort and must never break a sync.
+        """
+        payload = await self._fetch_json("matches", {"season_slug": str(season)})
+        clubs: Dict[str, str] = {}  # club id → club name
+        for competition in payload.get("competitions", []):
+            if competition.get("name") != self.competition_name:
+                continue
+            for match in competition.get("matches", []):
+                for side in ("home", "away"):
+                    team = match.get(side) or {}
+                    club_id, name = team.get("id"), team.get("name")
+                    if club_id and name:
+                        clubs[str(club_id)] = name
+
+        metadata: Dict[str, Dict[str, str]] = {}
+        for club_id, name in clubs.items():
+            try:
+                club = await self._fetch_json(f"clubs/{club_id}", {})
+            except Exception as e:  # noqa: BLE001 — best-effort enrichment
+                logger.warning(
+                    "Sportix club crest fetch failed for %s (%s): %s",
+                    name,
+                    club_id,
+                    e,
+                )
+                continue
+            logo_path = club.get("logo")
+            if logo_path:
+                metadata[name] = {
+                    "logo_url": f"{self.TEAM_LOGO_BASE_URL}/{str(logo_path).lstrip('/')}"
+                }
+        return metadata
 
     # ------------------------------------------------------------------
 

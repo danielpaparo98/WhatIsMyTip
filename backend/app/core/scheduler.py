@@ -18,6 +18,7 @@ from apscheduler.triggers.cron import CronTrigger
 from app.core.scheduler_ref import clear_scheduler, set_scheduler
 from app.cron.daily_sync import DailySyncJob
 from app.cron.historic_refresh import HistoricRefreshJob
+from app.cron.league_sync import LeagueSyncJob
 from app.cron.match_completion import MatchCompletionJob
 from app.cron.model_retrain import ModelRetrainJob
 from app.cron.supplementary_sync import SupplementarySyncJob
@@ -52,6 +53,7 @@ _MISFIRE_GRACE = {
     "historic-refresh": 3600, # 1 hour — weekly batch job
     "model-retrain": 3600,    # 1 hour — weekly retrain job
     "supplementary-sync": 900, # 15 min — daily injuries/weather refresh
+    "league-sync": 900,        # 15 min — daily state-league sweep
 }
 
 
@@ -137,6 +139,18 @@ def build_scheduler(session_factory: Any) -> AsyncIOScheduler:
             max_instances=1,
             coalesce=True,
             misfire_grace_time=_MISFIRE_GRACE["supplementary-sync"],
+        )
+    if settings.league_sync_enabled:
+        scheduler.add_job(
+            LeagueSyncJob(session_factory).execute,
+            CronTrigger.from_crontab(
+                settings.league_sync_cron, timezone=settings.cron_timezone
+            ),
+            id="league-sync",
+            name="State-league fixture sync",
+            max_instances=1,
+            coalesce=True,
+            misfire_grace_time=_MISFIRE_GRACE["league-sync"],
         )
     return scheduler
 

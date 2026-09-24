@@ -16,6 +16,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ..config import settings
 from ..crud.competitions import CompetitionCRUD
 from ..crud.multisport import EventCRUD, ParticipantResolver
 from ..ingestion import FeedProvider
@@ -197,3 +198,99 @@ async def run_wafl_sync(
         await session.commit()
     stats["status"] = "success"
     return stats
+
+
+async def run_all_leagues_sync(
+    session: AsyncSession,
+    season: Optional[int] = None,
+    leagues: Optional[List[str]] = None,
+) -> Dict[str, Any]:
+    """Sync EVERY live state league for one season (cron/script core).
+
+    The league list is derived from the ``STATE_LEAGUES`` registry —
+    every entry whose ``status`` starts with ``"live"`` — so leagues
+    come and go with the registry without touching this function (keys
+    the registry no longer knows about, e.g. a renamed Tasmania entry,
+    are simply not attempted).  An explicit ``leagues`` list overrides
+    the derivation for single-league backfills.
+
+    One league's failure never aborts the sweep: the error is recorded,
+    the remaining leagues still sync, and the aggregate result reports
+    ``status="partial"``.  ``season`` defaults to the current season
+    from settings (the job always runs on the live season).
+
+    Returns an aggregate dict::
+
+        {
+            "season": int,
+            "leagues": [key, ...],          # attempted, in order
+            "leagues_synced": [key, ...],
+            "leagues_failed": [key, ...],
+            "fixtures_synced": total,
+            "errors": ["<key>: <reason>", ...],
+            "results": {key: per-league stats},
+            "status": "success" | "partial",
+        }
+    """
+    # Deferred import — state_leagues imports this module's service
+    # class at module level, so a top-level import here would cycle.
+    from ..ingestion.state_leagues import STATE_LEAGUES, run_league_sync
+
+    year = season or settings.current_season
+    if leagues is None:
+        keys: List[str] = [
+            key
+            for key, config in STATE_LEAGUES.items()
+            if config.status.startswith("live")
+        ]
+    else:
+        keys = list(leagues)
+
+    aggregated: Dict[str, Any] = {
+        "season": year,
+        "leagues": keys,
+        "leagues_synced": [],
+        "leagues_failed": [],
+        "fixtures_synced": 0,
+        "errors": [],
+        "results": {},
+        "status": "success",
+    }
+
+    logger.info(
+        "Starting all-leagues sync for %d (%d leagues)", year, len(keys)
+    )
+
+    for key in keys:
+        if key not in STATE_LEAGUES:
+            error = (
+                f"{key}: unknown league — available: {sorted(STATE_LEAGUES)}"
+            )
+            logger.error("league sync skipped: %s", error)
+            aggregated["leagues_failed"].append(key)
+            aggregated["errors"].append(error)
+            aggregated["status"] = "partial"
+            continue
+        try:
+            stats = await run_league_sync(session, key, year)
+        except Exception as e:  # noqa: BLE001 — one league never aborts the sweep
+            error = f"{key}: {e}"
+            logger.error("league sync failed: %s", error, exc_info=True)
+            aggregated["leagues_failed"].append(key)
+            aggregated["errors"].append(error)
+            aggregated["status"] = "partial"
+            continue
+        aggregated["leagues_synced"].append(key)
+        aggregated["fixtures_synced"] += stats.get("fixtures_synced", 0)
+        aggregated["results"][key] = stats
+
+    logger.info(
+        "All-leagues sync completed for %d: %d synced, %d failed, "
+        "%d fixtures (%d errors)",
+        year,
+        len(aggregated["leagues_synced"]),
+        len(aggregated["leagues_failed"]),
+        aggregated["fixtures_synced"],
+        len(aggregated["errors"]),
+    )
+    return aggregated

@@ -153,6 +153,15 @@ class Settings(BaseSettings):
     supplementary_sync_cron: str = "45 5 * * *"  # daily 05:45 app-tz
     supplementary_sync_staleness_days: int = 3
 
+    # State-League Sync (Phase 5 rollout): scheduled sync of every
+    # "live" league in ``STATE_LEAGUES`` (see
+    # packages/shared/ingestion/state_leagues.py).  Runs at 04:30
+    # app-tz — after the daily AFL sync, before the morning
+    # tip-generation pass so local-competition fixtures/results are
+    # fresh for the day's predictions.
+    league_sync_enabled: bool = True
+    league_sync_cron: str = "30 4 * * *"  # daily 04:30 app-tz
+
     # Retry Configuration
     job_timeout_seconds: int = 3600
     # Default lock expiry when a caller does not supply one.  Callers

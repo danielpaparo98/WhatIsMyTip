@@ -433,6 +433,89 @@ class TestGradeSelection:
         assert calls[3][1] == {"gradeID": "c2721398"}
 
     @pytest.mark.asyncio
+    async def test_grade_ids_are_rescoped_to_the_seasons_own_grade(self):
+        """Grade ids are season-scoped on PlayHQ: the pinned id is the
+        ACTIVE season's.  When an older season is requested, the grade
+        with the same NAME in THAT season's grade list wins — otherwise
+        every historical season silently returns the active season's
+        fixture (same external ids everywhere)."""
+        provider, calls = _make_provider()
+
+        async def _hist_grades(season_id: str):
+            return [
+                {"id": "hist-grade-2025", "name": "NWFL Premier League Senior Men"},
+                {"id": "other", "name": "Real Mates RSAC NWFL Colts"},
+            ]
+
+        provider._discover_season_grades = _hist_grades  # type: ignore[method-assign]
+
+        await provider.get_fixtures(2025)
+
+        # org + comps via fake_query, then the fixture fetch for the
+        # RESCAPED grade id.
+        assert calls[2][1] == {"gradeID": "hist-grade-2025"}
+
+    @pytest.mark.asyncio
+    async def test_grade_ids_fall_back_to_the_pinned_id(self):
+        """A season whose grade list lacks the configured name still
+        syncs via the pinned id (best effort, never a hard failure)."""
+        provider, calls = _make_provider()
+
+        async def _odd_grades(season_id: str):
+            return [{"id": "unrelated", "name": "Something Else"}]
+
+        provider._discover_season_grades = _odd_grades  # type: ignore[method-assign]
+
+        await provider.get_fixtures(2025)
+
+        assert calls[2][1] == {"gradeID": "c2721398"}
+
+    @pytest.mark.asyncio
+    async def test_grade_ids_match_renamed_grades_by_tokens(self):
+        """Sponsor prefixes/suffixes rename grades every season: the
+        canonical 'NWFL Premier League Senior Men' must still find
+        'JMC NWFL Seniors' — and never a Women's/Colts grade."""
+        provider, calls = _make_provider()
+
+        async def _hist_grades(season_id: str):
+            return [
+                {"id": "womens", "name": "The Advocate NWFL Women"},
+                {"id": "colts", "name": '"Real Mates" RSAC NWFL Colts'},
+                {"id": "hist-grade", "name": "JMC NWFL Seniors"},
+                {"id": "dev", "name": "7AD 7BU SeaFM NWFL Development"},
+            ]
+
+        provider._discover_season_grades = _hist_grades  # type: ignore[method-assign]
+
+        await provider.get_fixtures(2025)
+
+        assert calls[2][1] == {"gradeID": "hist-grade"}
+
+    @pytest.mark.asyncio
+    async def test_grade_rescoping_prefers_senior_men_over_women(self):
+        """A Women's grade sharing most tokens ('...Premier League Senior
+        Women') must never beat the men's grade."""
+        provider, calls = _make_provider()
+
+        async def _hist_grades(season_id: str):
+            return [
+                {
+                    "id": "womens-2025",
+                    "name": "The Advocate NWFL Premier League Senior Women",
+                },
+                {
+                    "id": "mens-2025",
+                    "name": "JMC NWFL Premier League Senior Men",
+                },
+            ]
+
+        provider._discover_season_grades = _hist_grades  # type: ignore[method-assign]
+
+        await provider.get_fixtures(2025)
+
+        assert calls[2][1] == {"gradeID": "mens-2025"}
+
+    @pytest.mark.asyncio
     async def test_grade_name_selector_matches_by_substring(self):
         provider, calls = _make_provider()
         provider.grade_ids = {}

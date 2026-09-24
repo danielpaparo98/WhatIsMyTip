@@ -303,7 +303,17 @@ class PlayHQProvider:
 
     def _resolve_grade_ids(self, grades: List[Dict[str, Any]]) -> List[str]:
         if self.grade_ids:
-            return list(self.grade_ids.values())
+            # Grade ids are season-scoped on PlayHQ — the configured ids
+            # were captured from the active season.  When the requested
+            # season's grade list carries the same grade under a
+            # different id (historical seasons — names drift with
+            # sponsors: 'JMC NWFL Seniors 2024'), THAT id wins; the
+            # pinned id is only the fallback (e.g. grade list changed).
+            resolved: List[str] = []
+            for name, pinned in self.grade_ids.items():
+                rescoped = self._rescope_grade_id(name, grades)
+                resolved.append(rescoped or str(pinned))
+            return resolved
         if self._grade_name:
             wanted = self._grade_name.strip().lower()
             named = [g for g in grades if str(g.get("name") or "").lower() == wanted]
@@ -317,6 +327,47 @@ class PlayHQProvider:
                 )
             return [str(named[0]["id"])]
         raise ValueError("No grade configured — set grade_ids or grade_name")
+
+    @staticmethod
+    def _grade_tokens(name: Any) -> set:
+        """Significant lowercase words of a grade name (years dropped)."""
+        return {
+            token
+            for token in re.split(r"[^a-z0-9]+", str(name or "").lower())
+            if token and not token.isdigit()
+        }
+
+    def _rescope_grade_id(
+        self, name: str, grades: List[Dict[str, Any]]
+    ) -> Optional[str]:
+        """Find ``name`` among a season's grades: exact match first, then
+        the closest token overlap (score >= 2) so renamed variants
+        ('SFL' → 'Banjos Bakery SFL Seniors 2024') still resolve, while
+        Women's/Colts/Reserves grades never win.  ``None`` when nothing
+        plausibly matches."""
+        wanted = str(name).strip().lower()
+        for grade in grades:
+            if str(grade.get("name") or "").strip().lower() == wanted:
+                return str(grade.get("id"))
+        wanted_tokens = self._grade_tokens(name)
+        best_id: Optional[str] = None
+        best_score = 0
+        for grade in grades:
+            candidates = self._grade_tokens(grade.get("name"))
+            score = sum(
+                1
+                for token in wanted_tokens
+                if any(
+                    candidate == token
+                    or candidate.startswith(token)
+                    or token.startswith(candidate)
+                    for candidate in candidates
+                )
+            )
+            if score > best_score:
+                best_id = str(grade.get("id"))
+                best_score = score
+        return best_id if best_score >= 2 else None
 
     def _game_to_fixture(
         self, game: Dict[str, Any], season: int, round_id: Optional[int]

@@ -196,10 +196,11 @@ async def build_team_metadata_lookup(
     into the sync service's per-name identity lookup.
 
     Returns ``None`` — the service's no-identity default — when the
-    provider does not expose team metadata (e.g. Sportix/WAFL and the
-    AFL platform) or the fetch fails/comes back empty: identity capture
-    is best-effort and must never break a fixture sync.  Mapping keys
-    are the provider's raw team names, matching the fixture sides.
+    provider does not expose team metadata (e.g. the AFL platform; the
+    Sportix providers DO since the club-crest verification) or the
+    fetch fails/comes back empty: identity capture is best-effort and
+    must never break a fixture sync.  Mapping keys are the provider's
+    raw team names, matching the fixture sides.
     """
     getter = getattr(provider, "get_team_metadata", None)
     if not callable(getter):

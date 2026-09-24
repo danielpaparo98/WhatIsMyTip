@@ -11,6 +11,7 @@
 // the team name the backend returns (canonical AFL form or the raw
 // feed name for state-league clubs).
 import { getTeamColors } from './useTeamColors'
+import { leagueColorFor } from './useLeagueColors'
 import { useTeamLogos } from './useTeamLogos'
 
 export interface TeamIdentityEntry {
@@ -49,15 +50,16 @@ export function useTeamIdentity() {
 
   /**
    * Colour for a team at a palette index (0 = primary, 1 = secondary).
-   * A team with captured colours gets exactly those — indexes past the
-   * captured pair return null rather than silently mixing in the AFL
-   * palette.  Teams without identity fall back to the AFL colour map
-   * (which itself has a default celebration palette), still null past
-   * its length.
+   * Resolution order: an explicit identity entry, then the active
+   * league's curated club palette (useLeagueColors, non-AFL leagues),
+   * then the AFL colour map (which itself has a default celebration
+   * palette).  Each stage returns null past its palette length rather
+   * than silently mixing palettes.
    */
   const colorFor = (
     teamName: string | null | undefined,
     idx: number,
+    activeLeague?: string | null,
   ): string | null => {
     const entry = identityFor(teamName)
     if (entry?.primaryColor || entry?.secondaryColor) {
@@ -65,6 +67,10 @@ export function useTeamIdentity() {
         (c): c is string => typeof c === 'string' && c.length > 0,
       )
       return palette[idx] ?? null
+    }
+    const club = leagueColorFor(activeLeague, teamName)
+    if (club) {
+      return [club.primary, club.secondary][idx] ?? null
     }
     return getTeamColors(teamName)[idx] ?? null
   }

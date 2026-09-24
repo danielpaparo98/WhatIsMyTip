@@ -5,6 +5,7 @@ import {
   type TeamIdentityEntry,
 } from '../../composables/useTeamIdentity'
 import { useTeamLogos } from '../../composables/useTeamLogos'
+import { LEAGUE_COLORS } from '../../composables/useLeagueColors'
 
 /**
  * Data-driven team identity (backend migration 0011): TEAM_IDENTITY
@@ -122,5 +123,59 @@ describe('useTeamIdentity explicit entries override', () => {
 
   it('entries do not leak between tests (beforeEach clears the map)', () => {
     expect(TEAM_IDENTITY['Aspley Hornets']).toBeUndefined()
+  })
+})
+
+describe('useTeamIdentity league-palette fallback', () => {
+  beforeEach(() => {
+    for (const key of Object.keys(TEAM_IDENTITY)) {
+      delete TEAM_IDENTITY[key]
+    }
+  })
+
+  it('resolves a state-league club through the league palette', () => {
+    const { colorFor } = useTeamIdentity()
+    expect(colorFor('Peel Thunder', 0, 'wafl')).toBe(
+      LEAGUE_COLORS.wafl['Peel Thunder'].primary,
+    )
+    expect(colorFor('Peel Thunder', 1, 'wafl')).toBe(
+      LEAGUE_COLORS.wafl['Peel Thunder'].secondary,
+    )
+  })
+
+  it('normalises case/whitespace for the league lookup', () => {
+    const { colorFor } = useTeamIdentity()
+    expect(colorFor('  claremont ', 0, 'wafl')).toBe(
+      LEAGUE_COLORS.wafl['Claremont'].primary,
+    )
+  })
+
+  it('returns null past the league palette length', () => {
+    const { colorFor } = useTeamIdentity()
+    expect(colorFor('Claremont', 2, 'wafl')).toBeNull()
+  })
+
+  it('without a league key, behaviour is unchanged (AFL fallback)', () => {
+    const { colorFor } = useTeamIdentity()
+    expect(colorFor('Claremont', 0)).toBe('#FFD700')
+    expect(colorFor('Richmond', 0)).toBe('#FFD700')
+  })
+
+  it('a club missing from the league palette falls to the AFL palette', () => {
+    const { colorFor } = useTeamIdentity()
+    expect(colorFor('Richmond', 0, 'wafl')).toBe('#FFD700')
+    expect(colorFor('Richmond', 1, 'wafl')).toBe('#000000')
+  })
+
+  it('an unknown league key falls to the AFL palette', () => {
+    const { colorFor } = useTeamIdentity()
+    expect(colorFor('Peel Thunder', 0, 'not-a-league')).toBe('#FFD700')
+  })
+
+  it('an explicit identity entry beats the league palette', () => {
+    TEAM_IDENTITY['Peel Thunder'] = { primaryColor: '#123456' }
+    const { colorFor } = useTeamIdentity()
+    expect(colorFor('Peel Thunder', 0, 'wafl')).toBe('#123456')
+    expect(colorFor('Peel Thunder', 1, 'wafl')).toBeNull()
   })
 })

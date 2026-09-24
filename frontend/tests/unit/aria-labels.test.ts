@@ -15,6 +15,7 @@ const FRONTEND_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..')
 
 const VUE_FILES = [
   'components/Header.vue',
+  'components/LeagueSelector.vue',
   'components/Footer.vue',
   'components/TipCard.vue',
   'components/MatchAnalysisCard.vue',
