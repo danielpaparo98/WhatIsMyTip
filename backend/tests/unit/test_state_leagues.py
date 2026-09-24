@@ -22,22 +22,22 @@ class TestRegistry:
         assert STATE_LEAGUES["sanfl"].timezone == "Australia/Adelaide"
         assert STATE_LEAGUES["vfl"].timezone == "Australia/Melbourne"
 
-    def test_pending_sources_declare_no_provider(self):
-        for key in ("sanfl", "vfl"):
-            assert STATE_LEAGUES[key].provider_factory is None
-            assert STATE_LEAGUES[key].status == "pending-source"
-            # Every pending league documents WHERE its data lives.
-            assert STATE_LEAGUES[key].source_note
+    def test_remaining_unknown_source_declares_no_provider(self):
+        config = STATE_LEAGUES["tsl"]
+        assert config.provider_factory is None
+        assert config.status == "source-unknown"
+        # Every pending league documents WHERE its data lives.
+        assert config.source_note
 
     def test_unknown_league_rejected(self):
         with pytest.raises(ValueError, match="available"):
             get_league("nrl")
 
     @pytest.mark.asyncio
-    async def test_pending_league_sync_raises_with_guidance(self):
+    async def test_unknown_source_league_sync_raises_with_guidance(self):
         session = AsyncMock()
         with pytest.raises(NotImplementedError, match="no provider yet"):
-            await run_league_sync(session, "sanfl", 2026)
+            await run_league_sync(session, "tsl", 2026)
 
     @pytest.mark.asyncio
     async def test_live_league_sync_uses_registered_timezones(self):
@@ -84,5 +84,45 @@ class TestRegistry:
             crud.ensure_competition.await_args.kwargs["timezone"]
             == "Australia/Perth"
         )
+
+
+class TestLiveWiring:
+    """The four AFL-platform leagues and two iSports leagues wired live."""
+
+    def test_afl_platform_leagues_are_live(self):
+        from packages.shared.ingestion.afl_platform_provider import (
+            AflPlatformProvider,
+        )
+
+        for key, competition_id in (("vfl", 7), ("aflw", 3), ("vflw", 8), ("sanfl", 4)):
+            config = STATE_LEAGUES[key]
+            assert config.status == "live", key
+            assert config.provider_factory is not None, key
+            provider = config.provider_factory()
+            assert isinstance(provider, AflPlatformProvider), key
+            assert provider.competition_id == competition_id, key
+            assert provider.source == "aflapi"
+            assert "aflapi.afl.com.au/afl/v2" in config.source_note
+
+    def test_isports_leagues_are_live(self):
+        from packages.shared.ingestion.isports_provider import ISportsProvider
+
+        for key, league_id in (("qafl", 1), ("qaflw", 4)):
+            config = STATE_LEAGUES[key]
+            assert config.status == "live", key
+            assert config.provider_factory is not None, key
+            provider = config.provider_factory()
+            assert isinstance(provider, ISportsProvider), key
+            assert provider.league_id == league_id, key
+            assert provider.source == "isports"
+            assert "stats.isports.net.au/api" in config.source_note
+
+    def test_timezones_kept_per_state(self):
+        assert STATE_LEAGUES["vfl"].timezone == "Australia/Melbourne"
+        assert STATE_LEAGUES["aflw"].timezone == "Australia/Melbourne"
+        assert STATE_LEAGUES["vflw"].timezone == "Australia/Melbourne"
+        assert STATE_LEAGUES["sanfl"].timezone == "Australia/Adelaide"
+        assert STATE_LEAGUES["qafl"].timezone == "Australia/Brisbane"
+        assert STATE_LEAGUES["qaflw"].timezone == "Australia/Brisbane"
 
 

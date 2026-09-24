@@ -3,7 +3,8 @@
 The manifest for expanding across the state leagues: each entry names
 the authoritative source and its integration status.  Adding a league
 that is already supported = a config entry; a league on a NEW platform
-needs a FeedProvider first (see SANFL/VFL notes).
+needs a FeedProvider first (the QAFL/TSL pattern: probe, capture a
+payload, write the provider).
 
 Source findings (2026-09-24):
 
@@ -11,20 +12,22 @@ Source findings (2026-09-24):
   public client credentials expose a clean JSON API. LIVE.
 * **WAFLW / Colts / Reserves** — same Sportix tenant as the WAFL
   (competition_name is the only difference). LIVE.
-* **AFL platform** (``api.afl.com.au/cfs/afl``) — covers AFLW
-  (CD_C264), VFL (CD_C015), VFLW (CD_C464), SANFL (CD_C016) and the
-  Talent Leagues. Auth DECODED 2026-09-24: ``POST /WMCTok`` returns a
-  short-lived token sent as the ``x-media-mis-token`` header;
-  ``GET /competitions`` works with it. REMAINING: ``/compSeasons`` and
-  ``/matches`` return 403 with the basic token — the site's
-  match-centre widget obtains richer access; next step is tracing its
-  bundle for the additional token/flow. No scraping-guess provider
-  will be written before that is resolved.
-* **SANFL** — same AFL platform coverage as above (CD_C016), plus a
-  legacy WordPress path on sanfl.com.au.
-* **QAFL / TSL** — official sites not yet probed.
+* **VFL / VFLW / SANFL / AFLW** — the AFL platform's open v2 match API
+  (``aflapi.afl.com.au/afl/v2``) serves ``competitions/{id}/compseasons``
+  and ``matches`` without auth (VFL=7, AFLW=3, VFLW=8, SANFL=4). LIVE
+  via ``AflPlatformProvider`` (supersedes the earlier ``cfs/afl`` token
+  dead-end noted below).
+* **QAFL / QAFLW** — ``stats.isports.net.au/api`` exposes seasons,
+  matches and teams without auth (QAFL=1, QAFLW=4). Scores arrive only
+  in per-match ``teamReports``; completion is picked up by batch
+  season re-sync. LIVE via ``ISportsProvider``.
+* **TSL** — AFL Tasmania not yet probed.
 * **VFL legacy note** — vfl.com.au no longer resolves; the VFL lives
   inside afl.com.au/vfl.
+
+Historical note: the older ``api.afl.com.au/cfs/afl`` surface decoded
+on 2026-09-24 (``POST /WMCTok`` → ``x-media-mis-token``) still 403s on
+``/matches``; the open v2 API above made that path moot.
 """
 
 from __future__ import annotations
@@ -47,8 +50,10 @@ class LeagueConfig:
     name: str
     timezone: str
     provider_factory: Optional[Callable[[], FeedProvider]]
-    #: "live" = provider ready; "pending-source" = authoritative source
-    #: identified but not yet reverse-engineered (see module docstring).
+    #: "live" = provider ready; "live-same-tenant" = another config on
+    #: a live platform; "pending-source" = source identified but not yet
+    #: reverse-engineered; "source-unknown" = nothing probed yet (see
+    #: module docstring).
     status: str
     source_note: str
 
@@ -71,48 +76,44 @@ STATE_LEAGUES: Dict[str, LeagueConfig] = {
     "sanfl": LeagueConfig(
         name="South Australian National Football League",
         timezone="Australia/Adelaide",
-        provider_factory=None,
-        status="pending-source",
-        source_note=(
-            "sanfl.com.au (WordPress admin-ajax) — action names and "
-            "payload shapes need mapping"
-        ),
+        provider_factory=lambda: _afl_platform(4, "SANFL"),
+        status="live",
+        source_note="aflapi.afl.com.au/afl/v2 (open)",
     ),
     "vfl": LeagueConfig(
         name="Victorian Football League",
         timezone="Australia/Melbourne",
-        provider_factory=None,
-        status="pending-source",
-        source_note=(
-            "Authoritative: api.afl.com.au/cfs/afl (AFL-run). Key + "
-            "endpoints embedded in afl.com.au JS bundles — needs a "
-            "dedicated reverse-engineering pass"
-        ),
+        provider_factory=lambda: _afl_platform(7, "VFL"),
+        status="live",
+        source_note="aflapi.afl.com.au/afl/v2 (open)",
     ),
     "vflw": LeagueConfig(
         name="Victorian Women's Football League",
         timezone="Australia/Melbourne",
-        provider_factory=None,
-        status="pending-source",
-        source_note="Same AFL platform as the VFL — unlocked together with it",
+        provider_factory=lambda: _afl_platform(8, "VFLW"),
+        status="live",
+        source_note="aflapi.afl.com.au/afl/v2 (open)",
     ),
     "aflw": LeagueConfig(
         name="AFL Women's",
         timezone="Australia/Melbourne",
-        provider_factory=None,
-        status="pending-source",
-        source_note=(
-            "AFL-run (national). Squiggle is AFL men's only; "
-            "authoritative source is the AFL platform API — unlocked "
-            "together with the VFL pass"
-        ),
+        provider_factory=lambda: _afl_platform(3, "AFLW"),
+        status="live",
+        source_note="aflapi.afl.com.au/afl/v2 (open)",
     ),
     "qafl": LeagueConfig(
         name="Queensland Australian Football League",
         timezone="Australia/Brisbane",
-        provider_factory=None,
-        status="source-unknown",
-        source_note="aflq.com.au — platform not yet probed",
+        provider_factory=lambda: _isports(1),
+        status="live",
+        source_note="stats.isports.net.au/api (open)",
+    ),
+    "qaflw": LeagueConfig(
+        name="Queensland Australian Football League Women's",
+        timezone="Australia/Brisbane",
+        provider_factory=lambda: _isports(4),
+        status="live",
+        source_note="stats.isports.net.au/api (open)",
     ),
     "tsl": LeagueConfig(
         name="Tasmanian State League",
@@ -128,6 +129,20 @@ def _sportix(source: str, competition_name: str) -> FeedProvider:
     from .sportix_provider import SportixProvider
 
     return SportixProvider(source=source, competition_name=competition_name)
+
+
+def _afl_platform(competition_id: int, competition_name: str) -> FeedProvider:
+    from .afl_platform_provider import AflPlatformProvider
+
+    return AflPlatformProvider(
+        competition_id=competition_id, competition_name=competition_name
+    )
+
+
+def _isports(league_id: int) -> FeedProvider:
+    from .isports_provider import ISportsProvider
+
+    return ISportsProvider(league_id=league_id)
 
 
 def get_league(key: str) -> LeagueConfig:
