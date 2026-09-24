@@ -21,6 +21,10 @@ Source findings (2026-09-24):
   matches and teams without auth (QAFL=1, QAFLW=4). Scores arrive only
   in per-match ``teamReports``; completion is picked up by batch
   season re-sync. LIVE via ``ISportsProvider``.
+* **NWFL / SFL (Tasmania)** — both run on PlayHQ
+  (``api.playhq.com/graphql``, open, public discover API — recipe
+  verified live 2026-09-24, full NWFL 2026 season captured). LIVE via
+  ``PlayHQProvider``.
 * **TSL** — AFL Tasmania not yet probed.
 * **VFL legacy note** — vfl.com.au no longer resolves; the VFL lives
   inside afl.com.au/vfl.
@@ -122,6 +126,20 @@ STATE_LEAGUES: Dict[str, LeagueConfig] = {
         status="source-unknown",
         source_note="AFL Tasmania — platform not yet probed",
     ),
+    "nwfl": LeagueConfig(
+        name="North West Football League",
+        timezone="Australia/Hobart",
+        provider_factory=lambda: _playhq("nwfl"),
+        status="live",
+        source_note="playhq.com GraphQL (open, public discover API)",
+    ),
+    "sfl": LeagueConfig(
+        name="Southern Football League",
+        timezone="Australia/Hobart",
+        provider_factory=lambda: _playhq("sfl"),
+        status="live",
+        source_note="playhq.com GraphQL (open, public discover API)",
+    ),
 }
 
 
@@ -143,6 +161,24 @@ def _isports(league_id: int) -> FeedProvider:
     from .isports_provider import ISportsProvider
 
     return ISportsProvider(league_id=league_id)
+
+
+def _playhq(league: str) -> FeedProvider:
+    from .playhq_provider import (
+        NWFL_GRADE_IDS,
+        NWFL_ROUTING_CODE,
+        SFL_GRADE_IDS,
+        SFL_ROUTING_CODE,
+        PlayHQProvider,
+    )
+
+    routing_code, grade_ids = {
+        "nwfl": (NWFL_ROUTING_CODE, NWFL_GRADE_IDS),
+        "sfl": (SFL_ROUTING_CODE, SFL_GRADE_IDS),
+    }[league]
+    return PlayHQProvider(
+        organisation_routing_code=routing_code, grade_ids=grade_ids
+    )
 
 
 def get_league(key: str) -> LeagueConfig:
