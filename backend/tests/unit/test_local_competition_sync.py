@@ -240,3 +240,104 @@ class TestLocalCompetitionSync:
         assert stats["errors"], "resolver failure must be recorded"
         # The pass continued: fixture 2 synced despite fixture 1 failing.
         assert stats["fixtures_synced"] == 1
+
+    @pytest.mark.asyncio
+    async def test_team_metadata_is_threaded_into_ensure_team(self):
+        """Migration 0011: an optional per-name metadata callback feeds
+        logo/colours into the resolver for that side; names the provider
+        has no metadata for sync unchanged (identity stays NULL)."""
+        db = AsyncMock()
+        db.flush = AsyncMock()
+        db.commit = AsyncMock()
+
+        competition = SimpleNamespace(id=3, timezone="Australia/Perth")
+        season = SimpleNamespace(id=11, label="2026")
+
+        metadata_by_name = {
+            "Peel Thunder": {
+                "logo_url": "https://cdn.example/peel.png",
+                "primary_color": "#002B5C",
+                "secondary_color": "#E31937",
+            },
+        }
+
+        with patch(
+            "packages.shared.services.local_competition_sync.CompetitionCRUD"
+        ) as crud, patch(
+            "packages.shared.services.local_competition_sync.ParticipantResolver"
+        ) as resolver_cls, patch(
+            "packages.shared.services.local_competition_sync.EventCRUD"
+        ) as event_crud:
+            crud.ensure_competition = AsyncMock(return_value=competition)
+            crud.ensure_season = AsyncMock(return_value=season)
+            resolver_cls.return_value.ensure_team = AsyncMock(
+                return_value=SimpleNamespace(id=71)
+            )
+            event_crud.upsert_fixture = AsyncMock(
+                return_value=SimpleNamespace(id=501)
+            )
+            provider = MagicMock()
+            provider.sport_id = "afl"
+            provider.get_fixtures = AsyncMock(return_value=[_fixture()])
+
+            service = LocalCompetitionSyncService(
+                db,
+                provider=provider,
+                competition_name="West Australian Football League",
+                season=2026,
+                team_metadata=metadata_by_name.get,
+            )
+            await service.sync()
+
+        calls = {
+            call.args[0]: call.kwargs
+            for call in resolver_cls.return_value.ensure_team.await_args_list
+        }
+        home = calls["Peel Thunder"]
+        assert home["logo_url"] == "https://cdn.example/peel.png"
+        assert home["primary_color"] == "#002B5C"
+        assert home["secondary_color"] == "#E31937"
+
+        # No metadata for the away side → all identity kwargs None.
+        away = calls["East Fremantle"]
+        assert away["logo_url"] is None
+        assert away["primary_color"] is None
+        assert away["secondary_color"] is None
+
+    @pytest.mark.asyncio
+    async def test_team_metadata_is_optional(self):
+        """Default construction (WAFL bootstrap) passes no identity."""
+        db = AsyncMock()
+        db.flush = AsyncMock()
+        db.commit = AsyncMock()
+
+        competition = SimpleNamespace(id=3, timezone="Australia/Perth")
+        season = SimpleNamespace(id=11, label="2026")
+
+        with patch(
+            "packages.shared.services.local_competition_sync.CompetitionCRUD"
+        ) as crud, patch(
+            "packages.shared.services.local_competition_sync.ParticipantResolver"
+        ) as resolver_cls, patch(
+            "packages.shared.services.local_competition_sync.EventCRUD"
+        ) as event_crud:
+            crud.ensure_competition = AsyncMock(return_value=competition)
+            crud.ensure_season = AsyncMock(return_value=season)
+            resolver_cls.return_value.ensure_team = AsyncMock(
+                return_value=SimpleNamespace(id=71)
+            )
+            event_crud.upsert_fixture = AsyncMock(
+                return_value=SimpleNamespace(id=501)
+            )
+            provider = MagicMock()
+            provider.sport_id = "afl"
+            provider.get_fixtures = AsyncMock(return_value=[_fixture()])
+
+            service = LocalCompetitionSyncService(
+                db, provider=provider, competition_name="X", season=2026
+            )
+            assert service.team_metadata is None
+            await service.sync()
+
+        for call in resolver_cls.return_value.ensure_team.await_args_list:
+            assert call.kwargs["logo_url"] is None

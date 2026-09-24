@@ -153,6 +153,35 @@ def get_league(key: str) -> LeagueConfig:
     return STATE_LEAGUES[key]
 
 
+async def build_team_metadata_lookup(
+    provider: FeedProvider, season: int
+) -> Optional[Callable[[str], Optional[Dict[str, Any]]]]:
+    """Wrap an optional provider ``get_team_metadata`` (migration 0011)
+    into the sync service's per-name identity lookup.
+
+    Returns ``None`` — the service's no-identity default — when the
+    provider does not expose team metadata (e.g. Sportix/WAFL and the
+    AFL platform) or the fetch fails/comes back empty: identity capture
+    is best-effort and must never break a fixture sync.  Mapping keys
+    are the provider's raw team names, matching the fixture sides.
+    """
+    getter = getattr(provider, "get_team_metadata", None)
+    if not callable(getter):
+        return None
+    try:
+        mapping = await getter(season)
+    except Exception as e:  # noqa: BLE001 — metadata is best-effort
+        logger.warning(
+            "Team metadata fetch failed for %s: %s",
+            getattr(provider, "source", type(provider).__name__),
+            e,
+        )
+        return None
+    if not mapping:
+        return None
+    return lambda name: mapping.get(name)
+
+
 async def run_league_sync(
     session, league_key: str, season: int, *, mark_current: bool = True
 ) -> Dict[str, Any]:
@@ -163,12 +192,14 @@ async def run_league_sync(
         raise NotImplementedError(
             f"{config.name}: no provider yet — {config.source_note}"
         )
+    provider = config.provider_factory()
     service = LocalCompetitionSyncService(
         session,
-        provider=config.provider_factory(),
+        provider=provider,
         competition_name=config.name,
         season=season,
         competition_timezone=config.timezone,
+        team_metadata=await build_team_metadata_lookup(provider, season),
     )
     stats = await service.sync()
     if not mark_current:

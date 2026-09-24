@@ -11,7 +11,7 @@ tables.  First wired for WAFL (Sportix provider).
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -23,6 +23,11 @@ from ..logger import get_logger
 from ..sport_context import DEFAULT_CONTEXT
 
 logger = get_logger(__name__)
+
+#: Optional per-team identity lookup (migration 0011): raw provider
+#: team name → {logo_url, primary_color, secondary_color}.  ``None``
+#: return / missing name ⇒ identity stays NULL (frontend falls back).
+TeamMetadataFn = Callable[[str], Optional[Dict[str, Any]]]
 
 
 class LocalCompetitionSyncService:
@@ -38,6 +43,7 @@ class LocalCompetitionSyncService:
         competition_tier: str = "state",
         competition_format: str = "rounds",
         competition_timezone: Optional[str] = None,
+        team_metadata: Optional[TeamMetadataFn] = None,
     ):
         self.db = db
         self.provider = provider
@@ -48,6 +54,9 @@ class LocalCompetitionSyncService:
         # Per-competition venue timezone (P5: SANFL=Adelaide,
         # VFL=Melbourne, …).  None ⇒ the sport default (AFL: Perth).
         self.competition_timezone = competition_timezone or DEFAULT_CONTEXT.cron_timezone
+        # Team identity lookup (see TeamMetadataFn); built by the
+        # caller from an optional provider ``get_team_metadata``.
+        self.team_metadata = team_metadata
         self.logger = logger
 
     async def sync(self) -> Dict[str, Any]:
@@ -88,10 +97,12 @@ class LocalCompetitionSyncService:
                 home = await resolver.ensure_team(
                     fixture.home_participant or "",
                     aliases=(fixture.home_participant or "",),
+                    **self._identity_for(fixture.home_participant),
                 ) if fixture.home_participant else None
                 away = await resolver.ensure_team(
                     fixture.away_participant or "",
                     aliases=(fixture.away_participant or "",),
+                    **self._identity_for(fixture.away_participant),
                 ) if fixture.away_participant else None
 
                 local_fixture = self._to_local(fixture, tz)
@@ -118,6 +129,17 @@ class LocalCompetitionSyncService:
         return stats
 
     # ------------------------------------------------------------------
+
+    def _identity_for(self, name: Optional[str]) -> Dict[str, Any]:
+        """ensure_team identity kwargs for one fixture side: the
+        callback's dict when it has an entry, all-None otherwise."""
+        metadata = self.team_metadata(name) if (self.team_metadata and name) else None
+        metadata = metadata or {}
+        return {
+            "logo_url": metadata.get("logo_url"),
+            "primary_color": metadata.get("primary_color"),
+            "secondary_color": metadata.get("secondary_color"),
+        }
 
     @staticmethod
     def _competition_timezone(name: Optional[str]) -> ZoneInfo:

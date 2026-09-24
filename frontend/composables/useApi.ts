@@ -10,7 +10,7 @@ export interface Game {
   id: number
   slug: string
   /** @deprecated provider-specific id — see `source` (P3-2, ADR 0001) */
-  squiggle_id: number
+  squiggle_id: number | null
   /** Which feed provider produced this fixture ("squiggle" today). */
   source: string
   round_id: number
@@ -83,7 +83,7 @@ export interface GameDetailResponse {
 export interface GameWithTip {
   id: number
   slug: string
-  squiggle_id: number
+  squiggle_id: number | null
   round_id: number
   season: number
   home_team: string | null

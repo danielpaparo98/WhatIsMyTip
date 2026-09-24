@@ -29,6 +29,18 @@ carry no ``score`` blocks; ``completed`` is true only for
 ``status == "CONCLUDED"``.  ``external_id`` carries the provider id as
 a string, per the provider-assigned-id convention used by the other
 feed providers.
+
+Team identity (migration 0011, verified live 2026-09-24): the v2
+surface carries NO logo or colour data.  ``GET /teams?compSeasonId=``
+exposes only id/providerId/name/abbreviation/nickname/club
+(id/providerId/name/abbreviation/nickname)/metadata (always ``{}``
+across all 22 VFL teams)/teamType — no ``logoUrl``, ``uuid``,
+``image`` or colour keys; ``/matches`` embeds the same team blocks,
+and the single-team (``/teams/{id}``) and ``/clubs`` endpoints are
+equally bare.  Per the ingestion policy (never guess at unstable CDN
+paths), this provider offers NO ``get_team_metadata``: AFL-platform
+teams keep NULL identity and the frontend's hard-coded AFL logo/
+colour maps remain the fallback.
 """
 
 from __future__ import annotations

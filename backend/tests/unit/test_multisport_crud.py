@@ -139,3 +139,117 @@ class TestParticipantResolver:
         assert kinds.count("Participant") == 1
         assert kinds.count("Team") == 1
         assert kinds.count("TeamAlias") == 2
+
+
+class TestParticipantResolverIdentity:
+    """Migration 0011: logo/colours captured at ingestion.
+
+    Create path writes them onto the new Team row; the existing-row
+    path only backfills NULL fields (a value on file is never
+    clobbered by a later sync).
+    """
+
+    IDENTITY = dict(
+        logo_url="https://cdn.example/vultures.png",
+        primary_color="#002B5C",
+        secondary_color="#E31937",
+    )
+
+    @pytest.mark.asyncio
+    async def test_ensure_team_creates_with_identity(self):
+        db = AsyncMock(spec=AsyncSession)
+        db.execute = AsyncMock(
+            side_effect=[
+                _result(scalar_return=None),  # exact miss
+                _result(scalar_return=None),  # alias miss
+                _result(scalar_return=None),  # canonical miss
+            ]
+        )
+        added: list = []
+
+        def _assign_ids():
+            for obj in added:
+                if getattr(obj, "id", None) is None:
+                    obj.id = 42
+
+        db.add = MagicMock(side_effect=added.append)
+        db.flush = AsyncMock(side_effect=_assign_ids)
+
+        resolver = ParticipantResolver(db, sport_id="afl")
+        await resolver.ensure_team(
+            "Mt Gravatt Vultures", aliases=("Mt Gravatt",), **self.IDENTITY
+        )
+
+        teams = [obj for obj in added if type(obj).__name__ == "Team"]
+        assert len(teams) == 1
+        team = teams[0]
+        assert team.participant_id == 42
+        assert team.logo_url == self.IDENTITY["logo_url"]
+        assert team.primary_color == self.IDENTITY["primary_color"]
+        assert team.secondary_color == self.IDENTITY["secondary_color"]
+
+    @pytest.mark.asyncio
+    async def test_existing_team_backfills_null_identity(self):
+        participant = MagicMock(id=7, name="Mt Gravatt Vultures")
+        team_row = MagicMock(
+            logo_url=None, primary_color=None, secondary_color=None
+        )
+        db = AsyncMock(spec=AsyncSession)
+        db.execute = AsyncMock(
+            side_effect=[
+                _result(scalar_return=participant),  # exact hit
+                _result(scalar_return=team_row),  # Team row select
+            ]
+        )
+
+        resolver = ParticipantResolver(db, sport_id="afl")
+        resolved = await resolver.ensure_team(
+            "Mt Gravatt Vultures", **self.IDENTITY
+        )
+
+        assert resolved is participant
+        assert team_row.logo_url == self.IDENTITY["logo_url"]
+        assert team_row.primary_color == self.IDENTITY["primary_color"]
+        assert team_row.secondary_color == self.IDENTITY["secondary_color"]
+        db.flush.assert_awaited()
+
+    @pytest.mark.asyncio
+    async def test_existing_team_identity_is_never_overwritten(self):
+        """A logo/colour already on file must survive a re-sync."""
+        participant = MagicMock(id=7, name="Mt Gravatt Vultures")
+        team_row = MagicMock(
+            logo_url="https://cdn.example/kept.png",
+            primary_color=None,
+            secondary_color=None,
+        )
+        db = AsyncMock(spec=AsyncSession)
+        db.execute = AsyncMock(
+            side_effect=[
+                _result(scalar_return=participant),  # exact hit
+                _result(scalar_return=team_row),  # Team row select
+            ]
+        )
+
+        resolver = ParticipantResolver(db, sport_id="afl")
+        await resolver.ensure_team(
+            "Mt Gravatt Vultures", **self.IDENTITY
+        )
+
+        assert team_row.logo_url == "https://cdn.example/kept.png"
+        # The NULL fields are still backfilled.
+        assert team_row.primary_color == self.IDENTITY["primary_color"]
+        assert team_row.secondary_color == self.IDENTITY["secondary_color"]
+
+    @pytest.mark.asyncio
+    async def test_no_identity_kwargs_skip_the_team_query(self):
+        """Plain ensure_team calls (all legacy call sites) must not pay
+        for an extra Team select."""
+        participant = MagicMock(id=7, name="Adelaide")
+        db = AsyncMock(spec=AsyncSession)
+        db.execute = AsyncMock(return_value=_result(scalar_return=participant))
+
+        resolver = ParticipantResolver(db, sport_id="afl")
+        resolved = await resolver.ensure_team("Adelaide")
+
+        assert resolved is participant
+        assert db.execute.await_count == 1

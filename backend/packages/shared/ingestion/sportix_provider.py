@@ -17,6 +17,17 @@ Round mapping: ``Round N`` → N; finals map past the home-and-away
 rounds (``finals-week-1`` → 101, …, ``grand-final`` → 104) so the
 max(round) grand-final heuristic keeps working.  UTC datetimes are
 converted to venue-local naive form by the sync service, not here.
+
+Team identity (migration 0011, verified live 2026-09-24): the matches
+payload exposes NO club crests — ``home``/``away`` carry only
+id/name/slug, and the single ``logo`` key in the payload belongs to
+the match *broadcasters*.  ``GET /public/clubs/{id}`` DOES return a
+``logo`` path (e.g. ``"clubs/peel-thunder-145-LCdnaJ.png"``), but the
+filename is content-hashed (a Nuxt build asset): it changes on
+platform redeploys, so a URL stored today rots silently.  Per the
+no-guessing policy, Sportix enrichment is SKIPPED: this provider
+offers no ``get_team_metadata``, team identity stays NULL, and the
+frontend fallbacks apply (WAFL sync is unaffected).
 """
 
 from __future__ import annotations

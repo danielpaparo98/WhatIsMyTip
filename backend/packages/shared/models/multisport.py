@@ -27,6 +27,7 @@ from sqlalchemy import (
     Index,
     Integer,
     String,
+    Text,
     UniqueConstraint,
     text,
 )
@@ -128,7 +129,14 @@ class Participant(Base):
 
 
 class Team(Base):
-    """Club-level extension of a team ``Participant``."""
+    """Club-level extension of a team ``Participant``.
+
+    Identity columns (migration 0011) are captured at ingestion when
+    the feed supplies them — ``logo_url`` is a full URL, the colours
+    are ``'#RRGGBB'``/``'#RRGGBBAA'`` strings.  They stay NULL for
+    feeds without identity data; the frontend then falls back to its
+    hard-coded AFL logo/colour maps.
+    """
 
     __tablename__ = "teams"
 
@@ -136,6 +144,9 @@ class Team(Base):
         Integer, ForeignKey("participants.id"), primary_key=True
     )
     abbreviation = Column(String(10), nullable=True)
+    logo_url = Column(Text, nullable=True)
+    primary_color = Column(String(9), nullable=True)
+    secondary_color = Column(String(9), nullable=True)
 
 
 class Individual(Base):

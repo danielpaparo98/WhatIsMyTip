@@ -1960,7 +1960,7 @@ wheels = [
 ]
 
 [[package]]
-name = "whatismytip-faas"
+name = "whatismytip"
 version = "1.0.0"
 source = { editable = "." }
 dependencies = [

@@ -12,7 +12,7 @@ tables, with the teams.py canonical map as a transitional AFL fallback
 until aliases are fully seeded (ADR 0001 / P1-6).
 """
 
-from typing import TYPE_CHECKING, Iterable, Optional
+from typing import Dict, Iterable, Optional
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -302,11 +302,36 @@ class ParticipantResolver:
         return None
 
     async def ensure_team(
-        self, name: str, *, aliases: Iterable[str] = ()
+        self,
+        name: str,
+        *,
+        aliases: Iterable[str] = (),
+        logo_url: Optional[str] = None,
+        primary_color: Optional[str] = None,
+        secondary_color: Optional[str] = None,
     ) -> Participant:
-        """Resolve or create a team participant, registering aliases."""
+        """Resolve or create a team participant, registering aliases.
+
+        Identity kwargs (logo URL / colours, migration 0011) are written
+        onto the Team row on create; on an EXISTING team they only
+        backfill fields still NULL — a value already on file is never
+        clobbered by a later sync.
+        """
+        identity: Dict[str, str] = {}
+        for field, value in (
+            ("logo_url", logo_url),
+            ("primary_color", primary_color),
+            ("secondary_color", secondary_color),
+        ):
+            if value:
+                identity[field] = value
+
         existing = await self.resolve(name)
         if existing is not None:
+            if identity:
+                await self._backfill_team_identity(
+                    int(existing.id), identity
+                )
             return existing
 
         from ..teams import canonical_team
@@ -316,7 +341,7 @@ class ParticipantResolver:
         self.db.add(participant)
         await self.db.flush()  # assign id
 
-        team = Team(participant_id=participant.id)
+        team = Team(participant_id=participant.id, **identity)
         self.db.add(team)
 
         for alias in aliases:
@@ -333,6 +358,27 @@ class ParticipantResolver:
             self.sport_id,
         )
         return participant
+
+    async def _backfill_team_identity(
+        self, participant_id: int, identity: Dict[str, str]
+    ) -> None:
+        """Fill NULL identity fields on an existing team's Team row."""
+        result = await self.db.execute(
+            select(Team).where(Team.participant_id == participant_id)
+        )
+        team = result.scalar_one_or_none()
+        if team is None:
+            # Data drift: a team participant without its extension row.
+            self.db.add(Team(participant_id=participant_id, **identity))
+            await self.db.flush()
+            return
+        changed = False
+        for field, value in identity.items():
+            if getattr(team, field) is None:
+                setattr(team, field, value)
+                changed = True
+        if changed:
+            await self.db.flush()
 
 
 __all__ = ["EventCRUD", "ParticipantResolver"]

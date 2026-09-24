@@ -133,3 +133,176 @@ class TestLiveWiring:
         assert STATE_LEAGUES["qaflw"].timezone == "Australia/Brisbane"
 
 
+class TestTeamIdentityWiring:
+    """Migration 0011: providers that expose ``get_team_metadata`` feed
+    the sync service's per-name identity lookup — best-effort, never
+    sync-breaking (Sportix/WAFL exposes none and stays on the frontend
+    fallbacks)."""
+
+    @pytest.mark.asyncio
+    async def test_lookup_built_from_provider_metadata(self):
+        from packages.shared.ingestion.state_leagues import (
+            build_team_metadata_lookup,
+        )
+
+        provider = MagicMock()
+        provider.source = "isports"
+        provider.get_team_metadata = AsyncMock(
+            return_value={
+                "Mt Gravatt Vultures": {
+                    "logo_url": "https://cdn.example/v.png"
+                }
+            }
+        )
+
+        lookup = await build_team_metadata_lookup(provider, 2026)
+
+        assert lookup is not None
+        provider.get_team_metadata.assert_awaited_once_with(2026)
+        assert lookup("Mt Gravatt Vultures") == {
+            "logo_url": "https://cdn.example/v.png"
+        }
+        assert lookup("Unknown FC") is None
+
+    @pytest.mark.asyncio
+    async def test_provider_without_metadata_yields_none(self):
+        from packages.shared.ingestion.state_leagues import (
+            build_team_metadata_lookup,
+        )
+
+        provider = MagicMock(spec=["sport_id", "source", "get_fixtures"])
+
+        assert await build_team_metadata_lookup(provider, 2026) is None
+
+    @pytest.mark.asyncio
+    async def test_metadata_fetch_failure_yields_none(self):
+        """A broken metadata endpoint must never break a sync pass."""
+        from packages.shared.ingestion.state_leagues import (
+            build_team_metadata_lookup,
+        )
+
+        provider = MagicMock()
+        provider.source = "isports"
+        provider.get_team_metadata = AsyncMock(
+            side_effect=RuntimeError("feed down")
+        )
+
+        assert await build_team_metadata_lookup(provider, 2026) is None
+
+    @pytest.mark.asyncio
+    async def test_empty_metadata_yields_none(self):
+        from packages.shared.ingestion.state_leagues import (
+            build_team_metadata_lookup,
+        )
+
+        provider = MagicMock()
+        provider.source = "isports"
+        provider.get_team_metadata = AsyncMock(return_value={})
+
+        assert await build_team_metadata_lookup(provider, 2026) is None
+
+    @pytest.mark.asyncio
+    async def test_run_league_sync_threads_metadata_into_service(self):
+        from types import SimpleNamespace
+
+        from packages.shared.ingestion import state_leagues
+        from packages.shared.services.local_competition_sync import (
+            LocalCompetitionSyncService,
+        )
+
+        session = AsyncMock()
+        session.commit = AsyncMock()
+        competition = SimpleNamespace(id=9, timezone="Australia/Brisbane")
+        season = SimpleNamespace(id=21, label="2026")
+
+        provider = MagicMock()
+        provider.sport_id = "afl"
+        provider.source = "isports"
+        provider.get_fixtures = AsyncMock(return_value=[])
+        provider.get_team_metadata = AsyncMock(
+            return_value={"Some Team": {"logo_url": "x"}}
+        )
+
+        def _factory():
+            return provider
+
+        fake_config = SimpleNamespace(
+            name="Queensland Australian Football League",
+            timezone="Australia/Brisbane",
+            provider_factory=_factory,
+        )
+
+        with patch(
+            "packages.shared.services.local_competition_sync.CompetitionCRUD"
+        ) as crud, patch(
+            "packages.shared.services.local_competition_sync.ParticipantResolver"
+        ) as resolver_cls, patch(
+            "packages.shared.services.local_competition_sync.EventCRUD"
+        ) as event_crud, patch.object(
+            state_leagues, "LocalCompetitionSyncService",
+            wraps=state_leagues.LocalCompetitionSyncService,
+        ) as service_cls, patch.object(
+            state_leagues, "get_league", return_value=fake_config
+        ):
+            crud.ensure_competition = AsyncMock(return_value=competition)
+            crud.ensure_season = AsyncMock(return_value=season)
+            resolver_cls.return_value.ensure_team = AsyncMock(
+                return_value=SimpleNamespace(id=1)
+            )
+            event_crud.upsert_fixture = AsyncMock(
+                return_value=SimpleNamespace(id=1)
+            )
+            service_cls.side_effect = (
+                lambda *a, **kw: LocalCompetitionSyncService(*a, **kw)
+            )
+
+            stats = await run_league_sync(session, "qafl", 2026)
+
+        assert stats["status"] == "success"
+        # The REAL build_team_metadata_lookup ran against the provider's
+        # metadata and its lookup reached the service intact.
+        provider.get_team_metadata.assert_awaited_once_with(2026)
+        lookup = service_cls.call_args.kwargs["team_metadata"]
+        assert lookup("Some Team") == {"logo_url": "x"}
+        assert lookup("Unknown") is None
+
+    @pytest.mark.asyncio
+    async def test_wafl_league_sync_stays_without_metadata(self):
+        """Sportix exposes no stable crests — WAFL keeps team_metadata
+        None (non-breaking default)."""
+        from types import SimpleNamespace
+
+        session = AsyncMock()
+        session.commit = AsyncMock()
+        competition = SimpleNamespace(id=9, timezone="Australia/Perth")
+        season = SimpleNamespace(id=21, label="2026")
+
+        with patch(
+            "packages.shared.services.local_competition_sync.CompetitionCRUD"
+        ) as crud, patch(
+            "packages.shared.services.local_competition_sync.ParticipantResolver"
+        ) as resolver_cls, patch(
+            "packages.shared.services.local_competition_sync.EventCRUD"
+        ) as event_crud:
+            crud.ensure_competition = AsyncMock(return_value=competition)
+            crud.ensure_season = AsyncMock(return_value=season)
+            resolver_cls.return_value.ensure_team = AsyncMock(
+                return_value=SimpleNamespace(id=1)
+            )
+            event_crud.upsert_fixture = AsyncMock(
+                return_value=SimpleNamespace(id=1)
+            )
+            with patch(
+                "packages.shared.ingestion.state_leagues._sportix"
+            ) as sportix_factory:
+                provider = MagicMock()
+                provider.sport_id = "afl"
+                provider.get_fixtures = AsyncMock(return_value=[])
+                sportix_factory.return_value = provider
+
+                stats = await run_league_sync(session, "wafl", 2026)
+
+        assert stats["status"] == "success"
+        assert stats["fixtures_synced"] == 0
+
+

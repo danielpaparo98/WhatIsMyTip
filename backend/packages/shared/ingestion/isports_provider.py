@@ -13,6 +13,15 @@ API shape (verified live 2026-09-24):
   location{name}, teamReports[{teamId, score, ...}], ...}] (bare list)
 * ``GET seasons/{id}/teams``        → [{id, name, logo, seasonId}]
 
+Team identity (migration 0011, verified live 2026-09-24): the
+``/teams`` payload's ``logo`` is a bare filename
+(``"<uuid>.png"``); the iSports SPA resolves it against
+``https://storage-isports-prod.s3.ap-southeast-2.amazonaws.com/images``
+(probed HTTP 200) — that pair is what
+:meth:`ISportsProvider.get_team_metadata` emits.  The API exposes NO
+per-team colours anywhere, so colours stay NULL and the frontend
+fallbacks apply.
+
 Dialect notes (real payload):
 
 * Matches reference teams by ``homeTeamId``/``awayTeamId``, so the
@@ -52,6 +61,13 @@ class ISportsProvider:
 
     sport_id = "afl"
     source = "isports"
+
+    #: Base for the bare logo filenames the ``/teams`` payload carries —
+    #: the iSports SPA builds ``${base}/${logo}`` from exactly this S3
+    #: images prefix (verified live 2026-09-24, HTTP 200).
+    TEAM_LOGO_BASE_URL = (
+        "https://storage-isports-prod.s3.ap-southeast-2.amazonaws.com/images"
+    )
 
     def __init__(
         self,
@@ -117,6 +133,32 @@ class ISportsProvider:
             self._match_to_fixture(match, season, team_names)
             for match in matches
         ]
+
+    async def get_team_metadata(self, season: int) -> Dict[str, Dict[str, Any]]:
+        """Team identity for one season (migration 0011): raw team name
+        → ``{logo_url}``.
+
+        Keys are the same raw names the match payloads use, so the sync
+        service can look identity up per fixture side.  Teams without a
+        logo are omitted; colours are left out entirely (the iSports API
+        carries none — see the module docstring).
+        """
+        season_id = await self._resolve_season_id(season)
+        teams = await self._fetch_json(f"seasons/{season_id}/teams", {})
+        if isinstance(teams, dict):  # tolerate a wrapped payload
+            teams = teams.get("teams") or []
+        metadata: Dict[str, Dict[str, Any]] = {}
+        for team in teams:
+            if not isinstance(team, dict):
+                continue
+            name = team.get("name")
+            logo = team.get("logo")
+            if not name or not logo:
+                continue
+            metadata[str(name).strip()] = {
+                "logo_url": f"{self.TEAM_LOGO_BASE_URL}/{str(logo).lstrip('/')}"
+            }
+        return metadata
 
     async def get_fixture(self, external_id: int | str) -> Optional[FixtureDTO]:
         """Not offered by the iSports API.

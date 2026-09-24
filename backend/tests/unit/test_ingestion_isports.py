@@ -197,3 +197,82 @@ class TestISportsPlumbing:
         assert "Authorization" not in headers
         assert "WhatIsMyTip" in headers["User-Agent"]
         assert headers["Accept"] == "application/json"
+
+
+class TestISportsTeamMetadata:
+    """Team identity capture (migration 0011): the /teams payload's
+    bare logo filename resolves against the iSports S3 images bucket
+    (base URL verified live 2026-09-24, HTTP 200).  The API carries no
+    per-team colours, so none are emitted."""
+
+    @pytest.mark.asyncio
+    async def test_metadata_maps_every_named_team_with_a_logo(self):
+        provider, calls = _make_provider()
+        metadata = await provider.get_team_metadata(2026)
+
+        # The real 13-team QAFL payload.
+        assert len(metadata) == 13
+        assert metadata["Mt Gravatt Vultures"] == {
+            "logo_url": (
+                "https://storage-isports-prod.s3.ap-southeast-2.amazonaws.com"
+                "/images/c39f1cef-6939-43ab-a73d-908ec643344e.jpg"
+            )
+        }
+        assert metadata["Maroochydore Roos"]["logo_url"].endswith(
+            "/images/01c164b5-7c44-43be-996d-606aadba834d.png"
+        )
+        # One teams fetch, resolved via the season id.
+        assert ("seasons/54/teams", {}) in calls
+
+    @pytest.mark.asyncio
+    async def test_teams_without_a_logo_are_omitted(self):
+        provider, _ = _make_provider()
+
+        async def logo_missing(path, params=None):
+            if path == "leagues/1/seasons":
+                return _SEASONS
+            if path == "seasons/54/teams":
+                return [
+                    {"id": 1, "name": "Has Logo", "logo": "abc.png", "seasonId": 54},
+                    {"id": 2, "name": "No Logo", "logo": None, "seasonId": 54},
+                    {"id": 3, "name": "No Field", "seasonId": 54},
+                    {"id": 4, "logo": "orphan.png", "seasonId": 54},
+                ]
+            raise AssertionError(f"unexpected call: {path}")
+
+        provider._fetch_json = logo_missing
+        metadata = await provider.get_team_metadata(2026)
+
+        assert metadata == {
+            "Has Logo": {
+                "logo_url": (
+                    "https://storage-isports-prod.s3.ap-southeast-2.amazonaws.com"
+                    "/images/abc.png"
+                )
+            }
+        }
+
+    @pytest.mark.asyncio
+    async def test_wrapped_teams_payload_is_tolerated(self):
+        provider, _ = _make_provider()
+
+        async def wrapped(path, params=None):
+            if path == "leagues/1/seasons":
+                return _SEASONS
+            if path == "seasons/54/teams":
+                return {"teams": [
+                    {"id": 1, "name": "Wrapped FC", "logo": "w.png", "seasonId": 54},
+                ]}
+            raise AssertionError(f"unexpected call: {path}")
+
+        provider._fetch_json = wrapped
+        metadata = await provider.get_team_metadata(2026)
+
+        assert set(metadata) == {"Wrapped FC"}
+        assert metadata["Wrapped FC"]["logo_url"].endswith("/images/w.png")
+
+    @pytest.mark.asyncio
+    async def test_unknown_season_raises(self):
+        provider, _ = _make_provider()
+        with pytest.raises(ValueError, match="1999"):
+            await provider.get_team_metadata(1999)
