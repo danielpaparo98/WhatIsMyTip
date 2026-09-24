@@ -11,14 +11,20 @@ Source findings (2026-09-24):
   public client credentials expose a clean JSON API. LIVE.
 * **WAFLW / Colts / Reserves** — same Sportix tenant as the WAFL
   (competition_name is the only difference). LIVE.
-* **VFL** — the competition is AFL-run and its authoritative source is
-  the AFL platform API (``api.afl.com.au/cfs/afl``, seen referenced
-  from ``afl.com.au/vfl``).  The API key/endpoints are embedded in the
-  site's JS bundles and need dedicated reverse-engineering before a
-  provider can be written. PENDING SOURCE.
-* **SANFL** — sanfl.com.au is WordPress; fixture/ladder data loads via
-  ``admin-ajax.php`` actions from a custom plugin.  The action names
-  and payload shapes still need mapping. PENDING SOURCE.
+* **AFL platform** (``api.afl.com.au/cfs/afl``) — covers AFLW
+  (CD_C264), VFL (CD_C015), VFLW (CD_C464), SANFL (CD_C016) and the
+  Talent Leagues. Auth DECODED 2026-09-24: ``POST /WMCTok`` returns a
+  short-lived token sent as the ``x-media-mis-token`` header;
+  ``GET /competitions`` works with it. REMAINING: ``/compSeasons`` and
+  ``/matches`` return 403 with the basic token — the site's
+  match-centre widget obtains richer access; next step is tracing its
+  bundle for the additional token/flow. No scraping-guess provider
+  will be written before that is resolved.
+* **SANFL** — same AFL platform coverage as above (CD_C016), plus a
+  legacy WordPress path on sanfl.com.au.
+* **QAFL / TSL** — official sites not yet probed.
+* **VFL legacy note** — vfl.com.au no longer resolves; the VFL lives
+  inside afl.com.au/vfl.
 """
 
 from __future__ import annotations
