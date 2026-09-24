@@ -71,6 +71,8 @@ class LocalCompetitionSyncService:
             label=str(self.season),
             is_current=True,
         )
+        stats["competition_id"] = competition.id
+        stats["season_id"] = season.id
 
         tz = self._competition_timezone(competition.timezone)
         resolver = ParticipantResolver(self.db, sport_id=self.provider.sport_id)
@@ -133,9 +135,16 @@ class LocalCompetitionSyncService:
 
 
 async def run_wafl_sync(
-    session: AsyncSession, season: Optional[int] = None
+    session: AsyncSession,
+    season: Optional[int] = None,
+    *,
+    mark_current: bool = True,
 ) -> Dict[str, Any]:
-    """Reusable job/script core: one WAFL competition-season sync pass."""
+    """Reusable job/script core: one WAFL competition-season sync pass.
+
+    ``mark_current=False`` for historical backfills — only the live
+    season should carry ``seasons.is_current``.
+    """
     from ..ingestion.wafl_provider import WaflProvider
 
     year = season or datetime.now().year
@@ -146,5 +155,19 @@ async def run_wafl_sync(
         season=year,
     )
     stats = await service.sync()
+    if not mark_current:
+        from sqlalchemy import update
+
+        from ..models import Season
+
+        await session.execute(
+            update(Season)
+            .where(
+                Season.competition_id == stats["competition_id"],
+                Season.label == str(year),
+            )
+            .values(is_current=False)
+        )
+        await session.commit()
     stats["status"] = "success"
     return stats

@@ -219,7 +219,7 @@ class TipGenerationService:
                         )
                         continue
 
-                    game_stats = await self._generate_for_game(game, regenerate, skip_nlp=skip_nlp)
+                    game_stats = await self._generate_for_game(game, regenerate)
 
                     stats["games_processed"] += 1
                     stats["tips_created"] += game_stats.get("tips_created", 0)
@@ -506,12 +506,20 @@ class TipGenerationService:
 
         return game_stats
 
-    async def generate_batch(self, games: List[Game], regenerate: bool = False) -> Dict[str, Any]:
+    async def generate_batch(
+        self,
+        games: List[Game],
+        regenerate: bool = False,
+        skip_nlp: bool = False,
+    ) -> Dict[str, Any]:
         """Generate tips for multiple games in batch.
 
         Args:
             games: List of games to generate tips for
             regenerate: Whether to regenerate existing tips
+            skip_nlp: Skip AI explanation/analysis/report generation
+                (no LLM is invoked when True — used by backfill/backtest
+                sweeps)
 
         Returns:
             Dictionary with aggregated generation statistics
@@ -543,7 +551,7 @@ class TipGenerationService:
                     )
                     continue
 
-                game_stats = await self._generate_for_game(game, regenerate)
+                game_stats = await self._generate_for_game(game, regenerate, skip_nlp=skip_nlp)
 
                 stats["games_processed"] += 1
                 stats["tips_created"] += game_stats.get("tips_created", 0)

@@ -219,7 +219,7 @@ class TestGenerateForRoundSessionRollback:
 
         attempted: list[int] = []
 
-        async def fake_generate(game, regenerate=False):
+        async def fake_generate(game, regenerate=False, skip_nlp=False):
             attempted.append(game.id)
             if game.id == 1:
                 raise RuntimeError("simulated game failure")
