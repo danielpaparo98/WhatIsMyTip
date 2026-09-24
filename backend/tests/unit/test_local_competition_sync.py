@@ -42,6 +42,47 @@ def _fixture(**overrides):
 
 class TestLocalCompetitionSync:
     @pytest.mark.asyncio
+    async def test_competition_timezone_is_configurable(self):
+        """SANFL (Adelaide) / VFL (Melbourne) must register with their own
+        timezone — not the WAFL bootstrap's Perth default."""
+        db = AsyncMock()
+        db.flush = AsyncMock()
+        db.commit = AsyncMock()
+        competition = SimpleNamespace(id=4, timezone="Australia/Adelaide")
+        season = SimpleNamespace(id=12, label="2026")
+
+        with patch(
+            "packages.shared.services.local_competition_sync.CompetitionCRUD"
+        ) as crud, patch(
+            "packages.shared.services.local_competition_sync.ParticipantResolver"
+        ) as resolver_cls, patch(
+            "packages.shared.services.local_competition_sync.EventCRUD"
+        ) as event_crud:
+            crud.ensure_competition = AsyncMock(return_value=competition)
+            crud.ensure_season = AsyncMock(return_value=season)
+            resolver_cls.return_value.ensure_team = AsyncMock(
+                return_value=SimpleNamespace(id=71)
+            )
+            event_crud.upsert_fixture = AsyncMock(
+                return_value=SimpleNamespace(id=501)
+            )
+            provider = MagicMock()
+            provider.sport_id = "afl"
+            provider.get_fixtures = AsyncMock(return_value=[])
+
+            service = LocalCompetitionSyncService(
+                db,
+                provider=provider,
+                competition_name="South Australian National Football League",
+                season=2026,
+                competition_timezone="Australia/Adelaide",
+            )
+            await service.sync()
+
+        kwargs = crud.ensure_competition.await_args.kwargs
+        assert kwargs["timezone"] == "Australia/Adelaide"
+
+    @pytest.mark.asyncio
     async def test_registers_competition_season_and_upserts(self):
         db = AsyncMock()
         db.flush = AsyncMock()
@@ -100,8 +141,9 @@ class TestLocalCompetitionSync:
 
     @pytest.mark.asyncio
     async def test_tz_conversion_uses_competition_timezone(self):
-        """The competition's timezone — not a hardcoded one — drives the
-        naive conversion (a 2027 east-coast local league would use its own)."""
+        """The configured competition timezone — not a hardcoded one —
+        drives the naive conversion (a 2027 east-coast local league
+        would use its own)."""
         db = AsyncMock()
         db.flush = AsyncMock()
         db.commit = AsyncMock()
@@ -136,7 +178,11 @@ class TestLocalCompetitionSync:
             )
 
             service = LocalCompetitionSyncService(
-                db, provider=provider, competition_name="X", season=2026
+                db,
+                provider=provider,
+                competition_name="X",
+                season=2026,
+                competition_timezone="Australia/Sydney",
             )
             await service.sync()
 

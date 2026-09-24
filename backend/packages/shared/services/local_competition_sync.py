@@ -37,6 +37,7 @@ class LocalCompetitionSyncService:
         season: int,
         competition_tier: str = "state",
         competition_format: str = "rounds",
+        competition_timezone: Optional[str] = None,
     ):
         self.db = db
         self.provider = provider
@@ -44,6 +45,9 @@ class LocalCompetitionSyncService:
         self.season = season
         self.competition_tier = competition_tier
         self.competition_format = competition_format
+        # Per-competition venue timezone (P5: SANFL=Adelaide,
+        # VFL=Melbourne, …).  None ⇒ the sport default (AFL: Perth).
+        self.competition_timezone = competition_timezone or DEFAULT_CONTEXT.cron_timezone
         self.logger = logger
 
     async def sync(self) -> Dict[str, Any]:
@@ -63,7 +67,7 @@ class LocalCompetitionSyncService:
             name=self.competition_name,
             tier=self.competition_tier,
             format=self.competition_format,
-            timezone=DEFAULT_CONTEXT.cron_timezone,
+            timezone=self.competition_timezone,
         )
         season = await CompetitionCRUD.ensure_season(
             self.db,
@@ -74,7 +78,7 @@ class LocalCompetitionSyncService:
         stats["competition_id"] = competition.id
         stats["season_id"] = season.id
 
-        tz = self._competition_timezone(competition.timezone)
+        tz = self._competition_timezone(self.competition_timezone)
         resolver = ParticipantResolver(self.db, sport_id=self.provider.sport_id)
         fixtures = await self.provider.get_fixtures(self.season)
         self.logger.info("Fetched %d fixtures for %s", len(fixtures), start_label)
