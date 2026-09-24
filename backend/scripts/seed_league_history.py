@@ -1,17 +1,22 @@
-"""Full WAFL history seed: 5 seasons of data + model runs, NO LLMs.
+"""Full league history seed: N seasons of data + model runs, NO LLMs.
 
 Usage (demo DB via DATABASE_URL):
-    uv run python scripts/seed_wafl_history.py --seasons 2022 2023 2024 2025 2026
+    uv run python scripts/seed_league_history.py --league wafl \
+        --seasons 2022 2023 2024 2025 2026
+
+Leagues come from ``STATE_LEAGUES`` (packages/shared/ingestion/
+state_leagues.py): wafl, waflw live today; sanfl/vfl/... as their
+providers land.
 
 Pipeline per season:
-  1. run_wafl_sync — fixtures/results onto the events tables.
+  1. run_league_sync — fixtures/results onto the events tables.
   2. PROJECTION: mirror events into the legacy ``games`` table shape —
      the prediction models still read the legacy schema until the
      service cutover.  Safe only in an AFL-free (demo) database: the
      legacy table has no competition column (that is exactly why 0010
      exists).  This script is a DEMO/PILOT tool, not a production path.
 Then:
-  3. EloModel.update_cache — WAFL Elo ratings from the projected games.
+  3. EloModel.update_cache — ratings from the projected games.
   4. Model sweeps + heuristics for every completed game with
      ``skip_nlp=True`` — the OpenRouter explanations/reports are never
      constructed, so no LLM is invoked.
@@ -24,23 +29,21 @@ from __future__ import annotations
 import argparse
 import asyncio
 import time
-from typing import List, Optional
+from typing import List
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import async_sessionmaker, AsyncSession
 
 from packages.shared.db import get_engine
 from packages.shared.crud.games import GameCRUD
-from packages.shared.logger import get_logger
+from packages.shared.ingestion.state_leagues import run_league_sync
 from packages.shared.models_ml.elo import EloModel
 from packages.shared.services.backtest import BacktestService
-from packages.shared.services.local_competition_sync import run_wafl_sync
 from packages.shared.services.tip_generation import TipGenerationService
 
-logger = get_logger(__name__)
-
 # events → legacy games projection (one row per event; scores from the
-# event_participant sides).
+# event_participant sides).  Slug is deterministic per event id, so
+# re-runs never duplicate.
 _PROJECTION_SQL = text(
     """
     INSERT INTO games (slug, round_id, season, home_team, away_team,
@@ -69,10 +72,7 @@ _PROJECTION_SQL = text(
     """
 )
 
-# Slug is deterministic per event id, so re-runs must not duplicate.
-_EXISTING_SQL = text(
-    "SELECT count(*) FROM games WHERE slug LIKE 'w%'"
-)
+_EXISTING_SQL = text("SELECT count(*) FROM games WHERE slug LIKE 'w%'")
 
 
 async def _project_events_to_games(session: AsyncSession, labels: List[str]) -> int:
@@ -83,45 +83,37 @@ async def _project_events_to_games(session: AsyncSession, labels: List[str]) -> 
     return after - before
 
 
-async def main(seasons: List[int]) -> None:
+async def main(league: str, seasons: List[int]) -> None:
     engine = get_engine()
     session_factory = async_sessionmaker(engine, expire_on_commit=False)
 
-    # ------------------------------------------------------------------
     # 1. Multi-season sync (newest last so is_current lands on it).
-    # ------------------------------------------------------------------
     async with session_factory() as session:
         newest = max(seasons)
         for year in sorted(seasons):
-            stats = await run_wafl_sync(
-                session, season=year, mark_current=(year == newest)
+            stats = await run_league_sync(
+                session, league, year, mark_current=(year == newest)
             )
             print(
-                f"[sync] {year}: {stats['fixtures_synced']} fixtures, "
+                f"[sync] {league} {year}: {stats['fixtures_synced']} fixtures, "
                 f"{len(stats['errors'])} errors"
             )
             for error in stats["errors"][:5]:
                 print(f"       ERROR: {error}")
 
-    # ------------------------------------------------------------------
     # 2. Project events → legacy games shape (models read legacy).
-    # ------------------------------------------------------------------
     async with session_factory() as session:
         projected = await _project_events_to_games(
             session, [str(y) for y in seasons]
         )
-    print(f"[project] {projected} WAFL games mirrored into legacy `games`")
+    print(f"[project] {projected} games mirrored into legacy `games`")
 
-    # ------------------------------------------------------------------
     # 3. Elo ratings from the projected history.
-    # ------------------------------------------------------------------
     async with session_factory() as session:
         await EloModel.update_cache(session)
     print("[elo] ratings cache updated")
 
-    # ------------------------------------------------------------------
     # 4. Model sweeps + heuristics (skip_nlp=True — no LLM).
-    # ------------------------------------------------------------------
     sweep_start = time.time()
     async with session_factory() as session:
         service = TipGenerationService(session)
@@ -142,9 +134,7 @@ async def main(seasons: List[int]) -> None:
             )
     print(f"[tips] sweep took {time.time() - sweep_start:.0f}s")
 
-    # ------------------------------------------------------------------
     # 5. Backtest — per-season model/heuristic accuracy.
-    # ------------------------------------------------------------------
     backtest = BacktestService()
     async with session_factory() as session:
         for year in sorted(seasons):
@@ -156,7 +146,7 @@ async def main(seasons: List[int]) -> None:
                     f"acc={row['overall_accuracy']:.3f}  "
                     f"tips={row['total_tips']}"
                 )
-            print(f"  --- heuristics (fake even-money profit) ---")
+            print("  --- heuristics (fake even-money profit) ---")
             for heuristic in ("best_bet", "weighted_tip", "yolo"):
                 try:
                     hb = await backtest.calculate_backtest_from_tips(
@@ -179,6 +169,11 @@ async def main(seasons: List[int]) -> None:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
+        "--league",
+        default="wafl",
+        help="League key from STATE_LEAGUES (wafl, waflw, ...)",
+    )
+    parser.add_argument(
         "--seasons",
         type=int,
         nargs="+",
@@ -186,4 +181,4 @@ if __name__ == "__main__":
         help="Season years to seed (default: 2022-2026)",
     )
     args = parser.parse_args()
-    asyncio.run(main(args.seasons))
+    asyncio.run(main(args.league, args.seasons))

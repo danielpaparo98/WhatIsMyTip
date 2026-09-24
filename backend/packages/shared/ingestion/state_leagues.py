@@ -83,6 +83,38 @@ STATE_LEAGUES: Dict[str, LeagueConfig] = {
             "dedicated reverse-engineering pass"
         ),
     ),
+    "vflw": LeagueConfig(
+        name="Victorian Women's Football League",
+        timezone="Australia/Melbourne",
+        provider_factory=None,
+        status="pending-source",
+        source_note="Same AFL platform as the VFL — unlocked together with it",
+    ),
+    "aflw": LeagueConfig(
+        name="AFL Women's",
+        timezone="Australia/Melbourne",
+        provider_factory=None,
+        status="pending-source",
+        source_note=(
+            "AFL-run (national). Squiggle is AFL men's only; "
+            "authoritative source is the AFL platform API — unlocked "
+            "together with the VFL pass"
+        ),
+    ),
+    "qafl": LeagueConfig(
+        name="Queensland Australian Football League",
+        timezone="Australia/Brisbane",
+        provider_factory=None,
+        status="source-unknown",
+        source_note="aflq.com.au — platform not yet probed",
+    ),
+    "tsl": LeagueConfig(
+        name="Tasmanian State League",
+        timezone="Australia/Hobart",
+        provider_factory=None,
+        status="source-unknown",
+        source_note="AFL Tasmania — platform not yet probed",
+    ),
 }
 
 

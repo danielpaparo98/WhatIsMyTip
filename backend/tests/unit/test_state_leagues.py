@@ -15,7 +15,7 @@ from packages.shared.ingestion.state_leagues import (
 
 class TestRegistry:
     def test_all_state_leagues_registered(self):
-        assert {"wafl", "waflw", "sanfl", "vfl"} <= set(STATE_LEAGUES)
+        assert {"wafl", "waflw", "sanfl", "vfl", "vflw", "aflw", "qafl", "tsl"} <= set(STATE_LEAGUES)
 
     def test_timezones_differ_by_state(self):
         assert STATE_LEAGUES["wafl"].timezone == "Australia/Perth"
