@@ -89,14 +89,28 @@ class SportixProvider:
         }
 
     async def _default_fetch(self, path: str, params: Dict[str, Any]) -> Any:
+        import asyncio
+
         import httpx
 
-        async with httpx.AsyncClient(
-            timeout=30.0, verify=True, headers=self._headers()
-        ) as client:
-            response = await client.get(f"{self._api_url}/{path}", params=params)
-            response.raise_for_status()
-            return response.json()
+        # The Sportix edge is flaky under load (30s read timeouts,
+        # Cloudflare 522s, dropped connections ~1-in-3 observed during
+        # the 8-league seeding): retry with backoff.
+        last_error: Optional[Exception] = None
+        for attempt in range(3):
+            try:
+                async with httpx.AsyncClient(
+                    timeout=30.0, verify=True, headers=self._headers()
+                ) as client:
+                    response = await client.get(
+                        f"{self._api_url}/{path}", params=params
+                    )
+                    response.raise_for_status()
+                    return response.json()
+            except (httpx.TimeoutException, httpx.TransportError) as e:
+                last_error = e
+                await asyncio.sleep(1.5 * (attempt + 1))
+        raise last_error  # type: ignore[misc]
 
     # ------------------------------------------------------------------
 
@@ -128,6 +142,14 @@ class SportixProvider:
                 continue
             for match in competition.get("matches", []):
                 if match.get("bye"):
+                    continue
+                # PLACEHOLDER finals (e.g. AFLW "1st Semi Final" TBC
+                # teams) share one natural key — venue "To Be
+                # Confirmed" at a nominal time — which collides in the
+                # events natural-key upsert. Skip them; they arrive
+                # for real once teams are confirmed.
+                venue_name = (match.get("venue") or {}).get("name") or ""
+                if venue_name.strip().lower() == "to be confirmed":
                     continue
                 fixtures.append(self._match_to_fixture(match, season))
         return fixtures

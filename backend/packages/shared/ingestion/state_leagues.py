@@ -76,7 +76,7 @@ STATE_LEAGUES: Dict[str, LeagueConfig] = {
     "sanfl": LeagueConfig(
         name="South Australian National Football League",
         timezone="Australia/Adelaide",
-        provider_factory=lambda: _afl_platform(4, "SANFL"),
+        provider_factory=lambda: _afl_platform(14, "SANFL"),
         status="live",
         source_note="aflapi.afl.com.au/afl/v2 (open)",
     ),
@@ -90,7 +90,7 @@ STATE_LEAGUES: Dict[str, LeagueConfig] = {
     "vflw": LeagueConfig(
         name="Victorian Women's Football League",
         timezone="Australia/Melbourne",
-        provider_factory=lambda: _afl_platform(8, "VFLW"),
+        provider_factory=lambda: _afl_platform(11, "VFLW"),
         status="live",
         source_note="aflapi.afl.com.au/afl/v2 (open)",
     ),

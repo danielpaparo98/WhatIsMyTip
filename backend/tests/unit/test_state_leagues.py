@@ -94,7 +94,14 @@ class TestLiveWiring:
             AflPlatformProvider,
         )
 
-        for key, competition_id in (("vfl", 7), ("aflw", 3), ("vflw", 8), ("sanfl", 4)):
+        # Verified against the live platform (agent recon 2026-09-24):
+        # 8 was a 2020 stub and 4 was "NAB League Boys".
+        for key, competition_id in (
+            ("vfl", 7),
+            ("aflw", 3),
+            ("vflw", 11),
+            ("sanfl", 14),
+        ):
             config = STATE_LEAGUES[key]
             assert config.status == "live", key
             assert config.provider_factory is not None, key
