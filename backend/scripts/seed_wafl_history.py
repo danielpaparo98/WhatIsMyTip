@@ -131,7 +131,9 @@ async def main(seasons: List[int]) -> None:
             if not done:
                 print(f"[tips] {year}: no completed games")
                 continue
-            stats = await service.generate_batch(done, regenerate=False)
+            stats = await service.generate_batch(
+                done, regenerate=False, skip_nlp=True
+            )
             print(
                 f"[tips] {year}: {stats['games_processed']} games, "
                 f"{stats['tips_created']} tips, "
