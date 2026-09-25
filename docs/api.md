@@ -122,6 +122,49 @@ scope other queries accordingly.  Game responses now also carry a
 `squiggle_id` field is **deprecated** and will be removed after a
 deprecation window (P3-2 / ADR 0001).
 
+### Events (multi-league read surface, ADR 0001)
+
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| `GET` | `/api/events` | public | List events for a competition season, joined with their participants (query: `competition` id, `season` label e.g. `2026`, optional `round`, `limit` default 100). 404 when the competition/season is unknown. |
+| `GET` | `/api/events/{slug}` | public | Single event with its participants. 404 when absent. |
+
+Serves the sport-generic 0010 `events`/`event_participants` tables (ADR
+0001) so multi-league data is reachable.  Discover valid
+`competition`/`season` values via `GET /api/sports`.  The legacy
+`/api/games` routes remain available unchanged during the deprecation
+window.
+
+**Example**:
+
+```bash
+curl 'http://localhost:8000/api/events?competition=1&season=2026&round=1'
+curl http://localhost:8000/api/events/wafl-abc12345
+```
+
+```json
+{
+  "events": [
+    {
+      "id": 501,
+      "slug": "wafl-abc12345",
+      "round_id": 1,
+      "venue": "Lane Group Stadium",
+      "starts_at": "2026-04-03T13:10:00",
+      "status": "completed",
+      "completed": true,
+      "competition": "West Australian Football League",
+      "season": "2026",
+      "participants": [
+        {"side": "home", "participant_name": "Peel Thunder", "score": 91, "is_winner": true},
+        {"side": "away", "participant_name": "East Fremantle", "score": 78, "is_winner": false}
+      ]
+    }
+  ],
+  "count": 1
+}
+```
+
 ### Games
 
 | Method | Path | Auth | Description |

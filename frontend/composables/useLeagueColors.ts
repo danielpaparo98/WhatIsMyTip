@@ -8,9 +8,9 @@
 //
 // These are HAND-CURATED from the clubs' official branding — logos are
 // captured at ingestion (Sportix) but colours are not exposed by any
-// feed. Entries without a TODO(colors) comment follow well-established
-// club identities; commented ones are best-effort and worth verifying
-// against current official style guides.
+// feed. Entries were verified in Sep 2026 against Wikipedia club articles
+// (infobox colours/kits) and official club sites; the few still carrying
+// a TODO(colors) comment resisted sourcing and are best effort.
 //
 // AFL-affiliated entries reuse the palette from useTeamColors.ts so
 // the reserves/VFL sides match their parent clubs exactly.
@@ -32,151 +32,152 @@ const afl = (canonical: string): ClubColors => {
 
 // WAFL's ten clubs — shared by WAFLW (same clubs, women's competition).
 const WAFL_CLUBS: LeaguePalette = {
-  // TODO(colors): verify — navy/gold, exact shades unofficial.
-  Claremont: { primary: '#002E5D', secondary: '#F2A900' },
+  // Wikipedia infobox: navy #0C2340 / gold #FFC62B.
+  Claremont: { primary: '#0C2340', secondary: '#FFC62B' },
   'East Fremantle': { primary: '#003DA5', secondary: '#FFFFFF' },
-  // TODO(colors): verify — black with royal blue, exact blue unofficial.
-  'East Perth': { primary: '#000000', secondary: '#2B4C97' },
-  // TODO(colors): verify — navy/gold lightning branding.
-  'Peel Thunder': { primary: '#1B3C8C', secondary: '#FFC655' },
-  // TODO(colors): verify — red/black "Demons".
-  Perth: { primary: '#C8102E', secondary: '#000000' },
+  // Wikipedia infobox: blue #003D7B, black (colours "Blue, Black").
+  'East Perth': { primary: '#003D7B', secondary: '#000000' },
+  // Wikipedia infobox: dark blue #000066, white, teal accent.
+  'Peel Thunder': { primary: '#000066', secondary: '#FFFFFF' },
+  // Wikipedia infobox: black, red #DE132E (black kit body).
+  Perth: { primary: '#000000', secondary: '#DE132E' },
   'South Fremantle': { primary: '#D71920', secondary: '#FFFFFF' },
-  // TODO(colors): verify — maroon/gold "Lions".
-  Subiaco: { primary: '#7A263A', secondary: '#FFC655' },
+  // Wikipedia infobox: maroon #860038 / gold #FFC423.
+  Subiaco: { primary: '#860038', secondary: '#FFC423' },
   'Swan Districts': { primary: '#000000', secondary: '#FFFFFF' },
-  // TODO(colors): verify — cardinal red over navy.
-  'West Perth': { primary: '#9E1B32', secondary: '#002B5C' },
+  // Wikipedia: "cardinal and navy"; red hex #B50000, navy shade approximate.
+  'West Perth': { primary: '#B50000', secondary: '#002B5C' },
   // West Coast reserves — parent-club palette.
   'West Coast': afl('WestCoast'),
 }
 
 const VFL_CLUBS: LeaguePalette = {
   'Box Hill Hawks': afl('Hawthorn'),
-  // TODO(colors): verify — Melbourne-aligned, red over navy.
-  'Casey Demons': { primary: '#002B5C', secondary: '#E31937' },
+  // Melbourne's aligned reserves side — parent-club palette.
+  'Casey Demons': afl('Melbourne'),
   Collingwood: afl('Collingwood'),
   Essendon: afl('Essendon'),
-  // TODO(colors): verify — "Dolphins", commonly rendered purple/gold.
-  Frankston: { primary: '#3F2A8C', secondary: '#FFC655' },
+  // Wikipedia infobox: black, white, red (black kit body).
+  Frankston: { primary: '#000000', secondary: '#FFFFFF' },
   Geelong: afl('Geelong'),
   'North Melbourne': afl('NorthMelbourne'),
-  // TODO(colors): verify — "the Borough", blue/white.
-  'Port Melbourne': { primary: '#003DA5', secondary: '#FFFFFF' },
+  // Wikipedia infobox: blue #253A75, red (blue kit with red stripes).
+  'Port Melbourne': { primary: '#253A75', secondary: '#D71920' },
   Richmond: afl('Richmond'),
-  // TODO(colors): verify — "Zebras", red/white.
-  Sandringham: { primary: '#D71920', secondary: '#FFFFFF' },
-  // TODO(colors): verify — navy/gold/white shark branding.
+  // Wikipedia: black, gold #FED102, blue (documented since 1929).
+  Sandringham: { primary: '#000000', secondary: '#FED102' },
+  // TODO(colors): unverified — best effort
   Southport: { primary: '#0C2F6B', secondary: '#F2C94C' },
   'Sydney Swans': afl('Sydney'),
-  // TODO(colors): verify — "Tigers", gold/black stripes.
-  Werribee: { primary: '#FFC655', secondary: '#000000' },
-  // TODO(colors): verify — "Seagulls", navy/white.
-  Williamstown: { primary: '#002B5C', secondary: '#FFFFFF' },
-  // TODO(colors): verify — "Lions", royal blue/white.
-  Coburg: { primary: '#1D4E9E', secondary: '#FFFFFF' },
+  // Wikipedia infobox: black, gold #FED102 (gold tiger kit).
+  Werribee: { primary: '#FED102', secondary: '#000000' },
+  // Wikipedia infobox: blue #224B8E / gold #F5C751.
+  Williamstown: { primary: '#224B8E', secondary: '#F5C751' },
+  // Wikipedia: "retained navy blue and red as its main colours".
+  Coburg: { primary: '#002B5C', secondary: '#D71920' },
   'Brisbane Lions': afl('Brisbane'),
   Carlton: afl('Carlton'),
-  // TODO(colors): verify — navy/white, Carlton-aligned.
-  'Northern Bullants': { primary: '#14264E', secondary: '#FFFFFF' },
+  // Carlton's aligned reserves side — parent-club palette.
+  'Northern Bullants': afl('Carlton'),
 }
 
 // VFLW shares most VFL clubs plus women's-only sides.
 const VFLW_CLUBS: LeaguePalette = {
   ...VFL_CLUBS,
-  // TODO(colors): verify — "Falcons", green/white.
+  // TODO(colors): unverified — best effort (green/white; no source found)
   'Darebin Falcons': { primary: '#1B6B45', secondary: '#FFFFFF' },
-  // TODO(colors): verify — St Kilda-aligned red/white/black.
+  // Wikipedia infobox: red #ED0F05, white, black (St Kilda-aligned).
   'Southern Saints': { primary: '#ED0F05', secondary: '#FFFFFF' },
 }
 
 const SANFL_CLUBS: LeaguePalette = {
   Adelaide: afl('Adelaide'),
-  // TODO(colors): verify — "the Bays", navy/white.
-  Glenelg: { primary: '#002E5D', secondary: '#FFFFFF' },
+  // Wikipedia infobox: black, gold #FEBC03 (black kit body).
+  Glenelg: { primary: '#000000', secondary: '#FEBC03' },
   'North Adelaide': { primary: '#D71920', secondary: '#FFFFFF' },
-  // TODO(colors): verify — "Redlegs", red over blue.
-  Norwood: { primary: '#D71920', secondary: '#002B5C' },
+  // Wikipedia infobox: navy #001448, red #EE0F49 (navy kit body).
+  Norwood: { primary: '#001448', secondary: '#EE0F49' },
   'Port Adelaide Magpies': { primary: '#000000', secondary: '#FFFFFF' },
-  // TODO(colors): verify — "Panthers", navy/white.
-  'South Adelaide': { primary: '#002B5C', secondary: '#FFFFFF' },
+  // Wikipedia infobox: navy #021637, white.
+  'South Adelaide': { primary: '#021637', secondary: '#FFFFFF' },
   // "Double Blues" — royal over navy.
   Sturt: { primary: '#2B4C97', secondary: '#0C2F6B' },
   'West Adelaide': { primary: '#C8102E', secondary: '#000000' },
   // "Eagles" — navy/gold; AFL platform uses both spellings.
   'Woodville-West Torrens': { primary: '#003DA5', secondary: '#F2C94C' },
   Eagles: { primary: '#003DA5', secondary: '#F2C94C' },
-  // TODO(colors): verify — red/white/blue "Bulldogs".
-  'Central District': { primary: '#C8102E', secondary: '#002B5C' },
+  // Wikipedia kit: blue #072E9D body with red #B50000.
+  'Central District': { primary: '#072E9D', secondary: '#B50000' },
 }
 
 const QAFL_CLUBS: LeaguePalette = {
-  // TODO(colors): verify — "Hornets", black/gold.
-  'Aspley Hornets': { primary: '#000000', secondary: '#F2C94C' },
-  // TODO(colors): verify — Geelong-aligned blue/white hoops.
-  'Broadbeach Cats': { primary: '#003DA5', secondary: '#FFFFFF' },
-  // TODO(colors): verify — black/white.
-  'Coorparoo Kings': { primary: '#000000', secondary: '#FFFFFF' },
+  // Wikipedia infobox: brown #814102 / gold #FFCC00 (hornet colours).
+  'Aspley Hornets': { primary: '#814102', secondary: '#FFCC00' },
+  // Wikipedia infobox: navy #1C3C63, white.
+  'Broadbeach Cats': { primary: '#1C3C63', secondary: '#FFFFFF' },
+  // Official club site theme: navy #0A2240, white.
+  'Coorparoo Kings': { primary: '#0A2240', secondary: '#FFFFFF' },
   'Gold Coast Suns': afl('GoldCoast'),
   'Brisbane Lions': afl('Brisbane'),
-  // TODO(colors): verify — "Tigers", black/gold.
-  'Labrador Tigers': { primary: '#000000', secondary: '#F2C94C' },
-  // TODO(colors): verify — "Roos", blue/white.
-  Maroochydore: { primary: '#2B4C97', secondary: '#FFFFFF' },
-  // TODO(colors): verify — "Panthers", black/white.
+  // Wikipedia infobox: black / gold #FFCC00.
+  'Labrador Tigers': { primary: '#000000', secondary: '#FFCC00' },
+  // Wikipedia infobox: green #006600 / gold #FFCC00.
+  Maroochydore: { primary: '#006600', secondary: '#FFCC00' },
+  // TODO(colors): unverified — best effort (black/white; no source found)
   'Morningside Panthers': { primary: '#000000', secondary: '#FFFFFF' },
-  // TODO(colors): verify — "Lions", maroon/gold.
+  // TODO(colors): unverified — best effort (maroon/gold; no source found)
   'Moreton Bay Lions': { primary: '#6E1E3C', secondary: '#F2C94C' },
-  // TODO(colors): verify — "Vultures", maroon/white.
+  // TODO(colors): unverified — best effort (maroon/white; no source found)
   'Mount Gravatt Vultures': { primary: '#6E1E3C', secondary: '#FFFFFF' },
-  // TODO(colors): verify — "Tigers", black/gold.
-  'Noosa Tigers': { primary: '#000000', secondary: '#F2C94C' },
-  // TODO(colors): verify — "Lions", maroon/gold.
-  'Palm Beach Currumbin Lions': { primary: '#6E1E3C', secondary: '#F2C94C' },
-  // TODO(colors): verify — "Sharks", navy/red.
+  // Official club site theme: red #DF1717, navy #0B1D3B, amber accent.
+  'Noosa Tigers': { primary: '#DF1717', secondary: '#0B1D3B' },
+  // Wikipedia infobox: maroon #800000 / gold #FFCC00 (blue accent).
+  'Palm Beach Currumbin Lions': { primary: '#800000', secondary: '#FFCC00' },
+  // TODO(colors): unverified — best effort (navy/red; no source found)
   'Redland-Victoria Point Sharks': { primary: '#0C2F6B', secondary: '#D71920' },
-  // TODO(colors): verify — "Magpies", black/white.
+  // TODO(colors): unverified — best effort (black/white; no source found)
   'Sherwood Magpies': { primary: '#000000', secondary: '#FFFFFF' },
   Southport: VFL_CLUBS.Southport,
-  // TODO(colors): verify — "Demons", red/blue.
-  'Surfers Paradise Demons': { primary: '#D71920', secondary: '#002B5C' },
-  // TODO(colors): verify — red/white.
-  'UQ Red Lions': { primary: '#C8102E', secondary: '#FFFFFF' },
-  // TODO(colors): verify — "Gorillas", black/white.
+  // Wikipedia infobox: navy #000066, red #FF0000.
+  'Surfers Paradise Demons': { primary: '#000066', secondary: '#FF0000' },
+  // Wikipedia infobox: maroon #8A0D2B, blue #035BA9.
+  'UQ Red Lions': { primary: '#8A0D2B', secondary: '#035BA9' },
+  // TODO(colors): unverified — best effort (black/white; no source found)
   'Wilston Grange Gorillas': { primary: '#000000', secondary: '#FFFFFF' },
 }
 
-// Tasmania — TSL/legacy regional leagues, thinnest confidence of the
-// set; every entry needs verification.
+// Tasmania — TSL/legacy regional leagues. Verified against Wikipedia
+// club articles (infobox colours) where they exist; a couple of small
+// clubs resist sourcing and stay best-effort.
 const TAS_MAN_CLUBS: LeaguePalette = {
-  // TODO(colors): verify — "Magpies", black/white.
+  // Wikipedia infobox: black, white (teal accent).
   Devonport: { primary: '#000000', secondary: '#FFFFFF' },
-  // TODO(colors): verify — "Robins", black/white.
-  Ulverstone: { primary: '#000000', secondary: '#FFFFFF' },
-  // TODO(colors): verify — "Two Blues", navy/sky.
-  Penguin: { primary: '#002B5C', secondary: '#7FB2E5' },
-  // TODO(colors): verify — "Cats", blue/white.
-  Wynyard: { primary: '#003DA5', secondary: '#FFFFFF' },
-  // TODO(colors): verify — "Demons", red/black.
-  Latrobe: { primary: '#C8102E', secondary: '#000000' },
-  // TODO(colors): verify — "Swans", red/white.
-  'East Devonport': { primary: '#D71920', secondary: '#FFFFFF' },
-  // TODO(colors): verify — "Saints", blue/red.
+  // Wikipedia infobox: red #CC2031, black ("Robins").
+  Ulverstone: { primary: '#CC2031', secondary: '#000000' },
+  // Wikipedia infobox: navy #003399 / sky #66CCFF ("Two Blues").
+  Penguin: { primary: '#003399', secondary: '#66CCFF' },
+  // Wikipedia infobox: black, white.
+  Wynyard: { primary: '#000000', secondary: '#FFFFFF' },
+  // Wikipedia infobox: navy #000066, red #FF0000 ("Demons").
+  Latrobe: { primary: '#000066', secondary: '#FF0000' },
+  // Wikipedia infobox: red #E1251B, white ("Swans").
+  'East Devonport': { primary: '#E1251B', secondary: '#FFFFFF' },
+  // TODO(colors): unverified — best effort (blue/red; no source found)
   Smithton: { primary: '#2B4C97', secondary: '#D71920' },
 }
 
 const TAS_SOUTH_CLUBS: LeaguePalette = {
-  // TODO(colors): verify — "Roos", blue/white.
-  Clarence: { primary: '#002B5C', secondary: '#FFFFFF' },
-  // TODO(colors): verify — "Magpies", black/white with red trim.
+  // Wikipedia infobox: red #B50000, white ("Roos").
+  Clarence: { primary: '#B50000', secondary: '#FFFFFF' },
+  // Wikipedia infobox: black, white ("Magpies").
   Glenorchy: { primary: '#000000', secondary: '#FFFFFF' },
-  // TODO(colors): verify — "Tigers", black/gold.
-  Kingborough: { primary: '#000000', secondary: '#F2C94C' },
-  // TODO(colors): verify — "Demons", red/blue.
-  'North Hobart': { primary: '#C8102E', secondary: '#002B5C' },
-  // TODO(colors): verify — "Bombers", blue/red.
-  Lauderdale: { primary: '#003DA5', secondary: '#D71920' },
-  // TODO(colors): verify — "Eagles", blue/white.
+  // Wikipedia infobox: black / gold #FFCC00 ("Tigers").
+  Kingborough: { primary: '#000000', secondary: '#FFCC00' },
+  // Wikipedia infobox: blue #000066, red #FF0000 ("Demons").
+  'North Hobart': { primary: '#000066', secondary: '#FF0000' },
+  // Wikipedia: red/black "Bombers" (black kit body; formerly blue/white Cats).
+  Lauderdale: { primary: '#000000', secondary: '#FF0000' },
+  // TODO(colors): unverified — best effort (blue/white; no source found)
   'New Norfolk': { primary: '#2B4C97', secondary: '#FFFFFF' },
 }
 
@@ -196,15 +197,12 @@ export const LEAGUE_COLORS: Record<string, LeaguePalette> = {
     ]),
   ),
   tsl: {
-    // TODO(colors): verify — North Launceston "Bombers", black/gold.
-    'North Launceston': { primary: '#000000', secondary: '#F2C94C' },
-    // TODO(colors): verify — Launceston "Blues", navy/white.
-    Launceston: { primary: '#0C2F6B', secondary: '#FFFFFF' },
-    // TODO(colors): verify — Glenorchy, see SFL.
+    // Wikipedia infobox: black, red #FF0000 ("Northern Bombers").
+    'North Launceston': { primary: '#000000', secondary: '#FF0000' },
+    // Wikipedia infobox: navy #050F40, white ("Blues").
+    Launceston: { primary: '#050F40', secondary: '#FFFFFF' },
     Glenorchy: TAS_SOUTH_CLUBS.Glenorchy,
-    // TODO(colors): verify — Clarence, see SFL.
     Clarence: TAS_SOUTH_CLUBS.Clarence,
-    // TODO(colors): verify — Kingborough, see SFL.
     Kingborough: TAS_SOUTH_CLUBS.Kingborough,
   },
   nwfl: TAS_MAN_CLUBS,

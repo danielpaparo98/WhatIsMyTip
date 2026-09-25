@@ -25,6 +25,7 @@ from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from starlette.middleware.cors import CORSMiddleware
 
+from app.api.events import router as events_router
 from app.api.health import router as health_router
 from app.core.exceptions import BackendServiceError
 from app.core.lifespan import lifespan
@@ -194,3 +195,9 @@ app.include_router(admin_router, prefix="/admin", tags=["admin"], include_in_sch
 # P4-1 — multi-sport discovery surface (ADR 0001)
 app.include_router(sports_router, prefix="/api/sports", tags=["sports"])
 app.include_router(sports_router, prefix="/sports", tags=["sports"], include_in_schema=False)
+
+# Read-side cutover increment (ADR 0001) — event-scoped public reads off
+# the 0010 events tables.  ADDITIVE: legacy /api/games routes stay
+# untouched during the deprecation window.
+app.include_router(events_router, prefix="/api/events", tags=["events"])
+app.include_router(events_router, prefix="/events", tags=["events"], include_in_schema=False)

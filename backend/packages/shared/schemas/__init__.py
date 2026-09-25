@@ -1,3 +1,8 @@
+from .events import (
+    EventListResponse,
+    EventParticipantResponse,
+    EventResponse,
+)
 from .games import (
     GameDetailResponse,
     GameListResponse,
@@ -49,6 +54,9 @@ from .backtest import (  # noqa: E402
 )
 
 __all__ = [
+    "EventResponse",
+    "EventParticipantResponse",
+    "EventListResponse",
     "GameResponse",
     "GameListResponse",
     "GameDetailResponse",
