@@ -215,18 +215,19 @@ class TestGetMatchWeather:
 class TestGetHistoricalPerformance:
     @pytest.mark.asyncio
     async def test_returns_win_rate_for_similar_conditions(self, model, game):
-        """Given historical games in the same weather tier, return win rate."""
+        """Given >= _MIN_SAMPLE_SIZE historical games in the same weather
+        tier, return the win rate (2 wins from 3 → 2/3)."""
         db = AsyncMock()
 
-        hist_game = _make_historical_game(101, "Brisbane", "Sydney", 100, 80)
         hist_weather = _make_weather(temperature=22, precipitation=0, wind_gusts=8)
+        games = [
+            (_make_historical_game(101, "Brisbane", "Sydney", 100, 80), hist_weather),
+            (_make_historical_game(102, "Sydney", "Brisbane", 90, 70), hist_weather),
+            (_make_historical_game(103, "Brisbane", "Sydney", 95, 70), hist_weather),
+        ]
 
         # db.execute returns list of (Game, MatchWeather) tuples
-        db.execute.return_value = _mock_result_all(
-            [
-                (hist_game, hist_weather),
-            ]
-        )
+        db.execute.return_value = _mock_result_all(games)
 
         wr = await model._get_historical_performance(
             "Gabba",
@@ -235,17 +236,45 @@ class TestGetHistoricalPerformance:
             db,
             before_date=game.date,
         )
-        assert wr == 1.0  # Brisbane won 1/1
+        assert wr == pytest.approx(2 / 3)  # Brisbane won 2/3
+
+    @pytest.mark.asyncio
+    async def test_thin_sample_below_min_returns_none(self, model, game):
+        """REGRESSION: the old code returned a full-strength 0.0/1.0 win
+        rate from a 1–2 game sample (driving 0.70-confidence picks). Now
+        a thin sample is no usable information → None."""
+        db = AsyncMock()
+
+        hist_weather = _make_weather(temperature=22, precipitation=0, wind_gusts=8)
+        games = [
+            (_make_historical_game(101, "Brisbane", "Sydney", 100, 80), hist_weather),
+            (_make_historical_game(102, "Sydney", "Brisbane", 90, 70), hist_weather),
+        ]
+        db.execute.return_value = _mock_result_all(games)
+
+        wr = await model._get_historical_performance(
+            "Gabba",
+            "good",
+            "Brisbane",
+            db,
+            before_date=game.date,
+        )
+        assert wr is None
 
     @pytest.mark.asyncio
     async def test_zero_win_rate_when_team_lost_all_similar_games(self, model, game):
-        """A team that PLAYED and LOST its similar-condition games returns
-        0.0 — real data, deliberately distinct from None (no games)."""
+        """A team that PLAYED and LOST its similar-condition games (at
+        least _MIN_SAMPLE_SIZE of them) returns 0.0 — real data,
+        deliberately distinct from None (no usable sample)."""
         db = AsyncMock()
 
-        hist_game = _make_historical_game(102, "Brisbane", "Sydney", 60, 120)
         hist_weather = _make_weather(temperature=22, precipitation=0, wind_gusts=8)
-        db.execute.return_value = _mock_result_all([(hist_game, hist_weather)])
+        games = [
+            (_make_historical_game(102, "Brisbane", "Sydney", 60, 120), hist_weather),
+            (_make_historical_game(103, "Sydney", "Brisbane", 110, 50), hist_weather),
+            (_make_historical_game(104, "Brisbane", "Sydney", 55, 90), hist_weather),
+        ]
+        db.execute.return_value = _mock_result_all(games)
 
         wr = await model._get_historical_performance(
             "Gabba",
