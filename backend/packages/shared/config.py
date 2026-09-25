@@ -153,6 +153,11 @@ class Settings(BaseSettings):
     supplementary_sync_cron: str = "45 5 * * *"  # daily 05:45 app-tz
     supplementary_sync_staleness_days: int = 3
 
+    # Sportix platform client credential (wafl.com.au ships this to every
+    # browser; kept in env per the no-hardcoded-secrets policy so rotation
+    # needs no deploy). See sportix_provider.py.
+    sportix_api_key: str = "290|yQfFH5WycjbEb8eUtVtTCXZt2aWOxFpDjUYEdxgQ9326de46"
+
     # State-League Sync (Phase 5 rollout): scheduled sync of every
     # "live" league in ``STATE_LEAGUES`` (see
     # packages/shared/ingestion/state_leagues.py).  Runs at 04:30

@@ -14,7 +14,7 @@ Source findings (2026-09-24):
   (competition_name is the only difference). LIVE.
 * **VFL / VFLW / SANFL / AFLW** — the AFL platform's open v2 match API
   (``aflapi.afl.com.au/afl/v2``) serves ``competitions/{id}/compseasons``
-  and ``matches`` without auth (VFL=7, AFLW=3, VFLW=8, SANFL=4). LIVE
+  and ``matches`` without auth (VFL=7, AFLW=3, VFLW=11, SANFL=14). LIVE
   via ``AflPlatformProvider`` (supersedes the earlier ``cfs/afl`` token
   dead-end noted below).
 * **QAFL / QAFLW** — ``stats.isports.net.au/api`` exposes seasons,

@@ -119,6 +119,10 @@ class LocalCompetitionSyncService:
                 error = f"fixture {fixture.external_id}: {e}"
                 self.logger.error(error, exc_info=True)
                 stats["errors"].append(error)
+                try:
+                    await self.db.rollback()  # clear the poisoned transaction
+                except Exception:  # noqa: BLE001
+                    pass
 
         await self.db.commit()
         self.logger.info(
@@ -155,6 +159,8 @@ class LocalCompetitionSyncService:
         the ``events.starts_at`` convention (see models.multisport)."""
         if fixture.starts_at is None:
             return fixture
+        if fixture.starts_at.tzinfo is None:
+            return fixture  # already venue-local (PlayHQ emits naive local)
         local = fixture.starts_at.astimezone(tz).replace(tzinfo=None)
         from dataclasses import replace
 

@@ -81,7 +81,7 @@ class SportixProvider:
         competition_name: str,
         season_name: Optional[str] = None,
         api_url: str = "https://api.sportix.cloud/public",
-        api_key: str = "290|yQfFH5WycjbEb8eUtVtTCXZt2aWOxFpDjUYEdxgQ9326de46",
+        api_key: Optional[str] = None,
         tenant_id: str = "3b47430d-e8a4-4f13-bc22-1b622d4e9bda",
         fetch_json: Optional[Callable[[str, Dict[str, Any]], Awaitable[Any]]] = None,
     ):
@@ -89,7 +89,7 @@ class SportixProvider:
         self.competition_name = competition_name
         self._season_name = season_name
         self._api_url = api_url.rstrip("/")
-        self._api_key = api_key
+        self._api_key = api_key or _default_api_key()
         self._tenant_id = tenant_id
         self._fetch_json = fetch_json or self._default_fetch
 
@@ -264,3 +264,10 @@ class SportixProvider:
 
 
 __all__ = ["SportixProvider", "round_id_from_slug", "FINALS_ROUND_MAP"]
+
+
+
+def _default_api_key() -> str:
+    from ..config import settings
+
+    return settings.sportix_api_key

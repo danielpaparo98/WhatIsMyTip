@@ -6,8 +6,8 @@ One provider instance per competition — a registry entry, not new code:
 
     AflPlatformProvider(competition_id=7, competition_name="VFL")
 
-Competition ids (verified live 2026-09-24): VFL=7, AFLW=3, VFLW=8,
-SANFL=4.
+Competition ids (verified live 2026-09-24): VFL=7, AFLW=3, VFLW=11,
+SANFL=14.
 
 API shape (verified live):
 

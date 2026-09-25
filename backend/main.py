@@ -90,6 +90,11 @@ app.add_middleware(RequestIDMiddleware)  # outermost
 # ---------------------------------------------------------------------------
 
 app.state.limiter = get_limiter()
+# H2: slowapi enforces default_limits ONLY via this middleware — without
+# it every GET endpoint (incl. new events/sports routes) was unthrottled.
+from slowapi import SlowAPIMiddleware
+
+app.add_middleware(SlowAPIMiddleware)
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 # ---------------------------------------------------------------------------
