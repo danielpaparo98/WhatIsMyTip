@@ -13,6 +13,11 @@ class YOLOHeuristic(BaseHeuristic):
     2. Uses that prediction directly
     3. Boosts the confidence slightly
     4. Uses the full margin prediction
+
+    Zero-information default: with no model votes the heuristic returns
+    the alphabetically first team at 0.50 confidence with the 10-point
+    margin floor — a deterministic, home/away-neutral cold start with no
+    fabricated confidence.
     """
 
     def get_name(self) -> str:
@@ -23,8 +28,11 @@ class YOLOHeuristic(BaseHeuristic):
     ) -> Tuple[str, float, int]:
         """Apply YOLO heuristic."""
         if not model_predictions:
-            # Fallback to home team if no predictions
-            return Prediction(game.home_team, 0.6, 20)
+            # Zero information must look like zero information.  The
+            # alphabetically-first team is a home/away-neutral deterministic
+            # default; 0.50 confidence is an honest coin flip; 10 keeps
+            # YOLO's existing max(10, margin) floor idiom.
+            return Prediction(min(game.home_team, game.away_team), 0.50, 10)
 
         # Find the prediction with highest confidence
         best_model = max(

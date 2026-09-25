@@ -1,7 +1,7 @@
 """Unit tests for PlayerFormModel.
 
 Tests cover form score calculation, recent game lookups, advanced stat
-aggregation, cold-start behaviour, confidence/margin clamping, and
+aggregation, cold-start abstention, confidence/margin clamping, and
 backtest safety.
 """
 
@@ -12,6 +12,7 @@ import pytest
 
 from packages.shared.models import Game
 from packages.shared.models_ml.player_form import PlayerFormModel
+from packages.shared.models_ml.prediction import ABSTAINED, is_abstained
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -76,9 +77,17 @@ class TestCalculateFormScore:
             "avg_tog_pct": 85.0,
         }
         score = model._calculate_form_score(stats)
-        # 6*3 + 10*2 + 300*0.1 + 15*1.5 + 85*0.5
+        # 6*3 + 10*2 + 300*0.1 + 15*1.5 + 85/100*50
         # = 18 + 20 + 30 + 22.5 + 42.5 = 133.0
         assert score == pytest.approx(133.0)
+
+    def test_tog_pct_normalized_to_max_50(self, model):
+        """tog_pct is a 0-100 percentage: its contribution is normalized
+        to (pct / 100) * 50 — max 50, the same scale as the metres term —
+        instead of the raw 0-100 value dominating the composite."""
+        assert model._calculate_form_score({"avg_tog_pct": 100.0}) == pytest.approx(50.0)
+        assert model._calculate_form_score({"avg_tog_pct": 50.0}) == pytest.approx(25.0)
+        assert model._calculate_form_score({"avg_tog_pct": 0.0}) == pytest.approx(0.0)
 
     def test_low_form_score(self, model):
         """Weak advanced stats → low form score."""
@@ -90,7 +99,7 @@ class TestCalculateFormScore:
             "avg_tog_pct": 60.0,
         }
         score = model._calculate_form_score(stats)
-        # 2*3 + 4*2 + 100*0.1 + 5*1.5 + 60*0.5
+        # 2*3 + 4*2 + 100*0.1 + 5*1.5 + 60/100*50
         # = 6 + 8 + 10 + 7.5 + 30 = 61.5
         assert score == pytest.approx(61.5)
 
@@ -248,27 +257,25 @@ class TestGetTeamAdvancedStats:
 
 class TestPredictColdStart:
     @pytest.mark.asyncio
-    async def test_no_games_for_either_team(self, model, game):
-        """No recent games for either team → cold start."""
+    async def test_no_games_for_either_team_abstains(self, model, game):
+        """No recent games for either team → no usable data → ABSTAINED."""
         db = AsyncMock()
         with patch.object(model, "_get_recent_games", return_value=[]):
-            winner, confidence, margin = await model.predict(game, db)
+            result = await model.predict(game, db)
 
-        assert winner == "Brisbane"
-        assert confidence == 0.55
-        assert margin == 6
+        assert result is ABSTAINED
+        assert is_abstained(result)
 
     @pytest.mark.asyncio
-    async def test_no_advanced_stats_cold_start(self, model, game):
-        """Games exist but no advanced stats → cold start."""
+    async def test_no_advanced_stats_abstains(self, model, game):
+        """Games exist but no advanced stats → no usable data → ABSTAINED."""
         db = AsyncMock()
         with patch.object(model, "_get_recent_games", return_value=[1, 2, 3]), \
              patch.object(model, "_get_team_advanced_stats", return_value={}):
-            winner, confidence, margin = await model.predict(game, db)
+            result = await model.predict(game, db)
 
-        assert winner == "Brisbane"
-        assert confidence == 0.55
-        assert margin == 6
+        assert result is ABSTAINED
+        assert is_abstained(result)
 
     @pytest.mark.asyncio
     async def test_home_no_games_away_has_data(self, model, game):
@@ -331,7 +338,8 @@ class TestPredictScenarios:
 
     @pytest.mark.asyncio
     async def test_similar_form_low_confidence(self, model, game):
-        """Similar form → low confidence, home advantage tips it."""
+        """Identical form → genuine coin flip: low confidence, exact
+        ties break to home (`home_score >= away_score`)."""
         db = AsyncMock()
         stats = {
             "avg_score_involvements": 5.0,
@@ -344,9 +352,9 @@ class TestPredictScenarios:
              patch.object(model, "_get_team_advanced_stats", return_value=stats):
             winner, confidence, margin = await model.predict(game, db)
 
-        # Same stats + home advantage → home wins
+        # Identical form scores (no home bump) → tie → home via >=
         assert winner == "Brisbane"
-        assert confidence < 0.60  # Low confidence for similar form
+        assert confidence < 0.60  # Low confidence for identical form
 
     @pytest.mark.asyncio
     async def test_one_team_no_stats(self, model, game):
@@ -422,9 +430,9 @@ class TestPredictScenarios:
             )
             winner, confidence, margin = await model.predict(game, db)
 
-        # Even with home advantage (+2), bad home form should lose
-        # home_score = (1*3 + 2*2 + 50*0.1 + 3*1.5 + 50*0.5) + 2 = (3+4+5+4.5+25) + 2 = 43.5
-        # away_score = 6*3 + 10*2 + 300*0.1 + 15*1.5 + 85*0.5 = 18+20+30+22.5+42.5 = 133.0
+        # Even without a home bump, bad home form should lose
+        # home_score = 1*3 + 2*2 + 50*0.1 + 3*1.5 + 50/100*50 = 3+4+5+4.5+25 = 41.5
+        # away_score = 6*3 + 10*2 + 300*0.1 + 15*1.5 + 85/100*50 = 18+20+30+22.5+42.5 = 133.0
         assert winner == "Collingwood"
 
 
@@ -528,15 +536,14 @@ class TestClamping:
 
 class TestEdgeCases:
     @pytest.mark.asyncio
-    async def test_no_games_played(self, model, game):
-        """No games played yet → cold start."""
+    async def test_no_games_played_abstains(self, model, game):
+        """No games played yet → no usable data → ABSTAINED."""
         db = AsyncMock()
         with patch.object(model, "_get_recent_games", return_value=[]):
-            winner, confidence, margin = await model.predict(game, db)
+            result = await model.predict(game, db)
 
-        assert winner == "Brisbane"
-        assert confidence == 0.55
-        assert margin == 6
+        assert result is ABSTAINED
+        assert is_abstained(result)
 
     @pytest.mark.asyncio
     async def test_only_1_2_games_with_stats(self, model, game):
@@ -553,7 +560,7 @@ class TestEdgeCases:
              patch.object(model, "_get_team_advanced_stats", return_value=stats):
             winner, confidence, margin = await model.predict(game, db)
 
-        # Both teams have same stats + home advantage → home wins
+        # Both teams have identical stats → tie → home via >=
         assert winner == "Brisbane"
         assert 0.50 <= confidence <= 0.95
         assert 1 <= margin <= 100

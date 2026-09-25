@@ -87,10 +87,11 @@ class TestEnsureWeightedTipCoefficients:
 
     @pytest.mark.asyncio
     async def test_ttl_reloads_after_expiry(self):
+        import time as _time
+
         from packages.shared.orchestrator import (
             WEIGHTED_TIP_COEFFICIENT_TTL_SECONDS,
         )
-        import time as _time
 
         coeffs = {"elo_margin_home": 0.5}
         mock_get = AsyncMock(return_value=(1.0, coeffs))

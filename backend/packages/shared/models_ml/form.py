@@ -1,4 +1,4 @@
-from typing import Dict, Optional, Tuple
+from typing import Dict, Optional
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -35,7 +35,12 @@ class FormModel(BaseModel):
     async def _get_recent_form(
         self, db: AsyncSession, team: str, before_date
     ) -> Dict[str, float]:
-        """Calculate recent form statistics for a team."""
+        """Calculate recent form statistics for a team.
+
+        ``avg_score_diff`` is the SIGNED mean scoring margin from the
+        team's perspective — wins push it up, losses pull it down — so
+        heavy defeats damage form as much as heavy wins boost it.
+        """
         games = await self._repository_for(db).recent_games_for_participant(
             team, before=before_date, limit=self.games_to_consider
         )
@@ -61,7 +66,9 @@ class FormModel(BaseModel):
             else:
                 draws += 1
 
-            score_diffs.append(abs(score_diff))
+            # Signed, not abs(): a 40-point loss must hurt form, not
+            # flatter it the way a 40-point win does.
+            score_diffs.append(score_diff)
 
         return {
             "wins": wins,
@@ -91,8 +98,11 @@ class FormModel(BaseModel):
             + away_form["avg_score_diff"] / 10
         )
 
-        # Apply home advantage
-        home_score += 1.0
+        # P2 policy: no hardcoded home bump here — home advantage lives
+        # ONLY in elo.py (learned HA) and home_advantage.py.  Identical
+        # form is therefore an exact tie, and the strict ``>`` below
+        # hands the tip to the away team rather than manufacturing a
+        # fixture-biased home pick.
 
         # Calculate confidence
         total_score = abs(home_score) + abs(away_score)

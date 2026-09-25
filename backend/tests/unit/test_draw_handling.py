@@ -45,6 +45,17 @@ def _result(rows, scalar_rows=None) -> MagicMock:
     return r
 
 
+def _game(*, team_at_home: bool, home_score: int, away_score: int):
+    """A completed game with explicit scores, for signed-diff assertions."""
+    return SimpleNamespace(
+        home_team="Home" if team_at_home else "Away",
+        away_team="Away" if team_at_home else "Home",
+        home_score=home_score,
+        away_score=away_score,
+        date=datetime(2026, 4, 1, 10, 0),
+    )
+
+
 class TestFormModelDraws:
     @pytest.mark.asyncio
     async def test_draw_counted_as_draw_not_loss(self):
@@ -58,6 +69,8 @@ class TestFormModelDraws:
         assert form["draws"] == 1
         assert form["wins"] == 0
         assert form["losses"] == 0
+        # A draw contributes exactly 0 to the signed mean margin.
+        assert form["avg_score_diff"] == 0
 
     @pytest.mark.asyncio
     async def test_away_draw_counted_as_draw_not_loss(self):
@@ -70,6 +83,23 @@ class TestFormModelDraws:
 
         assert form["draws"] == 1
         assert form["losses"] == 0
+        assert form["avg_score_diff"] == 0
+
+    @pytest.mark.asyncio
+    async def test_loss_diff_is_negative_in_avg_score_diff(self):
+        """The mean score diff is SIGNED from the team's perspective —
+        a 20-point loss must drag the average down, not up."""
+        db = AsyncMock(spec=AsyncSession)
+        db.execute = AsyncMock(
+            return_value=_result(
+                [], scalar_rows=[_game(team_at_home=True, home_score=50, away_score=70)]
+            )
+        )
+
+        form = await FormModel()._get_recent_form(db, "Home", datetime(2026, 5, 1))
+
+        assert form["losses"] == 1
+        assert form["avg_score_diff"] == -20
 
 
 class TestBacktestDrawScoring:

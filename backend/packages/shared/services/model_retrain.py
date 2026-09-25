@@ -50,8 +50,13 @@ TRAINING_LOOKBACK_SEASONS: int = 3
 #: training example (otherwise the feature vector is too sparse).
 MIN_MODELS_PER_GAME: int = 4
 
-#: Don't overwrite the active model with fewer rows than this.
-MIN_TRAINING_ROWS: int = 20
+#: Don't fit OLS with too few rows: the design matrix has 16 features, so a
+#: 20-row fit is near-saturated (< 1.5 observations per feature) — the
+#: coefficients are unstable and the training-set r2 is meaningless.  100
+#: rows ≈ 6 observations per feature keeps the fit statistically meaningful.
+#: Below the threshold the previously-active version stays active (the
+#: existing skip path — unchanged).
+MIN_TRAINING_ROWS: int = 100
 
 #: A training row is ``(feature_vector(16), target_signed_home_margin)``.
 TrainingRow = Tuple[List[float], float]

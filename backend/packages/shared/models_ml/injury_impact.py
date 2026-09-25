@@ -4,11 +4,11 @@ Assesses the impact of injured players on team performance by quantifying
 each missing player's importance from their historical match stats and
 calculating a team-level impact score.
 
-Cold-start: returns (home_team, 0.55, 5) when no injury data is available.
+No active injuries (or no usable data) → the model abstains.
 """
 
 import json
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Union
 
 from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -17,7 +17,7 @@ from ..cache import _get_client
 from ..logger import get_logger
 from ..models import Game, Injury, Player, PlayerMatchStats
 from .base import BaseModel
-from .prediction import Prediction
+from .prediction import ABSTAINED, Abstained, Prediction
 
 logger = get_logger(__name__)
 
@@ -233,22 +233,27 @@ class InjuryImpactModel(BaseModel):
 
     async def predict(
         self, game: Game, db: AsyncSession
-    ) -> Prediction:
+    ) -> Union[Prediction, Abstained]:
         """Predict winner based on injury impact.
 
         Returns:
-            (winner_team, confidence, predicted_margin)
+            (winner_team, confidence, predicted_margin), or ABSTAINED
+            when neither team has active injuries (no winner
+            information) or there is no usable data.
         """
         try:
             # 1. Fetch active injuries for both teams
             injuries = await self._get_active_injuries(game, db)
 
             if not injuries:
+                # P2-1: a fully fit pair of teams is a normal mid-season
+                # state — it carries no winner information, so abstain
+                # instead of fabricating a home-team pick.
                 logger.info(
                     f"InjuryImpactModel: No injuries for game {game.id}, "
-                    "using cold-start default"
+                    "abstaining"
                 )
-                return Prediction(game.home_team, 0.52, 8)
+                return ABSTAINED
 
             # 2. Resolve player IDs
             injured_player_ids = [
