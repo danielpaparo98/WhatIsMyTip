@@ -339,7 +339,8 @@ class TestPredictScenarios:
     @pytest.mark.asyncio
     async def test_similar_form_low_confidence(self, model, game):
         """Identical form → genuine coin flip: low confidence, exact
-        ties break to home (`home_score >= away_score`)."""
+        ties break to the away side (strict `home > away`, consistent
+        with form/value/weather/injury/matchup)."""
         db = AsyncMock()
         stats = {
             "avg_score_involvements": 5.0,
@@ -352,8 +353,8 @@ class TestPredictScenarios:
              patch.object(model, "_get_team_advanced_stats", return_value=stats):
             winner, confidence, margin = await model.predict(game, db)
 
-        # Identical form scores (no home bump) → tie → home via >=
-        assert winner == "Brisbane"
+        # Identical form scores (no home bump) → tie → away via strict >
+        assert winner == "Collingwood"
         assert confidence < 0.60  # Low confidence for identical form
 
     @pytest.mark.asyncio
@@ -560,8 +561,8 @@ class TestEdgeCases:
              patch.object(model, "_get_team_advanced_stats", return_value=stats):
             winner, confidence, margin = await model.predict(game, db)
 
-        # Both teams have identical stats → tie → home via >=
-        assert winner == "Brisbane"
+        # Both teams have identical stats → tie → away via strict >
+        assert winner == "Collingwood"
         assert 0.50 <= confidence <= 0.95
         assert 1 <= margin <= 100
 

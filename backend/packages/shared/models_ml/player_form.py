@@ -254,10 +254,9 @@ class PlayerFormModel(BaseModel):
 
             # 6. Determine winner (no home bump — home advantage lives
             #    only in elo.py / home_advantage.py).  Exact ties break to
-            #    home via >= — a pre-existing convention; NOTE this is the
-            #    opposite direction to form/value/weather/injury/matchup,
-            #    whose strict > breaks ties to the away side.
-            if home_score >= away_score:
+            #    the away side via strict > — the same convention as
+            #    form/value/weather/injury/matchup.
+            if home_score > away_score:
                 winner = game.home_team
             else:
                 winner = game.away_team

@@ -495,7 +495,7 @@ Two rules apply across the prediction pipeline:
 
 | Model | Abstains when |
 |-------|---------------|
-| Weather Impact | No weather data for the game, or neither team has same-venue, same-weather-tier history |
+| Weather Impact | No weather data for the game, or neither team has at least 3 same-venue, same-weather-tier games on record |
 | Injury Impact | Neither team has active injuries (a normal mid-season state, not a cold start) |
 | Matchup | Fewer than 3 head-to-head games |
 | Player Form | No recent games/stats for either team |
@@ -508,7 +508,7 @@ Two rules apply across the prediction pipeline:
 | **Home Advantage** | Returns `ABSTAINED` at genuine grand finals (no longer raises) |
 | **Form** | Average score differential is **signed** — big losses reduce form |
 | **Value** | Compares raw historical win rates (no home boost) |
-| **Weather Impact** | Same-venue query filters by `Game.venue` (sample limit 120); "no similar-condition games" (`None`) is distinct from "lost all similar games" (`0.0`); one team without data is treated as `0.5` in the differential |
+| **Weather Impact** | Same-venue query filters by `Game.venue` (sample limit 120); a team needs ≥ 3 similar-condition games (`_MIN_SAMPLE_SIZE`) for its win rate to count — "no usable sample" (`None`) is distinct from "lost all of them" (`0.0`); one team without a usable sample is treated as `0.5` in the differential |
 | **Player Form** | `tog_pct` normalized to a 0–1 scale so its contribution is comparable to the other composite terms |
 | **Heuristic zero-information defaults** | When no model voted: Best Bet → (alphabetically-first team, 0.50, 5), YOLO → (alphabetically-first team, 0.50, 10); Weighted Tip → (alphabetically-first team, 0.55, 6) on vote ties and empty input (0.55 is the long-standing fixed fallback confidence). Vote ties in Best Bet resolve to the alphabetically-first team too. Deterministic and home/away-neutral — Best Bet and YOLO never inflate confidence on a no-information default. |
 | **Weighted Tip training** | Feature vectors and coefficients are aligned via `feature_names_for` — a length mismatch raises `ValueError` instead of silently mis-weighting. Retrain guard: `MIN_TRAINING_ROWS = 100` (16-feature OLS needs rows ≫ features); below 100 rows the previously-active version keeps serving. |

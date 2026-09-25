@@ -4,10 +4,11 @@ Uses historical weather data to determine how specific conditions affect
 game outcomes.  AFL is an outdoor sport where rain, wind, and extreme
 temperatures significantly impact scoring and game style.
 
-Abstains when there is no weather data or no similar-condition history
-for either team — a fabricated default pick is worse than no opinion
-(P2-1).  Home advantage is NOT modelled here: it lives exclusively in
-elo.py (learned HA) and home_advantage.py.
+Abstains when there is no weather data or no usable similar-condition
+history (fewer than ``_MIN_SAMPLE_SIZE`` games) for either team — a
+fabricated default pick is worse than no opinion (P2-1).  Home advantage
+is NOT modelled here: it lives exclusively in elo.py (learned HA) and
+home_advantage.py.
 """
 
 import json
@@ -36,7 +37,9 @@ _WEATHER_SEVERITY = {
     "poor": 1.2,
 }
 
-# Minimum number of similar-condition games required per team
+# Minimum number of similar-condition games required per team before a
+# win rate is trusted — thinner samples return None (no usable signal),
+# because a 1–2 game sample can produce a full-strength 0.0/1.0 rate.
 _MIN_SAMPLE_SIZE = 3
 
 
@@ -118,10 +121,12 @@ class WeatherImpactModel(BaseModel):
     ) -> Optional[float]:
         """Query historical games at the same venue in similar weather,
         returning the team's win rate (0.0–1.0), or ``None`` when the team
-        has no similar-condition games on record.
+        has fewer than ``_MIN_SAMPLE_SIZE`` similar-condition games on
+        record.
 
-        ``None`` (no data) is deliberately distinct from a 0.0 win rate
-        (played and lost them all) so callers never conflate the two.
+        ``None`` (no usable sample) is deliberately distinct from a 0.0
+        win rate (played at least ``_MIN_SAMPLE_SIZE`` and lost them all)
+        so callers never conflate the two.
 
         Fetches recent games with weather data and filters in Python by
         weather tier to avoid complex SQL tier-matching.
@@ -153,8 +158,9 @@ class WeatherImpactModel(BaseModel):
             if self._classify_weather(w) == weather_tier
         ]
 
-        if not similar_games:
-            # No data ≠ all losses: signal "no information" with None.
+        if len(similar_games) < _MIN_SAMPLE_SIZE:
+            # No data ≠ all losses, and a 1–2 game sample is equally
+            # untrustworthy: signal "no information" with None either way.
             return None
 
         # Calculate win rate
@@ -197,8 +203,9 @@ class WeatherImpactModel(BaseModel):
 
         Returns:
             (winner_team, confidence, predicted_margin), or ``ABSTAINED``
-            when there is no weather data or neither team has
-            similar-condition history.
+            when there is no weather data or neither team has a usable
+            similar-condition sample (fewer than ``_MIN_SAMPLE_SIZE``
+            games).
         """
         try:
             # 1. Get weather for this game
@@ -229,10 +236,12 @@ class WeatherImpactModel(BaseModel):
                 before_date=game.date,
             )
 
-            # 4. None means "no similar-condition games" (no data) —
-            # distinct from 0.0, which means the team played and lost
-            # them all.  Only BOTH-None is a true abstention; a real
-            # 0.0 is a signal and must keep voting.
+            # 4. None means "no usable sample" — no similar-condition
+            # games at all, or fewer than _MIN_SAMPLE_SIZE of them.
+            # Distinct from 0.0, which means the team played at least
+            # _MIN_SAMPLE_SIZE and lost them all.  Only BOTH-None is a
+            # true abstention; a real 0.0 is a signal and must keep
+            # voting.
             if home_wr is None and away_wr is None:
                 logger.info(
                     "WeatherImpactModel: No similar-condition history for "

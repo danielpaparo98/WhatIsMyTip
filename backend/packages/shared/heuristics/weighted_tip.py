@@ -206,7 +206,6 @@ def weighted_tip_fallback(
     model_predictions: Mapping[str, Prediction],
     home_team: str,
     away_team: str,
-    model_names: List[str] | None = None,
 ) -> Prediction:
     """Majority-vote fallback used before the first weekly retrain runs.
 
@@ -309,6 +308,4 @@ class WeightedTipHeuristic(BaseHeuristic):
         # No trained model yet — majority-vote fallback.  The fallback owns
         # the empty cold-start case too (alphabetically first team, 0.55, 6),
         # so the neutral rule lives in exactly one place.
-        return weighted_tip_fallback(
-            model_predictions, home_team, away_team, model_names=self.model_names
-        )
+        return weighted_tip_fallback(model_predictions, home_team, away_team)
