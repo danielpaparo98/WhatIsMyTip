@@ -13,6 +13,10 @@ from ..models import Game
 from ..sport_context import DEFAULT_CONTEXT, SportContext
 from ..utils import ensure_datetime
 from .base import BaseModel
+
+# GF-COMPLETE: grand-final detection requires a complete fixture; the
+# constant guards which rounds the HA learning treats as neutral.
+from .neutral import MIN_ROUNDS_FOR_GRAND_FINAL_DETECTION
 from .prediction import Prediction
 
 logger = get_logger(__name__)
@@ -106,17 +110,29 @@ class EloModel(BaseModel):
         if not games:
             return None, neutral_keys
 
-        # Season -> max round (the grand-final round), from THIS sample.
+        # Season -> max round (the grand-final round) and -> the set of
+        # DISTINCT rounds, both from THIS sample (GF-COMPLETE).
         max_rounds: dict = {}
+        distinct_rounds: dict = {}
         for g in games:
             if g.season is not None and g.round_id is not None:
                 if g.season not in max_rounds or g.round_id > max_rounds[g.season]:
                     max_rounds[g.season] = g.round_id
+                distinct_rounds.setdefault(g.season, set()).add(g.round_id)
 
         for g in games:
             if g.season is None or g.round_id is None:
                 continue
-            if g.round_id == max_rounds.get(g.season):
+            # GF-COMPLETE: only a COMPLETE fixture (~27 distinct rounds
+            # in a full AFL season) has a grand final.  A mid-season
+            # sample's max round is merely the latest completed round —
+            # its games keep home advantage in the rating walk and stay
+            # in the HA measurement.
+            is_complete_season = (
+                len(distinct_rounds.get(g.season, ()))
+                >= MIN_ROUNDS_FOR_GRAND_FINAL_DETECTION
+            )
+            if is_complete_season and g.round_id == max_rounds.get(g.season):
                 neutral_keys.add((g.season, g.round_id))
                 continue
             if g.home_score is not None and g.away_score is not None:

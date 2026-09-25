@@ -1,5 +1,5 @@
 import json
-from typing import Dict, Tuple
+from typing import Dict, Union
 
 from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -9,7 +9,7 @@ from ..logger import get_logger
 from ..models import Game
 from ..utils import ensure_datetime
 from .base import BaseModel
-from .prediction import Prediction
+from .prediction import ABSTAINED, Abstained, Prediction
 
 logger = get_logger(__name__)
 
@@ -112,23 +112,26 @@ class HomeAdvantageModel(BaseModel):
         except Exception as e:
             logger.warning(f"HomeAdvantageModel: Redis cache write error: {e}")
 
-    async def predict(self, game: Game, db: AsyncSession) -> Prediction:
+    async def predict(
+        self, game: Game, db: AsyncSession
+    ) -> Union[Prediction, Abstained]:
         """Predict winner based on home advantage.
 
         Uses only historical data before the prediction game's date.
 
-        GF-NEUTRAL (2026-09-21): raises on neutral-venue games (the grand
-        final) so the orchestrator marks the model ABSTAINED — its venue
-        win-rate statistics describe the venue's tenants, not these two
-        teams, and voting them would be noise.
+        GF-NEUTRAL (2026-09-21, revised 2026-09-25): returns the
+        ``ABSTAINED`` singleton at neutral-venue games (the grand
+        final) — its venue win-rate statistics describe the venue's
+        tenants, not these two teams, and voting them would be noise.
+        Raising is reserved for internal errors per the P2-1 contract;
+        the orchestrator logs exceptions as failures, not abstentions.
         """
         from .neutral import is_grand_final
 
         if await is_grand_final(db, game):
-            raise ValueError(
-                "Neutral venue (grand final): home advantage does not apply — "
-                "model abstains"
-            )
+            # P2-1: "no usable opinion" is a RETURN, not an exception —
+            # a raise would be recorded as a model failure downstream.
+            return ABSTAINED
 
         await self._calculate_home_advantage(db, game)
 

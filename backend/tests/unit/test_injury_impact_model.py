@@ -1,7 +1,7 @@
 """Unit tests for InjuryImpactModel.
 
 Tests cover player importance scoring, injury impact calculation,
-cold-start behaviour, confidence/margin clamping, and backtest safety.
+no-injury abstention, confidence/margin clamping, and backtest safety.
 """
 
 from datetime import datetime, timezone
@@ -11,6 +11,7 @@ import pytest
 
 from packages.shared.models import Game, Injury, Player
 from packages.shared.models_ml.injury_impact import InjuryImpactModel
+from packages.shared.models_ml.prediction import ABSTAINED, is_abstained
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -191,28 +192,29 @@ class TestGetPlayerStats:
 
 class TestPredictColdStart:
     @pytest.mark.asyncio
-    async def test_no_injuries_returns_cold_start(self, model, game):
-        """No injuries for either team → cold-start default."""
+    async def test_no_injuries_abstains(self, model, game):
+        """No injuries for either team → normal mid-season state with no
+        winner information → ABSTAINED (not a fabricated home pick)."""
         db = AsyncMock()
         with patch.object(model, "_get_active_injuries", return_value=[]):
-            winner, confidence, margin = await model.predict(game, db)
+            result = await model.predict(game, db)
 
-        assert winner == "Brisbane"
-        assert confidence == pytest.approx(0.52)
-        assert margin == 8
+        assert result is ABSTAINED
+        assert is_abstained(result)
 
     @pytest.mark.asyncio
-    async def test_all_players_available_returns_cold_start(self, model, game):
-        """Injuries exist but all players 'Available' → filtered out → cold start."""
+    async def test_all_players_available_abstains(self, model, game):
+        """Injuries exist but all players 'Available' → filtered out →
+        no active injuries → ABSTAINED."""
         db = AsyncMock()
         # These should be filtered out
         _make_injury(return_timeline="Available")
         _make_player(player_id=10)
         with patch.object(model, "_get_active_injuries", return_value=[]):
-            winner, confidence, margin = await model.predict(game, db)
+            result = await model.predict(game, db)
 
-        assert winner == "Brisbane"
-        assert 0.50 <= confidence <= 0.95
+        assert result is ABSTAINED
+        assert is_abstained(result)
 
 
 # ---------------------------------------------------------------------------
@@ -337,6 +339,18 @@ class TestPredictScenarios:
         assert winner == "Brisbane"
 
 
+def _minor_away_injury_patches(model, game):
+    """Patches giving the model a real (non-abstaining) prediction path:
+    a single away-team injury with no stats → default importance 3.0."""
+    injury = _make_injury(player_name="Role Player", team="Collingwood")
+    player = _make_player(name="Role Player", player_id=20)
+    return (
+        patch.object(model, "_get_active_injuries", return_value=[(injury, player)]),
+        patch.object(model, "_get_player_stats", return_value={}),
+        patch.object(model, "_get_team_averages", return_value={}),
+    )
+
+
 # ---------------------------------------------------------------------------
 # Confidence and margin clamping
 # ---------------------------------------------------------------------------
@@ -346,7 +360,8 @@ class TestClamping:
     async def test_confidence_lower_bound(self, model, game):
         """Confidence must be at least 0.50."""
         db = AsyncMock()
-        with patch.object(model, "_get_active_injuries", return_value=[]):
+        inj_patch, stats_patch, avgs_patch = _minor_away_injury_patches(model, game)
+        with inj_patch, stats_patch, avgs_patch:
             winner, confidence, margin = await model.predict(game, db)
 
         assert confidence >= 0.50
@@ -385,7 +400,8 @@ class TestClamping:
     async def test_margin_lower_bound(self, model, game):
         """Margin must be at least 1."""
         db = AsyncMock()
-        with patch.object(model, "_get_active_injuries", return_value=[]):
+        inj_patch, stats_patch, avgs_patch = _minor_away_injury_patches(model, game)
+        with inj_patch, stats_patch, avgs_patch:
             winner, confidence, margin = await model.predict(game, db)
 
         assert margin >= 1
@@ -452,20 +468,23 @@ class TestEdgeCases:
              patch.object(model, "_get_team_averages", return_value=team_avgs):
             winner, confidence, margin = await model.predict(game, db)
 
-        assert winner in ("Brisbane", "Collingwood")
+        # Away-only injury → away more impacted → diff < 0 → away wins
+        # (strict > comparison breaks diff == 0 to the away side).
+        assert winner == "Collingwood"
         assert 0.50 <= confidence <= 0.95
         assert 1 <= margin <= 100
 
     @pytest.mark.asyncio
     async def test_injury_with_test_status_filtered(self, model, game):
-        """Players with 'Test' return_timeline are filtered out."""
+        """Players with 'Test' return_timeline are filtered out → no active
+        injuries → ABSTAINED."""
         db = AsyncMock()
-        # _get_active_injuries filters these — confirm empty result → cold start
+        # _get_active_injuries filters these — confirm empty result → abstain
         with patch.object(model, "_get_active_injuries", return_value=[]):
-            winner, confidence, margin = await model.predict(game, db)
+            result = await model.predict(game, db)
 
-        assert winner == "Brisbane"
-        assert confidence >= 0.50
+        assert result is ABSTAINED
+        assert is_abstained(result)
 
 
 # ---------------------------------------------------------------------------

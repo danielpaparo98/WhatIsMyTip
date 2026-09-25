@@ -17,12 +17,11 @@ Guards two production incidents found in the 2026-09 comprehensive review:
   ``failed_models`` key of the ``predict_all`` payload.
 """
 
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, List, Optional, Tuple
 
 import pytest
 
 from packages.shared.orchestrator import ModelOrchestrator
-
 
 # ---------------------------------------------------------------------------
 # Fakes
@@ -228,9 +227,10 @@ class TestFailedModelAbstains:
         results = await orch.predict_all(game)
 
         assert set(results.keys()) == {"best_bet", "yolo", "weighted_tip"}
-        # Documented empty-predictions fallbacks:
-        assert results["best_bet"]["tip"] == ("Richmond", 0.55, 15)
-        assert results["yolo"]["tip"] == ("Richmond", 0.6, 20)
+        # Documented empty-predictions fallbacks — home/away-neutral
+        # (alphabetically first of Richmond/Carlton) with no fake confidence:
+        assert results["best_bet"]["tip"] == ("Carlton", 0.50, 5)
+        assert results["yolo"]["tip"] == ("Carlton", 0.50, 10)
         assert results["weighted_tip"]["tip"] == ("Carlton", 0.55, 6)
         assert sorted(results["best_bet"]["failed_models"]) == ["m0", "m1", "m2"]
 

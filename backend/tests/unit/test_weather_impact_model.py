@@ -1,7 +1,10 @@
 """Unit tests for WeatherImpactModel.
 
-Tests cover weather tier classification, historical performance lookups,
-cold-start behaviour, confidence/margin clamping, and backtest safety.
+Tests cover weather tier classification, historical performance lookups
+(venue filter, sample-size limit, None-vs-0.0 distinction), abstention
+on missing weather data or one-sided no-data, removal of the home
+weather bonus, one-team-None substitution, confidence/margin clamping,
+and backtest safety.
 """
 
 from datetime import datetime, timezone
@@ -10,6 +13,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from packages.shared.models import Game, MatchWeather
+from packages.shared.models_ml.prediction import ABSTAINED, Prediction, is_abstained
 from packages.shared.models_ml.weather_impact import WeatherImpactModel
 
 # ---------------------------------------------------------------------------
@@ -54,6 +58,28 @@ def _make_weather(
         wind_gusts=wind_gusts,
         humidity=humidity,
         data_type="forecast",
+    )
+
+
+def _make_historical_game(
+    game_id,
+    home_team,
+    away_team,
+    home_score,
+    away_score,
+    venue="Gabba",
+):
+    """Create a completed historical Game (defaults put it at the Gabba)."""
+    return Game(
+        id=game_id,
+        slug=f"hist-{game_id}",
+        home_team=home_team,
+        away_team=away_team,
+        home_score=home_score,
+        away_score=away_score,
+        venue=venue,
+        date=datetime(2025, 5, 1),
+        completed=True,
     )
 
 
@@ -192,15 +218,7 @@ class TestGetHistoricalPerformance:
         """Given historical games in the same weather tier, return win rate."""
         db = AsyncMock()
 
-        # Create historical games with weather in "good" tier
-        hist_game = MagicMock()
-        hist_game.home_team = "Brisbane"
-        hist_game.away_team = "Sydney"
-        hist_game.home_score = 100
-        hist_game.away_score = 80
-        hist_game.completed = True
-        hist_game.date = datetime(2025, 5, 1)
-
+        hist_game = _make_historical_game(101, "Brisbane", "Sydney", 100, 80)
         hist_weather = _make_weather(temperature=22, precipitation=0, wind_gusts=8)
 
         # db.execute returns list of (Game, MatchWeather) tuples
@@ -220,8 +238,27 @@ class TestGetHistoricalPerformance:
         assert wr == 1.0  # Brisbane won 1/1
 
     @pytest.mark.asyncio
-    async def test_returns_zero_when_no_similar_games(self, model, game):
-        """No historical games in this weather tier → win rate 0."""
+    async def test_zero_win_rate_when_team_lost_all_similar_games(self, model, game):
+        """A team that PLAYED and LOST its similar-condition games returns
+        0.0 — real data, deliberately distinct from None (no games)."""
+        db = AsyncMock()
+
+        hist_game = _make_historical_game(102, "Brisbane", "Sydney", 60, 120)
+        hist_weather = _make_weather(temperature=22, precipitation=0, wind_gusts=8)
+        db.execute.return_value = _mock_result_all([(hist_game, hist_weather)])
+
+        wr = await model._get_historical_performance(
+            "Gabba",
+            "good",
+            "Brisbane",
+            db,
+            before_date=game.date,
+        )
+        assert wr == 0.0
+
+    @pytest.mark.asyncio
+    async def test_returns_none_when_no_similar_games(self, model, game):
+        """No historical games in this weather tier → None (no data)."""
         db = AsyncMock()
         db.execute.return_value = _mock_result_all([])
 
@@ -232,45 +269,258 @@ class TestGetHistoricalPerformance:
             db,
             before_date=game.date,
         )
-        assert wr == 0.0
+        assert wr is None
 
-
-# ---------------------------------------------------------------------------
-# predict() — cold-start / no data scenarios
-# ---------------------------------------------------------------------------
-
-
-class TestPredictColdStart:
     @pytest.mark.asyncio
-    async def test_no_weather_data_returns_cold_start(self, model, game):
-        """When no weather forecast exists, return cold-start defaults."""
+    async def test_query_filters_by_venue_and_limits_to_120(self, model, game):
+        """The docstring promises games 'at the same venue' — the SQL must
+        actually filter on Game.venue == venue.  The recency limit is 120
+        (not 30): after venue AND weather-tier filtering, 30 recent games
+        left unusable per-tier samples."""
         db = AsyncMock()
-        # First call: get_match_weather → None
-        db.execute.return_value = _mock_scalars_first(None)
+        db.execute.return_value = _mock_result_all([])
 
+        await model._get_historical_performance(
+            "Gabba",
+            "good",
+            "Brisbane",
+            db,
+            before_date=game.date,
+        )
+
+        stmt = db.execute.call_args[0][0]
+
+        # and_() → BooleanClauseList; inspect each clause structurally
+        # (avoids compiling the datetime bind under literal_binds).
+        def _is_venue_clause(clause):
+            left = getattr(clause, "left", None)
+            right = getattr(clause, "right", None)
+            return (
+                getattr(left, "name", None) == "venue"
+                and getattr(right, "value", None) == "Gabba"
+            )
+
+        assert any(_is_venue_clause(c) for c in stmt.whereclause.clauses), (
+            f"expected Game.venue == 'Gabba' filter in query, got: {stmt.whereclause}"
+        )
+
+        # LIMIT is compiled as a bound parameter by this SQLAlchemy
+        # version — assert on the limit clause's value instead of the
+        # rendered SQL string.
+        limit_clause = stmt._limit_clause
+        assert limit_clause is not None
+        assert limit_clause.value == 120
+
+
+# ---------------------------------------------------------------------------
+# predict() — abstention on missing data (no fabricated cold-start picks)
+# ---------------------------------------------------------------------------
+
+
+class TestPredictAbstention:
+    @pytest.mark.asyncio
+    async def test_no_weather_row_abstains(self, model, game):
+        """No MatchWeather row → ABSTAINED, never a default home pick."""
         with patch.object(model, "_get_match_weather", return_value=None):
-            winner, confidence, margin = await model.predict(game, db)
+            result = await model.predict(game, AsyncMock())
 
-        assert winner == "Brisbane"  # home team default
-        assert 0.50 <= confidence <= 0.95
-        assert 1 <= margin <= 100
+        assert result is ABSTAINED
+        assert is_abstained(result)
 
     @pytest.mark.asyncio
-    async def test_no_historical_weather_returns_cold_start(self, model, game):
-        """Weather exists but no historical data → cold start."""
-        db = AsyncMock()
+    async def test_both_teams_no_similar_games_abstains(self, model, game):
+        """Weather exists but NEITHER team has similar-condition history
+        → ABSTAINED (the old (home, 0.55, 12) cold-start is gone)."""
         weather = _make_weather()
 
         with (
             patch.object(model, "_get_match_weather", return_value=weather),
-            patch.object(model, "_get_historical_performance", return_value=0.0),
+            patch.object(
+                model, "_get_historical_performance", return_value=None
+            ),
         ):
-            winner, confidence, margin = await model.predict(game, db)
+            result = await model.predict(game, AsyncMock())
 
-        # Should return cold-start default
-        assert winner == "Brisbane"
-        assert 0.50 <= confidence <= 0.95
-        assert 1 <= margin <= 100
+        assert result is ABSTAINED
+        assert is_abstained(result)
+
+    @pytest.mark.asyncio
+    async def test_no_weather_abstains_regardless_of_venue(self, model):
+        """Unknown venue + no weather row → ABSTAINED (was a home default)."""
+        game = Game(
+            id=2,
+            slug="test-2",
+            home_team="Sydney",
+            away_team="Melbourne",
+            venue="Unknown Stadium",
+            date=datetime(2025, 7, 1),
+            completed=False,
+        )
+        with patch.object(model, "_get_match_weather", return_value=None):
+            result = await model.predict(game, AsyncMock())
+
+        assert result is ABSTAINED
+
+
+# ---------------------------------------------------------------------------
+# predict() — 0.0-with-data vs None (no-data) conflation regression
+# ---------------------------------------------------------------------------
+
+
+class TestNoDataVsAllLosses:
+    @pytest.mark.asyncio
+    async def test_home_lost_all_with_data_away_none_picks_away(self, model, game):
+        """REGRESSION: home team LOST all its similar-condition games
+        (win rate 0.0 WITH data) while the away team has no data.  The old
+        code conflated 0.0 with no-data and returned the (home, 0.55, 12)
+        cold start.  Now: away side gets 0.5 → diff = -0.5 → away wins at
+        0.70 — a data-driven pick, not a fabricated default."""
+        weather = _make_weather()  # good tier, severity 0.5
+
+        with (
+            patch.object(model, "_get_match_weather", return_value=weather),
+            patch.object(model, "_get_historical_performance") as mock_perf,
+        ):
+            mock_perf.side_effect = lambda venue, tier, team, db, before_date: (
+                0.0 if team == "Brisbane" else None
+            )
+            result = await model.predict(game, AsyncMock())
+
+        assert not is_abstained(result)
+        assert isinstance(result, Prediction)
+        assert result.pick == "Collingwood"
+        assert result.probability == pytest.approx(0.70)
+        assert result.score_projection == pytest.approx(25, abs=1)
+
+    @pytest.mark.asyncio
+    async def test_away_lost_all_with_data_home_none_picks_home(self, model, game):
+        """Mirror case: away team 0.0 WITH data, home team None → home
+        side substituted with 0.5 → diff = +0.5 → home wins at 0.70."""
+        weather = _make_weather()
+
+        with (
+            patch.object(model, "_get_match_weather", return_value=weather),
+            patch.object(model, "_get_historical_performance") as mock_perf,
+        ):
+            mock_perf.side_effect = lambda venue, tier, team, db, before_date: (
+                None if team == "Brisbane" else 0.0
+            )
+            result = await model.predict(game, AsyncMock())
+
+        assert not is_abstained(result)
+        assert isinstance(result, Prediction)
+        assert result.pick == "Brisbane"
+        assert result.probability == pytest.approx(0.70)
+
+    @pytest.mark.asyncio
+    async def test_both_teams_lost_all_is_not_abstained(self, model, game):
+        """Both teams 0.0 WITH data → real signal (dead heat), NOT the old
+        no-data cold-start: away-of-tie pick at coin-flip confidence."""
+        weather = _make_weather()
+
+        with (
+            patch.object(model, "_get_match_weather", return_value=weather),
+            patch.object(
+                model, "_get_historical_performance", return_value=0.0
+            ),
+        ):
+            result = await model.predict(game, AsyncMock())
+
+        assert isinstance(result, Prediction)
+        assert result.pick == "Collingwood"  # diff == 0 → else branch
+        assert result.probability == pytest.approx(0.50)
+        assert result.score_projection == 1
+
+
+# ---------------------------------------------------------------------------
+# predict() — one-sided no data: None substitutes as 0.5
+# ---------------------------------------------------------------------------
+
+
+class TestOneSidedNoData:
+    @pytest.mark.asyncio
+    async def test_home_none_away_has_data_away_wins(self, model, game):
+        """Home None → 0.5; away 0.6 → diff = -0.1 → away wins ~0.54."""
+        weather = _make_weather()  # good tier, severity 0.5
+
+        with (
+            patch.object(model, "_get_match_weather", return_value=weather),
+            patch.object(model, "_get_historical_performance") as mock_perf,
+        ):
+            mock_perf.side_effect = lambda venue, tier, team, db, before_date: (
+                None if team == "Brisbane" else 0.6
+            )
+            result = await model.predict(game, AsyncMock())
+
+        assert isinstance(result, Prediction)
+        assert result.pick == "Collingwood"
+        assert result.probability == pytest.approx(0.54)
+        assert result.score_projection == pytest.approx(5, abs=1)
+
+    @pytest.mark.asyncio
+    async def test_away_none_home_has_data_home_wins(self, model, game):
+        """Away None → 0.5; home 0.6 → diff = +0.1 → home wins ~0.54."""
+        weather = _make_weather()
+
+        with (
+            patch.object(model, "_get_match_weather", return_value=weather),
+            patch.object(model, "_get_historical_performance") as mock_perf,
+        ):
+            mock_perf.side_effect = lambda venue, tier, team, db, before_date: (
+                0.6 if team == "Brisbane" else None
+            )
+            result = await model.predict(game, AsyncMock())
+
+        assert isinstance(result, Prediction)
+        assert result.pick == "Brisbane"
+        assert result.probability == pytest.approx(0.54)
+
+
+# ---------------------------------------------------------------------------
+# predict() — no home weather bonus
+# ---------------------------------------------------------------------------
+
+
+class TestNoHomeWeatherBonus:
+    @pytest.mark.asyncio
+    async def test_poor_weather_equal_win_rates_no_home_bonus(self, model, game):
+        """In the 'poor' tier with EQUAL win rates the pick must NOT be
+        auto-home: the old +0.03 home bonus is gone, so diff == 0 → the
+        else branch → away, coin-flip confidence, minimum margin."""
+        weather = _make_weather(
+            temperature=5.0,  # +1
+            precipitation=8.0,  # +2
+            wind_gusts=55.0,  # +2
+        )  # → "poor"
+
+        with (
+            patch.object(model, "_get_match_weather", return_value=weather),
+            patch.object(
+                model, "_get_historical_performance", return_value=0.5
+            ),
+        ):
+            result = await model.predict(game, AsyncMock())
+
+        assert isinstance(result, Prediction)
+        assert result.pick == "Collingwood"  # NOT auto-home
+        assert result.probability == pytest.approx(0.50)  # no bonus inflation
+        assert result.score_projection == 1
+
+    @pytest.mark.asyncio
+    async def test_good_weather_equal_win_rates_away_of_tie(self, model, game):
+        """Good weather tier with equal records → away-of-tie (unchanged)."""
+        weather = _make_weather(temperature=22, precipitation=0, wind_gusts=8)
+
+        with (
+            patch.object(model, "_get_match_weather", return_value=weather),
+            patch.object(
+                model, "_get_historical_performance", return_value=0.50
+            ),
+        ):
+            result = await model.predict(game, AsyncMock())
+
+        assert isinstance(result, Prediction)
+        assert result.pick == "Collingwood"  # diff == 0 → else branch
 
 
 # ---------------------------------------------------------------------------
@@ -292,11 +542,11 @@ class TestPredictScenarios:
             mock_perf.side_effect = lambda venue, tier, team, db, before_date: (
                 0.75 if team == "Brisbane" else 0.35
             )
-            winner, confidence, margin = await model.predict(game, AsyncMock())
+            result = await model.predict(game, AsyncMock())
 
-        assert winner == "Brisbane"
-        assert confidence > 0.55
-        assert margin > 1
+        assert result.pick == "Brisbane"
+        assert result.probability > 0.55
+        assert result.score_projection > 1
 
     @pytest.mark.asyncio
     async def test_wind_forecast_away_better(self, model, game):
@@ -311,43 +561,10 @@ class TestPredictScenarios:
             mock_perf.side_effect = lambda venue, tier, team, db, before_date: (
                 0.30 if team == "Brisbane" else 0.70
             )
-            winner, confidence, margin = await model.predict(game, AsyncMock())
+            result = await model.predict(game, AsyncMock())
 
-        assert winner == "Collingwood"
-        assert confidence > 0.50
-
-    @pytest.mark.asyncio
-    async def test_normal_weather_home_slight_edge(self, model, game):
-        """Normal conditions with similar records → close prediction."""
-        weather = _make_weather(temperature=22, precipitation=0, wind_gusts=8)
-
-        with (
-            patch.object(model, "_get_match_weather", return_value=weather),
-            patch.object(model, "_get_historical_performance") as mock_perf,
-        ):
-            mock_perf.side_effect = lambda venue, tier, team, db, before_date: (
-                0.55 if team == "Brisbane" else 0.50
-            )
-            winner, confidence, margin = await model.predict(game, AsyncMock())
-
-        assert winner in ("Brisbane", "Collingwood")
-        assert 0.50 <= confidence <= 0.95
-
-    @pytest.mark.asyncio
-    async def test_good_weather_no_bonus(self, model, game):
-        """Good weather tier gives no home weather bonus."""
-        weather = _make_weather(temperature=22, precipitation=0, wind_gusts=8)
-
-        with (
-            patch.object(model, "_get_match_weather", return_value=weather),
-            patch.object(model, "_get_historical_performance") as mock_perf,
-        ):
-            # Exactly equal records
-            mock_perf.side_effect = lambda venue, tier, team, db, before_date: 0.50
-            winner, confidence, margin = await model.predict(game, AsyncMock())
-
-        # With equal records and good weather (no bonus), adjusted_diff = 0 → away wins  # noqa: E501
-        assert winner == "Collingwood"  # away team when diff <= 0
+        assert result.pick == "Collingwood"
+        assert result.probability > 0.50
 
 
 # ---------------------------------------------------------------------------
@@ -362,11 +579,13 @@ class TestClamping:
         weather = _make_weather()
         with (
             patch.object(model, "_get_match_weather", return_value=weather),
-            patch.object(model, "_get_historical_performance", return_value=0.5),
+            patch.object(
+                model, "_get_historical_performance", return_value=0.5
+            ),
         ):
-            winner, confidence, margin = await model.predict(game, AsyncMock())
+            result = await model.predict(game, AsyncMock())
 
-        assert confidence >= 0.50
+        assert result.probability >= 0.50
 
     @pytest.mark.asyncio
     async def test_confidence_upper_bound(self, model, game):
@@ -381,9 +600,9 @@ class TestClamping:
             mock_perf.side_effect = lambda venue, tier, team, db, before_date: (
                 1.0 if team == "Brisbane" else 0.0
             )
-            winner, confidence, margin = await model.predict(game, AsyncMock())
+            result = await model.predict(game, AsyncMock())
 
-        assert confidence <= 0.95
+        assert result.probability <= 0.95
 
     @pytest.mark.asyncio
     async def test_margin_lower_bound(self, model, game):
@@ -391,11 +610,13 @@ class TestClamping:
         weather = _make_weather()
         with (
             patch.object(model, "_get_match_weather", return_value=weather),
-            patch.object(model, "_get_historical_performance", return_value=0.5),
+            patch.object(
+                model, "_get_historical_performance", return_value=0.5
+            ),
         ):
-            winner, confidence, margin = await model.predict(game, AsyncMock())
+            result = await model.predict(game, AsyncMock())
 
-        assert margin >= 1
+        assert result.score_projection >= 1
 
     @pytest.mark.asyncio
     async def test_margin_upper_bound(self, model, game):
@@ -409,9 +630,9 @@ class TestClamping:
             mock_perf.side_effect = lambda venue, tier, team, db, before_date: (
                 1.0 if team == "Brisbane" else 0.0
             )
-            winner, confidence, margin = await model.predict(game, AsyncMock())
+            result = await model.predict(game, AsyncMock())
 
-        assert margin <= 100
+        assert result.score_projection <= 100
 
 
 # ---------------------------------------------------------------------------
@@ -421,26 +642,6 @@ class TestClamping:
 
 class TestEdgeCases:
     @pytest.mark.asyncio
-    async def test_venue_not_found(self, model):
-        """Game with unknown venue still produces a valid prediction."""
-        game = Game(
-            id=2,
-            slug="test-2",
-            home_team="Sydney",
-            away_team="Melbourne",
-            venue="Unknown Stadium",
-            date=datetime(2025, 7, 1),
-            completed=False,
-        )
-        db = AsyncMock()
-        with patch.object(model, "_get_match_weather", return_value=None):
-            winner, confidence, margin = await model.predict(game, db)
-
-        assert winner == "Sydney"
-        assert 0.50 <= confidence <= 0.95
-        assert 1 <= margin <= 100
-
-    @pytest.mark.asyncio
     async def test_error_propagates_for_abstention(self, model, game):
         """Internal errors propagate — the orchestrator abstains (P0-3)."""
         db = AsyncMock()
@@ -449,19 +650,3 @@ class TestEdgeCases:
         with patch.object(model, "_get_match_weather", side_effect=Exception("boom")):
             with pytest.raises(Exception):
                 await model.predict(game, db)
-
-    @pytest.mark.asyncio
-    async def test_insufficient_similar_games_uses_fallback(self, model, game):
-        """Fewer than 3 similar-condition games → cold-start fallback."""
-        weather = _make_weather(precipitation=10.0)
-
-        with (
-            patch.object(model, "_get_match_weather", return_value=weather),
-            patch.object(model, "_get_historical_performance", return_value=0.0),
-        ):
-            winner, confidence, margin = await model.predict(game, AsyncMock())
-
-        # Should fall back to cold-start
-        assert winner == "Brisbane"
-        assert 0.50 <= confidence <= 0.95
-        assert 1 <= margin <= 100

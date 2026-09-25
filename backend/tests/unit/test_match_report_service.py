@@ -55,11 +55,15 @@ def _make_game_mock(**overrides) -> MagicMock:
     return game
 
 
-def _session_with_scalar(value) -> AsyncMock:
-    """Session whose single ``execute`` returns ``scalar() == value``."""
+def _session_with_one(max_round, distinct_rounds) -> AsyncMock:
+    """Session whose single ``execute`` returns ``one() == (max_round, distinct_rounds)``.
+
+    GF-COMPLETE: ``is_grand_final`` reads both the season's max round and its
+    distinct round count (completeness guard) from one aggregate row.
+    """
     session = AsyncMock(spec=AsyncSession)
     result = MagicMock()
-    result.scalar.return_value = value
+    result.one.return_value = (max_round, distinct_rounds)
     session.execute = AsyncMock(return_value=result)
     return session
 
@@ -106,11 +110,12 @@ def _valid_report() -> GrandFinalReport:
 
 
 class TestIsGrandFinal:
-    """``is_grand_final`` compares the game's round to the season max round."""
+    """``is_grand_final`` compares the game's round to the season max round
+    of a COMPLETE fixture (>= 25 distinct rounds — GF-COMPLETE guard)."""
 
     @pytest.mark.asyncio
     async def test_true_when_round_is_season_max(self):
-        session = _session_with_scalar(27)
+        session = _session_with_one(27, 27)
         game = _make_game_mock(round_id=27, season=2026)
 
         assert await MatchReportService.is_grand_final(session, game) is True
@@ -118,14 +123,14 @@ class TestIsGrandFinal:
 
     @pytest.mark.asyncio
     async def test_false_when_round_is_not_season_max(self):
-        session = _session_with_scalar(27)
+        session = _session_with_one(27, 27)
         game = _make_game_mock(round_id=10, season=2026)
 
         assert await MatchReportService.is_grand_final(session, game) is False
 
     @pytest.mark.asyncio
     async def test_false_when_season_has_no_games(self):
-        session = _session_with_scalar(None)
+        session = _session_with_one(None, 0)
         game = _make_game_mock(round_id=27, season=2026)
 
         assert await MatchReportService.is_grand_final(session, game) is False

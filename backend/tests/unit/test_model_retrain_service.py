@@ -45,14 +45,11 @@ from packages.shared.models import (
     ModelVersion,
 )
 from packages.shared.services.model_retrain import (
-    MIN_MODELS_PER_GAME,
     MIN_TRAINING_ROWS,
-    TRAINING_LOOKBACK_SEASONS,
     WEIGHTED_TIP_MODEL_NAME,
     _gather_training_rows,
     run_model_retrain,
 )
-
 
 # Mark all tests in this module with ``@pytest.mark.postgres`` so the
 # standard unit-test run can be filtered on machines without Podman.
@@ -310,6 +307,19 @@ async def _seed_rows(
 # ---------------------------------------------------------------------------
 
 
+def test_min_training_rows_threshold_pinned():
+    """Pin the skip threshold at 100 rows.
+
+    WHY 100: the design matrix has 16 features, so an ordinary least squares
+    fit on 20 rows is near-saturated (< 1.5 observations per feature) —
+    coefficients are unstable and the training-set r2 is meaningless.
+    100 rows ≈ 6 observations per feature keeps the fit statistically
+    meaningful; below the threshold the previously-active version stays
+    active (skip path).
+    """
+    assert MIN_TRAINING_ROWS == 100
+
+
 class TestRunModelRetrain:
     @pytest.mark.asyncio
     async def test_trains_and_persists_active_version(self, session_factory):
@@ -411,8 +421,10 @@ class TestRunModelRetrain:
                 set_active=True,
             )
 
-        # Fewer than MIN_TRAINING_ROWS usable games (each is usable: 8 preds).
-        small_n = MIN_TRAINING_ROWS - 1
+        # One row below the new threshold: 99 usable games (each is usable:
+        # 8 preds) must still skip, while 99 rows would have trained under
+        # the old 20-row threshold.
+        small_n = 99
         await _seed_rows(session_factory, small_n, season=2025)
 
         async with session_factory() as session:
@@ -421,7 +433,7 @@ class TestRunModelRetrain:
         assert result["status"] == "skipped"
         assert result["reason"] == "insufficient_training_rows"
         assert result["rows"] == small_n
-        assert result["min_required"] == MIN_TRAINING_ROWS
+        assert result["min_required"] == 100
 
         # Existing active model is unchanged.
         async with session_factory() as session:

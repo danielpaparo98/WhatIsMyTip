@@ -4,11 +4,11 @@ Uses historical head-to-head performance between specific team pairs with
 exponential time decay weighting.  Combines H2H win rate (60%) with
 venue-specific records (40%) to produce predictions.
 
-Cold-start: returns (home_team, 0.55, 8) when insufficient historical data.
+Cold-start: abstains when there is insufficient historical data.
 """
 
 import json
-from typing import Tuple
+from typing import Tuple, Union
 
 from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -17,7 +17,7 @@ from ..cache import _get_client
 from ..logger import get_logger
 from ..models import Game
 from .base import BaseModel
-from .prediction import Prediction
+from .prediction import ABSTAINED, Abstained, Prediction
 
 logger = get_logger(__name__)
 
@@ -204,11 +204,12 @@ class MatchupModel(BaseModel):
 
     async def predict(
         self, game: Game, db: AsyncSession
-    ) -> Prediction:
+    ) -> Union[Prediction, Abstained]:
         """Predict winner based on head-to-head history and venue records.
 
         Returns:
-            (winner_team, confidence, predicted_margin)
+            (winner_team, confidence, predicted_margin), or ABSTAINED
+            when there is insufficient H2H history.
         """
         try:
             # 1. Get H2H data
@@ -222,13 +223,15 @@ class MatchupModel(BaseModel):
                 f"(avg margin={avg_h2h_margin:.1f})"
             )
 
-            # 2. Cold start if fewer than 3 H2H games
+            # 2. Insufficient H2H history → no usable opinion
             if game_count < _MIN_H2H_GAMES:
                 logger.info(
                     f"MatchupModel: Only {game_count} H2H games, "
-                    "using cold-start default"
+                    "abstaining"
                 )
-                return Prediction(game.home_team, 0.55, 8)
+                # P2-1: sparse history carries no winner information —
+                # never fabricate a home-team pick from it.
+                return ABSTAINED
 
             # 3. Get venue records for both teams
             home_venue_wr = await self._get_venue_record(
