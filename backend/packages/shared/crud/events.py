@@ -72,6 +72,26 @@ class EventsCRUD:
         ]
 
     @staticmethod
+    async def get_latest_season_label(
+        db: AsyncSession, competition_id: int
+    ) -> Optional[str]:
+        """The latest season label of a competition, by label ordering.
+
+        Used by the legacy ``/api/games`` route to default
+        ``season_label`` when only ``competition`` is given.  Returns
+        ``None`` when the competition does not exist (or has no seasons
+        yet) — the router maps that to 404.
+        """
+        stmt = (
+            select(Season.label)
+            .where(Season.competition_id == competition_id)
+            .order_by(Season.label.desc())
+            .limit(1)
+        )
+        row = (await db.execute(stmt)).first()
+        return row[0] if row else None
+
+    @staticmethod
     async def get_by_slug_with_participants(
         db: AsyncSession, slug: str
     ) -> Optional[Dict[str, Any]]:

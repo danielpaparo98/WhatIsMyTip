@@ -167,9 +167,15 @@ curl http://localhost:8000/api/events/wafl-abc12345
 
 ### Games
 
+> **DEPRECATED (ADR 0001)**: all `/api/games` responses carry
+> `Deprecation: true`, a `Sunset` HTTP-date six months out, and
+> `Link: <https://whatismytip.com/api/events>; rel="alternate"`.  New
+> clients should use [`/api/events`](#events-multi-league-read-surface-adr-0001);
+> the legacy behaviour below is unchanged during the window.
+
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
-| `GET` | `/api/games` | public | List games (filter: `season`, `round`, `upcoming`, `latest`, `team`, `limit`, `offset`) |
+| `GET` | `/api/games` | public | List games (filter: `season`, `round`, `upcoming`, `latest`, `team`, `limit`, `offset`).  Multi-league (ADR 0001): add `competition` (id, see `/api/sports`) + optional `season_label` (defaults to the competition's latest season by label) to serve that competition's events through the same response shape — `round` maps to the event round, `upcoming`/`latest` filter over events, `limit`/`offset` paginate.  404 when the competition/season is unknown. |
 | `GET` | `/api/games/{slug}` | public | Get a single game by slug (e.g. `richmond-v-carlton-r1-2025`) |
 | `GET` | `/api/games/{slug}/detail` | public | Full game detail with tips, predictions, weather, and analysis |
 | `GET` | `/api/games/health` | public | Games router health |
@@ -181,7 +187,15 @@ curl http://localhost:8000/api/games
 curl 'http://localhost:8000/api/games?season=2025&round=1'
 curl 'http://localhost:8000/api/games?upcoming=true'
 curl 'http://localhost:8000/api/games?latest=true'
+# Multi-league (events tables) through the legacy shape:
+curl 'http://localhost:8000/api/games?competition=1&season_label=2026&round=1&limit=50&offset=0'
 ```
+
+When `competition` is supplied, rows come from the sport-generic
+`events`/`event_participants` tables: participants are flattened to
+`home_team`/`away_team`, `squiggle_id` is `null`, and `source` is
+`"events"` (legacy AFL rows keep `source: "squiggle"`).  Events with
+no home/away sides (races, field events) are skipped.
 
 ### Tips
 

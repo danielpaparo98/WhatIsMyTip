@@ -11,22 +11,32 @@ the frontend and existing clients don't change.
 Routes (mounted at ``/api/games``):
 
 * ``GET /``              — list games (filters: ``season``, ``round``,
-                           ``upcoming``, ``latest``)
+                           ``upcoming``, ``latest``; ADR 0001
+                           deprecation-window additions:
+                           ``competition`` + ``season_label`` serve
+                           events-table competitions through the same
+                           legacy response shape)
 * ``GET /{slug}``        — single game by slug
 * ``GET /{slug}/detail`` — game + tips + model_predictions +
                            match_analysis + weather
 * ``GET /{slug}/report`` — stored grand-final pre-match report
                            (404 unless the game is the grand final and
                            a report has been generated)
+
+Deprecation (ADR 0001): every response carries ``Deprecation: true``,
+a ``Sunset`` HTTP-date six months out, and a ``Link`` header pointing
+at the ``/api/events`` replacement surface.
 """
 
 from __future__ import annotations
 
-from datetime import datetime
+import calendar
+from datetime import date, datetime, timezone
+from email.utils import format_datetime
 from typing import Annotated, Optional
 from zoneinfo import ZoneInfo
 
-from fastapi import APIRouter, Depends, Path, Query
+from fastapi import APIRouter, Depends, Path, Query, Response
 from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -40,6 +50,8 @@ from packages.shared.crud import (
     ModelPredictionCRUD,
     TipCRUD,
 )
+from packages.shared.crud.events import EventsCRUD
+from packages.shared.crud.events_adapter import event_to_game_response
 from packages.shared.models import Game, MatchWeather
 from packages.shared.schemas import (
     GameDetailResponse,
@@ -52,12 +64,112 @@ from packages.shared.schemas.match_analysis import MatchAnalysisResponse
 from packages.shared.schemas.match_report import MatchReportResponse
 from packages.shared.services.match_report import MatchReportService
 
-router = APIRouter()
+
+# ---------------------------------------------------------------------------
+# ADR 0001 deprecation headers — applied to every /api/games response
+# (router-level dependency) so legacy clients can discover the window
+# and the replacement surface without reading release notes.
+# ---------------------------------------------------------------------------
+
+#: The day the deprecation window opened (this increment's ship date).
+GAMES_API_DEPRECATION_DATE = date(2026, 9, 25)
+
+#: Replacement surface advertised in the ``Link`` header.
+GAMES_API_LINK_HEADER = '<https://whatismytip.com/api/events>; rel="alternate"'
+
+
+def _sunset_http_date(deprecated: date) -> str:
+    """HTTP-date exactly six months after ``deprecated`` (day clamped
+    for shorter months), formatted per RFC 7231 via :mod:`email.utils`.
+    """
+    total = deprecated.month - 1 + 6
+    sunset_year = deprecated.year + total // 12
+    sunset_month = total % 12 + 1
+    sunset_day = min(deprecated.day, calendar.monthrange(sunset_year, sunset_month)[1])
+    return format_datetime(
+        datetime(sunset_year, sunset_month, sunset_day, tzinfo=timezone.utc),
+        usegmt=True,
+    )
+
+
+#: Computed once at import — a constant per deployment, not per request.
+GAMES_API_SUNSET_HEADER = _sunset_http_date(GAMES_API_DEPRECATION_DATE)
+
+
+async def _deprecation_headers(response: Response) -> None:
+    """Router dependency stamping the ADR 0001 deprecation headers onto
+    the response (merged into the final response by FastAPI)."""
+    response.headers["Deprecation"] = "true"
+    response.headers["Sunset"] = GAMES_API_SUNSET_HEADER
+    response.headers["Link"] = GAMES_API_LINK_HEADER
+
+
+router = APIRouter(dependencies=[Depends(_deprecation_headers)])
 
 
 # ---------------------------------------------------------------------------
 # GET /  — list games
 # ---------------------------------------------------------------------------
+
+#: Upper bound for the events-path fetch.  The whole (bounded) season is
+#: fetched once so ``latest`` can locate the max round and
+#: ``upcoming``/pagination can filter/slice in memory — a rounds-format
+#: season is a few hundred rows at most.
+EVENTS_FETCH_LIMIT = 500
+
+
+async def _list_games_from_events(
+    db: AsyncSession,
+    competition: int,
+    season_label: Optional[str],
+    round_id: Optional[int],
+    upcoming: bool,
+    latest: bool,
+    limit: int,
+    offset: int,
+):
+    """Serve a competition's events through the legacy ``GameListResponse``
+    shape (ADR 0001 deprecation window).
+
+    Season label defaults to the competition's latest season by label;
+    unknown competition/season → 404; a known season with no events →
+    empty list.  ``latest`` keeps only the max round with events;
+    ``upcoming`` keeps not-completed events ordered by ``starts_at``.
+    """
+    label = season_label
+    if label is None:
+        label = await EventsCRUD.get_latest_season_label(db, competition)
+        if label is None:
+            raise http_error(404, "not_found", "Competition not found")
+
+    events = await EventsCRUD.get_by_competition_season(
+        db, competition, label, round_id, limit=EVENTS_FETCH_LIMIT
+    )
+    if events is None:
+        raise http_error(404, "not_found", "Competition or season not found")
+
+    if latest:
+        if events:
+            max_round = max(event["round_id"] or 0 for event in events)
+            events = [e for e in events if (e["round_id"] or 0) == max_round]
+    if upcoming:
+        events = [e for e in events if not e["completed"]]
+        events = sorted(
+            events,
+            key=lambda e: (e["starts_at"] is None, e["starts_at"] or datetime.max),
+        )
+
+    games = [
+        adapted
+        for adapted in (event_to_game_response(e) for e in events)
+        if adapted is not None
+    ]
+    page = games[offset : offset + limit]
+    resp = GameListResponse(
+        games=[GameResponse.model_validate(g) for g in page],
+        count=len(page),
+    )
+    return resp.model_dump(mode="json")
 
 
 # Extra no-trailing-slash alias so the DigitalOcean App Platform ingress
@@ -69,6 +181,21 @@ router = APIRouter()
 @router.get("/", response_model=None)
 async def list_games(
     db: Annotated[AsyncSession, Depends(get_db)],
+    competition: Annotated[
+        Optional[int],
+        Query(
+            ge=1,
+            description="ADR 0001: serve this competition's events through "
+            "the legacy games shape (see GET /api/sports for ids)",
+        ),
+    ] = None,
+    season_label: Annotated[
+        Optional[str],
+        Query(
+            description="ADR 0001: season label for the competition filter "
+            "(defaults to the competition's latest season by label)",
+        ),
+    ] = None,
     season: Annotated[
         Optional[int],
         Query(ge=2000, description="Filter by season year"),
@@ -94,6 +221,13 @@ async def list_games(
             "Prevents unbounded scans on large seasons.",
         ),
     ] = 50,
+    offset: Annotated[
+        int,
+        Query(
+            ge=0,
+            description="Skip the first N results (events-path pagination)",
+        ),
+    ] = 0,
 ):
     """List games, with optional filters.
 
@@ -103,9 +237,29 @@ async def list_games(
     instead of a games list — used by the homepage to render the
     current round banner.  Otherwise returns a ``GameListResponse``.
 
+    ADR 0001 deprecation window: when ``competition`` is provided, the
+    route serves that competition's events (0010 events tables) through
+    the SAME ``GameListResponse`` shape via the events adapter —
+    ``season_label`` defaults to the competition's latest season,
+    ``round`` maps to the event round, ``latest``/``upcoming`` filter
+    over events, and ``limit``/``offset`` paginate.  Without
+    ``competition`` the legacy path is taken unchanged.
+
     The ``round`` URL parameter matches the FaaS contract (and the
     ``useApi.ts`` frontend helper) verbatim.
     """
+    if competition is not None:
+        return await _list_games_from_events(
+            db,
+            competition,
+            season_label,
+            round_id,
+            upcoming,
+            latest,
+            limit,
+            offset,
+        )
+
     if latest:
         current_year = datetime.now().year
         now = datetime.now(tz=ZoneInfo(settings.cron_timezone)).replace(tzinfo=None)
