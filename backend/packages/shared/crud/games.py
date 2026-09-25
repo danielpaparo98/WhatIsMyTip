@@ -14,8 +14,7 @@ from ..cache import (
 from ..logger import get_logger
 from ..models import Game, Tip
 from ..schemas.games import GameResponse
-from ..squiggle import SquiggleClient
-from ..squiggle.utils import parse_squiggle_complete
+from ..ingestion import FixtureDTO
 from ..teams import canonical_team
 from ..utils import generate_slug
 
@@ -259,37 +258,40 @@ class GameCRUD:
 
     @staticmethod
     async def create_or_update_with_tracking(
-        db: AsyncSession, game_data: dict
+        db: AsyncSession, fixture: "FixtureDTO"
     ) -> Dict[str, Any]:
-        """Create or update a game from Squiggle data with sync tracking.
+        """Create or update a game from a canonical fixture DTO with sync tracking.
+
+        P3-1: the CRUD layer speaks canonical :class:`FixtureDTO` — the
+        vendor dialect (Squiggle field names, the 100-final sentinel,
+        ISO-Z dates) lives in the feed provider, not here.
 
         This method tracks sync metadata including last_synced_at and sync_version.
 
         Args:
             db: Database session
-            game_data: Game data from Squiggle API
+            fixture: Canonical fixture DTO from a FeedProvider
 
         Returns:
             Dictionary with sync tracking info:
             - action: "created", "updated", or "skipped"
             - game: The Game object
-            - squiggle_id: The Squiggle game ID
+            - squiggle_id: The provider's external id (transitional key name)
         """
-        # Check if game exists by squiggle_id
-        game = await GameCRUD.get_by_squiggle_id(db, game_data["id"])
+        external_id = fixture.external_id
+        # Check if game exists by provider external id (transitional column)
+        game = await GameCRUD.get_by_squiggle_id(db, external_id)
 
-        # Parse complete status (Squiggle returns 100 for complete, not True/False)
-        is_complete = parse_squiggle_complete(game_data.get("complete", False))
+        is_complete = fixture.completed
 
-        # Get values with defaults for None
-        home_score_val = game_data.get("hscore")
-        away_score_val = game_data.get("ascore")
+        home_score_val = fixture.home_score
+        away_score_val = fixture.away_score
 
         # Canonicalise team names (compact form) so logos, the ELO cache
         # and model queries all agree regardless of the source's naming
         # (Squiggle sends "Western Bulldogs", "GWS", "Gold Coast" ...).
-        home_team_raw = game_data.get("hteam")
-        away_team_raw = game_data.get("ateam")
+        home_team_raw = fixture.home_participant
+        away_team_raw = fixture.away_participant
         home_team_val = (
             canonical_team(home_team_raw) if home_team_raw else home_team_raw
         )
@@ -308,7 +310,7 @@ class GameCRUD:
             return {
                 "action": "skipped_no_teams",
                 "game": None,
-                "squiggle_id": game_data["id"],
+                "squiggle_id": external_id,
             }
         # A row already exists — fall through so scores/date/venue can
         # still be updated, but the blank incoming teams must never
@@ -317,17 +319,17 @@ class GameCRUD:
 
         # DUP-GUARD: Squiggle occasionally re-publishes a fixture under
         # a NEW id (e.g. the grand-final TBC placeholder is replaced by
-        # a real fixture with a fresh id).  With squiggle_id as the only
-        # identity this used to INSERT a second row for the same game —
-        # the locator double-counts the round and the site can fixate
-        # on the orphan row, which the feed will NEVER mark complete.
-        # Adopt the existing row by re-pointing its squiggle_id so the
+        # a real fixture with a fresh id).  With the external id as the
+        # only identity this used to INSERT a second row for the same
+        # game — the locator double-counts the round and the site can
+        # fixate on the orphan row, which the feed will NEVER mark
+        # complete.  Adopt the existing row by re-pointing its id so the
         # update branch below refreshes it in place.
         if game is None and home_team_val and away_team_val and not is_complete:
             adoptable = await GameCRUD._find_adoptable_duplicate(
                 db,
-                season=game_data.get("year", 0),
-                round_id=game_data.get("round", 0),
+                season=fixture.season,
+                round_id=fixture.round_id or 0,
                 home=home_team_val,
                 away=away_team_val,
             )
@@ -337,13 +339,13 @@ class GameCRUD:
                     "for %s vs %s s%s r%s",
                     adoptable.slug,
                     adoptable.squiggle_id,
-                    game_data["id"],
+                    external_id,
                     home_team_val,
                     away_team_val,
-                    game_data.get("year", 0),
-                    game_data.get("round", 0),
+                    fixture.season,
+                    fixture.round_id,
                 )
-                adoptable.squiggle_id = game_data["id"]
+                adoptable.squiggle_id = external_id
                 game = adoptable
 
         if game:
@@ -363,11 +365,11 @@ class GameCRUD:
             if away_score_val is not None and game.away_score != away_score_val:
                 changed = True
                 game.away_score = away_score_val
-            if game_data.get("venue") is not None and game.venue != game_data["venue"]:
+            if fixture.venue is not None and game.venue != fixture.venue:
                 changed = True
-                game.venue = game_data["venue"]
-            if game_data.get("date") is not None:
-                new_date = datetime.fromisoformat(game_data["date"].replace("Z", "+00:00"))
+                game.venue = fixture.venue
+            if fixture.starts_at is not None:
+                new_date = fixture.starts_at
                 if game.date != new_date:
                     changed = True
                     game.date = new_date
@@ -388,15 +390,15 @@ class GameCRUD:
             slug = await GameCRUD._generate_unique_slug(db)
             game = Game(
                 slug=slug,
-                squiggle_id=game_data["id"],
-                round_id=game_data.get("round", 0),
-                season=game_data.get("year", 0),
+                squiggle_id=external_id,
+                round_id=fixture.round_id or 0,
+                season=fixture.season,
                 home_team=home_team_val or "",
                 away_team=away_team_val or "",
                 home_score=home_score_val,
                 away_score=away_score_val,
-                venue=game_data.get("venue", ""),
-                date=datetime.fromisoformat(game_data["date"].replace("Z", "+00:00")),
+                venue=fixture.venue or "",
+                date=fixture.starts_at,
                 completed=is_complete,
                 last_synced_at=now,
                 sync_version=1,
@@ -416,32 +418,13 @@ class GameCRUD:
         return {
             "action": action,
             "game": game,
-            "squiggle_id": game_data["id"]
+            "squiggle_id": external_id
         }
 
-    @staticmethod
-    async def sync_from_squiggle(
-        db: AsyncSession, client: SquiggleClient, year: Optional[int] = None
-    ) -> List[Game]:
-        """Sync games from Squiggle API to database.
-
-        Args:
-            db: Database session
-            client: Squiggle API client
-            year: Optional year to sync (defaults to current year)
-
-        Returns:
-            List of synced games
-        """
-        games_data = await client.get_games(year=year)
-        synced_games = []
-
-        for game_data in games_data:
-            game = await GameCRUD.create_or_update(db, game_data)
-            if game is not None:
-                synced_games.append(game)
-
-        return synced_games
+    # NOTE: the old ``sync_from_squiggle`` duplicate ingestion path was
+    # removed here (P3-1) — it duplicated ``GameSyncService.sync_games``
+    # with zero callers and kept the Squiggle dialect inside the CRUD
+    # layer.  Sync always flows through the FeedProvider boundary now.
 
     @staticmethod
     async def get_next_upcoming_round(db: AsyncSession) -> Optional[Tuple[int, int]]:
@@ -585,12 +568,15 @@ class GameCRUD:
     async def update_game_completion(
         db: AsyncSession,
         game_id: int,
-        squiggle_data: dict
+        fixture: "FixtureDTO",
     ) -> Optional[Game]:
-        """Update game with final scores from Squiggle data.
+        """Update game with final scores from a canonical fixture DTO.
+
+        P3-1: consumes a canonical :class:`FixtureDTO` — the vendor
+        dialect lives in the feed provider.
 
         Updates game with:
-        - Final scores from Squiggle
+        - Final scores from the fixture
         - Sets completed = True
         - Updates last_synced_at timestamp
         - Increments sync_version
@@ -598,13 +584,11 @@ class GameCRUD:
         Args:
             db: Database session
             game_id: Database ID of the game
-            squiggle_data: Game data from Squiggle API
+            fixture: Canonical fixture DTO from a FeedProvider
 
         Returns:
             Updated Game object or None if game not found
         """
-        from datetime import datetime
-
         from ..cache import invalidate_cache_pattern
 
         # Get the game
@@ -620,21 +604,15 @@ class GameCRUD:
         if game.completed:
             return game
 
-        # Parse complete status
-        is_complete = parse_squiggle_complete(squiggle_data.get("complete", False))
-
-        # Only update if Squiggle says it's complete
-        if not is_complete:
+        # Only update if the provider says it's complete
+        if not fixture.completed:
             return None
 
         # Update scores
-        home_score_val = squiggle_data.get("hscore")
-        away_score_val = squiggle_data.get("ascore")
-
-        if home_score_val is not None:
-            game.home_score = home_score_val
-        if away_score_val is not None:
-            game.away_score = away_score_val
+        if fixture.home_score is not None:
+            game.home_score = fixture.home_score
+        if fixture.away_score is not None:
+            game.away_score = fixture.away_score
 
         # Mark as completed
         game.completed = True
@@ -651,6 +629,8 @@ class GameCRUD:
         await invalidate_cache_pattern(short_cache, "games_by_round:")
         await invalidate_cache_pattern(short_cache, "upcoming_games:")
         await invalidate_cache_pattern(medium_cache, "games_by_season:")
+
+        return game
 
     @staticmethod
     async def _generate_unique_slug(db: AsyncSession, max_attempts: int = 10) -> str:

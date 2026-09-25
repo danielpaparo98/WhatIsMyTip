@@ -8,7 +8,7 @@ Cold-start: returns (home_team, 0.55, 8) when insufficient historical data.
 """
 
 import json
-from typing import Optional, Tuple
+from typing import Tuple
 
 from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -17,6 +17,7 @@ from ..cache import _get_client
 from ..logger import get_logger
 from ..models import Game
 from .base import BaseModel
+from .prediction import Prediction
 
 logger = get_logger(__name__)
 
@@ -183,23 +184,6 @@ class MatchupModel(BaseModel):
     # Caching
     # ------------------------------------------------------------------
 
-    async def _check_cache(self, game: Game) -> Optional[dict]:
-        """Check Redis cache for a previously computed prediction."""
-        try:
-            client = _get_client()
-            teams_sorted = sorted([game.home_team, game.away_team])
-            cache_key = (
-                f"{_CACHE_PREFIX}{teams_sorted[0]}:{teams_sorted[1]}:"
-                f"{game.venue}:"
-                f"{game.date.isoformat() if game.date else 'all'}"
-            )
-            raw = await client.get(cache_key)
-            if raw is not None:
-                return json.loads(raw)
-        except Exception as e:
-            logger.warning(f"MatchupModel: Redis cache read error: {e}")
-        return None
-
     async def _store_cache(self, game: Game, data: dict) -> None:
         """Store computed prediction data in Redis."""
         try:
@@ -220,7 +204,7 @@ class MatchupModel(BaseModel):
 
     async def predict(
         self, game: Game, db: AsyncSession
-    ) -> Tuple[str, float, int]:
+    ) -> Prediction:
         """Predict winner based on head-to-head history and venue records.
 
         Returns:
@@ -244,7 +228,7 @@ class MatchupModel(BaseModel):
                     f"MatchupModel: Only {game_count} H2H games, "
                     "using cold-start default"
                 )
-                return game.home_team, 0.55, 8
+                return Prediction(game.home_team, 0.55, 8)
 
             # 3. Get venue records for both teams
             home_venue_wr = await self._get_venue_record(
@@ -295,8 +279,10 @@ class MatchupModel(BaseModel):
                 "game_count": game_count,
             })
 
-            return winner, confidence, margin
+            return Prediction(winner, confidence, margin)
 
-        except Exception as e:
-            logger.error(f"MatchupModel: Prediction failed: {e}")
-            return game.home_team, 0.55, 8
+        except Exception:
+            # P0-3: never convert an internal failure into a confident-
+            # looking home-team vote — re-raise so the orchestrator
+            # records an abstention (ORCH-M7).
+            raise

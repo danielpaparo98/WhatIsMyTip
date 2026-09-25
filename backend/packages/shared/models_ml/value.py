@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..models import Game
 from .base import BaseModel
+from .prediction import Prediction
 
 
 class ValueModel(BaseModel):
@@ -74,7 +75,7 @@ class ValueModel(BaseModel):
             wins = home["wins"] + away["wins"]
             self.team_win_rates[team] = (wins / total) if total > 0 else 0.5
 
-    async def predict(self, game: Game, db: AsyncSession) -> Tuple[str, float, int]:
+    async def predict(self, game: Game, db: AsyncSession) -> Prediction:
         """Predict winner based on value (undervalued teams).
 
         Uses only historical data before the prediction game's date.
@@ -101,4 +102,4 @@ class ValueModel(BaseModel):
         confidence = max(0.5, min(0.9, confidence))
         margin = max(1, min(80, margin))
 
-        return winner, confidence, margin
+        return Prediction(winner, confidence, margin)

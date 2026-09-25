@@ -1,8 +1,9 @@
 from abc import ABC, abstractmethod
-from typing import Dict, List, Tuple
+from typing import Dict, List
 
 from ..models import Game
 from ..models_ml import BaseModel
+from ..models_ml.prediction import Prediction
 
 
 class BaseHeuristic(ABC):
@@ -13,18 +14,18 @@ class BaseHeuristic(ABC):
 
     @abstractmethod
     async def apply(
-        self, game: Game, model_predictions: Dict[str, Tuple[str, float, int]]
-    ) -> Tuple[str, float, int]:
+        self, game: Game, model_predictions: Dict[str, Prediction]
+    ) -> Prediction:
         """Apply heuristic to model predictions.
 
         Args:
             game: Game to predict
-            model_predictions: Dict of model_name -> (winner, confidence, margin)
+            model_predictions: Dict of model_name -> Prediction
 
         Returns:
-            Tuple of (winner, confidence, margin)
+            Prediction (pick, probability, score_projection)
         """
-        pass
+        raise NotImplementedError
 
     @abstractmethod
     def get_name(self) -> str:

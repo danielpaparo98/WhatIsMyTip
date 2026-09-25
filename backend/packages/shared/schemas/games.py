@@ -26,7 +26,14 @@ class WeatherResponse(BaseModel):
 class GameResponse(BaseModel):
     id: int
     slug: str
-    squiggle_id: int
+    # DEPRECATED (P3-2 / ADR 0001): provider-specific id.  Optional —
+    # fixtures from other providers have no Squiggle id.  Kept for
+    # legacy clients during the deprecation window; new clients should
+    # read ``source`` (and, post-cutover, the source_refs collection).
+    squiggle_id: Optional[int] = None
+    # P3-2: which feed provider produced this fixture.  "squiggle" for
+    # every legacy row; a second sport's provider names itself.
+    source: str = "squiggle"
     round_id: int
     season: int
     # home_team / away_team / venue are nullable in Postgres to support

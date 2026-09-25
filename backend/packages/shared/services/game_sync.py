@@ -1,4 +1,9 @@
-"""Service for syncing games from Squiggle API."""
+"""Service for syncing fixtures from a feed provider into the database.
+
+P3-1: the service consumes canonical :class:`FixtureDTO` objects from a
+:class:`FeedProvider` — the vendor dialect lives in the provider, not
+here and not in the CRUD layer.
+"""
 
 import time
 from datetime import datetime
@@ -7,6 +12,8 @@ from typing import Any, Dict, List, Optional
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..crud.games import GameCRUD
+from ..ingestion import FeedProvider
+from ..ingestion.squiggle_provider import SquiggleProvider
 from ..logger import get_logger
 from ..squiggle import SquiggleClient
 
@@ -14,29 +21,39 @@ logger = get_logger(__name__)
 
 
 class GameSyncService:
-    """Service for syncing games from Squiggle API to database.
+    """Service for syncing games from a feed provider to database.
 
     This service handles:
-    - Fetching games from Squiggle API for specified seasons
+    - Fetching fixtures from the feed provider for specified seasons
     - Creating or updating games in the database
     - Tracking sync statistics (created, updated, skipped)
-    - Handling API errors gracefully
+    - Handling feed errors gracefully
     """
 
     def __init__(
         self,
-        squiggle_client: SquiggleClient,
-        db_session: AsyncSession,
-        season: Optional[int] = None
+        squiggle_client: Optional[SquiggleClient] = None,
+        db_session: AsyncSession = None,
+        season: Optional[int] = None,
+        provider: Optional[FeedProvider] = None,
     ):
         """Initialize the GameSyncService.
 
         Args:
-            squiggle_client: Squiggle API client
+            squiggle_client: Squiggle API client — wrapped in a
+                ``SquiggleProvider`` when no explicit ``provider`` is
+                given (back-compat with existing wiring/tests).
             db_session: Database session
             season: Season year to sync (defaults to current year)
+            provider: Explicit feed provider (overrides the client).
+                A second sport injects its own provider here.
         """
-        self.client = squiggle_client
+        if provider is not None:
+            self.provider = provider
+        elif squiggle_client is not None:
+            self.provider = SquiggleProvider(client=squiggle_client)
+        else:
+            self.provider = SquiggleProvider()
         self.db = db_session
         self.season = season or datetime.now().year
         self.logger = logger
@@ -66,22 +83,27 @@ class GameSyncService:
         }
 
         try:
-            # Fetch games from Squiggle API
-            self.logger.info(f"Fetching games from Squiggle API for season {self.season}")
-            games_data = await self.client.get_games(year=self.season)
+            # Fetch canonical fixtures from the feed provider
+            self.logger.info(
+                f"Fetching fixtures from {self.provider.sport_id} provider "
+                f"for season {self.season}"
+            )
+            fixtures = await self.provider.get_fixtures(self.season)
 
-            if not games_data:
-                self.logger.warning(f"No games returned from Squiggle API for season {self.season}")
+            if not fixtures:
+                self.logger.warning(
+                    f"No fixtures returned for season {self.season}"
+                )
                 stats["duration_seconds"] = time.time() - start_time
                 return stats
 
-            self.logger.info(f"Retrieved {len(games_data)} games from Squiggle API")
+            self.logger.info(f"Retrieved {len(fixtures)} fixtures")
 
-            # Process each game
-            for game_data in games_data:
+            # Process each fixture
+            for fixture in fixtures:
                 try:
                     result = await GameCRUD.create_or_update_with_tracking(
-                        self.db, game_data
+                        self.db, fixture
                     )
 
                     if result["action"] == "created":
@@ -94,7 +116,7 @@ class GameSyncService:
                     stats["total_games"] += 1
 
                 except Exception as e:
-                    error_msg = f"Error processing game {game_data.get('id', 'unknown')}: {str(e)}"
+                    error_msg = f"Error processing fixture {fixture.external_id}: {str(e)}"
                     self.logger.error(error_msg)
                     stats["errors"].append(error_msg)
 

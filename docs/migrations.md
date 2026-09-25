@@ -118,9 +118,9 @@ uv run alembic stamp <revision_id>
 
 ## Migration History
 
-The project uses a **consolidated baseline** rather than individual historical migrations. The old SQLite-era incremental migrations have been replaced by a single comprehensive PostgreSQL baseline.
+The project started with a **consolidated baseline** rather than individual historical migrations: the old SQLite-era incremental migrations were replaced by a single comprehensive PostgreSQL baseline (`0001`).
 
-The current `head` is **`0002_weather_players_injuries`** (verified via `uv run alembic current` — there are exactly **2 migrations** on disk). The original Phase 4c plan called for a 3rd migration adding a metrics index; that index was ultimately added via the SQLAlchemy `Index(...)` declarations in `0001` / `0002` (rather than a separate `0003` migration), so no third file is expected.
+The current `head` is **`0009_fix_generation_progress_seq`** — there are **9 migrations** on disk (verified September 2026; run `uv run alembic current` / `uv run alembic history` to re-verify).
 
 ### Current Migrations
 
@@ -128,10 +128,17 @@ The current `head` is **`0002_weather_players_injuries`** (verified via `uv run 
 |-------|----------|------|-------------|
 | 1 | `0001` | [`0001_consolidated_postgresql_schema.py`](../backend/alembic/versions/2026_05_28_1613-0001_consolidated_postgresql_schema.py) | Full PostgreSQL schema baseline (all tables, indexes, constraints) |
 | 2 | `0002` | [`0002_weather_players_injuries.py`](../backend/alembic/versions/2026_06_10_0600-0002_weather_players_injuries.py) | Weather, player, and injury tracking tables |
+| 3 | `0003` | [`0003_job_executions_metrics_index.py`](../backend/alembic/versions/2026_06_18_0145-0003_job_executions_metrics_index.py) | Composite metrics index on `job_executions` |
+| 4 | `0004` | [`0004_canonical_team_names.py`](../backend/alembic/versions/2026_06_21_0200-0004_canonical_team_names.py) | Canonicalize team-name aliases across tables |
+| 5 | `0005` | [`0005_model_versions_coefficients.py`](../backend/alembic/versions/2026_06_21_1208-0005_model_versions_coefficients.py) | Model versions + learned coefficients tables |
+| 6 | `0006` | [`0006_model_version_num_width.py`](../backend/alembic/versions/2026_06_22_1240-0006_model_version_num_width.py) | Widen `model_versions.version_num` (alembic bookkeeping guard) |
+| 7 | `0007` | [`0007_elo_cache_dedup.py`](../backend/alembic/versions/2026_06_22_1245-0007_elo_cache_dedup.py) | Deduplicate alias rows in `elo_cache` missed by 0004 |
+| 8 | `0008` | [`0008_match_reports.py`](../backend/alembic/versions/2026_09_19_1200-0008_match_reports.py) | `match_reports` table (grand-final pre-match reports) |
+| 9 | `0009` | [`0009_fix_generation_progress_seq.py`](../backend/alembic/versions/2026_09_21_0900-0009_fix_generation_progress_seq.py) | Fix `generation_progress` sequence desync (explicit-ID CSV loads) |
 
 ### Migration 0001: Consolidated PostgreSQL Schema
 
-This baseline migration creates the complete schema for the FaaS backend, including:
+This baseline migration creates the complete schema for the backend, including:
 
 - **games** — AFL match data (teams, round, venue, scores, status, sync tracking)
 - **tips** — Generated tips (team, confidence, margin, heuristic)
@@ -148,9 +155,9 @@ All indexes and constraints are included in the consolidated migration.
 ### Migration 0002: Weather, Players & Injuries
 
 Adds tables for:
-- **weather_data** — Match-day weather conditions
+- **match_weather** — Match-day weather conditions
 - **players** — Player roster information
-- **player_stats** — Individual player performance metrics
+- **player_match_stats** / **player_advanced_stats** — Individual player performance metrics
 - **injuries** — Team injury lists and player availability
 
 ---

@@ -1,9 +1,20 @@
+from .events import (
+    EventListResponse,
+    EventParticipantResponse,
+    EventResponse,
+)
 from .games import (
     GameDetailResponse,
     GameListResponse,
     GameResponse,
     ModelPrediction,
     WeatherResponse,
+)
+from .sports import (
+    CompetitionResponse,
+    SeasonResponse,
+    SportResponse,
+    SportsListResponse,
 )
 from .match_analysis import MatchAnalysisResponse
 from .match_report import (
@@ -43,6 +54,9 @@ from .backtest import (  # noqa: E402
 )
 
 __all__ = [
+    "EventResponse",
+    "EventParticipantResponse",
+    "EventListResponse",
     "GameResponse",
     "GameListResponse",
     "GameDetailResponse",

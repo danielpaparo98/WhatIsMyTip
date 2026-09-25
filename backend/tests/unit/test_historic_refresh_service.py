@@ -12,7 +12,6 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from packages.shared.services.historic_refresh import (
-    ALL_SEASONS,
     BATCH_SIZE,
     MAX_RUNTIME_SECONDS,
     run_historic_refresh,

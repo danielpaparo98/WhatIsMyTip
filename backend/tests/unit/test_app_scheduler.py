@@ -39,17 +39,23 @@ class TestBuildScheduler:
     def test_registers_all_scheduled_jobs(self):
         scheduler = build_scheduler(_make_session_factory())
         job_ids = {job.id for job in scheduler.get_jobs()}
-        # 5 jobs registered with these IDs (model-retrain is enabled by default)
+        # 7 jobs registered with these IDs (model-retrain,
+        # supplementary-sync and league-sync are enabled by default)
         assert "daily-sync" in job_ids
         assert "match-completion" in job_ids
         assert "tip-generation" in job_ids
         assert "historic-refresh" in job_ids
         assert "model-retrain" in job_ids
-        assert len(job_ids) == 5
+        assert "supplementary-sync" in job_ids
+        assert "league-sync" in job_ids
+        assert len(job_ids) == 7
 
     def test_jobs_use_cron_triggers(self):
         scheduler = build_scheduler(_make_session_factory())
-        for job_id in ("daily-sync", "match-completion", "tip-generation", "historic-refresh", "model-retrain"):
+        for job_id in (
+            "daily-sync", "match-completion", "tip-generation",
+            "historic-refresh", "model-retrain", "league-sync",
+        ):
             job = scheduler.get_job(job_id)
             assert job is not None
             # Each job's trigger should be a CronTrigger
@@ -60,14 +66,20 @@ class TestBuildScheduler:
     def test_max_instances_is_one(self):
         """Each job should only allow one concurrent instance (relies on JobLock)."""
         scheduler = build_scheduler(_make_session_factory())
-        for job_id in ("daily-sync", "match-completion", "tip-generation", "historic-refresh", "model-retrain"):
+        for job_id in (
+            "daily-sync", "match-completion", "tip-generation",
+            "historic-refresh", "model-retrain", "league-sync",
+        ):
             job = scheduler.get_job(job_id)
             assert job.max_instances == 1, f"{job_id} allows > 1 instance"
 
     def test_coalesce_is_true(self):
         """Misfired triggers should be coalesced into one run."""
         scheduler = build_scheduler(_make_session_factory())
-        for job_id in ("daily-sync", "match-completion", "tip-generation", "historic-refresh", "model-retrain"):
+        for job_id in (
+            "daily-sync", "match-completion", "tip-generation",
+            "historic-refresh", "model-retrain", "league-sync",
+        ):
             job = scheduler.get_job(job_id)
             assert job.coalesce is True, f"{job_id} coalesce is False"
 
@@ -114,6 +126,49 @@ class TestBuildScheduler:
         assert fields["minute"] == "30"
         assert fields["hour"] == "6"
         assert fields["day_of_week"] == "2"
+
+    def test_league_sync_registered_when_enabled(self, monkeypatch):
+        """The league-sync job is registered when ``league_sync_enabled`` is True."""
+        from packages.shared import config as config_module
+
+        fake_settings = config_module.Settings(league_sync_enabled=True)
+        monkeypatch.setattr(scheduler_module, "settings", fake_settings)
+
+        scheduler = build_scheduler(_make_session_factory())
+        job = scheduler.get_job("league-sync")
+        assert job is not None
+        assert isinstance(job.trigger, CronTrigger)
+        assert job.max_instances == 1
+        assert job.coalesce is True
+
+    def test_league_sync_not_registered_when_disabled(self, monkeypatch):
+        """The league-sync job is absent when ``league_sync_enabled`` is False."""
+        from packages.shared import config as config_module
+
+        fake_settings = config_module.Settings(league_sync_enabled=False)
+        monkeypatch.setattr(scheduler_module, "settings", fake_settings)
+
+        scheduler = build_scheduler(_make_session_factory())
+        assert scheduler.get_job("league-sync") is None
+        # The other jobs are still registered.
+        job_ids = {job.id for job in scheduler.get_jobs()}
+        assert {"daily-sync", "match-completion", "tip-generation", "historic-refresh"} <= job_ids
+
+    def test_league_sync_uses_cron_string_from_settings(self, monkeypatch):
+        """A custom ``league_sync_cron`` expression is plumbed into the trigger."""
+        from packages.shared import config as config_module
+
+        fake_settings = config_module.Settings(
+            league_sync_cron="15 4 * * *", league_sync_enabled=True
+        )
+        monkeypatch.setattr(scheduler_module, "settings", fake_settings)
+
+        scheduler = build_scheduler(_make_session_factory())
+        job = scheduler.get_job("league-sync")
+        assert job is not None
+        fields = {f.name: str(f) for f in job.trigger.fields}
+        assert fields["minute"] == "15"
+        assert fields["hour"] == "4"
 
     def test_reads_cron_expressions_from_settings(self, monkeypatch):
         """Custom cron expressions in settings should be picked up by the scheduler."""

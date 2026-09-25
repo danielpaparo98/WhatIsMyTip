@@ -1,4 +1,8 @@
-"""Service for detecting and processing completed matches."""
+"""Service for detecting and processing completed matches.
+
+P3-1: consumes canonical :class:`FixtureDTO` objects from a
+:class:`FeedProvider` — the vendor dialect lives in the provider.
+"""
 
 import time
 from datetime import datetime, timedelta, timezone
@@ -10,11 +14,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..cache import invalidate_cache_pattern, medium_cache
 from ..config import settings
 from ..crud.games import GameCRUD
+from ..ingestion import FeedProvider
+from ..ingestion.squiggle_provider import SquiggleProvider
 from ..logger import get_logger
 from ..models import Game
 from ..models_ml.elo import EloModel
 from ..squiggle import SquiggleClient
-from ..squiggle.utils import parse_squiggle_complete
 
 logger = get_logger(__name__)
 
@@ -24,22 +29,34 @@ class MatchCompletionDetectorService:
 
     This service handles:
     - Finding games that should be completed based on scheduled time
-    - Checking Squiggle API for final scores
+    - Checking the feed provider for final scores
     - Marking games as completed in database
     - Handling edge cases (postponed games, cancelled games)
     """
 
     def __init__(
-        self, squiggle_client: SquiggleClient, db_session: AsyncSession, buffer_minutes: int = 60
+        self,
+        squiggle_client: Optional[SquiggleClient] = None,
+        db_session: AsyncSession = None,
+        buffer_minutes: int = 60,
+        provider: Optional[FeedProvider] = None,
     ):
         """Initialize the MatchCompletionDetectorService.
 
         Args:
-            squiggle_client: Squiggle API client
+            squiggle_client: Squiggle API client — wrapped in a
+                ``SquiggleProvider`` when no explicit ``provider`` is
+                given (back-compat with existing wiring/tests).
             db_session: Database session
             buffer_minutes: Buffer time after scheduled game time (default: 60 minutes)
+            provider: Explicit feed provider (overrides the client).
         """
-        self.client = squiggle_client
+        if provider is not None:
+            self.provider = provider
+        elif squiggle_client is not None:
+            self.provider = SquiggleProvider(client=squiggle_client)
+        else:
+            self.provider = SquiggleProvider()
         self.db = db_session
         self.buffer_minutes = buffer_minutes
         self.logger = logger
@@ -111,35 +128,34 @@ class MatchCompletionDetectorService:
                     break
             window_end = now.date().isoformat()
 
-            games_data = await self.client.get_games(
-                year=current_year,
+            fixtures = await self.provider.get_fixtures(
+                current_year,
                 start_date=window_start,
                 end_date=window_end,
             )
 
-            # Create a mapping of squiggle_id to game data
-            games_by_squiggle_id = {game_data["id"]: game_data for game_data in games_data}
+            # Create a mapping of provider external id to fixture DTO
+            fixtures_by_external_id = {
+                fixture.external_id: fixture for fixture in fixtures
+            }
 
             # Process each game
             for game in recently_finished_games:
                 try:
-                    # Get the latest data from Squiggle
-                    squiggle_data = games_by_squiggle_id.get(game.squiggle_id)
+                    # Get the latest data from the provider
+                    fixture = fixtures_by_external_id.get(game.squiggle_id)
 
-                    if not squiggle_data:
+                    if fixture is None:
                         self.logger.warning(
-                            f"Game {game.squiggle_id} not found in Squiggle API response"
+                            f"Game {game.squiggle_id} not found in provider response"
                         )
                         stats["games_not_ready"] += 1
                         continue
 
-                    # Check if the game is complete in Squiggle
-                    is_complete = parse_squiggle_complete(squiggle_data.get("complete", False))
-
-                    if is_complete:
+                    if fixture.completed:
                         # Update game with final scores
                         updated_game = await GameCRUD.update_game_completion(
-                            self.db, game_id=game.id, squiggle_data=squiggle_data
+                            self.db, game_id=game.id, fixture=fixture
                         )
 
                         if updated_game:
@@ -273,32 +289,29 @@ class MatchCompletionDetectorService:
                     "game_date": game.date.isoformat() if game.date else None,
                 }
 
-            # Fetch game data from Squiggle
-            squiggle_data = await self.client.get_game(squiggle_id)
+            # Fetch the fixture from the provider
+            fixture = await self.provider.get_fixture(squiggle_id)
 
-            # Check completion status
-            is_complete = parse_squiggle_complete(squiggle_data.get("complete", False))
-
-            if is_complete:
-                # Update game
-                updated_game = await GameCRUD.update_game_completion(
-                    self.db, game_id=game.id, squiggle_data=squiggle_data
-                )
-
-                return {
-                    "squiggle_id": squiggle_id,
-                    "status": "completed",
-                    "home_team": game.home_team,
-                    "away_team": game.away_team,
-                    "home_score": updated_game.home_score if updated_game else game.home_score,
-                    "away_score": updated_game.away_score if updated_game else game.away_score,
-                }
-            else:
+            if fixture is None or not fixture.completed:
                 return {
                     "squiggle_id": squiggle_id,
                     "status": "not_complete",
-                    "reason": "Game not complete in Squiggle API",
+                    "reason": "Game not complete at the provider",
                 }
+
+            # Update game
+            updated_game = await GameCRUD.update_game_completion(
+                self.db, game_id=game.id, fixture=fixture
+            )
+
+            return {
+                "squiggle_id": squiggle_id,
+                "status": "completed",
+                "home_team": game.home_team,
+                "away_team": game.away_team,
+                "home_score": updated_game.home_score if updated_game else game.home_score,
+                "away_score": updated_game.away_score if updated_game else game.away_score,
+            }
 
         except Exception as e:
             self.logger.error(f"Error checking game {squiggle_id}: {str(e)}", exc_info=True)

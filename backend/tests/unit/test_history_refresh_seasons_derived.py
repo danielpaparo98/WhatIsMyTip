@@ -14,9 +14,11 @@ the range by setting ``HISTORIC_REFRESH_SEASONS`` explicitly.
 
 from __future__ import annotations
 
+from datetime import datetime
+
 import pytest
 
-from packages.shared.config import settings
+from packages.shared.config import Settings, settings
 from packages.shared.services.historic_data_refresh import (
     HistoricDataRefreshService,
     derive_default_seasons,
@@ -75,3 +77,47 @@ class TestServiceDefaultSeasons:
             seasons=explicit,
         )
         assert svc.seasons == explicit
+
+
+class TestOrchestratorDefaultSeasons:
+    """The cron orchestrator must share the SAME derived window as the
+    worker (P0-6).
+
+    Regression: ``historic_refresh.py`` kept its own module-level
+    constant ``ALL_SEASONS = list(range(2010, 2026))``, so the SEC-LO-003
+    fix landed on the worker path but the orchestrator still silently
+    skipped every new season each January 1st.
+    """
+
+    def test_orchestrator_uses_derived_window(self, monkeypatch) -> None:
+        from packages.shared.services.historic_refresh import default_seasons
+
+        monkeypatch.setattr(settings, "current_season", 2030)
+        assert default_seasons() == derive_default_seasons(current_season=2030)
+        assert default_seasons() == list(range(2014, 2030))
+
+    def test_batches_built_from_derived_window(self, monkeypatch) -> None:
+        from packages.shared.services.historic_refresh import (
+            _build_batches,
+            default_seasons,
+        )
+
+        monkeypatch.setattr(settings, "current_season", 2030)
+        batches = _build_batches(None)
+        flattened = [season for batch in batches for season in batch]
+        assert flattened == default_seasons()
+
+
+class TestHistoricRefreshSeasonsSetting:
+    """The admin-trigger fallback setting tracks the year too (P0-6)."""
+
+    def test_setting_default_is_derived_not_hardcoded(self) -> None:
+        factory = Settings.model_fields["historic_refresh_seasons"].default_factory
+        assert factory is not None, (
+            "historic_refresh_seasons must derive its default, not pin '2010-2025'"
+        )
+        year = datetime.now().year
+        assert factory() == f"{year - 16}-{year - 1}"
+
+    def test_dead_start_year_setting_removed(self) -> None:
+        assert "historical_refresh_start_year" not in Settings.model_fields

@@ -56,6 +56,11 @@ services:
   postgres:
     image: postgres:16-alpine
     container_name: wimt-postgres
+    # The entrypoint needs CAP_CHOWN/FOWNER/SETUID/SETGID before dropping
+    # to the postgres user; with cap_drop ALL it must run AS that user
+    # (uid 999 = postgres in postgres:16-alpine). Without this the
+    # container crash-loops on volume chmod (seen 2026-09-24).
+    user: "999:999"
     environment:
       POSTGRES_USER: wimt
       POSTGRES_PASSWORD: wimt_dev_password
@@ -86,6 +91,7 @@ services:
   redis:
     image: redis:7-alpine
     container_name: wimt-redis
+    user: "999:1000"
     volumes:
       - wimt_redis_data:/data
     healthcheck:

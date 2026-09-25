@@ -10,13 +10,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..cache import _get_client
 from ..logger import get_logger
 from ..models import Game
+from ..sport_context import DEFAULT_CONTEXT, SportContext
 from ..utils import ensure_datetime
 from .base import BaseModel
+from .prediction import Prediction
 
 logger = get_logger(__name__)
 
 # Redis key for storing computed Elo ratings
-_ELO_RATINGS_REDIS_KEY = "wimt:elo_ratings"
+_LEGACY_ELO_RATINGS_REDIS_KEY = "wimt:elo_ratings"  # pre-P2-2 key (AFL default, no namespace)
 # TTL for Elo ratings in Redis (1 hour — recomputed on update_cache)
 _ELO_RATINGS_TTL = 3600
 
@@ -40,18 +42,33 @@ class EloModel(BaseModel):
     # excluded) instead of assumed at a fixed 50.  Set whenever ratings
     # are computed from a game list; predict prefers it over the
     # hard-coded default and DROPS it entirely at neutral venues.
-    _LEARNED_HOME_ADVANTAGE: Optional[float] = None
+    # P2-5: per-sport learned home advantage, keyed by ``sport_id``.
+    # Was a single class-level float — one sport's rating walk would
+    # silently overwrite the value every other sport's predictions read.
+    _LEARNED_HOME_ADVANTAGE: Dict[str, float] = {}
 
     # Lock for coordinating cache initialisation across concurrent coroutines
     # within a single function invocation
     _cache_lock = asyncio.Lock()
 
-    def __init__(self, k_factor: float = 32.0, home_advantage: float = 50.0):
+    def __init__(
+        self,
+        k_factor: float = 32.0,
+        home_advantage: float = 50.0,
+        context: Optional["SportContext"] = None,
+    ):
         self.k_factor = k_factor
         self.home_advantage = home_advantage
         # Instance-level ratings for backward compatibility (backtesting)
         self.ratings: Dict[str, float] = {}
         self._lock = asyncio.Lock()
+        # P2-2: sport-scoped cache namespace — ratings for two sports
+        # (or two competitions) can never cross-contaminate by name.
+        self.context = context or DEFAULT_CONTEXT
+
+    @property
+    def redis_cache_key(self) -> str:
+        return self.context.cache_key("elo_ratings")
 
     def get_name(self) -> str:
         return "elo"
@@ -155,9 +172,14 @@ class EloModel(BaseModel):
             )
             expected_away = 1.0 - expected_home
 
-            # Actual scores
+            # Actual scores (a draw is the standard 0.5 for each side)
             if game.home_score is not None and game.away_score is not None:
-                actual_home = 1.0 if game.home_score > game.away_score else 0.0
+                if game.home_score > game.away_score:
+                    actual_home = 1.0
+                elif game.away_score > game.home_score:
+                    actual_home = 0.0
+                else:
+                    actual_home = 0.5
                 actual_away = 1.0 - actual_home
 
                 # Update ratings
@@ -175,15 +197,18 @@ class EloModel(BaseModel):
     # ------------------------------------------------------------------
 
     @classmethod
-    async def _load_ratings_from_redis(cls) -> Optional[Dict[str, float]]:
+    async def _load_ratings_from_redis(
+        cls, context: Optional[SportContext] = None
+    ) -> Optional[Dict[str, float]]:
         """Load Elo ratings from Redis.
 
         Returns:
             Dict of team -> rating, or None if not cached in Redis.
         """
+        ctx = context or DEFAULT_CONTEXT
         try:
             client = _get_client()
-            raw = await client.get(_ELO_RATINGS_REDIS_KEY)
+            raw = await client.get(ctx.cache_key("elo_ratings"))
             if raw is not None:
                 ratings = json.loads(raw)
                 logger.info(f"EloModel: Loaded {len(ratings)} ratings from Redis")
@@ -193,12 +218,17 @@ class EloModel(BaseModel):
         return None
 
     @classmethod
-    async def _save_ratings_to_redis(cls, ratings: Dict[str, float]) -> None:
+    async def _save_ratings_to_redis(
+        cls,
+        ratings: Dict[str, float],
+        context: Optional[SportContext] = None,
+    ) -> None:
         """Save Elo ratings to Redis with TTL."""
+        ctx = context or DEFAULT_CONTEXT
         try:
             client = _get_client()
             await client.set(
-                _ELO_RATINGS_REDIS_KEY,
+                ctx.cache_key("elo_ratings"),
                 json.dumps(ratings),
                 ex=_ELO_RATINGS_TTL,
             )
@@ -207,12 +237,15 @@ class EloModel(BaseModel):
             logger.warning(f"EloModel: Failed to save ratings to Redis: {e}")
 
     @classmethod
-    async def _initialize_cache(cls, db: AsyncSession):
+    async def _initialize_cache(
+        cls, db: AsyncSession, context: Optional[SportContext] = None
+    ):
         """Initialize the ratings cache — tries Redis first, then DB."""
+        ctx = context or DEFAULT_CONTEXT
         async with cls._cache_lock:
             # Try Redis first
             try:
-                ratings = await cls._load_ratings_from_redis()
+                ratings = await cls._load_ratings_from_redis(ctx)
             except Exception as exc:  # noqa: BLE001 - best-effort
                 # Redis load failure must not block cache init (LO-001).
                 # Fall through to DB recompute so the application still
@@ -230,10 +263,12 @@ class EloModel(BaseModel):
             start_time = time.time()
             logger.info("EloModel._initialize_cache: Computing ratings from database")
 
-            ratings = await cls._compute_ratings_from_db(db)
+            ratings = await cls._compute_ratings_from_db(
+                db, sport_id=ctx.sport_id
+            )
 
             # Save to Redis for future invocations
-            await cls._save_ratings_to_redis(ratings)
+            await cls._save_ratings_to_redis(ratings, ctx)
 
             total_time = time.time() - start_time
             logger.info(
@@ -242,15 +277,21 @@ class EloModel(BaseModel):
             )
 
     @classmethod
-    async def _compute_ratings_from_db(cls, db: AsyncSession) -> Dict[str, float]:
+    async def _compute_ratings_from_db(
+        cls, db: AsyncSession, sport_id: str = DEFAULT_CONTEXT.sport_id,
+    ) -> Dict[str, float]:
         """Compute Elo ratings from the database (full scan of completed games)."""
         # Get all teams
         result = await db.execute(
-            select(Game.home_team).distinct().where(Game.home_team is not None)
+            select(Game.home_team)
+            .distinct()
+            .where(Game.home_team.is_not(None))
         )
         home_teams = set(r[0] for r in result.all())
         result = await db.execute(
-            select(Game.away_team).distinct().where(Game.away_team is not None)
+            select(Game.away_team)
+            .distinct()
+            .where(Game.away_team.is_not(None))
         )
         away_teams = set(r[0] for r in result.all())
         all_teams = home_teams.union(away_teams)
@@ -268,7 +309,7 @@ class EloModel(BaseModel):
         # grand-final rounds (neutral venues) in the rating walk.
         learned, neutral_keys = cls.learn_home_advantage(games)
         if learned is not None:
-            cls._LEARNED_HOME_ADVANTAGE = learned
+            cls._LEARNED_HOME_ADVANTAGE[sport_id] = learned
 
         # Process games in chronological order
         cls._compute_ratings_from_games(
@@ -282,7 +323,9 @@ class EloModel(BaseModel):
         return ratings
 
     @classmethod
-    async def update_cache(cls, db: AsyncSession):
+    async def update_cache(
+        cls, db: AsyncSession, context: Optional[SportContext] = None
+    ):
         """Update the ratings cache from database.
 
         This should be called after new games are completed or synced.
@@ -304,14 +347,15 @@ class EloModel(BaseModel):
         consistent with the database.  This is fine for the current
         data scale (a single season is ~200 games).
         """
+        ctx = context or DEFAULT_CONTEXT
         async with cls._cache_lock:
             start_time = time.time()
             logger.info("EloModel.update_cache: Updating Elo ratings")
 
-            ratings = await cls._compute_ratings_from_db(db)
+            ratings = await cls._compute_ratings_from_db(db, sport_id=ctx.sport_id)
 
             # Save to Redis
-            await cls._save_ratings_to_redis(ratings)
+            await cls._save_ratings_to_redis(ratings, ctx)
 
             # Also persist to DB for durability
             await cls.save_to_cache(db, ratings)
@@ -346,7 +390,10 @@ class EloModel(BaseModel):
             logger.error(f"EloModel.save_to_cache: Failed to save ratings: {e}", exc_info=True)
 
     @classmethod
-    async def load_from_cache(cls, db: AsyncSession, season: Optional[int] = None) -> bool:
+    async def load_from_cache(
+        cls, db: AsyncSession, season: Optional[int] = None,
+        context: Optional[SportContext] = None,
+    ) -> bool:
         """Load Elo ratings from database cache into Redis.
 
         Args:
@@ -359,6 +406,8 @@ class EloModel(BaseModel):
         from datetime import datetime
 
         from ..crud.elo_cache import EloCacheCRUD
+
+        ctx = context or DEFAULT_CONTEXT
 
         if season is None:
             season = datetime.now().year
@@ -373,7 +422,7 @@ class EloModel(BaseModel):
                 return False
 
             # Store in Redis
-            await cls._save_ratings_to_redis(ratings)
+            await cls._save_ratings_to_redis(ratings, ctx)
 
             logger.info(
                 f"EloModel.load_from_cache: Loaded {len(ratings)} ratings for season {season}"
@@ -384,13 +433,16 @@ class EloModel(BaseModel):
             return False
 
     @classmethod
-    async def get_cached_ratings(cls) -> Dict[str, float]:
+    async def get_cached_ratings(
+        cls, context: Optional[SportContext] = None
+    ) -> Dict[str, float]:
         """Get ratings from Redis cache.
 
         Returns:
             Dict of team -> rating, empty dict if not cached.
         """
-        ratings = await cls._load_ratings_from_redis()
+        ctx = context or DEFAULT_CONTEXT
+        ratings = await cls._load_ratings_from_redis(ctx)
         return ratings if ratings is not None else {}
 
     # ------------------------------------------------------------------
@@ -411,7 +463,7 @@ class EloModel(BaseModel):
     # Prediction
     # ------------------------------------------------------------------
 
-    async def predict(self, game: Game, db: AsyncSession) -> Tuple[str, float, int]:
+    async def predict(self, game: Game, db: AsyncSession) -> Prediction:
         """Predict winner using Elo ratings with point-in-time data.
 
         For current predictions (non-backtesting), uses the Redis-backed cache
@@ -443,15 +495,15 @@ class EloModel(BaseModel):
         )
 
         if use_cache:
-            ratings = await self.__class__._load_ratings_from_redis()
+            ratings = await self.__class__._load_ratings_from_redis(self.context)
             if ratings:
                 logger.info(f"EloModel.predict: Using Redis-cached ratings ({len(ratings)} teams)")
             else:
                 # Redis miss — try DB cache, then compute
                 loaded = await self.__class__.load_from_cache(db)
                 if not loaded:
-                    await self.__class__._initialize_cache(db)
-                ratings = await self.__class__._load_ratings_from_redis()
+                    await self.__class__._initialize_cache(db, context=self.context)
+                ratings = await self.__class__._load_ratings_from_redis(self.context)
 
                 if not ratings:
                     # Final fallback: point-in-time computation
@@ -481,7 +533,7 @@ class EloModel(BaseModel):
         else:
             # GF-HA: prefer the MEASURED advantage over the hard-coded
             # default (falls back to 50 when no sample has been seen).
-            ha = type(self)._LEARNED_HOME_ADVANTAGE
+            ha = type(self)._LEARNED_HOME_ADVANTAGE.get(self.context.sport_id)
             if ha is None:
                 ha = self.home_advantage
         effective_home = home_rating + ha
@@ -509,7 +561,7 @@ class EloModel(BaseModel):
             f"| winner={winner}, confidence={confidence:.2f}, margin={margin}"
         )
 
-        return winner, confidence, margin
+        return Prediction(winner, confidence, margin)
 
     async def _compute_point_in_time_ratings(
         self, db: AsyncSession, game: Game
@@ -546,7 +598,7 @@ class EloModel(BaseModel):
         # (grand finals excluded) instead of assuming a fixed +50.
         learned, neutral_keys = self.learn_home_advantage(games)
         if learned is not None:
-            type(self)._LEARNED_HOME_ADVANTAGE = learned
+            type(self)._LEARNED_HOME_ADVANTAGE[self.context.sport_id] = learned
             ha_to_use = learned
         else:
             ha_to_use = self.home_advantage

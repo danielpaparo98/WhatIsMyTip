@@ -22,6 +22,7 @@ from packages.shared.cache import (
     short_cache,
 )
 from packages.shared.crud.games import GameCRUD
+from packages.shared.ingestion.squiggle_provider import fixture_from_squiggle
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -113,7 +114,7 @@ class TestTargetedCacheInvalidation:
              patch("packages.shared.cache.invalidate_cache_pattern", pattern_invalidate_mock), \
              patch.object(short_cache, "delete", short_delete_mock), \
              patch.object(medium_cache, "delete", medium_delete_mock):
-            await GameCRUD.create_or_update_with_tracking(db, game_data)
+            await GameCRUD.create_or_update_with_tracking(db, fixture_from_squiggle(game_data))
 
         # The pattern-invalidator must NOT have been called — it would
         # SCAN the whole cache.
@@ -155,7 +156,7 @@ class TestTargetedCacheInvalidation:
              patch("packages.shared.cache.invalidate_cache_pattern", pattern_invalidate_mock), \
              patch.object(short_cache, "delete", AsyncMock(return_value=True)), \
              patch.object(medium_cache, "delete", AsyncMock(return_value=True)):
-            await GameCRUD.create_or_update_with_tracking(db, game_data)
+            await GameCRUD.create_or_update_with_tracking(db, fixture_from_squiggle(game_data))
 
         # Critical assertion: no blanket pattern invalidation.
         assert pattern_invalidate_mock.await_count == 0
@@ -193,7 +194,7 @@ class TestTeamNameCanonicalisation:
                 patch.object(GameCRUD, "_generate_unique_slug", AsyncMock(return_value="abc-12345")), \
                 patch.object(short_cache, "delete", AsyncMock(return_value=True)), \
                 patch.object(medium_cache, "delete", AsyncMock(return_value=True)):
-            result = await GameCRUD.create_or_update_with_tracking(db, game_data)
+            result = await GameCRUD.create_or_update_with_tracking(db, fixture_from_squiggle(game_data))
 
         game = result["game"]
         assert game.home_team == "Bulldogs"
@@ -222,7 +223,7 @@ class TestTeamNameCanonicalisation:
         with patch.object(GameCRUD, "get_by_squiggle_id", AsyncMock(return_value=existing)), \
                 patch.object(short_cache, "delete", AsyncMock(return_value=True)), \
                 patch.object(medium_cache, "delete", AsyncMock(return_value=True)):
-            await GameCRUD.create_or_update_with_tracking(db, game_data)
+            await GameCRUD.create_or_update_with_tracking(db, fixture_from_squiggle(game_data))
 
         assert existing.home_team == "GoldCoast"
         assert existing.away_team == "NorthMelbourne"
@@ -333,7 +334,7 @@ class TestPlaceholderGameSyncSkipping:
                 patch.object(short_cache, "delete", AsyncMock(return_value=True)), \
                 patch.object(medium_cache, "delete", AsyncMock(return_value=True)):
             result = await GameCRUD.create_or_update_with_tracking(
-                db, _make_game_data(hteam=None, ateam=None)
+                db, fixture_from_squiggle(_make_game_data(hteam=None, ateam=None))
             )
 
         assert result["action"] == "skipped_no_teams"
@@ -351,7 +352,7 @@ class TestPlaceholderGameSyncSkipping:
                 patch.object(short_cache, "delete", AsyncMock(return_value=True)), \
                 patch.object(medium_cache, "delete", AsyncMock(return_value=True)):
             result = await GameCRUD.create_or_update_with_tracking(
-                db, _make_game_data(hteam="", ateam="")
+                db, fixture_from_squiggle(_make_game_data(hteam="", ateam=""))
             )
 
         assert result["action"] == "skipped_no_teams"
@@ -370,7 +371,7 @@ class TestPlaceholderGameSyncSkipping:
                 patch.object(short_cache, "delete", AsyncMock(return_value=True)), \
                 patch.object(medium_cache, "delete", AsyncMock(return_value=True)):
             result = await GameCRUD.create_or_update_with_tracking(
-                db, _make_game_data(hteam="Hawthorn", ateam="")
+                db, fixture_from_squiggle(_make_game_data(hteam="Hawthorn", ateam=""))
             )
 
         assert result["action"] == "created"
@@ -390,7 +391,7 @@ class TestPlaceholderGameSyncSkipping:
                 patch.object(short_cache, "delete", AsyncMock(return_value=True)), \
                 patch.object(medium_cache, "delete", AsyncMock(return_value=True)):
             await GameCRUD.create_or_update_with_tracking(
-                db, _make_game_data(id=42, hteam="", ateam="")
+                db, fixture_from_squiggle(_make_game_data(id=42, hteam="", ateam=""))
             )
 
         assert existing.home_team == "Hawthorn"
@@ -409,7 +410,7 @@ class TestDuplicateFixtureAdoption:
         existing.completed = False
         existing.squiggle_id = 38729
         # The incoming feed carries the NEW id (39880) for the same fixture.
-        game_data = _make_game_data(id=39880, year=2026, round=29)
+        game_data = fixture_from_squiggle(_make_game_data(id=39880, year=2026, round=29))
 
         adoptable = AsyncMock(return_value=existing)
         with patch.object(GameCRUD, "get_by_squiggle_id", AsyncMock(return_value=None)), \
@@ -439,7 +440,7 @@ class TestDuplicateFixtureAdoption:
                 patch.object(short_cache, "delete", AsyncMock(return_value=True)), \
                 patch.object(medium_cache, "delete", AsyncMock(return_value=True)):
             result = await GameCRUD.create_or_update_with_tracking(
-                db, _make_game_data(id=40000)
+                db, fixture_from_squiggle(_make_game_data(id=40000))
             )
 
         assert result["action"] == "created"
@@ -462,9 +463,127 @@ class TestDuplicateFixtureAdoption:
                 patch.object(short_cache, "delete", AsyncMock(return_value=True)), \
                 patch.object(medium_cache, "delete", AsyncMock(return_value=True)):
             result = await GameCRUD.create_or_update_with_tracking(
-                db, _make_game_data(id=50000, year=2026, round=29)
+                db, fixture_from_squiggle(_make_game_data(id=50000, year=2026, round=29))
             )
 
         # Fell through to a normal create; the completed row untouched.
         assert result["action"] == "created"
         db.add.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# update_game_completion return contract (P0-1)
+# ---------------------------------------------------------------------------
+
+
+def _make_incomplete_game(*, game_id: int = 7) -> SimpleNamespace:
+    """A stand-in Game row that has not been completed yet."""
+    return SimpleNamespace(
+        id=game_id,
+        slug="xyz-67890",
+        season=2026,
+        round_id=5,
+        home_team="Home",
+        away_team="Away",
+        home_score=None,
+        away_score=None,
+        venue="MCG",
+        date=__import__("datetime").datetime.fromisoformat(
+            "2026-04-18T10:00:00+00:00"
+        ),
+        completed=False,
+        last_synced_at=None,
+        sync_version=0,
+    )
+
+
+class TestUpdateGameCompletionReturn:
+    """``update_game_completion`` documents ``Optional[Game]`` but its
+    success path fell off the end of the function, returning ``None``
+    to callers after a *successful* completion update (P0-1).  P3-1:
+    it consumes a canonical FixtureDTO, not a vendor dict."""
+
+    @staticmethod
+    def _completed_fixture(**overrides):
+        from packages.shared.ingestion.squiggle_provider import (
+            fixture_from_squiggle,
+        )
+
+        data = {
+            "id": 555,
+            "complete": 100,
+            "hscore": 88,
+            "ascore": 71,
+        }
+        data.update(overrides)
+        return fixture_from_squiggle(data)
+
+    @pytest.mark.asyncio
+    async def test_success_path_returns_updated_game(self):
+        db = AsyncMock(spec=AsyncSession)
+        result_mock = MagicMock()
+        result_mock.scalar_one_or_none.return_value = _make_incomplete_game()
+        db.execute = AsyncMock(return_value=result_mock)
+
+        pattern_invalidate_mock = AsyncMock(return_value=0)
+
+        with patch(
+            "packages.shared.cache.invalidate_cache_pattern",
+            pattern_invalidate_mock,
+        ):
+            game = await GameCRUD.update_game_completion(
+                db, 7, self._completed_fixture()
+            )
+
+        # The updated game object must be returned, not None.
+        assert game is not None
+        assert game.completed is True
+        assert game.home_score == 88
+        assert game.away_score == 71
+        assert game.sync_version == 1
+        db.commit.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_already_completed_returns_game(self):
+        """Existing contract: completed game ⇒ returned untouched."""
+        db = AsyncMock(spec=AsyncSession)
+        done = _make_incomplete_game()
+        done.completed = True
+        result_mock = MagicMock()
+        result_mock.scalar_one_or_none.return_value = done
+        db.execute = AsyncMock(return_value=result_mock)
+
+        game = await GameCRUD.update_game_completion(
+            db, 7, self._completed_fixture()
+        )
+
+        assert game is done
+        db.commit.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_unknown_game_returns_none(self):
+        db = AsyncMock(spec=AsyncSession)
+        result_mock = MagicMock()
+        result_mock.scalar_one_or_none.return_value = None
+        db.execute = AsyncMock(return_value=result_mock)
+
+        game = await GameCRUD.update_game_completion(
+            db, 999, self._completed_fixture()
+        )
+
+        assert game is None
+
+    @pytest.mark.asyncio
+    async def test_incomplete_fixture_returns_none(self):
+        """Feed says the game is not final ⇒ no update, returns None."""
+        db = AsyncMock(spec=AsyncSession)
+        result_mock = MagicMock()
+        result_mock.scalar_one_or_none.return_value = _make_incomplete_game()
+        db.execute = AsyncMock(return_value=result_mock)
+
+        game = await GameCRUD.update_game_completion(
+            db, 7, self._completed_fixture(complete=0, hscore=1, ascore=2)
+        )
+
+        assert game is None
+        db.commit.assert_not_awaited()

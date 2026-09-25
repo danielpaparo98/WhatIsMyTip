@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 from sqlalchemy import and_, case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -17,6 +17,34 @@ logger = get_logger(__name__)
 
 # Stake amount per game for profit calculation
 STAKE_PER_GAME = 10.0
+
+
+def actual_winner_name(game) -> Optional[str]:
+    """Name of the side that won a completed game, or ``None`` on a draw.
+
+    A drawn game has no winner, so a tip on either side is incorrect.
+    (The previous ``home > away else away`` form credited the AWAY team
+    with drawn games — P0-5.)
+    """
+    if game.home_score is not None and game.away_score is not None:
+        if game.home_score > game.away_score:
+            return game.home_team
+        if game.away_score > game.home_score:
+            return game.away_team
+    return None
+
+
+def actual_winner_case() -> "case":
+    """SQL ``case`` resolving a game's actual winner name — ``NULL`` on draws.
+
+    Because ``name = NULL`` is never true, tips on drawn games fall
+    through to the incorrect/profit-losing branch of every scoring
+    ``case`` that uses this helper.
+    """
+    return case(
+        (Game.home_score > Game.away_score, Game.home_team),
+        (Game.away_score > Game.home_score, Game.away_team),
+    )
 
 
 class BacktestService:
@@ -95,13 +123,11 @@ class BacktestService:
         for tip, game in tip_rows:
             tips_made += 1
 
-            # Determine actual winner from the game object
-            actual_winner_name = (
-                game.home_team if game.home_score > game.away_score else game.away_team
-            )
+            # Determine actual winner from the game object (None on a draw)
+            winner_name = actual_winner_name(game)
 
-            # Check if prediction was correct
-            if tip.selected_team == actual_winner_name:
+            # Check if prediction was correct (a draw is never correct)
+            if tip.selected_team == winner_name:
                 tips_correct += 1
                 profit += STAKE_PER_GAME
             else:
@@ -148,10 +174,7 @@ class BacktestService:
                 func.sum(
                     case(
                         (Tip.selected_team ==
-                         case(
-                             (Game.home_score > Game.away_score, Game.home_team),
-                             else_=Game.away_team
-                         ), 1),
+                         actual_winner_case(), 1),
                         else_=0
                     )
                 ).label('correct_tips')
@@ -200,20 +223,14 @@ class BacktestService:
                 func.sum(
                     case(
                         (Tip.selected_team ==
-                         case(
-                             (Game.home_score > Game.away_score, Game.home_team),
-                             else_=Game.away_team
-                         ), 1),
+                         actual_winner_case(), 1),
                         else_=0
                     )
                 ).label('tips_correct'),
                 func.sum(
                     case(
                         (Tip.selected_team ==
-                         case(
-                             (Game.home_score > Game.away_score, Game.home_team),
-                             else_=Game.away_team
-                         ), STAKE_PER_GAME),
+                         actual_winner_case(), STAKE_PER_GAME),
                         else_=-STAKE_PER_GAME
                     )
                 ).label('profit')
@@ -385,13 +402,11 @@ class BacktestService:
             tips_made += 1
             total_margin += abs(prediction.margin or 0)
 
-            # Determine actual winner from the game object
-            actual_winner_name = (
-                game.home_team if game.home_score > game.away_score else game.away_team
-            )
+            # Determine actual winner from the game object (None on a draw)
+            winner_name = actual_winner_name(game)
 
-            # Check if prediction was correct
-            if prediction.winner == actual_winner_name:
+            # Check if prediction was correct (a draw is never correct)
+            if prediction.winner == winner_name:
                 tips_correct += 1
                 profit += STAKE_PER_GAME
             else:
@@ -464,20 +479,14 @@ class BacktestService:
                 func.sum(
                     case(
                         (ModelPrediction.winner ==
-                         case(
-                             (Game.home_score > Game.away_score, Game.home_team),
-                             else_=Game.away_team
-                         ), 1),
+                         actual_winner_case(), 1),
                         else_=0
                     )
                 ).label('tips_correct'),
                 func.sum(
                     case(
                         (ModelPrediction.winner ==
-                         case(
-                             (Game.home_score > Game.away_score, Game.home_team),
-                             else_=Game.away_team
-                         ), STAKE_PER_GAME),
+                         actual_winner_case(), STAKE_PER_GAME),
                         else_=-STAKE_PER_GAME
                     )
                 ).label('profit')

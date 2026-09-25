@@ -26,4 +26,6 @@ Landing page for the [`docs/`](../README.md) directory. Start here.
 
 - [`../README.md`](../README.md) — project overview
 - [`../CONTRIBUTING.md`](../CONTRIBUTING.md) — how to contribute (TDD + gitmoji + `feature/` branching + bun/uv toolchain)
+- [`../plans/multi-sport-refactor-plan.md`](../plans/multi-sport-refactor-plan.md) — multi-sport refactor roadmap (phases, subtasks)
+- [`adr/0001-multi-sport-model.md`](adr/0001-multi-sport-model.md) — ADR: multi-sport data model + staged cutover (D1–D4)
 - [`../backend/README.md`](../backend/README.md) — backend-specific quick start

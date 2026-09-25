@@ -8,7 +8,7 @@ Cold-start: returns (home_team, 0.55, 6) when insufficient data.
 """
 
 import json
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Tuple
 
 from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -17,6 +17,7 @@ from ..cache import _get_client
 from ..logger import get_logger
 from ..models import Game, PlayerAdvancedStats, PlayerMatchStats
 from .base import BaseModel
+from .prediction import Prediction
 
 logger = get_logger(__name__)
 
@@ -161,22 +162,6 @@ class PlayerFormModel(BaseModel):
     # Caching
     # ------------------------------------------------------------------
 
-    async def _check_cache(self, game: Game) -> Optional[dict]:
-        """Check Redis cache for a previously computed prediction."""
-        try:
-            client = _get_client()
-            cache_key = (
-                f"{_CACHE_PREFIX}"
-                f"{game.home_team}:{game.away_team}:"
-                f"{game.date.isoformat() if game.date else 'all'}"
-            )
-            raw = await client.get(cache_key)
-            if raw is not None:
-                return json.loads(raw)
-        except Exception as e:
-            logger.warning(f"PlayerFormModel: Redis cache read error: {e}")
-        return None
-
     async def _store_cache(self, game: Game, data: dict) -> None:
         """Store computed prediction data in Redis."""
         try:
@@ -196,7 +181,7 @@ class PlayerFormModel(BaseModel):
 
     async def predict(
         self, game: Game, db: AsyncSession
-    ) -> Tuple[str, float, int]:
+    ) -> Prediction:
         """Predict winner based on recent player form.
 
         Returns:
@@ -223,7 +208,7 @@ class PlayerFormModel(BaseModel):
                     "PlayerFormModel: No recent games for either team, "
                     "using cold-start default"
                 )
-                return game.home_team, 0.55, 6
+                return Prediction(game.home_team, 0.55, 6)
 
             # 3. Get advanced stats
             home_stats = (
@@ -247,7 +232,7 @@ class PlayerFormModel(BaseModel):
                     "PlayerFormModel: No advanced stats available, "
                     "using cold-start default"
                 )
-                return game.home_team, 0.55, 6
+                return Prediction(game.home_team, 0.55, 6)
 
             # 5. Calculate form scores
             home_score = self._calculate_form_score(home_stats)
@@ -293,8 +278,10 @@ class PlayerFormModel(BaseModel):
                 "away_games": len(away_game_ids),
             })
 
-            return winner, confidence, margin
+            return Prediction(winner, confidence, margin)
 
-        except Exception as e:
-            logger.error(f"PlayerFormModel: Prediction failed: {e}")
-            return game.home_team, 0.55, 6
+        except Exception:
+            # P0-3: never convert an internal failure into a confident-
+            # looking home-team vote — re-raise so the orchestrator
+            # records an abstention (ORCH-M7).
+            raise

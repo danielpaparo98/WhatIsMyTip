@@ -219,7 +219,7 @@ class TestGenerateForRoundSessionRollback:
 
         attempted: list[int] = []
 
-        async def fake_generate(game, regenerate=False):
+        async def fake_generate(game, regenerate=False, skip_nlp=False):
             attempted.append(game.id)
             if game.id == 1:
                 raise RuntimeError("simulated game failure")
@@ -334,3 +334,110 @@ class TestTeamlessGameSkip:
         assert stats["games_skipped_no_teams"] == 2
         assert stats["tips_created"] == 3
         assert stats["errors"] == []
+
+
+class TestSingleModelSweep:
+    """All tips and model predictions for a game must come from ONE
+    orchestrator sweep (P0-2).
+
+    Regression: ``_generate_for_game`` called ``orchestrator.predict``
+    once per heuristic (each running ALL models — 3×8 = 24 model runs),
+    then looped ``orchestrator.models`` calling ``model.predict`` again
+    for persistence (8 more runs).  32 executions where 8 suffice, with
+    Elo-style stateful models possibly answering differently between
+    the sweep that decided the tip and the run that got persisted.
+    """
+
+    @staticmethod
+    def _make_game():
+        return SimpleNamespace(
+            id=55,
+            slug="abc-55555",
+            season=2026,
+            round_id=9,
+            home_team="Home",
+            away_team="Away",
+            date=__import__("datetime").datetime.fromisoformat(
+                "2026-05-10T10:00:00+00:00"
+            ),
+            completed=False,
+        )
+
+    @pytest.mark.asyncio
+    async def test_one_predict_all_call_persists_everything(self, monkeypatch):
+        session = _make_session()
+
+        # Two fake models — their .predict must NEVER be called by the service.
+        model_a, model_b = MagicMock(name="ModelA"), MagicMock(name="ModelB")
+        model_a.get_name.return_value = "model_a"
+        model_b.get_name.return_value = "model_b"
+        model_a.predict = AsyncMock()
+        model_b.predict = AsyncMock()
+
+        orchestrator = MagicMock()
+        orchestrator.get_available_heuristics.return_value = ["best_bet", "yolo"]
+        orchestrator.models = [model_a, model_b]
+        orchestrator.predict = AsyncMock()
+        orchestrator.predict_all = AsyncMock(
+            return_value={
+                "best_bet": {
+                    "model_predictions": {
+                        "model_a": ("Home", 0.80, 15),
+                        "model_b": ("Away", 0.60, 4),
+                    },
+                    "tip": ("Home", 0.80, 15),
+                    "failed_models": [],
+                },
+                "yolo": {
+                    "model_predictions": {
+                        "model_a": ("Home", 0.80, 15),
+                        "model_b": ("Away", 0.60, 4),
+                    },
+                    "tip": ("Away", 0.60, 4),
+                    "failed_models": [],
+                },
+            }
+        )
+        monkeypatch.setattr(
+            "packages.shared.services.tip_generation._get_orchestrator",
+            lambda: orchestrator,
+        )
+
+        create_tip = AsyncMock()
+        create_pred = AsyncMock()
+        monkeypatch.setattr(TipCRUD, "get_by_game", AsyncMock(return_value=[]))
+        monkeypatch.setattr(TipCRUD, "create", create_tip)
+        monkeypatch.setattr(
+            "packages.shared.crud.model_predictions.ModelPredictionCRUD.get_by_game",
+            AsyncMock(return_value=[]),
+        )
+        monkeypatch.setattr(
+            "packages.shared.crud.model_predictions.ModelPredictionCRUD.create",
+            create_pred,
+        )
+
+        service = TipGenerationService(session)
+        stats = await service._generate_for_game(self._make_game(), skip_nlp=True)
+
+        # The whole game runs on a single sweep.
+        orchestrator.predict_all.assert_awaited_once()
+        orchestrator.predict.assert_not_awaited()
+        model_a.predict.assert_not_called()
+        model_b.predict.assert_not_called()
+
+        # One tip per heuristic, persisted from the sweep's tip tuples.
+        assert create_tip.await_count == 2
+        heuristics_tipped = {
+            call.kwargs["heuristic"] for call in create_tip.await_args_list
+        }
+        assert heuristics_tipped == {"best_bet", "yolo"}
+
+        # One stored prediction per model, from the SAME sweep.
+        assert create_pred.await_count == 2
+        stored_models = {
+            call.kwargs["model_name"] for call in create_pred.await_args_list
+        }
+        assert stored_models == {"model_a", "model_b"}
+
+        assert stats["tips_created"] == 2
+        assert stats["model_predictions_created"] == 2

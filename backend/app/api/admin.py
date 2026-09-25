@@ -42,12 +42,16 @@ from packages.shared.models_ml.elo import EloModel
 from packages.shared.schemas.admin import (
     DailySyncTriggerRequest,
     HistoricRefreshTriggerRequest,
+    LeagueSyncTriggerRequest,
     MatchCompletionTriggerRequest,
     TipGenerationTriggerRequest,
 )
 from packages.shared.services.game_sync import GameSyncService
 from packages.shared.services.historic_data_refresh import (
     HistoricDataRefreshService,
+)
+from packages.shared.services.local_competition_sync import (
+    run_all_leagues_sync,
 )
 from packages.shared.services.match_completion import (
     MatchCompletionDetectorService,
@@ -71,6 +75,7 @@ ALLOWED_JOB_NAMES = {
     "match-completion",
     "tip-generation",
     "historic-refresh",
+    "league-sync",
 }
 
 
@@ -139,6 +144,9 @@ async def trigger_job(
             "round_id": parsed.round_id,
             "regenerate_tips": parsed.regenerate_tips,
         }
+    elif job_name == "league-sync":
+        parsed = LeagueSyncTriggerRequest.model_validate(body)
+        return await _run_league_sync(db, parsed)
     # Unreachable â€” job_name is validated above
     raise http_error(500, "internal_error", "unreachable")
 
@@ -179,6 +187,27 @@ async def _run_daily_sync(
         }
     finally:
         await squiggle_client.close()
+
+
+async def _run_league_sync(
+    db: AsyncSession, body: LeagueSyncTriggerRequest
+) -> dict:
+    """Trigger the state-league sync (one season across live leagues)."""
+    season = body.season or settings.current_season
+    stats = await run_all_leagues_sync(db, season=season, leagues=body.leagues)
+    return {
+        "success": True,
+        "message": (
+            f"Synced {stats['fixtures_synced']} fixtures across "
+            f"{len(stats['leagues_synced'])} leagues "
+            f"({len(stats['leagues_failed'])} failed)"
+        ),
+        "season": stats["season"],
+        "leagues_synced": stats["leagues_synced"],
+        "leagues_failed": stats["leagues_failed"],
+        "fixtures_synced": stats["fixtures_synced"],
+        "errors": stats["errors"],
+    }
 
 
 async def _run_match_completion(

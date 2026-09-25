@@ -1,0 +1,912 @@
+[
+  {
+    "id": 2435,
+    "type": "REGULAR",
+    "seasonId": 54,
+    "homeTeamId": 342,
+    "homeTeamCsv": "324f7e7f-b609-4bfc-a276-1ca6c1fb86a5.csv",
+    "awayTeamId": 341,
+    "awayTeamCsv": "a06b02b6-3249-463a-b8f2-f92a341f4cd8.csv",
+    "locationId": 95,
+    "round": 9,
+    "date": "2026-05-30T14:00:00.000Z",
+    "status": "PUBLISHED",
+    "season": {
+      "id": 54,
+      "name": "2026",
+      "startDate": "2026-03-28T01:03:15.000Z",
+      "endDate": "2027-03-20T01:03:15.000Z",
+      "leagueId": 1,
+      "createdDate": "2026-03-23T01:04:36.433Z",
+      "createdUserId": "da47c81b-0fe6-428d-ae7b-546ed27a1b7b",
+      "updatedDate": "2026-04-12T02:00:51.994Z",
+      "updatedUserId": "da47c81b-0fe6-428d-ae7b-546ed27a1b7b",
+      "league": {
+        "id": 1,
+        "name": "QAFL",
+        "logo": "fe47d587-15e4-486b-b15c-217e2b643b1e.png",
+        "color": "#8e1542",
+        "replayUrl": "https://hub.doubletakesports.com.au/afl-qld/",
+        "sportId": 1,
+        "createdDate": "2023-03-29T07:19:33.712Z",
+        "createdUserId": null,
+        "updatedDate": "2025-04-09T00:56:03.269Z",
+        "updatedUserId": "da47c81b-0fe6-428d-ae7b-546ed27a1b7b"
+      }
+    },
+    "awayTeam": {
+      "id": 341,
+      "name": "Labrador Tigers",
+      "logo": "02034576-cd28-4a2f-908e-8d1c0542ff98.png",
+      "seasonId": 54
+    },
+    "homeTeam": {
+      "id": 342,
+      "name": "Maroochydore Roos",
+      "logo": "01c164b5-7c44-43be-996d-606aadba834d.png",
+      "seasonId": 54
+    },
+    "location": {
+      "id": 95,
+      "name": "Maroochydore Multi Sports Complex"
+    },
+    "teamReports": [
+      {
+        "id": 4709,
+        "matchId": 2435,
+        "teamId": 342,
+        "score": 122,
+        "meta": {"RUSHED": 1, "TOTAL_GOAL": 19, "TOTAL_BEHIND": 7}
+      },
+      {
+        "id": 4710,
+        "matchId": 2435,
+        "teamId": 341,
+        "score": 67,
+        "meta": {"RUSHED": 0, "TOTAL_GOAL": 9, "TOTAL_BEHIND": 13}
+      }
+    ]
+  },
+  {
+    "id": 9100,
+    "type": "REGULAR",
+    "seasonId": 54,
+    "homeTeamId": 339,
+    "homeTeamCsv": "00000000-0000-0000-0000-000000000001.csv",
+    "awayTeamId": 343,
+    "awayTeamCsv": "00000000-0000-0000-0000-000000000002.csv",
+    "locationId": 95,
+    "round": 1,
+    "date": "2026-03-28T04:00:00.000Z",
+    "status": "PUBLISHED",
+    "season": {
+      "id": 54,
+      "name": "2026",
+      "startDate": "2026-03-28T01:03:15.000Z",
+      "endDate": "2027-03-20T01:03:15.000Z",
+      "leagueId": 1,
+      "createdDate": "2026-03-23T01:04:36.433Z",
+      "createdUserId": "da47c81b-0fe6-428d-ae7b-546ed27a1b7b",
+      "updatedDate": "2026-04-12T02:00:51.994Z",
+      "updatedUserId": "da47c81b-0fe6-428d-ae7b-546ed27a1b7b",
+      "league": {
+        "id": 1,
+        "name": "QAFL",
+        "logo": "fe47d587-15e4-486b-b15c-217e2b643b1e.png",
+        "color": "#8e1542",
+        "replayUrl": "https://hub.doubletakesports.com.au/afl-qld/",
+        "sportId": 1,
+        "createdDate": "2023-03-29T07:19:33.712Z",
+        "createdUserId": null,
+        "updatedDate": "2025-04-09T00:56:03.269Z",
+        "updatedUserId": "da47c81b-0fe6-428d-ae7b-546ed27a1b7b"
+      }
+    },
+    "awayTeam": {
+      "id": 343,
+      "name": "Morningside Panthers",
+      "logo": "df36f9bb-3a8c-4525-a403-e245182eb485.png",
+      "seasonId": 54
+    },
+    "homeTeam": {
+      "id": 339,
+      "name": "Aspley Hornets",
+      "logo": "aa9c348e-9348-48de-a95a-81a66a6c98d1.png",
+      "seasonId": 54
+    },
+    "location": {
+      "id": 95,
+      "name": "Maroochydore Multi Sports Complex"
+    },
+    "teamReports": [
+      {
+        "id": 910001,
+        "matchId": 9100,
+        "teamId": 343,
+        "score": 91,
+        "meta": {"RUSHED": 0, "TOTAL_GOAL": 13, "TOTAL_BEHIND": 13}
+      },
+      {
+        "id": 910002,
+        "matchId": 9100,
+        "teamId": 339,
+        "score": 78,
+        "meta": {"RUSHED": 0, "TOTAL_GOAL": 11, "TOTAL_BEHIND": 12}
+      }
+    ]
+  },
+  {
+    "id": 9101,
+    "type": "REGULAR",
+    "seasonId": 54,
+    "homeTeamId": 347,
+    "homeTeamCsv": "00000000-0000-0000-0000-000000000003.csv",
+    "awayTeamId": 345,
+    "awayTeamCsv": "00000000-0000-0000-0000-000000000004.csv",
+    "locationId": 27,
+    "round": 1,
+    "date": "2026-03-28T06:00:00.000Z",
+    "status": "PUBLISHED",
+    "season": {
+      "id": 54,
+      "name": "2026",
+      "startDate": "2026-03-28T01:03:15.000Z",
+      "endDate": "2027-03-20T01:03:15.000Z",
+      "leagueId": 1,
+      "createdDate": "2026-03-23T01:04:36.433Z",
+      "createdUserId": "da47c81b-0fe6-428d-ae7b-546ed27a1b7b",
+      "updatedDate": "2026-04-12T02:00:51.994Z",
+      "updatedUserId": "da47c81b-0fe6-428d-ae7b-546ed27a1b7b",
+      "league": {
+        "id": 1,
+        "name": "QAFL",
+        "logo": "fe47d587-15e4-486b-b15c-217e2b643b1e.png",
+        "color": "#8e1542",
+        "replayUrl": "https://hub.doubletakesports.com.au/afl-qld/",
+        "sportId": 1,
+        "createdDate": "2023-03-29T07:19:33.712Z",
+        "createdUserId": null,
+        "updatedDate": "2025-04-09T00:56:03.269Z",
+        "updatedUserId": "da47c81b-0fe6-428d-ae7b-546ed27a1b7b"
+      }
+    },
+    "awayTeam": {
+      "id": 345,
+      "name": "Palm Beach-Currumbin Lions",
+      "logo": "e1fdb851-3745-4bb8-a986-6896af5f04dc.png",
+      "seasonId": 54
+    },
+    "homeTeam": {
+      "id": 347,
+      "name": "Sherwood Magpies",
+      "logo": "5a17d509-3f7c-407d-8cfe-9d3f59dbd8a0.png",
+      "seasonId": 54
+    },
+    "teamReports": [
+      {
+        "id": 910101,
+        "matchId": 9101,
+        "teamId": 347,
+        "score": 95,
+        "meta": {"RUSHED": 0, "TOTAL_GOAL": 14, "TOTAL_BEHIND": 11}
+      },
+      {
+        "id": 910102,
+        "matchId": 9101,
+        "teamId": 345,
+        "score": 67,
+        "meta": {"RUSHED": 0, "TOTAL_GOAL": 9, "TOTAL_BEHIND": 13}
+      }
+    ]
+  },
+  {
+    "id": 9102,
+    "type": "REGULAR",
+    "seasonId": 54,
+    "homeTeamId": 340,
+    "homeTeamCsv": "00000000-0000-0000-0000-000000000005.csv",
+    "awayTeamId": 346,
+    "awayTeamCsv": "00000000-0000-0000-0000-000000000006.csv",
+    "locationId": 95,
+    "round": 2,
+    "date": "2026-04-04T04:00:00.000Z",
+    "status": "PUBLISHED",
+    "season": {
+      "id": 54,
+      "name": "2026",
+      "startDate": "2026-03-28T01:03:15.000Z",
+      "endDate": "2027-03-20T01:03:15.000Z",
+      "leagueId": 1,
+      "createdDate": "2026-03-23T01:04:36.433Z",
+      "createdUserId": "da47c81b-0fe6-428d-ae7b-546ed27a1b7b",
+      "updatedDate": "2026-04-12T02:00:51.994Z",
+      "updatedUserId": "da47c81b-0fe6-428d-ae7b-546ed27a1b7b",
+      "league": {
+        "id": 1,
+        "name": "QAFL",
+        "logo": "fe47d587-15e4-486b-b15c-217e2b643b1e.png",
+        "color": "#8e1542",
+        "replayUrl": "https://hub.doubletakesports.com.au/afl-qld/",
+        "sportId": 1,
+        "createdDate": "2023-03-29T07:19:33.712Z",
+        "createdUserId": null,
+        "updatedDate": "2025-04-09T00:56:03.269Z",
+        "updatedUserId": "da47c81b-0fe6-428d-ae7b-546ed27a1b7b"
+      }
+    },
+    "awayTeam": {
+      "id": 346,
+      "name": "Redland-Victoria Point Sharks",
+      "logo": "a512f078-7e78-449f-bb3b-7ff4575f44f6.png",
+      "seasonId": 54
+    },
+    "homeTeam": {
+      "id": 340,
+      "name": "Broadbeach Cats",
+      "logo": "3cba138a-2ef0-416f-95ac-3a0b06783d51.png",
+      "seasonId": 54
+    },
+    "location": {
+      "id": 95,
+      "name": "Maroochydore Multi Sports Complex"
+    },
+    "teamReports": [
+      {
+        "id": 910201,
+        "matchId": 9102,
+        "teamId": 340,
+        "score": 83,
+        "meta": {"RUSHED": 0, "TOTAL_GOAL": 12, "TOTAL_BEHIND": 11}
+      },
+      {
+        "id": 910202,
+        "matchId": 9102,
+        "teamId": 346,
+        "score": 86,
+        "meta": {"RUSHED": 0, "TOTAL_GOAL": 13, "TOTAL_BEHIND": 8}
+      }
+    ]
+  },
+  {
+    "id": 9103,
+    "type": "REGULAR",
+    "seasonId": 54,
+    "homeTeamId": 371,
+    "homeTeamCsv": "00000000-0000-0000-0000-000000000007.csv",
+    "awayTeamId": 373,
+    "awayTeamCsv": "00000000-0000-0000-0000-000000000008.csv",
+    "locationId": 95,
+    "round": 2,
+    "date": "2026-04-04T06:00:00.000Z",
+    "status": "PUBLISHED",
+    "season": {
+      "id": 54,
+      "name": "2026",
+      "startDate": "2026-03-28T01:03:15.000Z",
+      "endDate": "2027-03-20T01:03:15.000Z",
+      "leagueId": 1,
+      "createdDate": "2026-03-23T01:04:36.433Z",
+      "createdUserId": "da47c81b-0fe6-428d-ae7b-546ed27a1b7b",
+      "updatedDate": "2026-04-12T02:00:51.994Z",
+      "updatedUserId": "da47c81b-0fe6-428d-ae7b-546ed27a1b7b",
+      "league": {
+        "id": 1,
+        "name": "QAFL",
+        "logo": "fe47d587-15e4-486b-b15c-217e2b643b1e.png",
+        "color": "#8e1542",
+        "replayUrl": "https://hub.doubletakesports.com.au/afl-qld/",
+        "sportId": 1,
+        "createdDate": "2023-03-29T07:19:33.712Z",
+        "createdUserId": null,
+        "updatedDate": "2025-04-09T00:56:03.269Z",
+        "updatedUserId": "da47c81b-0fe6-428d-ae7b-546ed27a1b7b"
+      }
+    },
+    "teamReports": [
+      {
+        "id": 910301,
+        "matchId": 9103,
+        "teamId": 371,
+        "score": 88,
+        "meta": {"RUSHED": 0, "TOTAL_GOAL": 13, "TOTAL_BEHIND": 10}
+      },
+      {
+        "id": 910302,
+        "matchId": 9103,
+        "teamId": 373,
+        "score": 84,
+        "meta": {"RUSHED": 0, "TOTAL_GOAL": 13, "TOTAL_BEHIND": 6}
+      }
+    ]
+  },
+  {
+    "id": 9104,
+    "type": "REGULAR",
+    "seasonId": 54,
+    "homeTeamId": 344,
+    "homeTeamCsv": "00000000-0000-0000-0000-000000000009.csv",
+    "awayTeamId": 375,
+    "awayTeamCsv": "00000000-0000-0000-0000-00000000000a.csv",
+    "locationId": 95,
+    "round": 9,
+    "date": "2026-05-30T05:00:00.000Z",
+    "status": "PUBLISHED",
+    "season": {
+      "id": 54,
+      "name": "2026",
+      "startDate": "2026-03-28T01:03:15.000Z",
+      "endDate": "2027-03-20T01:03:15.000Z",
+      "leagueId": 1,
+      "createdDate": "2026-03-23T01:04:36.433Z",
+      "createdUserId": "da47c81b-0fe6-428d-ae7b-546ed27a1b7b",
+      "updatedDate": "2026-04-12T02:00:51.994Z",
+      "updatedUserId": "da47c81b-0fe6-428d-ae7b-546ed27a1b7b",
+      "league": {
+        "id": 1,
+        "name": "QAFL",
+        "logo": "fe47d587-15e4-486b-b15c-217e2b643b1e.png",
+        "color": "#8e1542",
+        "replayUrl": "https://hub.doubletakesports.com.au/afl-qld/",
+        "sportId": 1,
+        "createdDate": "2023-03-29T07:19:33.712Z",
+        "createdUserId": null,
+        "updatedDate": "2025-04-09T00:56:03.269Z",
+        "updatedUserId": "da47c81b-0fe6-428d-ae7b-546ed27a1b7b"
+      }
+    },
+    "awayTeam": {
+      "id": 375,
+      "name": "Coorparoo Kings",
+      "logo": "3a1166de-3b63-4e72-9e3c-abc0b4732ecc.png",
+      "seasonId": 54
+    },
+    "homeTeam": {
+      "id": 344,
+      "name": "Mt Gravatt Vultures",
+      "logo": "c39f1cef-6939-43ab-a73d-908ec643344e.jpg",
+      "seasonId": 54
+    },
+    "location": {
+      "id": 95,
+      "name": "Maroochydore Multi Sports Complex"
+    },
+    "teamReports": []
+  },
+  {
+    "id": 9105,
+    "type": "REGULAR",
+    "seasonId": 54,
+    "homeTeamId": 345,
+    "homeTeamCsv": "00000000-0000-0000-0000-00000000000b.csv",
+    "awayTeamId": 340,
+    "awayTeamCsv": "00000000-0000-0000-0000-00000000000c.csv",
+    "locationId": 95,
+    "round": 9,
+    "date": "2026-05-30T07:00:00.000Z",
+    "status": "PUBLISHED",
+    "season": {
+      "id": 54,
+      "name": "2026",
+      "startDate": "2026-03-28T01:03:15.000Z",
+      "endDate": "2027-03-20T01:03:15.000Z",
+      "leagueId": 1,
+      "createdDate": "2026-03-23T01:04:36.433Z",
+      "createdUserId": "da47c81b-0fe6-428d-ae7b-546ed27a1b7b",
+      "updatedDate": "2026-04-12T02:00:51.994Z",
+      "updatedUserId": "da47c81b-0fe6-428d-ae7b-546ed27a1b7b",
+      "league": {
+        "id": 1,
+        "name": "QAFL",
+        "logo": "fe47d587-15e4-486b-b15c-217e2b643b1e.png",
+        "color": "#8e1542",
+        "replayUrl": "https://hub.doubletakesports.com.au/afl-qld/",
+        "sportId": 1,
+        "createdDate": "2023-03-29T07:19:33.712Z",
+        "createdUserId": null,
+        "updatedDate": "2025-04-09T00:56:03.269Z",
+        "updatedUserId": "da47c81b-0fe6-428d-ae7b-546ed27a1b7b"
+      }
+    },
+    "awayTeam": {
+      "id": 340,
+      "name": "Broadbeach Cats",
+      "logo": "3cba138a-2ef0-416f-95ac-3a0b06783d51.png",
+      "seasonId": 54
+    },
+    "homeTeam": {
+      "id": 345,
+      "name": "Palm Beach-Currumbin Lions",
+      "logo": "e1fdb851-3745-4bb8-a986-6896af5f04dc.png",
+      "seasonId": 54
+    },
+    "location": {
+      "id": 95,
+      "name": "Maroochydore Multi Sports Complex"
+    },
+    "teamReports": [
+      {
+        "id": 910501,
+        "matchId": 9105,
+        "teamId": 345,
+        "score": 101,
+        "meta": {"RUSHED": 0, "TOTAL_GOAL": 15, "TOTAL_BEHIND": 11}
+      },
+      {
+        "id": 910502,
+        "matchId": 9105,
+        "teamId": 340,
+        "score": 54,
+        "meta": {"RUSHED": 0, "TOTAL_GOAL": 8, "TOTAL_BEHIND": 6}
+      }
+    ]
+  },
+  {
+    "id": 9106,
+    "type": "REGULAR",
+    "seasonId": 54,
+    "homeTeamId": 342,
+    "homeTeamCsv": "00000000-0000-0000-0000-00000000000d.csv",
+    "awayTeamId": 347,
+    "awayTeamCsv": "00000000-0000-0000-0000-00000000000e.csv",
+    "locationId": 95,
+    "round": 10,
+    "date": "2026-06-06T05:00:00.000Z",
+    "status": "DRAFT",
+    "season": {
+      "id": 54,
+      "name": "2026",
+      "startDate": "2026-03-28T01:03:15.000Z",
+      "endDate": "2027-03-20T01:03:15.000Z",
+      "leagueId": 1,
+      "createdDate": "2026-03-23T01:04:36.433Z",
+      "createdUserId": "da47c81b-0fe6-428d-ae7b-546ed27a1b7b",
+      "updatedDate": "2026-04-12T02:00:51.994Z",
+      "updatedUserId": "da47c81b-0fe6-428d-ae7b-546ed27a1b7b",
+      "league": {
+        "id": 1,
+        "name": "QAFL",
+        "logo": "fe47d587-15e4-486b-b15c-217e2b643b1e.png",
+        "color": "#8e1542",
+        "replayUrl": "https://hub.doubletakesports.com.au/afl-qld/",
+        "sportId": 1,
+        "createdDate": "2023-03-29T07:19:33.712Z",
+        "createdUserId": null,
+        "updatedDate": "2025-04-09T00:56:03.269Z",
+        "updatedUserId": "da47c81b-0fe6-428d-ae7b-546ed27a1b7b"
+      }
+    },
+    "awayTeam": {
+      "id": 347,
+      "name": "Sherwood Magpies",
+      "logo": "5a17d509-3f7c-407d-8cfe-9d3f59dbd8a0.png",
+      "seasonId": 54
+    },
+    "homeTeam": {
+      "id": 342,
+      "name": "Maroochydore Roos",
+      "logo": "01c164b5-7c44-43be-996d-606aadba834d.png",
+      "seasonId": 54
+    },
+    "location": {
+      "id": 95,
+      "name": "Maroochydore Multi Sports Complex"
+    },
+    "teamReports": [
+      {
+        "id": 910601,
+        "matchId": 9106,
+        "teamId": 342,
+        "score": 45,
+        "meta": {"RUSHED": 0, "TOTAL_GOAL": 6, "TOTAL_BEHIND": 9}
+      },
+      {
+        "id": 910602,
+        "matchId": 9106,
+        "teamId": 347,
+        "score": 39,
+        "meta": {"RUSHED": 0, "TOTAL_GOAL": 5, "TOTAL_BEHIND": 9}
+      }
+    ]
+  },
+  {
+    "id": 9107,
+    "type": "REGULAR",
+    "seasonId": 54,
+    "homeTeamId": 339,
+    "homeTeamCsv": "00000000-0000-0000-0000-00000000000f.csv",
+    "awayTeamId": 371,
+    "awayTeamCsv": "00000000-0000-0000-0000-000000000010.csv",
+    "locationId": 95,
+    "round": 17,
+    "date": "2026-08-01T04:00:00.000Z",
+    "status": "PUBLISHED",
+    "season": {
+      "id": 54,
+      "name": "2026",
+      "startDate": "2026-03-28T01:03:15.000Z",
+      "endDate": "2027-03-20T01:03:15.000Z",
+      "leagueId": 1,
+      "createdDate": "2026-03-23T01:04:36.433Z",
+      "createdUserId": "da47c81b-0fe6-428d-ae7b-546ed27a1b7b",
+      "updatedDate": "2026-04-12T02:00:51.994Z",
+      "updatedUserId": "da47c81b-0fe6-428d-ae7b-546ed27a1b7b",
+      "league": {
+        "id": 1,
+        "name": "QAFL",
+        "logo": "fe47d587-15e4-486b-b15c-217e2b643b1e.png",
+        "color": "#8e1542",
+        "replayUrl": "https://hub.doubletakesports.com.au/afl-qld/",
+        "sportId": 1,
+        "createdDate": "2023-03-29T07:19:33.712Z",
+        "createdUserId": null,
+        "updatedDate": "2025-04-09T00:56:03.269Z",
+        "updatedUserId": "da47c81b-0fe6-428d-ae7b-546ed27a1b7b"
+      }
+    },
+    "awayTeam": {
+      "id": 371,
+      "name": "Noosa Tigers",
+      "logo": "bd942431-7da6-41c1-96c1-04cda810b1a4.png",
+      "seasonId": 54
+    },
+    "homeTeam": {
+      "id": 339,
+      "name": "Aspley Hornets",
+      "logo": "aa9c348e-9348-48de-a95a-81a66a6c98d1.png",
+      "seasonId": 54
+    },
+    "location": {
+      "id": 95,
+      "name": "Maroochydore Multi Sports Complex"
+    },
+    "teamReports": [
+      {
+        "id": 910701,
+        "matchId": 9107,
+        "teamId": 339,
+        "score": 90,
+        "meta": {"RUSHED": 0, "TOTAL_GOAL": 13, "TOTAL_BEHIND": 12}
+      }
+    ]
+  },
+  {
+    "id": 9108,
+    "type": "REGULAR",
+    "seasonId": 54,
+    "homeTeamId": 341,
+    "homeTeamCsv": "00000000-0000-0000-0000-000000000011.csv",
+    "awayTeamId": 343,
+    "awayTeamCsv": "00000000-0000-0000-0000-000000000012.csv",
+    "locationId": 95,
+    "round": 18,
+    "date": "2026-08-08T04:00:00.000Z",
+    "status": "PUBLISHED",
+    "season": {
+      "id": 54,
+      "name": "2026",
+      "startDate": "2026-03-28T01:03:15.000Z",
+      "endDate": "2027-03-20T01:03:15.000Z",
+      "leagueId": 1,
+      "createdDate": "2026-03-23T01:04:36.433Z",
+      "createdUserId": "da47c81b-0fe6-428d-ae7b-546ed27a1b7b",
+      "updatedDate": "2026-04-12T02:00:51.994Z",
+      "updatedUserId": "da47c81b-0fe6-428d-ae7b-546ed27a1b7b",
+      "league": {
+        "id": 1,
+        "name": "QAFL",
+        "logo": "fe47d587-15e4-486b-b15c-217e2b643b1e.png",
+        "color": "#8e1542",
+        "replayUrl": "https://hub.doubletakesports.com.au/afl-qld/",
+        "sportId": 1,
+        "createdDate": "2023-03-29T07:19:33.712Z",
+        "createdUserId": null,
+        "updatedDate": "2025-04-09T00:56:03.269Z",
+        "updatedUserId": "da47c81b-0fe6-428d-ae7b-546ed27a1b7b"
+      }
+    },
+    "awayTeam": {
+      "id": 343,
+      "name": "Morningside Panthers",
+      "logo": "df36f9bb-3a8c-4525-a403-e245182eb485.png",
+      "seasonId": 54
+    },
+    "homeTeam": {
+      "id": 341,
+      "name": "Labrador Tigers",
+      "logo": "02034576-cd28-4a2f-908e-8d1c0542ff98.png",
+      "seasonId": 54
+    },
+    "location": {
+      "id": 95,
+      "name": "Maroochydore Multi Sports Complex"
+    },
+    "teamReports": [
+      {
+        "id": 910801,
+        "matchId": 9108,
+        "teamId": 341,
+        "score": 72,
+        "meta": {"RUSHED": 0, "TOTAL_GOAL": 11, "TOTAL_BEHIND": 6}
+      },
+      {
+        "id": 910802,
+        "matchId": 9108,
+        "teamId": 343,
+        "score": 70,
+        "meta": {"RUSHED": 0, "TOTAL_GOAL": 10, "TOTAL_BEHIND": 10}
+      }
+    ]
+  },
+  {
+    "id": 9109,
+    "type": "REGULAR",
+    "seasonId": 54,
+    "homeTeamId": 375,
+    "homeTeamCsv": "00000000-0000-0000-0000-000000000013.csv",
+    "awayTeamId": 346,
+    "awayTeamCsv": "00000000-0000-0000-0000-000000000014.csv",
+    "locationId": 95,
+    "round": 18,
+    "date": "2026-08-08T06:00:00.000Z",
+    "status": "PUBLISHED",
+    "season": {
+      "id": 54,
+      "name": "2026",
+      "startDate": "2026-03-28T01:03:15.000Z",
+      "endDate": "2027-03-20T01:03:15.000Z",
+      "leagueId": 1,
+      "createdDate": "2026-03-23T01:04:36.433Z",
+      "createdUserId": "da47c81b-0fe6-428d-ae7b-546ed27a1b7b",
+      "updatedDate": "2026-04-12T02:00:51.994Z",
+      "updatedUserId": "da47c81b-0fe6-428d-ae7b-546ed27a1b7b",
+      "league": {
+        "id": 1,
+        "name": "QAFL",
+        "logo": "fe47d587-15e4-486b-b15c-217e2b643b1e.png",
+        "color": "#8e1542",
+        "replayUrl": "https://hub.doubletakesports.com.au/afl-qld/",
+        "sportId": 1,
+        "createdDate": "2023-03-29T07:19:33.712Z",
+        "createdUserId": null,
+        "updatedDate": "2025-04-09T00:56:03.269Z",
+        "updatedUserId": "da47c81b-0fe6-428d-ae7b-546ed27a1b7b"
+      }
+    },
+    "awayTeam": {
+      "id": 346,
+      "name": "Redland-Victoria Point Sharks",
+      "logo": "a512f078-7e78-449f-bb3b-7ff4575f44f6.png",
+      "seasonId": 54
+    },
+    "homeTeam": {
+      "id": 375,
+      "name": "Coorparoo Kings",
+      "logo": "3a1166de-3b63-4e72-9e3c-abc0b4732ecc.png",
+      "seasonId": 54
+    },
+    "location": {
+      "id": 95,
+      "name": "Maroochydore Multi Sports Complex"
+    },
+    "teamReports": [
+      {
+        "id": 910901,
+        "matchId": 9109,
+        "teamId": 375,
+        "score": 83,
+        "meta": {"RUSHED": 0, "TOTAL_GOAL": 12, "TOTAL_BEHIND": 11}
+      },
+      {
+        "id": 910902,
+        "matchId": 9109,
+        "teamId": 346,
+        "score": 86,
+        "meta": {"RUSHED": 0, "TOTAL_GOAL": 13, "TOTAL_BEHIND": 8}
+      }
+    ]
+  },
+  {
+    "id": 9110,
+    "type": "REGULAR",
+    "seasonId": 54,
+    "homeTeamId": 344,
+    "homeTeamCsv": "00000000-0000-0000-0000-000000000015.csv",
+    "awayTeamId": 371,
+    "awayTeamCsv": "00000000-0000-0000-0000-000000000016.csv",
+    "locationId": 95,
+    "round": 19,
+    "date": "2026-08-15T04:00:00.000Z",
+    "status": "PUBLISHED",
+    "season": {
+      "id": 54,
+      "name": "2026",
+      "startDate": "2026-03-28T01:03:15.000Z",
+      "endDate": "2027-03-20T01:03:15.000Z",
+      "leagueId": 1,
+      "createdDate": "2026-03-23T01:04:36.433Z",
+      "createdUserId": "da47c81b-0fe6-428d-ae7b-546ed27a1b7b",
+      "updatedDate": "2026-04-12T02:00:51.994Z",
+      "updatedUserId": "da47c81b-0fe6-428d-ae7b-546ed27a1b7b",
+      "league": {
+        "id": 1,
+        "name": "QAFL",
+        "logo": "fe47d587-15e4-486b-b15c-217e2b643b1e.png",
+        "color": "#8e1542",
+        "replayUrl": "https://hub.doubletakesports.com.au/afl-qld/",
+        "sportId": 1,
+        "createdDate": "2023-03-29T07:19:33.712Z",
+        "createdUserId": null,
+        "updatedDate": "2025-04-09T00:56:03.269Z",
+        "updatedUserId": "da47c81b-0fe6-428d-ae7b-546ed27a1b7b"
+      }
+    },
+    "awayTeam": {
+      "id": 371,
+      "name": "Noosa Tigers",
+      "logo": "bd942431-7da6-41c1-96c1-04cda810b1a4.png",
+      "seasonId": 54
+    },
+    "homeTeam": {
+      "id": 344,
+      "name": "Mt Gravatt Vultures",
+      "logo": "c39f1cef-6939-43ab-a73d-908ec643344e.jpg",
+      "seasonId": 54
+    },
+    "location": {
+      "id": 95,
+      "name": "Maroochydore Multi Sports Complex"
+    },
+    "teamReports": [
+      {
+        "id": 911001,
+        "matchId": 9110,
+        "teamId": 344,
+        "score": 95,
+        "meta": {"RUSHED": 0, "TOTAL_GOAL": 14, "TOTAL_BEHIND": 11}
+      },
+      {
+        "id": 911002,
+        "matchId": 9110,
+        "teamId": 371,
+        "score": 74,
+        "meta": {"RUSHED": 0, "TOTAL_GOAL": 11, "TOTAL_BEHIND": 8}
+      }
+    ]
+  },
+  {
+    "id": 9111,
+    "type": "REGULAR",
+    "seasonId": 54,
+    "homeTeamId": 342,
+    "homeTeamCsv": "00000000-0000-0000-0000-000000000017.csv",
+    "awayTeamId": 339,
+    "awayTeamCsv": "00000000-0000-0000-0000-000000000018.csv",
+    "locationId": 95,
+    "round": 20,
+    "date": "2026-08-22T04:00:00.000Z",
+    "status": "PUBLISHED",
+    "season": {
+      "id": 54,
+      "name": "2026",
+      "startDate": "2026-03-28T01:03:15.000Z",
+      "endDate": "2027-03-20T01:03:15.000Z",
+      "leagueId": 1,
+      "createdDate": "2026-03-23T01:04:36.433Z",
+      "createdUserId": "da47c81b-0fe6-428d-ae7b-546ed27a1b7b",
+      "updatedDate": "2026-04-12T02:00:51.994Z",
+      "updatedUserId": "da47c81b-0fe6-428d-ae7b-546ed27a1b7b",
+      "league": {
+        "id": 1,
+        "name": "QAFL",
+        "logo": "fe47d587-15e4-486b-b15c-217e2b643b1e.png",
+        "color": "#8e1542",
+        "replayUrl": "https://hub.doubletakesports.com.au/afl-qld/",
+        "sportId": 1,
+        "createdDate": "2023-03-29T07:19:33.712Z",
+        "createdUserId": null,
+        "updatedDate": "2025-04-09T00:56:03.269Z",
+        "updatedUserId": "da47c81b-0fe6-428d-ae7b-546ed27a1b7b"
+      }
+    },
+    "awayTeam": {
+      "id": 339,
+      "name": "Aspley Hornets",
+      "logo": "aa9c348e-9348-48de-a95a-81a66a6c98d1.png",
+      "seasonId": 54
+    },
+    "homeTeam": {
+      "id": 342,
+      "name": "Maroochydore Roos",
+      "logo": "01c164b5-7c44-43be-996d-606aadba834d.png",
+      "seasonId": 54
+    },
+    "location": {
+      "id": 95,
+      "name": "Maroochydore Multi Sports Complex"
+    },
+    "teamReports": [
+      {
+        "id": 911101,
+        "matchId": 9111,
+        "teamId": 342,
+        "score": 103,
+        "meta": {"RUSHED": 0, "TOTAL_GOAL": 15, "TOTAL_BEHIND": 13}
+      },
+      {
+        "id": 911102,
+        "matchId": 9111,
+        "teamId": 339,
+        "score": 58,
+        "meta": {"RUSHED": 0, "TOTAL_GOAL": 8, "TOTAL_BEHIND": 10}
+      }
+    ]
+  },
+  {
+    "id": 9112,
+    "type": "REGULAR",
+    "seasonId": 54,
+    "homeTeamId": 347,
+    "homeTeamCsv": "00000000-0000-0000-0000-000000000019.csv",
+    "awayTeamId": 340,
+    "awayTeamCsv": "00000000-0000-0000-0000-00000000001a.csv",
+    "locationId": 95,
+    "round": 21,
+    "date": "2026-08-29T04:00:00.000Z",
+    "status": "PUBLISHED",
+    "season": {
+      "id": 54,
+      "name": "2026",
+      "startDate": "2026-03-28T01:03:15.000Z",
+      "endDate": "2027-03-20T01:03:15.000Z",
+      "leagueId": 1,
+      "createdDate": "2026-03-23T01:04:36.433Z",
+      "createdUserId": "da47c81b-0fe6-428d-ae7b-546ed27a1b7b",
+      "updatedDate": "2026-04-12T02:00:51.994Z",
+      "updatedUserId": "da47c81b-0fe6-428d-ae7b-546ed27a1b7b",
+      "league": {
+        "id": 1,
+        "name": "QAFL",
+        "logo": "fe47d587-15e4-486b-b15c-217e2b643b1e.png",
+        "color": "#8e1542",
+        "replayUrl": "https://hub.doubletakesports.com.au/afl-qld/",
+        "sportId": 1,
+        "createdDate": "2023-03-29T07:19:33.712Z",
+        "createdUserId": null,
+        "updatedDate": "2025-04-09T00:56:03.269Z",
+        "updatedUserId": "da47c81b-0fe6-428d-ae7b-546ed27a1b7b"
+      }
+    },
+    "awayTeam": {
+      "id": 340,
+      "name": "Broadbeach Cats",
+      "logo": "3cba138a-2ef0-416f-95ac-3a0b06783d51.png",
+      "seasonId": 54
+    },
+    "homeTeam": {
+      "id": 347,
+      "name": "Sherwood Magpies",
+      "logo": "5a17d509-3f7c-407d-8cfe-9d3f59dbd8a0.png",
+      "seasonId": 54
+    },
+    "location": {
+      "id": 95,
+      "name": "Maroochydore Multi Sports Complex"
+    },
+    "teamReports": [
+      {
+        "id": 911201,
+        "matchId": 9112,
+        "teamId": 347,
+        "score": 78,
+        "meta": {"RUSHED": 0, "TOTAL_GOAL": 11, "TOTAL_BEHIND": 12}
+      },
+      {
+        "id": 911202,
+        "matchId": 9112,
+        "teamId": 340,
+        "score": 71,
+        "meta": {"RUSHED": 0, "TOTAL_GOAL": 10, "TOTAL_BEHIND": 11}
+      }
+    ]
+  }
+]

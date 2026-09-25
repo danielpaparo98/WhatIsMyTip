@@ -17,6 +17,7 @@ from ..cache import _get_client
 from ..logger import get_logger
 from ..models import Game, Injury, Player, PlayerMatchStats
 from .base import BaseModel
+from .prediction import Prediction
 
 logger = get_logger(__name__)
 
@@ -213,22 +214,6 @@ class InjuryImpactModel(BaseModel):
     # Caching
     # ------------------------------------------------------------------
 
-    async def _check_cache(self, game: Game) -> Optional[dict]:
-        """Check Redis cache for a previously computed prediction."""
-        try:
-            client = _get_client()
-            cache_key = (
-                f"{_CACHE_PREFIX}"
-                f"{game.home_team}:{game.away_team}:"
-                f"{game.date.isoformat() if game.date else 'all'}"
-            )
-            raw = await client.get(cache_key)
-            if raw is not None:
-                return json.loads(raw)
-        except Exception as e:
-            logger.warning(f"InjuryImpactModel: Redis cache read error: {e}")
-        return None
-
     async def _store_cache(self, game: Game, data: dict) -> None:
         """Store computed prediction data in Redis."""
         try:
@@ -248,7 +233,7 @@ class InjuryImpactModel(BaseModel):
 
     async def predict(
         self, game: Game, db: AsyncSession
-    ) -> Tuple[str, float, int]:
+    ) -> Prediction:
         """Predict winner based on injury impact.
 
         Returns:
@@ -263,7 +248,7 @@ class InjuryImpactModel(BaseModel):
                     f"InjuryImpactModel: No injuries for game {game.id}, "
                     "using cold-start default"
                 )
-                return game.home_team, 0.52, 8
+                return Prediction(game.home_team, 0.52, 8)
 
             # 2. Resolve player IDs
             injured_player_ids = [
@@ -339,8 +324,10 @@ class InjuryImpactModel(BaseModel):
                 "away_impact": away_impact,
             })
 
-            return winner, confidence, margin
+            return Prediction(winner, confidence, margin)
 
-        except Exception as e:
-            logger.error(f"InjuryImpactModel: Prediction failed: {e}")
-            return game.home_team, 0.55, 5
+        except Exception:
+            # P0-3: never convert an internal failure into a confident-
+            # looking home-team vote — re-raise so the orchestrator
+            # records an abstention (ORCH-M7).
+            raise

@@ -17,6 +17,7 @@ from ..cache import _get_client
 from ..logger import get_logger
 from ..models import Game, MatchWeather
 from .base import BaseModel
+from .prediction import Prediction
 
 logger = get_logger(__name__)
 
@@ -157,22 +158,6 @@ class WeatherImpactModel(BaseModel):
     # Caching
     # ------------------------------------------------------------------
 
-    async def _check_cache(self, game: Game) -> Optional[dict]:
-        """Check Redis cache for a previously computed prediction."""
-        try:
-            client = _get_client()
-            cache_key = (
-                f"{_CACHE_PREFIX}"
-                f"{game.date.isoformat() if game.date else 'all'}"
-                f":{game.home_team}:{game.away_team}"
-            )
-            raw = await client.get(cache_key)
-            if raw is not None:
-                return json.loads(raw)
-        except Exception as e:
-            logger.warning(f"WeatherImpactModel: Redis cache read error: {e}")
-        return None
-
     async def _store_cache(self, game: Game, data: dict) -> None:
         """Store computed prediction data in Redis."""
         try:
@@ -192,7 +177,7 @@ class WeatherImpactModel(BaseModel):
 
     async def predict(
         self, game: Game, db: AsyncSession
-    ) -> Tuple[str, float, int]:
+    ) -> Prediction:
         """Predict winner based on weather conditions.
 
         Returns:
@@ -207,7 +192,7 @@ class WeatherImpactModel(BaseModel):
                     "WeatherImpactModel: No weather data for game "
                     f"{game.id}, using cold-start default"
                 )
-                return game.home_team, 0.55, 12
+                return Prediction(game.home_team, 0.55, 12)
 
             # 2. Classify weather tier
             current_tier = self._classify_weather(weather)
@@ -239,7 +224,7 @@ class WeatherImpactModel(BaseModel):
                     "WeatherImpactModel: No historical weather data, "
                     "using cold-start default"
                 )
-                return game.home_team, 0.55, 12
+                return Prediction(game.home_team, 0.55, 12)
 
             # 5. Weather resilience differential
             diff = home_wr - away_wr
@@ -279,8 +264,10 @@ class WeatherImpactModel(BaseModel):
                 "tier": current_tier,
             })
 
-            return winner, confidence, margin
+            return Prediction(winner, confidence, margin)
 
-        except Exception as e:
-            logger.error(f"WeatherImpactModel: Prediction failed: {e}")
-            return game.home_team, 0.55, 12
+        except Exception:
+            # P0-3: never convert an internal failure into a confident-
+            # looking home-team vote — re-raise so the orchestrator
+            # records an abstention (ORCH-M7).
+            raise

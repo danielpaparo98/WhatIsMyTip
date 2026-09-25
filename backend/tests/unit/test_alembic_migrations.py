@@ -371,11 +371,37 @@ def test_migration_0008_downgrade_drops_table():
     assert "ix_match_reports_game_id" in src
 
 
-def test_migration_head_is_0009():
-    """After adding 0009 (generation_progress sequence resync), the
-    migration tree must have exactly one head: 0009_fix_generation_progress_seq.
+def test_migration_head_is_0011():
+    """After adding 0011 (team identity columns), the migration tree
+    must have exactly one head: 0011_team_identity.
     """
     revisions = _all_migrations()
     heads = [rev for rev in revisions if rev not in set(revisions.values())]
-    assert "0009_fix_generation_progress_seq" in heads
+    assert "0011_team_identity" in heads
     assert len(heads) == 1, f"expected a single head, got {heads}"
+
+
+_MIG_0011 = "2026_09_24_2057-0011_team_identity"
+
+
+def test_migration_0011_chains_off_0010():
+    """0011 must chain directly off 0010 (the previous head)."""
+    revisions = _all_migrations()
+    assert revisions.get("0011_team_identity") == "0010_consolidated_multisport"
+
+
+def test_migration_0011_adds_team_identity_columns():
+    """The upgrade must add the three nullable identity columns to
+    ``teams`` (logo URL + two colours); the downgrade must drop them."""
+    up_src = _read_source(_MIG_0011, "upgrade")
+    assert '"teams"' in up_src
+    assert '"logo_url"' in up_src
+    assert '"primary_color"' in up_src
+    assert '"secondary_color"' in up_src
+    assert "sa.Text()" in up_src
+    assert "sa.String(length=9)" in up_src
+
+    down_src = _read_source(_MIG_0011, "downgrade")
+    assert 'op.drop_column("teams", "logo_url")' in down_src
+    assert 'op.drop_column("teams", "primary_color")' in down_src
+    assert 'op.drop_column("teams", "secondary_color")' in down_src

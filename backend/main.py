@@ -25,6 +25,7 @@ from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from starlette.middleware.cors import CORSMiddleware
 
+from app.api.events import router as events_router
 from app.api.health import router as health_router
 from app.core.exceptions import BackendServiceError
 from app.core.lifespan import lifespan
@@ -89,6 +90,11 @@ app.add_middleware(RequestIDMiddleware)  # outermost
 # ---------------------------------------------------------------------------
 
 app.state.limiter = get_limiter()
+# H2: slowapi enforces default_limits ONLY via this middleware � without
+# it every GET endpoint (incl. new events/sports routes) was unthrottled.
+from slowapi.middleware import SlowAPIMiddleware
+
+app.add_middleware(SlowAPIMiddleware)
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 # ---------------------------------------------------------------------------
@@ -166,6 +172,7 @@ from app.api.games import router as games_router
 from app.api.tips import router as tips_router
 from app.api.backtest import router as backtest_router
 from app.api.admin import router as admin_router
+from app.api.sports import router as sports_router
 
 # NOTE — DigitalOcean App Platform ingress path-prefix routing trims the
 # matched prefix before the request reaches this service: a public
@@ -189,3 +196,13 @@ app.include_router(backtest_router, prefix="/api/backtest", tags=["backtest"])
 app.include_router(backtest_router, prefix="/backtest", tags=["backtest"], include_in_schema=False)
 app.include_router(admin_router, prefix="/api/admin", tags=["admin"])
 app.include_router(admin_router, prefix="/admin", tags=["admin"], include_in_schema=False)
+
+# P4-1 — multi-sport discovery surface (ADR 0001)
+app.include_router(sports_router, prefix="/api/sports", tags=["sports"])
+app.include_router(sports_router, prefix="/sports", tags=["sports"], include_in_schema=False)
+
+# Read-side cutover increment (ADR 0001) — event-scoped public reads off
+# the 0010 events tables.  ADDITIVE: legacy /api/games routes stay
+# untouched during the deprecation window.
+app.include_router(events_router, prefix="/api/events", tags=["events"])
+app.include_router(events_router, prefix="/events", tags=["events"], include_in_schema=False)

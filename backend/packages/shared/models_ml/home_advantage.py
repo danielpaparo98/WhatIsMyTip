@@ -9,6 +9,7 @@ from ..logger import get_logger
 from ..models import Game
 from ..utils import ensure_datetime
 from .base import BaseModel
+from .prediction import Prediction
 
 logger = get_logger(__name__)
 
@@ -111,7 +112,7 @@ class HomeAdvantageModel(BaseModel):
         except Exception as e:
             logger.warning(f"HomeAdvantageModel: Redis cache write error: {e}")
 
-    async def predict(self, game: Game, db: AsyncSession) -> Tuple[str, float, int]:
+    async def predict(self, game: Game, db: AsyncSession) -> Prediction:
         """Predict winner based on home advantage.
 
         Uses only historical data before the prediction game's date.
@@ -150,4 +151,4 @@ class HomeAdvantageModel(BaseModel):
         confidence = max(0.5, min(0.85, confidence))
         margin = max(1, min(60, margin))
 
-        return winner, confidence, margin
+        return Prediction(winner, confidence, margin)

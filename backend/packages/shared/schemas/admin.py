@@ -69,6 +69,24 @@ class HistoricRefreshTriggerRequest(BaseModel):
     )
 
 
+class LeagueSyncTriggerRequest(BaseModel):
+    """Request model for triggering the state-league sync."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    season: Optional[int] = Field(
+        default=None,
+        description="Season year to sync. Defaults to current season.",
+    )
+    leagues: Optional[List[str]] = Field(
+        default=None,
+        description=(
+            "League keys from STATE_LEAGUES to sync. "
+            "Defaults to every live league in the registry."
+        ),
+    )
+
+
 class TipGenerateRequest(BaseModel):
     """Request model for the tips /generate endpoint."""
 

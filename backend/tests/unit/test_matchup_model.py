@@ -450,15 +450,12 @@ class TestEdgeCases:
         assert margin == 8
 
     @pytest.mark.asyncio
-    async def test_error_returns_safe_default(self, model, game):
-        """Any exception inside predict returns a safe default."""
+    async def test_error_propagates_for_abstention(self, model, game):
+        """Internal errors propagate — the orchestrator abstains (P0-3)."""
         db = AsyncMock()
         with patch.object(model, "_get_head_to_head", side_effect=Exception("DB error")):
-            winner, confidence, margin = await model.predict(game, db)
-
-        assert winner == "Brisbane"
-        assert confidence == 0.55
-        assert margin == 8
+            with pytest.raises(Exception, match="DB error"):
+                await model.predict(game, db)
 
     @pytest.mark.asyncio
     async def test_unknown_venue(self, model, game):
