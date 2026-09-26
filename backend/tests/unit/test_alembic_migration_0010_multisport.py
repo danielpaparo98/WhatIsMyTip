@@ -55,6 +55,13 @@ _SKIP_REASON = _podman_unavailable_reason()
 if _SKIP_REASON is not None:
     pytest.skip(_SKIP_REASON, allow_module_level=True)
 
+# Mark all tests in this module with ``@pytest.mark.postgres`` so the
+# standard unit-test run can be filtered on machines without Podman
+# (every sibling migration test module carries the same marker; this
+# one was missed, so its container-startup flakiness surfaced inside
+# plain ``pytest tests/unit/`` runs).
+pytestmark = pytest.mark.postgres
+
 
 _POSTGRES_IMAGE = "docker.io/library/postgres:16-alpine"
 _CONTAINER_NAME_PREFIX = "wimt-pg-mig0010-"
