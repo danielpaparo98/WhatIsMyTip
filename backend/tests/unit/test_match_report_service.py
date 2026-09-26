@@ -17,7 +17,11 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from packages.shared.config import settings
-from packages.shared.schemas.match_report import GrandFinalReport
+from packages.shared.schemas.match_report import (
+    GrandFinalReport,
+    InjuryNote,
+    PlayerSpotlight,
+)
 from packages.shared.services.match_report import (
     GFDeps,
     MatchReportService,
@@ -55,11 +59,26 @@ def _make_game_mock(**overrides) -> MagicMock:
     return game
 
 
-def _session_with_scalar(value) -> AsyncMock:
-    """Session whose single ``execute`` returns ``scalar() == value``."""
+def _session_with_one(max_round, distinct_rounds) -> AsyncMock:
+    """Session whose single ``execute`` returns ``one() == (max_round, distinct_rounds)``.
+
+    GF-COMPLETE: ``is_grand_final`` reads both the season's max round and its
+    distinct round count (completeness guard) from one aggregate row.
+    """
     session = AsyncMock(spec=AsyncSession)
     result = MagicMock()
-    result.scalar.return_value = value
+    result.one.return_value = (max_round, distinct_rounds)
+    session.execute = AsyncMock(return_value=result)
+    return session
+
+
+def _db_with_players(rows) -> AsyncMock:
+    """Session whose ``execute`` returns ``all() == rows`` of
+    ``(player_name, current_team)`` — the player-team ground truth
+    lookup used by ``_normalize_sides``."""
+    session = AsyncMock(spec=AsyncSession)
+    result = MagicMock()
+    result.all.return_value = list(rows)
     session.execute = AsyncMock(return_value=result)
     return session
 
@@ -106,11 +125,12 @@ def _valid_report() -> GrandFinalReport:
 
 
 class TestIsGrandFinal:
-    """``is_grand_final`` compares the game's round to the season max round."""
+    """``is_grand_final`` compares the game's round to the season max round
+    of a COMPLETE fixture (>= 25 distinct rounds — GF-COMPLETE guard)."""
 
     @pytest.mark.asyncio
     async def test_true_when_round_is_season_max(self):
-        session = _session_with_scalar(27)
+        session = _session_with_one(27, 27)
         game = _make_game_mock(round_id=27, season=2026)
 
         assert await MatchReportService.is_grand_final(session, game) is True
@@ -118,14 +138,14 @@ class TestIsGrandFinal:
 
     @pytest.mark.asyncio
     async def test_false_when_round_is_not_season_max(self):
-        session = _session_with_scalar(27)
+        session = _session_with_one(27, 27)
         game = _make_game_mock(round_id=10, season=2026)
 
         assert await MatchReportService.is_grand_final(session, game) is False
 
     @pytest.mark.asyncio
     async def test_false_when_season_has_no_games(self):
-        session = _session_with_scalar(None)
+        session = _session_with_one(None, 0)
         game = _make_game_mock(round_id=27, season=2026)
 
         assert await MatchReportService.is_grand_final(session, game) is False
@@ -438,11 +458,13 @@ def _swapped_report() -> GrandFinalReport:
 
 
 class TestNormalizeSides:
-    def test_inverted_sides_are_remapped_to_the_fixture(self):
+    @pytest.mark.asyncio
+    async def test_inverted_sides_are_remapped_to_the_fixture(self):
         game = SimpleNamespace(home_team="Fremantle", away_team="Brisbane")
         report = _swapped_report()
+        db = _db_with_players([])  # no player rows → team-field fallback
 
-        fixed = _normalize_sides(game, report)
+        fixed = await _normalize_sides(db, game, report)
 
         # Season story now matches the fixture.
         assert fixed.season_story.home.team == "Fremantle"
@@ -454,7 +476,8 @@ class TestNormalizeSides:
         ]
         assert [p.name for p in fixed.key_players.away] == ["Dunkley"]
 
-    def test_entries_matching_neither_side_are_dropped(self):
+    @pytest.mark.asyncio
+    async def test_entries_matching_neither_side_are_dropped(self):
         from packages.shared.schemas.match_report import PlayerSpotlight
 
         game = SimpleNamespace(home_team="Fremantle", away_team="Brisbane")
@@ -463,10 +486,110 @@ class TestNormalizeSides:
         report.key_players.away = [
             PlayerSpotlight(name="Mystery", team="Gold Coast", note="n")
         ]
+        db = _db_with_players([])
 
-        fixed = _normalize_sides(game, report)
+        fixed = await _normalize_sides(db, game, report)
         assert fixed.key_players.home == []
         assert fixed.key_players.away == []
+
+
+class TestNormalizeSidesPlayerGroundTruth:
+    """GF-SIDES v2 (2026-09-26, user report): the agent also mislabels
+    the ``team`` FIELD itself — Fremantle players carried
+    ``team: "Brisbane"``, so the v1 remap (which trusts each entry's own
+    team field) placed them under Brisbane's "Players to Watch" column.
+
+    The players table is ground truth: spotlight/injury entries are
+    validated against ``Player.current_team`` and placed by the player's
+    REAL team; the agent's label is only a fallback for unknown players.
+    """
+
+    GAME = SimpleNamespace(home_team="Fremantle", away_team="Brisbane")
+
+    @pytest.mark.asyncio
+    async def test_mislabeled_team_field_corrected_by_player_table(self):
+        """Amiss is a FREMANTLE player even when the agent wrote
+        ``team: "Brisbane"`` — and the DB name is the AFL Tables
+        "Surname, Given" form while the agent wrote "Given Surname"."""
+        report = _swapped_report()
+        report.key_players.home = [
+            PlayerSpotlight(name="Dunkley", team="Brisbane", note="Contested beast"),
+        ]
+        report.key_players.away = [
+            # MISLABELED: real team is Fremantle (the fixture home side).
+            PlayerSpotlight(name="Jye Amiss", team="Brisbane", note="32 goals"),
+        ]
+        db = _db_with_players([("Amiss, Jye", "Fremantle")])
+
+        fixed = await _normalize_sides(db, self.GAME, report)
+
+        # Amiss placed under Fremantle (home) by his REAL team...
+        assert [p.name for p in fixed.key_players.home] == ["Jye Amiss"]
+        # ...and the stored label is rewritten to the canonical real team.
+        assert fixed.key_players.home[0].team == "Fremantle"
+        # Dunkley unknown to the DB → falls back to the agent's label.
+        assert [p.name for p in fixed.key_players.away] == ["Dunkley"]
+        assert fixed.key_players.away[0].team == "Brisbane"
+
+    @pytest.mark.asyncio
+    async def test_injury_watch_remapped_by_player_real_team(self):
+        """InjuryNote has NO team field (v1 passed it through untouched);
+        the player lookup now closes that hole."""
+        report = _swapped_report()
+        report.injury_watch.home = [
+            InjuryNote(player="Lachie Neale", status="Out", note="Hamstring"),
+        ]
+        db = _db_with_players([("Neale, Lachie", "Brisbane")])
+
+        fixed = await _normalize_sides(db, self.GAME, report)
+
+        # Neale plays for Brisbane (the away side) — moved out of home.
+        assert [n.player for n in fixed.injury_watch.away] == ["Lachie Neale"]
+        assert fixed.injury_watch.home == []
+
+    @pytest.mark.asyncio
+    async def test_injury_note_for_non_participant_is_dropped(self):
+        report = _swapped_report()
+        report.injury_watch.home = [
+            InjuryNote(player="Marcus Bontempelli", status="Out", note="Knee"),
+        ]
+        db = _db_with_players([("Bontempelli, Marcus", "Bulldogs")])
+
+        fixed = await _normalize_sides(db, self.GAME, report)
+
+        assert fixed.injury_watch.home == []
+        assert fixed.injury_watch.away == []
+
+    @pytest.mark.asyncio
+    async def test_unknown_players_keep_agent_placement(self):
+        """No DB row → no better signal than the agent's own placement."""
+        report = _swapped_report()
+        report.injury_watch.home = [
+            InjuryNote(player="Mystery Man", status="Out", note="Sore"),
+        ]
+        db = _db_with_players([])
+
+        fixed = await _normalize_sides(db, self.GAME, report)
+
+        assert [n.player for n in fixed.injury_watch.home] == ["Mystery Man"]
+
+    @pytest.mark.asyncio
+    async def test_db_failure_degrades_to_team_field_normalisation(self):
+        """The lookup must NEVER break report generation (design
+        constraint: every failure is logged and skipped)."""
+        report = _swapped_report()
+        session = AsyncMock(spec=AsyncSession)
+        session.execute = AsyncMock(side_effect=RuntimeError("db down"))
+
+        fixed = await _normalize_sides(session, self.GAME, report)
+
+        # v1 behaviour intact: team-field remap still applied.
+        assert fixed.season_story.home.team == "Fremantle"
+        assert [p.name for p in fixed.key_players.home] == [
+            "Amiss, Jye",
+            "Treacy, Josh",
+        ]
+        assert [p.name for p in fixed.key_players.away] == ["Dunkley"]
 
 
 class TestAnchorPredictionToWeightedTip:

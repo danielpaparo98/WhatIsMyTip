@@ -1,11 +1,12 @@
 from datetime import date
-from typing import Dict, Optional, Tuple
+from typing import Dict, Optional
 
 from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..models import Game
 from .base import BaseModel
+from .prediction import Prediction
 
 
 class ValueModel(BaseModel):
@@ -74,7 +75,7 @@ class ValueModel(BaseModel):
             wins = home["wins"] + away["wins"]
             self.team_win_rates[team] = (wins / total) if total > 0 else 0.5
 
-    async def predict(self, game: Game, db: AsyncSession) -> Tuple[str, float, int]:
+    async def predict(self, game: Game, db: AsyncSession) -> Prediction:
         """Predict winner based on value (undervalued teams).
 
         Uses only historical data before the prediction game's date.
@@ -84,21 +85,21 @@ class ValueModel(BaseModel):
         home_rate = self.team_win_rates.get(game.home_team, 0.5)
         away_rate = self.team_win_rates.get(game.away_team, 0.5)
 
-        # Apply home advantage adjustment
-        adjusted_home = min(home_rate + 0.05, 0.9)
-
-        # Predict team with better historical performance
-        if adjusted_home > away_rate:
+        # Predict team with better historical performance.
+        # Raw rates only — home advantage is owned by the elo /
+        # home_advantage models; a hardcoded bump here double-counted it
+        # and flipped genuine away-team edges (e.g. 0.50 vs 0.53).
+        if home_rate > away_rate:
             winner = game.home_team
-            confidence = (adjusted_home - away_rate) + 0.5
-            margin = int((adjusted_home - away_rate) * 150)
+            confidence = (home_rate - away_rate) + 0.5
+            margin = int((home_rate - away_rate) * 150)
         else:
             winner = game.away_team
-            confidence = (away_rate - adjusted_home) + 0.5
-            margin = int((away_rate - adjusted_home) * 150)
+            confidence = (away_rate - home_rate) + 0.5
+            margin = int((away_rate - home_rate) * 150)
 
         # Clamp values
         confidence = max(0.5, min(0.9, confidence))
         margin = max(1, min(80, margin))
 
-        return winner, confidence, margin
+        return Prediction(winner, confidence, margin)

@@ -219,7 +219,7 @@ class TipGenerationService:
                         )
                         continue
 
-                    game_stats = await self._generate_for_game(game, regenerate, skip_nlp=skip_nlp)
+                    game_stats = await self._generate_for_game(game, regenerate)
 
                     stats["games_processed"] += 1
                     stats["tips_created"] += game_stats.get("tips_created", 0)
@@ -354,8 +354,15 @@ class TipGenerationService:
         existing_tips = await TipCRUD.get_by_game(self.db, game.id)
         existing_heuristics = {tip.heuristic for tip in existing_tips}
 
-        # Get available heuristics
+        # P0-2: run every model exactly ONCE via predict_all, then derive
+        # both the heuristic tips AND the stored model predictions from
+        # that single sweep.  (The previous flow re-ran all models once
+        # per heuristic and once more for persistence — 3×8+8 = 32 model
+        # executions per game instead of 8, and stateful models could
+        # answer differently between the sweep that decided the tip and
+        # the run that got persisted.)
         heuristics_to_use = self.orchestrator.get_available_heuristics()
+        sweep = await self.orchestrator.predict_all(game, self.db)
 
         # Generate tips for each heuristic
         for heuristic in heuristics_to_use:
@@ -372,11 +379,9 @@ class TipGenerationService:
                     game_stats["tips_skipped"] += 1
                     continue
 
-            # Generate prediction using the heuristic
+            # Take the heuristic's tip from the sweep.
             try:
-                winner, confidence, margin = await self.orchestrator.predict(
-                    game, heuristic, self.db
-                )
+                winner, confidence, margin = sweep[heuristic]["tip"]
 
                 # Create the tip
                 await TipCRUD.create(
@@ -397,22 +402,24 @@ class TipGenerationService:
                 )
                 raise
 
-        # Generate and store model predictions for this game
+        # Persist the model predictions from the same sweep — the exact
+        # values the heuristics consumed, not a second model run.
+        # Models that failed during the sweep abstained (absent from
+        # model_predictions) and are simply not persisted.
         # Fetch all existing predictions once (N+1 fix)
         existing_predictions = await ModelPredictionCRUD.get_by_game(self.db, game.id)
         existing_by_model = {p.model_name: p for p in existing_predictions}
+        model_predictions = next(iter(sweep.values()))["model_predictions"]
 
-        for model in self.orchestrator.models:
+        for model_name, (winner, confidence, margin) in model_predictions.items():
             try:
-                winner, confidence, margin = await model.predict(game, self.db)
-
-                if model.get_name() in existing_by_model:
+                if model_name in existing_by_model:
                     if regenerate:
                         # Update existing prediction
                         await ModelPredictionCRUD.create_or_update(
                             db=self.db,
                             game_id=game.id,
-                            model_name=model.get_name(),
+                            model_name=model_name,
                             winner=winner,
                             confidence=confidence,
                             margin=margin,
@@ -426,7 +433,7 @@ class TipGenerationService:
                     await ModelPredictionCRUD.create(
                         db=self.db,
                         game_id=game.id,
-                        model_name=model.get_name(),
+                        model_name=model_name,
                         winner=winner,
                         confidence=confidence,
                         margin=margin,
@@ -435,7 +442,7 @@ class TipGenerationService:
 
             except Exception as e:
                 self.logger.error(
-                    f"Error generating prediction for model {model.get_name()} "
+                    f"Error storing prediction for model {model_name} "
                     f"for game {game.id}: {str(e)}",
                     exc_info=True,
                 )
@@ -499,12 +506,20 @@ class TipGenerationService:
 
         return game_stats
 
-    async def generate_batch(self, games: List[Game], regenerate: bool = False) -> Dict[str, Any]:
+    async def generate_batch(
+        self,
+        games: List[Game],
+        regenerate: bool = False,
+        skip_nlp: bool = False,
+    ) -> Dict[str, Any]:
         """Generate tips for multiple games in batch.
 
         Args:
             games: List of games to generate tips for
             regenerate: Whether to regenerate existing tips
+            skip_nlp: Skip AI explanation/analysis/report generation
+                (no LLM is invoked when True — used by backfill/backtest
+                sweeps)
 
         Returns:
             Dictionary with aggregated generation statistics
@@ -536,7 +551,7 @@ class TipGenerationService:
                     )
                     continue
 
-                game_stats = await self._generate_for_game(game, regenerate)
+                game_stats = await self._generate_for_game(game, regenerate, skip_nlp=skip_nlp)
 
                 stats["games_processed"] += 1
                 stats["tips_created"] += game_stats.get("tips_created", 0)
@@ -593,15 +608,7 @@ async def run_tip_generation(session: AsyncSession) -> Dict[str, Any]:
           ``model_predictions_created``, ``errors``, ``explanations_generated``.
     """
     generation_service = TipGenerationService(db_session=session)
-    try:
-        gen_stats = await generation_service.generate_for_next_upcoming_round()
-    except Exception:
-        # Ensure the service is closed even on failure
-        try:
-            await generation_service.close()  # type: ignore[attr-defined]
-        except Exception:  # noqa: BLE001
-            pass
-        raise
+    gen_stats = await generation_service.generate_for_next_upcoming_round()
 
     games_processed = gen_stats.get("games_processed", 0)
     tips_created = gen_stats.get("tips_created", 0)

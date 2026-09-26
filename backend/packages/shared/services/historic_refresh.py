@@ -22,13 +22,25 @@ from ..cache import RedisCache, invalidate_cache_pattern, medium_cache
 from ..config import settings
 from ..crud.generation_progress import GenerationProgressCRUD
 from ..logger import get_logger
-from .historic_data_refresh import HistoricDataRefreshService
+from .historic_data_refresh import (
+    HistoricDataRefreshService,
+    derive_default_seasons,
+)
 
 logger = get_logger(__name__)
 
 
-# All seasons covered by the historic refresh
-ALL_SEASONS: List[int] = list(range(2010, 2026))
+def default_seasons() -> List[int]:
+    """Derived 16-season window for the historic refresh (P0-6).
+
+    Delegates to :func:`derive_default_seasons` so the orchestrator and
+    the worker share ONE mechanism.  The previous module-level constant
+    ``ALL_SEASONS = list(range(2010, 2026))`` was frozen at import time:
+    the SEC-LO-003 auto-derivation fix landed on the worker path but
+    not here, so the orchestrator silently skipped every new season
+    each January 1st.
+    """
+    return derive_default_seasons()
 
 # Number of seasons per batch — finer granularity keeps each batch short
 # within the 15-minute limit.
@@ -47,7 +59,7 @@ MAX_RUNTIME_SECONDS: int = 780
 
 def _build_batches(seasons: Optional[List[int]] = None) -> List[List[int]]:
     """Split *seasons* into batches of ``BATCH_SIZE``."""
-    source = seasons if seasons is not None else ALL_SEASONS
+    source = seasons if seasons is not None else default_seasons()
     return [source[i : i + BATCH_SIZE] for i in range(0, len(source), BATCH_SIZE)]
 
 
@@ -85,6 +97,7 @@ async def run_historic_refresh(
     #    Priority:  (1) Redis fast-path continuation marker,
     #               (2) DB `generation_progress` table fallback,
     #               (3) Fresh start with all seasons.
+    default_window = default_seasons()
     remaining = await cache.get(CONTINUATION_KEY)
     if remaining:
         seasons_to_process = remaining
@@ -99,8 +112,8 @@ async def run_historic_refresh(
         db_progress = active_ops[0] if active_ops else None
         if db_progress and db_progress.completed_items:
             already_done = db_progress.completed_items
-            remaining_indices = list(range(already_done, len(ALL_SEASONS)))
-            seasons_to_process = [ALL_SEASONS[i] for i in remaining_indices]
+            remaining_indices = list(range(already_done, len(default_window)))
+            seasons_to_process = [default_window[i] for i in remaining_indices]
             logger.info(
                 "Resuming from DB progress (record %s): %s seasons already done, %s remaining",
                 db_progress.id,
@@ -108,7 +121,7 @@ async def run_historic_refresh(
                 len(seasons_to_process),
             )
         else:
-            seasons_to_process = list(ALL_SEASONS)
+            seasons_to_process = list(default_window)
             logger.info(
                 "Starting fresh: processing all %s seasons",
                 len(seasons_to_process),
@@ -190,7 +203,7 @@ async def run_historic_refresh(
             await GenerationProgressCRUD.upsert_active(
                 session,
                 operation_type="historic_refresh",
-                total_items=len(ALL_SEASONS),
+                total_items=len(default_window),
                 completed_items=total_seasons_processed,
             )
             await session.commit()

@@ -1,30 +1,14 @@
-// Human-friendly labels for the 3 heuristic names returned by the
-// backend.  Keep in sync with `HEURISTICS` in
-// backend/scripts/seed_data.py.
-export const HEURISTIC_ORDER = ['weighted_tip', 'best_bet', 'yolo']
+// Human-friendly labels and sport-specific presentation, sourced from
+// the single sport config (P4-2).  The named exports below are kept
+// for backward compatibility with existing consumers/tests — they are
+// now views over `SPORT_CONFIG`.
+import { SPORT_CONFIG } from './useSportConfig'
 
-export const HEURISTIC_LABELS: Record<string, string> = {
-  weighted_tip: 'Weighted Tip',
-  best_bet: 'Best Bet',
-  yolo: 'YOLO',
-}
+export const HEURISTIC_ORDER = SPORT_CONFIG.heuristicOrder
 
-// Human-friendly labels for every model registered in
-// `backend/packages/shared/models_ml/__init__.py`.  Previously only
-// the original 4 models were mapped; the 4 newer ML models would
-// render as raw snake_case keys.  CR-007 from Phase 2b.
-export const MODEL_DISPLAY_NAMES: Record<string, string> = {
-  // Original 4
-  elo: 'Elo Rating',
-  form: 'Form',
-  home_advantage: 'Home Advantage',
-  value: 'Value',
-  // Newer ML models (Phase 2: new-models-architecture)
-  weather_impact: 'Weather Impact',
-  injury_impact: 'Injury Impact',
-  matchup: 'Matchup',
-  player_form: 'Player Form',
-}
+export const HEURISTIC_LABELS: Record<string, string> = SPORT_CONFIG.heuristicLabels
+
+export const MODEL_DISPLAY_NAMES: Record<string, string> = SPORT_CONFIG.modelDisplayNames
 
 /**
  * Sort an array of objects by their heuristic field matching
@@ -58,9 +42,9 @@ export function useFormatters() {
   // DESIGN-FIX (hydration): formatting without an explicit timeZone
   // made the prerendered HTML (built in UTC) differ from the client's
   // en-AU rendering — a systematic hydration mismatch on every card
-  // with a date.  Pin to Australia/Sydney: identical text server and
-  // client, and venue-consistent times for an AFL product.
-  const DATE_TZ = 'Australia/Sydney'
+  // with a date.  Pin to the sport's display timezone from the config
+  // (P4-2): identical text server and client, venue-consistent times.
+  const DATE_TZ = SPORT_CONFIG.displayTimezone
 
   const formatDate = (dateStr: string | null | undefined): string => {
     if (!dateStr) return '—'

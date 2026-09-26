@@ -1,7 +1,7 @@
 [project]
-name = "whatismytip-faas"
+name = "whatismytip"
 version = "1.0.0"
-description = "WhatIsMyTip FaaS Backend - Digital Ocean Functions"
+description = "WhatIsMyTip - AI-powered AFL tipping backend (FastAPI)"
 requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.115.0",

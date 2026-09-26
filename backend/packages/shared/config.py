@@ -129,9 +129,13 @@ class Settings(BaseSettings):
     # See note above — the expression is in the FastAPI app's local
     # timezone (default Australia/Perth).
     historic_refresh_enabled: bool = True
-    historic_refresh_seasons: str = "2010-2025"
+    # P0-6: derived default ([current-16, current) as a string) so the
+    # admin-trigger fallback advances with the year.  An explicit
+    # ``HISTORIC_REFRESH_SEASONS`` env var still overrides it.
+    historic_refresh_seasons: str = Field(
+        default_factory=lambda: f"{datetime.now().year - 16}-{datetime.now().year - 1}",
+    )
     historic_refresh_regenerate_tips: bool = False
-    historical_refresh_start_year: int = 2010
     historical_refresh_timeout_seconds: int = 900  # 15 minutes (safety cap for in-process scheduler)
 
     # Model Retrain (weekly ``weighted_tip`` scikit-learn refit)
@@ -139,6 +143,29 @@ class Settings(BaseSettings):
     # (default Australia/Perth).  Toggle ``model_retrain_enabled`` to
     # register/skip the job in the scheduler.
     model_retrain_enabled: bool = True
+
+    # Supplementary Data Sync (P3-3): scheduled refresh of the injury
+    # (FootyWire) and weather (Open-Meteo) feeds.  These were previously
+    # MANUAL-script-only — the injury model's point-in-time guard
+    # silently starved as scraped data aged.  ``staleness_days`` trips
+    # an alert when the newest scraped injury row is older than this.
+    supplementary_sync_enabled: bool = True
+    supplementary_sync_cron: str = "45 5 * * *"  # daily 05:45 app-tz
+    supplementary_sync_staleness_days: int = 3
+
+    # Sportix platform client credential (wafl.com.au ships this to every
+    # browser; kept in env per the no-hardcoded-secrets policy so rotation
+    # needs no deploy). See sportix_provider.py.
+    sportix_api_key: str = "290|yQfFH5WycjbEb8eUtVtTCXZt2aWOxFpDjUYEdxgQ9326de46"
+
+    # State-League Sync (Phase 5 rollout): scheduled sync of every
+    # "live" league in ``STATE_LEAGUES`` (see
+    # packages/shared/ingestion/state_leagues.py).  Runs at 04:30
+    # app-tz — after the daily AFL sync, before the morning
+    # tip-generation pass so local-competition fixtures/results are
+    # fresh for the day's predictions.
+    league_sync_enabled: bool = True
+    league_sync_cron: str = "30 4 * * *"  # daily 04:30 app-tz
 
     # Retry Configuration
     job_timeout_seconds: int = 3600

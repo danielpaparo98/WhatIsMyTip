@@ -22,6 +22,7 @@ Pydantic AI API reference (verified 2026-09-19, pydantic-ai 2.46.0):
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Dict, Optional
@@ -49,6 +50,7 @@ from ..models import (
     PlayerAdvancedStats,
     PlayerMatchStats,
 )
+from ..models_ml.neutral import is_grand_final as _is_grand_final
 from ..schemas.match_report import GrandFinalReport, Prediction
 from ..teams import canonical_team
 from .match_context import _head_to_head, _recent_form
@@ -284,16 +286,95 @@ async def _ensure_weather(db: AsyncSession, game: Game) -> None:
         logger.warning(f"Weather ensure failed for game {game.id} (non-fatal): {e}")
 
 
-def _normalize_sides(game: Game, report: GrandFinalReport) -> GrandFinalReport:
-    """GF-SIDES FIX (2026-09-21, user report): the agent swapped the
+# GF-SIDES v2 name matching: AFL Tables stores "Surname, Given"
+# ("Amiss, Jye") while the agent and FootyWire write "Given Surname"
+# ("Jye Amiss").  Apostrophes/commas are stripped and each form
+# generates BOTH orderings so either representation matches one key.
+_NAME_PUNCT_RE = re.compile(r"[.'\u2019]")
+_NAME_WS_RE = re.compile(r"\s+")
+
+
+def _name_keys(raw: Optional[str]) -> set[str]:
+    """Case/punctuation-insensitive lookup keys for a player name.
+
+    "Amiss, Jye" and "Jye Amiss" both produce {"amiss jye", "jye amiss"};
+    a plain "Callum Ah Chee" produces {"callum ah chee"}.
+    """
+    cleaned = _NAME_PUNCT_RE.sub("", raw or "").strip()
+    if not cleaned:
+        return set()
+    keys = {_NAME_WS_RE.sub(" ", cleaned.replace(",", " ")).lower()}
+    parts = [p.strip() for p in cleaned.split(",") if p.strip()]
+    if len(parts) == 2:
+        keys.add(_NAME_WS_RE.sub(" ", f"{parts[1]} {parts[0]}").lower())
+    return keys
+
+
+async def _player_team_lookup(
+    db: AsyncSession, names: list[Optional[str]]
+) -> Dict[str, str]:
+    """Batch-lookup real teams for player names from the players table.
+
+    Returns ``{name_key: canonical_team}``.  Defensive: any failure is
+    logged and an empty map returned so normalisation degrades to the
+    v1 team-field behaviour instead of breaking report generation.
+    """
+    wanted: set[str] = set()
+    for name in names:
+        wanted |= _name_keys(name)
+    if not wanted:
+        return {}
+    try:
+        # Match the DB's "space form" (commas → spaces, punctuation
+        # stripped, whitespace collapsed) against the generated keys.
+        space_form = func.regexp_replace(
+            func.regexp_replace(
+                func.replace(Player.name, ",", " "), "[.'\u2019]", "", "g"
+            ),
+            r"\s+",
+            " ",
+            "g",
+        )
+        result = await db.execute(
+            select(Player.name, Player.current_team).where(space_form.in_(wanted))
+        )
+        lookup: Dict[str, str] = {}
+        for name, team in result.all():
+            canonical = canonical_team(team or "")
+            if not canonical:
+                continue
+            for key in _name_keys(name):
+                lookup[key] = canonical
+        return lookup
+    except Exception as e:  # noqa: BLE001 — normalisation must never break gen
+        logger.warning(f"Player team lookup failed (falling back): {e}")
+        return {}
+
+
+async def _normalize_sides(
+    db: AsyncSession, game: Game, report: GrandFinalReport
+) -> GrandFinalReport:
+    """Pin the report's sided sections to the REAL fixture sides.
+
+    GF-SIDES FIX (2026-09-21, user report): the agent swapped the
     sides between sections — Fremantle's players appeared under
     Brisbane's "Players to Watch" column.  Every sided object carries a
     ``team`` field, so remap each section against the REAL fixture
     (canonical comparison) and drop entries that match neither side.
 
+    GF-SIDES v2 (2026-09-26, user report): the agent ALSO mislabels the
+    ``team`` field itself — Fremantle players carried
+    ``team: "Brisbane"`` — so the v1 remap faithfully placed them under
+    Brisbane.  The players table is ground truth: every key_players /
+    injury_watch entry is validated against ``Player.current_team`` and
+    placed by the player's REAL team (the agent's label is rewritten to
+    match).  Entries whose real team matches neither fixture side are
+    dropped as noise; players unknown to the DB fall back to the agent's
+    own ``team`` label (key_players) or its placement (injury_watch,
+    which carries no team field at all).
+
     season_story: swapped wholesale when its home/away teams are
-    inverted.  key_players: rebuilt per side.  injury_watch has no
-    team field (undetectable) and is passed through as-is.
+    inverted (no player names to validate against).
     """
     canonical_home = canonical_team(game.home_team or "")
     canonical_away = canonical_team(game.away_team or "")
@@ -316,11 +397,37 @@ def _normalize_sides(game: Game, report: GrandFinalReport) -> GrandFinalReport:
         if home_side == "away" and away_side == "home":
             story.home, story.away = story.away, story.home
 
-    # Key players: remap every entry by its own ``team`` field.
+    # Real-team ground truth for every named player in the report.
+    lookup = await _player_team_lookup(
+        db,
+        [p.name for p in report.key_players.home]
+        + [p.name for p in report.key_players.away]
+        + [n.player for n in report.injury_watch.home]
+        + [n.player for n in report.injury_watch.away],
+    )
+
+    def _resolve(name: Optional[str]) -> tuple[Optional[str], Optional[str]]:
+        """(side, canonical real team) per the players table; the side is
+        None when the player's real team matches neither fixture side."""
+        for key in _name_keys(name):
+            team = lookup.get(key)
+            if team:
+                return _side_of(team), team
+        return None, None
+
+    # Key players: place every entry by the player's REAL team when
+    # known; fall back to the entry's own (v1) team label otherwise.
     entries = list(report.key_players.home) + list(report.key_players.away)
     rebuilt_home: list = []
     rebuilt_away: list = []
     for entry in entries:
+        side, real = _resolve(entry.name)
+        if real is not None:
+            if side is None:
+                continue  # real team matches neither fixture side → noise
+            entry.team = real  # rewrite the agent's mislabel in the payload
+            (rebuilt_home if side == "home" else rebuilt_away).append(entry)
+            continue
         side = _side_of(entry.team)
         if side == "home":
             rebuilt_home.append(entry)
@@ -329,6 +436,25 @@ def _normalize_sides(game: Game, report: GrandFinalReport) -> GrandFinalReport:
         # Entries matching neither side are dropped (mis-attributed).
     report.key_players.home = rebuilt_home
     report.key_players.away = rebuilt_away
+
+    # Injury watch: entries carry no team field, so validate each player
+    # against the DB and remap; unknown players keep the agent's slot.
+    tagged = [("home", n) for n in report.injury_watch.home] + [
+        ("away", n) for n in report.injury_watch.away
+    ]
+    injury_home: list = []
+    injury_away: list = []
+    for origin, note in tagged:
+        side, real = _resolve(note.player)
+        if real is not None:
+            if side is None:
+                continue  # injured player is not a fixture participant
+            target = side
+        else:
+            target = origin  # unknown player: keep the agent's placement
+        (injury_home if target == "home" else injury_away).append(note)
+    report.injury_watch.home = injury_home
+    report.injury_watch.away = injury_away
 
     return report
 
@@ -830,17 +956,13 @@ class MatchReportService:
     async def is_grand_final(db: AsyncSession, game: Game) -> bool:
         """True when ``game`` is the last round of its season (grand final).
 
-        Same heuristic as the ``GET /api/games?latest=true`` locator:
-        the grand final is the game whose round_id equals the season's
-        max round_id.
+        P0-8: delegates to :func:`packages.shared.models_ml.neutral.is_grand_final`
+        — the single implementation of the heuristic (also used by the Elo
+        and home-advantage models).  The round locator in
+        ``app/api/games.py`` derives the same flag from its own max-round
+        query because it needs ``max_round_id`` for the post-season check.
         """
-        if game.round_id is None or game.season is None:
-            return False
-        result = await db.execute(
-            select(func.max(Game.round_id)).where(Game.season == game.season)
-        )
-        max_round = result.scalar()
-        return bool(max_round is not None and game.round_id == max_round)
+        return await _is_grand_final(db, game)
 
     async def generate_and_store_report(
         self, db: AsyncSession, game: Game
@@ -933,10 +1055,11 @@ class MatchReportService:
             )
             # Store the sanitised payload (the JSONB blob is what the
             # API serves; normalise mojibake once at write time), with
-            # sided sections pinned to the REAL fixture sides and the
-            # verdict anchored to the weighted tip.
+            # sided sections pinned to the REAL fixture sides (validated
+            # against the players table) and the verdict anchored to the
+            # weighted tip.
             output = _sanitize_mojibake(result.output)
-            output = _normalize_sides(game, output)
+            output = await _normalize_sides(db, game, output)
             output = await _anchor_prediction_to_weighted_tip(db, game, output)
             return output
         except Exception as e:

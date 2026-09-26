@@ -48,7 +48,7 @@ WhatIsMyTip is a comprehensive AFL tipping application that combines machine lea
 - **Async Database Operations**: PostgreSQL with SQLAlchemy (asyncpg driver)
 - **Redis Caching**: 3-tier TTL cache (60s / 300s / 3600s) shared across all routes
 - **Container-based**: Single FastAPI process per container, deployed to DigitalOcean App Platform
-- **In-process APScheduler**: 4 scheduled jobs (daily-sync, match-completion, tip-generation, historic-refresh) running inside the API process
+- **In-process APScheduler**: 5 scheduled jobs (daily-sync, match-completion, tip-generation, historic-refresh, model-retrain) running inside the API process
 - **Rate Limiting**: 60 requests per minute per IP
 - **CORS Support**: Configurable cross-origin requests
 - **No GPU Required**: Cost-efficient AI explanations using CPU
@@ -63,7 +63,7 @@ WhatIsMyTip is a comprehensive AFL tipping application that combines machine lea
 
 ### Backend
 - **FastAPI**: Single Python web framework process (the API server)
-- **APScheduler**: In-process cron scheduler for the 4 background jobs
+- **APScheduler**: In-process cron scheduler for the 5 background jobs
 - **PostgreSQL**: Managed relational database (asyncpg driver)
 - **Redis**: Managed cache with 3-tier TTL strategy
 - **Pydantic Settings**: Configuration and environment management

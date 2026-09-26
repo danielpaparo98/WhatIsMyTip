@@ -332,14 +332,14 @@ For runtime monitoring and on-call procedures, see [`docs/operations.md`](operat
 Database connections are managed by [`packages/shared/db.py`](../backend/packages/shared/db.py:1), which provides:
 
 - **Async SQLAlchemy engine** using the asyncpg driver (`postgresql+asyncpg://`)
-- **Session factory** (`factory()`) — context manager that yields an `AsyncSession`
+- **Session factory** (`get_session()`) — returns an `AsyncSession`, which is itself an async context manager
 - **Engine disposal** — `dispose_engine(force=...)` for shutdown
 
 ```python
-from packages.shared.db import factory
+from packages.shared.db import get_session
 
 async def do_work():
-    async with factory() as session:
+    async with get_session() as session:
         # session is automatically committed on success
         # and rolled back on exception
         ...
@@ -364,11 +364,19 @@ SQLAlchemy models are defined in [`packages/shared/models/`](../backend/packages
 - **Tip** — Generated tips (team, confidence, margin, heuristic)
 - **ModelPrediction** — Individual model predictions per game
 - **MatchAnalysis** — Detailed match analysis (weather, injuries, player data)
+- **MatchReport** — Grand-final pre-match report payloads (JSONB)
 - **JobExecution** — Cron job execution records (status, timing, error details)
 - **JobLock** — Advisory locks for preventing concurrent job runs
 - **EloCache** — Cached Elo ratings for teams
 - **GenerationProgress** — Tip generation progress tracking
 - **BacktestResult** — Backtesting performance metrics
+- **Player** — Player roster information
+- **MatchWeather** — Match-day weather observations
+- **PlayerMatchStats** — Per-match player statistics
+- **PlayerAdvancedStats** — Advanced (FootyWire) player statistics
+- **Injury** — Injury list entries
+- **ModelVersion** — Active versioned model metadata + metrics
+- **ModelCoefficient** — Learned weighted-tip coefficients per model version
 
 ### Migrations
 
@@ -463,7 +471,7 @@ All heuristics inherit from [`BaseHeuristic`](../backend/packages/shared/heurist
 | **YOLO** | [`heuristics/yolo.py`](../backend/packages/shared/heuristics/yolo.py:1) |
 | **Weighted Tip** | [`heuristics/weighted_tip.py`](../backend/packages/shared/heuristics/weighted_tip.py:1) |
 
-The [`ModelOrchestrator`](../backend/packages/shared/orchestrator.py:1) runs all 8 models in parallel using `asyncio.gather()`, then each heuristic combines the model outputs into a final prediction with a team, confidence score, and predicted margin.
+The [`ModelOrchestrator`](../backend/packages/shared/orchestrator.py:1) runs all 8 models in parallel using `asyncio.gather()`, then each heuristic combines the model outputs into a final prediction with a team, confidence score, and predicted margin. Models that return `ABSTAINED` are excluded from the consensus vote — heuristics see fewer voters, not abstentions.
 
 ```python
 from packages.shared.orchestrator import ModelOrchestrator
@@ -477,6 +485,33 @@ result = await orchestrator.predict(game, db=session, heuristic="best_bet")
 results = await orchestrator.predict_all(game, db=session)
 # Returns: {"best_bet": {...}, "yolo": {...}, "weighted_tip": {...}}
 ```
+
+### Neutrality & abstention policy
+
+Two rules apply across the prediction pipeline:
+
+- **Home advantage lives in exactly two models**: **Elo** (learned from data, grand finals excluded) and **Home Advantage** (its dedicated purpose). Every other model compares raw signals with **no home adjustments** — the former hardcoded bumps (`+1.0` form, `+2.0` player form, `+0.05` value, `+0.03` weather) were removed.
+- **No usable opinion → `ABSTAINED`** (P2-1 contract). Models never fabricate a pick from missing data; raising is reserved for internal errors.
+
+| Model | Abstains when |
+|-------|---------------|
+| Weather Impact | No weather data for the game, or neither team has at least 3 same-venue, same-weather-tier games on record |
+| Injury Impact | Neither team has active injuries (a normal mid-season state, not a cold start) |
+| Matchup | Fewer than 3 head-to-head games |
+| Player Form | No recent games/stats for either team |
+
+### Model behaviour notes
+
+| Area | Behaviour |
+|------|-----------|
+| **Grand-final detection** | A round counts as the grand final only when its season shows a **complete fixture** (≥ 25 distinct rounds, `MIN_ROUNDS_FOR_GRAND_FINAL_DETECTION`). Mid-season, the latest completed round is the sample max and must not be misread as the GF. Trade-off: shortened historical seasons (e.g. COVID-2020) lose GF detection — accepted. |
+| **Home Advantage** | Returns `ABSTAINED` at genuine grand finals (no longer raises) |
+| **Form** | Average score differential is **signed** — big losses reduce form |
+| **Value** | Compares raw historical win rates (no home boost) |
+| **Weather Impact** | Same-venue query filters by `Game.venue` (sample limit 120); a team needs ≥ 3 similar-condition games (`_MIN_SAMPLE_SIZE`) for its win rate to count — "no usable sample" (`None`) is distinct from "lost all of them" (`0.0`); one team without a usable sample is treated as `0.5` in the differential |
+| **Player Form** | `tog_pct` normalized to a 0–1 scale so its contribution is comparable to the other composite terms |
+| **Heuristic zero-information defaults** | When no model voted: Best Bet → (alphabetically-first team, 0.50, 5), YOLO → (alphabetically-first team, 0.50, 10); Weighted Tip → (alphabetically-first team, 0.55, 6) on vote ties and empty input (0.55 is the long-standing fixed fallback confidence). Vote ties in Best Bet resolve to the alphabetically-first team too. Deterministic and home/away-neutral — Best Bet and YOLO never inflate confidence on a no-information default. |
+| **Weighted Tip training** | Feature vectors and coefficients are aligned via `feature_names_for` — a length mismatch raises `ValueError` instead of silently mis-weighting. Retrain guard: `MIN_TRAINING_ROWS = 100` (16-feature OLS needs rows ≫ features); below 100 rows the previously-active version keeps serving. |
 
 ---
 

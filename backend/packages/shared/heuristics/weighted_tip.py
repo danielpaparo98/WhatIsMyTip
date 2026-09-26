@@ -19,44 +19,56 @@ that it can be reused by two callers:
 
 The exact ordering of :data:`FEATURE_NAMES` is the **contract** between
 training and prediction — both sides must build vectors in this order.
+:data:`FEATURE_NAMES` is derived via :func:`feature_names_for` so any
+model list yields a matching name list; :func:`predict_home_margin` takes
+an optional ``feature_names`` argument and raises :class:`ValueError` on
+a length mismatch, so a vector and its names can never silently drift
+apart (``zip`` would otherwise truncate and mis-weight the prediction).
 """
 
 from __future__ import annotations
 
 import statistics
-from typing import Dict, List, Mapping, Tuple
+from typing import Dict, List, Mapping
 
 from ..models import Game
+from ..models_ml.prediction import Prediction
+from ..models_ml.registry import build_default_registry
 from .base import BaseHeuristic
 
 # ---------------------------------------------------------------------------
 # Canonical feature ordering (the training/prediction contract)
 # ---------------------------------------------------------------------------
 
-#: The eight underlying ML models, in fixed order.  ``get_name()`` of each
-#: model in :mod:`packages.shared.models_ml` matches these strings.
-MODEL_NAMES: List[str] = [
-    "elo",
-    "form",
-    "home_advantage",
-    "value",
-    "weather_impact",
-    "injury_impact",
-    "matchup",
-    "player_form",
-]
+#: The eight underlying ML models, in fixed order.  P2-3: derived from
+#: the model registry — the single source of truth — instead of a
+#: hardcoded list.  The resulting order is identical (it IS the
+#: weighted-tip feature contract for the AFL bootstrap set).
+MODEL_NAMES: List[str] = build_default_registry().names()
+
+
+def feature_names_for(model_names: List[str]) -> List[str]:
+    """Interleave per-model feature names: ``<name>_margin_home``, ``<name>_conf``.
+
+    Single source of the naming contract so the vector built from one
+    model list and the names zipped against it can always be produced
+    from the *same* list (see :func:`weighted_tip_predict`).
+    """
+    names: List[str] = []
+    for name in model_names:
+        names.append(f"{name}_margin_home")  # signed margin toward HOME team
+        names.append(f"{name}_conf")  # that model's confidence 0..1
+    return names
+
 
 #: The 16-length ordered feature list.  For each model we emit the signed
 #: margin toward the home team first, then that model's confidence.
 #: This is the exact order training and prediction must agree on.
-FEATURE_NAMES: List[str] = []
-for _n in MODEL_NAMES:
-    FEATURE_NAMES.append(f"{_n}_margin_home")  # signed margin toward HOME team
-    FEATURE_NAMES.append(f"{_n}_conf")  # that model's confidence 0..1
+FEATURE_NAMES: List[str] = feature_names_for(MODEL_NAMES)
 
 
-# A prediction tuple is ``(winner, confidence, margin)``.
-Prediction = Tuple[str, float, int]
+# The typed prediction contract (P2-1).  ``Prediction`` is a NamedTuple
+# whose positional order matches the legacy ``(winner, confidence, margin)``.
 
 
 # ---------------------------------------------------------------------------
@@ -67,6 +79,7 @@ def build_feature_vector(
     model_predictions: Mapping[str, Prediction],
     home_team: str,
     away_team: str,
+    model_names: List[str] | None = None,
 ) -> List[float]:
     """Build the 16-length ordered feature vector for one game.
 
@@ -79,7 +92,7 @@ def build_feature_vector(
     Pure and side-effect-free.
     """
     features: List[float] = []
-    for name in MODEL_NAMES:
+    for name in model_names if model_names is not None else MODEL_NAMES:
         entry = model_predictions.get(name)
         if entry is None:
             features.append(0.0)  # margin
@@ -105,14 +118,27 @@ def predict_home_margin(
     features: List[float],
     intercept: float,
     coefficients: Mapping[str, float],
+    feature_names: List[str] | None = None,
 ) -> float:
     """Linear combination: ``intercept + sum(coef[name] * value)``.
 
-    ``coefficients`` is keyed by :data:`FEATURE_NAMES`.  A feature with no
-    coefficient entry is treated as coefficient ``0.0``.  Pure function.
+    ``coefficients`` is keyed by feature name (default
+    :data:`FEATURE_NAMES`).  A feature with no coefficient entry is
+    treated as coefficient ``0.0``.  Pass ``feature_names`` whenever the
+    vector was built from a non-default ``model_names`` list — the names
+    and the vector must come from the same list.  Raises
+    :class:`ValueError` on a length mismatch instead of silently
+    truncating the zip and mis-weighting the prediction.  Pure function.
     """
+    names = FEATURE_NAMES if feature_names is None else feature_names
+    if len(features) != len(names):
+        raise ValueError(
+            f"features/names length mismatch: got {len(features)} features "
+            f"but {len(names)} feature names — the vector and the names "
+            "must come from the same model list"
+        )
     total = float(intercept)
-    for name, value in zip(FEATURE_NAMES, features):
+    for name, value in zip(names, features):
         total += float(coefficients.get(name, 0.0)) * float(value)
     return total
 
@@ -139,7 +165,7 @@ def home_margin_to_tip(
     winner = home_team if y_pred >= 0 else away_team
     margin = max(1, int(round(abs(y_pred))))
     confidence = round(min(0.95, max(0.50, 0.50 + abs(y_pred) * 0.015)), 3)
-    return winner, confidence, margin
+    return Prediction(winner, confidence, margin)
 
 
 # ---------------------------------------------------------------------------
@@ -152,10 +178,23 @@ def weighted_tip_predict(
     model_predictions: Mapping[str, Prediction],
     home_team: str,
     away_team: str,
+    model_names: List[str] | None = None,
 ) -> Prediction:
-    """Convenience pure function composing A2 → A3 → A4."""
-    features = build_feature_vector(model_predictions, home_team, away_team)
-    y_pred = predict_home_margin(features, intercept, coefficients)
+    """Convenience pure function composing A2 → A3 → A4.
+
+    The feature vector and the coefficient-name order are ALWAYS derived
+    from the same ``model_names`` list, so they can never drift apart.
+    """
+    resolved_names = model_names if model_names is not None else MODEL_NAMES
+    features = build_feature_vector(
+        model_predictions, home_team, away_team, model_names=resolved_names
+    )
+    y_pred = predict_home_margin(
+        features,
+        intercept,
+        coefficients,
+        feature_names=feature_names_for(resolved_names),
+    )
     return home_margin_to_tip(y_pred, home_team, away_team)
 
 
@@ -171,15 +210,15 @@ def weighted_tip_fallback(
     """Majority-vote fallback used before the first weekly retrain runs.
 
     Tally votes across ``model_predictions`` (home vs away winner); the
-    team with the most votes wins, with ties broken toward the home team.
+    team with the most votes wins.  Ties and empty inputs resolve to the
+    alphabetically first team — a deterministic, home/away-neutral rule.
     Confidence is fixed at ``0.55`` and the margin is the rounded mean of
     the absolute prediction margins (or ``6`` when there are none).
-
-    An empty ``model_predictions`` short-circuits to the cold-start tip
-    ``(away_team, 0.55, 6)`` so callers always get a sane answer.
     """
     if not model_predictions:
-        return away_team, 0.55, 6
+        # Zero information must look like zero information: alphabetically
+        # first team, fixed 0.55 confidence, minimum margin 6.
+        return Prediction(min(home_team, away_team), 0.55, 6)
 
     home_votes = 0
     away_votes = 0
@@ -191,13 +230,20 @@ def weighted_tip_fallback(
             away_votes += 1
         margins.append(abs(margin))
 
-    winner = home_team if home_votes >= away_votes else away_team
+    # Home/away-neutral tie-break: strictly-more-votes wins; a tie goes to
+    # the alphabetically first team (deterministic, no fixture bias).
+    if home_votes > away_votes:
+        winner = home_team
+    elif away_votes > home_votes:
+        winner = away_team
+    else:
+        winner = min(home_team, away_team)
     confidence = 0.55
     if margins:
         margin = max(1, int(round(statistics.fmean(margins))))
     else:
         margin = 6
-    return winner, confidence, margin
+    return Prediction(winner, confidence, margin)
 
 
 # ---------------------------------------------------------------------------
@@ -220,6 +266,12 @@ class WeightedTipHeuristic(BaseHeuristic):
 
     def __init__(self, models):
         self.models = models
+        # P2-3: per-instance model names derived from the injected
+        # models — the registry (not a hardcoded list) decides which
+        # models exist, and the feature vector follows.
+        self.model_names: List[str] = (
+            [m.get_name() for m in models] if models else list(MODEL_NAMES)
+        )
         self._intercept: float | None = None
         self._coefficients: Dict[str, float] | None = None
 
@@ -250,11 +302,10 @@ class WeightedTipHeuristic(BaseHeuristic):
                 model_predictions,
                 home_team,
                 away_team,
+                model_names=self.model_names,
             )
 
-        # No trained model yet — majority-vote fallback.  Guard the empty
-        # cold-start case explicitly to match the old behaviour.
-        if not model_predictions:
-            return away_team, 0.55, 6
-
+        # No trained model yet — majority-vote fallback.  The fallback owns
+        # the empty cold-start case too (alphabetically first team, 0.55, 6),
+        # so the neutral rule lives in exactly one place.
         return weighted_tip_fallback(model_predictions, home_team, away_team)

@@ -49,13 +49,61 @@ class TestBestBetHeuristic:
         assert margin > 0
 
     @pytest.mark.asyncio
-    async def test_empty_predictions_fallback(self):
-        """With no predictions, should fall back to home team."""
-        game = _make_game()
+    async def test_empty_predictions_default_is_alphabetically_first(self):
+        """Zero information must look like zero information.
+
+        No votes → the alphabetically first team (home/away-neutral
+        deterministic default), coin-flip confidence 0.50, and the
+        heuristic's minimum margin 5.
+        """
+        game = _make_game()  # home=Richmond, away=Carlton → min is Carlton
         winner, confidence, margin = await self.heuristic.apply(game, {})
-        assert winner == "Richmond"
-        assert confidence == 0.55
-        assert margin == 15
+        assert winner == "Carlton"
+        assert confidence == 0.50
+        assert margin == 5
+
+    @pytest.mark.asyncio
+    async def test_empty_predictions_neutral_when_home_is_alphabetically_last(self):
+        """Proves neutrality: home team alphabetically AFTER away → away picked."""
+        game = _make_game(home_team="Sydney", away_team="Brisbane")
+        winner, confidence, margin = await self.heuristic.apply(game, {})
+        assert winner == "Brisbane"  # min("Sydney", "Brisbane") — the away team
+        assert confidence == 0.50
+        assert margin == 5
+
+    @pytest.mark.asyncio
+    async def test_vote_tie_resolves_to_alphabetically_first_team(self):
+        """A 1–1 vote split must not depend on dict insertion (model
+        completion) order — the alphabetically first team wins."""
+        game = _make_game()  # home=Richmond, away=Carlton → min is Carlton
+
+        # Away vote first in insertion order…
+        predictions_away_first = {
+            "elo": ("Carlton", 0.6, 8),
+            "form": ("Richmond", 0.7, 12),
+        }
+        # …and home vote first in insertion order.
+        predictions_home_first = {
+            "elo": ("Richmond", 0.7, 12),
+            "form": ("Carlton", 0.6, 8),
+        }
+
+        winner_a, _, _ = await self.heuristic.apply(game, predictions_away_first)
+        winner_b, _, _ = await self.heuristic.apply(game, predictions_home_first)
+
+        assert winner_a == "Carlton"
+        assert winner_b == "Carlton"
+
+    @pytest.mark.asyncio
+    async def test_vote_tie_neutral_when_home_is_alphabetically_last(self):
+        """Proves vote-tie neutrality: home team alphabetically AFTER away."""
+        game = _make_game(home_team="Sydney", away_team="Brisbane")
+        predictions = {
+            "elo": ("Sydney", 0.7, 12),
+            "form": ("Brisbane", 0.6, 8),
+        }
+        winner, _, _ = await self.heuristic.apply(game, predictions)
+        assert winner == "Brisbane"
 
     @pytest.mark.asyncio
     async def test_confidence_capped_at_09(self):
@@ -128,13 +176,26 @@ class TestYOLOHeuristic:
         assert winner == "Carlton"  # form model had highest confidence
 
     @pytest.mark.asyncio
-    async def test_empty_predictions_fallback(self):
-        """With no predictions, should fall back to home team."""
-        game = _make_game()
+    async def test_empty_predictions_default_is_alphabetically_first(self):
+        """Zero information must look like zero information.
+
+        No votes → alphabetically first team (home/away-neutral),
+        coin-flip confidence 0.50, and YOLO's 10-point margin floor.
+        """
+        game = _make_game()  # home=Richmond, away=Carlton → min is Carlton
         winner, confidence, margin = await self.heuristic.apply(game, {})
-        assert winner == "Richmond"
-        assert confidence == 0.6
-        assert margin == 20
+        assert winner == "Carlton"
+        assert confidence == 0.50
+        assert margin == 10
+
+    @pytest.mark.asyncio
+    async def test_empty_predictions_neutral_when_home_is_alphabetically_last(self):
+        """Proves neutrality: home team alphabetically AFTER away → away picked."""
+        game = _make_game(home_team="Sydney", away_team="Adelaide")
+        winner, confidence, margin = await self.heuristic.apply(game, {})
+        assert winner == "Adelaide"  # min("Sydney", "Adelaide") — the away team
+        assert confidence == 0.50
+        assert margin == 10
 
     @pytest.mark.asyncio
     async def test_confidence_boosted(self):
@@ -180,11 +241,24 @@ class TestWeightedTipHeuristic:
         assert self.heuristic.get_name() == "weighted_tip"
 
     @pytest.mark.asyncio
-    async def test_empty_predictions_fallback(self):
-        """With no predictions, cold-start returns the away team."""
+    async def test_empty_predictions_default_is_alphabetically_first(self):
+        """With no predictions, cold-start picks the alphabetically first team.
+
+        Neutral rule: min("Richmond", "Carlton") = "Carlton" (here the away
+        team), fixed 0.55 confidence and margin 6.
+        """
         game = _make_game()
         winner, confidence, margin = await self.heuristic.apply(game, {})
         assert winner == "Carlton"
+        assert confidence == 0.55
+        assert margin == 6
+
+    @pytest.mark.asyncio
+    async def test_empty_predictions_neutral_when_home_is_alphabetically_first(self):
+        """Proves neutrality: home alphabetically FIRST → home picked (not away)."""
+        game = _make_game(home_team="Adelaide", away_team="Brisbane")
+        winner, confidence, margin = await self.heuristic.apply(game, {})
+        assert winner == "Adelaide"
         assert confidence == 0.55
         assert margin == 6
 

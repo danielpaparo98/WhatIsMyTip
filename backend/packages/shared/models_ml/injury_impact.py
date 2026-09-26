@@ -4,11 +4,11 @@ Assesses the impact of injured players on team performance by quantifying
 each missing player's importance from their historical match stats and
 calculating a team-level impact score.
 
-Cold-start: returns (home_team, 0.55, 5) when no injury data is available.
+No active injuries (or no usable data) → the model abstains.
 """
 
 import json
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Union
 
 from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -17,6 +17,7 @@ from ..cache import _get_client
 from ..logger import get_logger
 from ..models import Game, Injury, Player, PlayerMatchStats
 from .base import BaseModel
+from .prediction import ABSTAINED, Abstained, Prediction
 
 logger = get_logger(__name__)
 
@@ -213,22 +214,6 @@ class InjuryImpactModel(BaseModel):
     # Caching
     # ------------------------------------------------------------------
 
-    async def _check_cache(self, game: Game) -> Optional[dict]:
-        """Check Redis cache for a previously computed prediction."""
-        try:
-            client = _get_client()
-            cache_key = (
-                f"{_CACHE_PREFIX}"
-                f"{game.home_team}:{game.away_team}:"
-                f"{game.date.isoformat() if game.date else 'all'}"
-            )
-            raw = await client.get(cache_key)
-            if raw is not None:
-                return json.loads(raw)
-        except Exception as e:
-            logger.warning(f"InjuryImpactModel: Redis cache read error: {e}")
-        return None
-
     async def _store_cache(self, game: Game, data: dict) -> None:
         """Store computed prediction data in Redis."""
         try:
@@ -248,22 +233,27 @@ class InjuryImpactModel(BaseModel):
 
     async def predict(
         self, game: Game, db: AsyncSession
-    ) -> Tuple[str, float, int]:
+    ) -> Union[Prediction, Abstained]:
         """Predict winner based on injury impact.
 
         Returns:
-            (winner_team, confidence, predicted_margin)
+            (winner_team, confidence, predicted_margin), or ABSTAINED
+            when neither team has active injuries (no winner
+            information) or there is no usable data.
         """
         try:
             # 1. Fetch active injuries for both teams
             injuries = await self._get_active_injuries(game, db)
 
             if not injuries:
+                # P2-1: a fully fit pair of teams is a normal mid-season
+                # state — it carries no winner information, so abstain
+                # instead of fabricating a home-team pick.
                 logger.info(
                     f"InjuryImpactModel: No injuries for game {game.id}, "
-                    "using cold-start default"
+                    "abstaining"
                 )
-                return game.home_team, 0.52, 8
+                return ABSTAINED
 
             # 2. Resolve player IDs
             injured_player_ids = [
@@ -339,8 +329,10 @@ class InjuryImpactModel(BaseModel):
                 "away_impact": away_impact,
             })
 
-            return winner, confidence, margin
+            return Prediction(winner, confidence, margin)
 
-        except Exception as e:
-            logger.error(f"InjuryImpactModel: Prediction failed: {e}")
-            return game.home_team, 0.55, 5
+        except Exception:
+            # P0-3: never convert an internal failure into a confident-
+            # looking home-team vote — re-raise so the orchestrator
+            # records an abstention (ORCH-M7).
+            raise

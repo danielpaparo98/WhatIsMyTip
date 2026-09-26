@@ -18,6 +18,7 @@ from packages.shared.heuristics.weighted_tip import (
     MODEL_NAMES,
     WeightedTipHeuristic,
     build_feature_vector,
+    feature_names_for,
     home_margin_to_tip,
     predict_home_margin,
     weighted_tip_fallback,
@@ -64,6 +65,17 @@ class TestFeatureOrdering:
 
     def test_feature_names_are_unique(self):
         assert len(set(FEATURE_NAMES)) == len(FEATURE_NAMES)
+
+    def test_feature_names_for_produces_module_level_contract(self):
+        """FEATURE_NAMES must be exactly feature_names_for(MODEL_NAMES)."""
+        assert FEATURE_NAMES == feature_names_for(MODEL_NAMES)
+
+    def test_feature_names_for_interleaves_margin_then_confidence(self):
+        names = feature_names_for(["a", "b"])
+        assert names == ["a_margin_home", "a_conf", "b_margin_home", "b_conf"]
+
+    def test_feature_names_for_empty_is_empty(self):
+        assert feature_names_for([]) == []
 
 
 # ---------------------------------------------------------------------------
@@ -152,6 +164,93 @@ class TestPredictHomeMargin:
     def test_zero_intercept_zero_coefficients_is_zero(self):
         features = [9.0] * 16
         assert predict_home_margin(features, 0.0, {}) == pytest.approx(0.0)
+
+    def test_custom_feature_names_drive_coefficient_lookup(self):
+        """Non-default names must be the ones zipped against the vector."""
+        features = [10.0, 0.5]
+        coeffs = {"m": 2.0, "c": -1.0}
+        # 1.0 + 2.0*10.0 + (-1.0)*0.5 = 20.5 — only correct if `names` is used.
+        assert predict_home_margin(
+            features, 1.0, coeffs, feature_names=["m", "c"]
+        ) == pytest.approx(20.5)
+
+    def test_fewer_names_than_features_raises_value_error(self):
+        # Old behaviour: zip silently truncated → fail loud instead.
+        with pytest.raises(ValueError):
+            predict_home_margin([1.0] * 16, 0.0, {}, feature_names=["a", "b"])
+
+    def test_more_names_than_features_raises_value_error(self):
+        names = feature_names_for(MODEL_NAMES) + ["extra_margin_home"]
+        with pytest.raises(ValueError):
+            predict_home_margin([1.0] * 16, 0.0, {}, feature_names=names)
+
+    def test_default_call_with_matching_length_still_works(self):
+        # Backward compatible: no feature_names kwarg → FEATURE_NAMES.
+        features = [1.0] * 16
+        coeffs = {name: 0.5 for name in FEATURE_NAMES}
+        assert predict_home_margin(features, 0.0, coeffs) == pytest.approx(8.0)
+
+
+# ---------------------------------------------------------------------------
+# Feature-name alignment (weighted_tip_predict ↔ build_feature_vector)
+# ---------------------------------------------------------------------------
+
+class TestFeatureNameAlignment:
+    """The feature vector and the coefficient-name order must come from the
+    SAME model list — otherwise zip silently mis-weights predictions."""
+
+    def test_reversed_model_order_produces_exact_manual_dot_product(self):
+        """Alignment proof: build features with a REVERSED model order and
+        distinct per-model coefficients; the result must equal a manual
+        zip-based dot product over feature_names_for(the same reversed list).
+
+        Under the old behaviour (vector built in reversed order but names
+        taken from module-level FEATURE_NAMES) the coefficient/value pairs
+        misalign and the dot product differs.
+        """
+        reversed_names = list(reversed(MODEL_NAMES))
+        preds = {
+            "elo": ("Richmond", 0.70, 10),
+            "form": ("Carlton", 0.65, 8),
+            "home_advantage": ("Richmond", 0.60, 6),
+            "value": ("Carlton", 0.55, 4),
+            "weather_impact": ("Richmond", 0.75, 12),
+            "injury_impact": ("Carlton", 0.50, 2),
+            "matchup": ("Richmond", 0.85, 14),
+            "player_form": ("Carlton", 0.45, 16),
+        }
+        # Distinct coefficients per model (both margin and confidence) so any
+        # name/value misalignment changes the sum.
+        coeffs: dict = {}
+        for idx, name in enumerate(reversed_names):
+            coeffs[f"{name}_margin_home"] = float(idx + 1)
+            coeffs[f"{name}_conf"] = 0.5 * float(idx + 1)
+
+        names = feature_names_for(reversed_names)
+        features = build_feature_vector(
+            preds, "Richmond", "Carlton", model_names=reversed_names
+        )
+        assert len(features) == len(names)
+
+        # Manual dot product: the ground truth the implementation must match.
+        expected_y = sum(
+            coeffs[n] * v for n, v in zip(names, features)
+        )
+        expected = home_margin_to_tip(expected_y, "Richmond", "Carlton")
+
+        result = weighted_tip_predict(
+            0.0, coeffs, preds, "Richmond", "Carlton", model_names=reversed_names
+        )
+        assert result == expected
+
+    def test_default_model_names_align_with_module_contract(self):
+        """model_names=None must yield the canonical FEATURE_NAMES pairing."""
+        preds = {"elo": ("Richmond", 0.7, 10)}
+        coeffs = {"elo_margin_home": 1.0, "elo_conf": 0.0}
+        expected_y = 2.0 + 1.0 * 10.0
+        expected = home_margin_to_tip(expected_y, "Richmond", "Carlton")
+        result = weighted_tip_predict(2.0, coeffs, preds, "Richmond", "Carlton")
+        assert result == expected
 
 
 # ---------------------------------------------------------------------------
@@ -257,15 +356,29 @@ class TestWeightedTipFallback:
         winner, conf, margin = weighted_tip_fallback(preds, "Richmond", "Carlton")
         assert winner == "Carlton"
 
-    def test_tie_breaks_to_home(self):
-        # Non-empty tie (1-1) → home.
+    def test_tie_breaks_to_alphabetically_first(self):
+        """Non-empty tie (1-1) → alphabetically first, NOT automatically home.
+
+        Richmond vs Carlton: min is Carlton (the away team) — proves the old
+        home-biased `home_votes >= away_votes` rule is gone.
+        """
         preds = {
             "elo": ("Richmond", 0.7, 10),
             "form": ("Carlton", 0.7, 12),
         }
         winner, conf, margin = weighted_tip_fallback(preds, "Richmond", "Carlton")
-        assert winner == "Richmond"
+        assert winner == "Carlton"
         assert conf == pytest.approx(0.55)
+
+    def test_tie_breaks_to_home_when_home_is_alphabetically_first(self):
+        """Neutrality in the other direction: home='Adelaide' < away='Carlton'
+        → a 1-1 tie picks the home team (because it is alphabetically first)."""
+        preds = {
+            "elo": ("Adelaide", 0.7, 10),
+            "form": ("Carlton", 0.7, 12),
+        }
+        winner, _, _ = weighted_tip_fallback(preds, "Adelaide", "Carlton")
+        assert winner == "Adelaide"
 
     def test_margin_is_mean_of_absolute_margins(self):
         preds = {
@@ -277,9 +390,18 @@ class TestWeightedTipFallback:
         _, _, margin = weighted_tip_fallback(preds, "Richmond", "Carlton")
         assert margin == 9
 
-    def test_empty_predictions_returns_away_cold_start(self):
+    def test_empty_predictions_returns_alphabetically_first_cold_start(self):
+        """Empty input → alphabetically first team, 0.55, 6 — NOT always away."""
+        # Richmond vs Carlton → min is Carlton (the away team).
         winner, conf, margin = weighted_tip_fallback({}, "Richmond", "Carlton")
         assert winner == "Carlton"
+        assert conf == pytest.approx(0.55)
+        assert margin == 6
+
+    def test_empty_predictions_neutral_when_home_is_alphabetically_first(self):
+        """Proves neutrality: home alphabetically FIRST → home picked."""
+        winner, conf, margin = weighted_tip_fallback({}, "Adelaide", "Brisbane")
+        assert winner == "Adelaide"
         assert conf == pytest.approx(0.55)
         assert margin == 6
 
@@ -352,9 +474,19 @@ class TestWeightedTipHeuristic:
         assert margin == 20
 
     @pytest.mark.asyncio
-    async def test_empty_predictions_returns_away_cold_start(self):
-        game = _make_game()
+    async def test_empty_predictions_returns_alphabetically_first_cold_start(self):
+        """Empty predictions → alphabetically first team (home/away-neutral)."""
+        game = _make_game()  # min("Richmond", "Carlton") = "Carlton"
         winner, conf, margin = await self.heuristic.apply(game, {})
         assert winner == "Carlton"
+        assert conf == pytest.approx(0.55)
+        assert margin == 6
+
+    @pytest.mark.asyncio
+    async def test_empty_predictions_neutral_when_home_is_alphabetically_first(self):
+        """Proves neutrality: home alphabetically FIRST → home picked (not away)."""
+        game = _make_game(home_team="Adelaide", away_team="Brisbane")
+        winner, conf, margin = await self.heuristic.apply(game, {})
+        assert winner == "Adelaide"
         assert conf == pytest.approx(0.55)
         assert margin == 6

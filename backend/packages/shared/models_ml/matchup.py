@@ -4,11 +4,11 @@ Uses historical head-to-head performance between specific team pairs with
 exponential time decay weighting.  Combines H2H win rate (60%) with
 venue-specific records (40%) to produce predictions.
 
-Cold-start: returns (home_team, 0.55, 8) when insufficient historical data.
+Cold-start: abstains when there is insufficient historical data.
 """
 
 import json
-from typing import Optional, Tuple
+from typing import Tuple, Union
 
 from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -17,6 +17,7 @@ from ..cache import _get_client
 from ..logger import get_logger
 from ..models import Game
 from .base import BaseModel
+from .prediction import ABSTAINED, Abstained, Prediction
 
 logger = get_logger(__name__)
 
@@ -183,23 +184,6 @@ class MatchupModel(BaseModel):
     # Caching
     # ------------------------------------------------------------------
 
-    async def _check_cache(self, game: Game) -> Optional[dict]:
-        """Check Redis cache for a previously computed prediction."""
-        try:
-            client = _get_client()
-            teams_sorted = sorted([game.home_team, game.away_team])
-            cache_key = (
-                f"{_CACHE_PREFIX}{teams_sorted[0]}:{teams_sorted[1]}:"
-                f"{game.venue}:"
-                f"{game.date.isoformat() if game.date else 'all'}"
-            )
-            raw = await client.get(cache_key)
-            if raw is not None:
-                return json.loads(raw)
-        except Exception as e:
-            logger.warning(f"MatchupModel: Redis cache read error: {e}")
-        return None
-
     async def _store_cache(self, game: Game, data: dict) -> None:
         """Store computed prediction data in Redis."""
         try:
@@ -220,11 +204,12 @@ class MatchupModel(BaseModel):
 
     async def predict(
         self, game: Game, db: AsyncSession
-    ) -> Tuple[str, float, int]:
+    ) -> Union[Prediction, Abstained]:
         """Predict winner based on head-to-head history and venue records.
 
         Returns:
-            (winner_team, confidence, predicted_margin)
+            (winner_team, confidence, predicted_margin), or ABSTAINED
+            when there is insufficient H2H history.
         """
         try:
             # 1. Get H2H data
@@ -238,13 +223,15 @@ class MatchupModel(BaseModel):
                 f"(avg margin={avg_h2h_margin:.1f})"
             )
 
-            # 2. Cold start if fewer than 3 H2H games
+            # 2. Insufficient H2H history → no usable opinion
             if game_count < _MIN_H2H_GAMES:
                 logger.info(
                     f"MatchupModel: Only {game_count} H2H games, "
-                    "using cold-start default"
+                    "abstaining"
                 )
-                return game.home_team, 0.55, 8
+                # P2-1: sparse history carries no winner information —
+                # never fabricate a home-team pick from it.
+                return ABSTAINED
 
             # 3. Get venue records for both teams
             home_venue_wr = await self._get_venue_record(
@@ -295,8 +282,10 @@ class MatchupModel(BaseModel):
                 "game_count": game_count,
             })
 
-            return winner, confidence, margin
+            return Prediction(winner, confidence, margin)
 
-        except Exception as e:
-            logger.error(f"MatchupModel: Prediction failed: {e}")
-            return game.home_team, 0.55, 8
+        except Exception:
+            # P0-3: never convert an internal failure into a confident-
+            # looking home-team vote — re-raise so the orchestrator
+            # records an abstention (ORCH-M7).
+            raise

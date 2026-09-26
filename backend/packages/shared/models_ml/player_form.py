@@ -4,11 +4,11 @@ Aggregates player_advanced_stats to the team level to measure recent team
 quality.  Teams whose players are collectively generating more metres gained,
 score involvements, and contested possessions are playing better football.
 
-Cold-start: returns (home_team, 0.55, 6) when insufficient data.
+Cold-start: abstains when there is no usable data.
 """
 
 import json
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Union
 
 from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -17,6 +17,7 @@ from ..cache import _get_client
 from ..logger import get_logger
 from ..models import Game, PlayerAdvancedStats, PlayerMatchStats
 from .base import BaseModel
+from .prediction import ABSTAINED, Abstained, Prediction
 
 logger = get_logger(__name__)
 
@@ -44,19 +45,23 @@ class PlayerFormModel(BaseModel):
     def _calculate_form_score(self, stats: dict) -> float:
         """Calculate a composite form score from aggregated advanced stats.
 
-        Weighted composite:
-            score_involvements * 3
-            + contested_possessions * 2
-            + metres_gained * 0.1
-            + pressure_acts * 1.5
-            + tog_pct * 0.5
+        Weighted composite (typical per-term magnitude):
+            score_involvements * 3        (~9-18)
+            + contested_possessions * 2   (~12-20)
+            + metres_gained * 0.1         (~30-40)
+            + pressure_acts * 1.5         (~12-22)
+            + (tog_pct / 100) * 50        (~30-45)
+
+        tog_pct is a 0-100 percentage: dividing by 100 normalizes it so
+        its contribution (max 50) stays on the same scale as the other
+        terms instead of the raw 0-100 value dominating the composite.
         """
         return (
             stats.get("avg_score_involvements", 0) * 3
             + stats.get("avg_contested_possessions", 0) * 2
             + stats.get("avg_metres_gained", 0) * 0.1
             + stats.get("avg_pressure_acts", 0) * 1.5
-            + stats.get("avg_tog_pct", 0) * 0.5
+            + stats.get("avg_tog_pct", 0) / 100 * 50
         )
 
     # ------------------------------------------------------------------
@@ -161,22 +166,6 @@ class PlayerFormModel(BaseModel):
     # Caching
     # ------------------------------------------------------------------
 
-    async def _check_cache(self, game: Game) -> Optional[dict]:
-        """Check Redis cache for a previously computed prediction."""
-        try:
-            client = _get_client()
-            cache_key = (
-                f"{_CACHE_PREFIX}"
-                f"{game.home_team}:{game.away_team}:"
-                f"{game.date.isoformat() if game.date else 'all'}"
-            )
-            raw = await client.get(cache_key)
-            if raw is not None:
-                return json.loads(raw)
-        except Exception as e:
-            logger.warning(f"PlayerFormModel: Redis cache read error: {e}")
-        return None
-
     async def _store_cache(self, game: Game, data: dict) -> None:
         """Store computed prediction data in Redis."""
         try:
@@ -196,11 +185,12 @@ class PlayerFormModel(BaseModel):
 
     async def predict(
         self, game: Game, db: AsyncSession
-    ) -> Tuple[str, float, int]:
+    ) -> Union[Prediction, Abstained]:
         """Predict winner based on recent player form.
 
         Returns:
-            (winner_team, confidence, predicted_margin)
+            (winner_team, confidence, predicted_margin), or ABSTAINED
+            when there is no usable data for either team.
         """
         try:
             # 1. Get recent games for both teams
@@ -217,13 +207,15 @@ class PlayerFormModel(BaseModel):
                 f"{game.away_team}={len(away_game_ids)}"
             )
 
-            # 2. Cold start if no games for either team
+            # 2. No games for either team → no usable data
             if not home_game_ids and not away_game_ids:
                 logger.info(
                     "PlayerFormModel: No recent games for either team, "
-                    "using cold-start default"
+                    "abstaining"
                 )
-                return game.home_team, 0.55, 6
+                # P2-1: missing data carries no winner information —
+                # never fabricate a home-team pick from it.
+                return ABSTAINED
 
             # 3. Get advanced stats
             home_stats = (
@@ -241,13 +233,14 @@ class PlayerFormModel(BaseModel):
                 else {}
             )
 
-            # 4. Cold start if no stats for either team
+            # 4. No stats for either team → no usable data
             if not home_stats and not away_stats:
                 logger.info(
                     "PlayerFormModel: No advanced stats available, "
-                    "using cold-start default"
+                    "abstaining"
                 )
-                return game.home_team, 0.55, 6
+                # P2-1: missing data carries no winner information.
+                return ABSTAINED
 
             # 5. Calculate form scores
             home_score = self._calculate_form_score(home_stats)
@@ -259,21 +252,21 @@ class PlayerFormModel(BaseModel):
                 f"{game.away_team}={away_score:.1f}"
             )
 
-            # 6. Add slight home advantage
-            home_score += 2.0
-
-            # 7. Determine winner
-            if home_score >= away_score:
+            # 6. Determine winner (no home bump — home advantage lives
+            #    only in elo.py / home_advantage.py).  Exact ties break to
+            #    the away side via strict > — the same convention as
+            #    form/value/weather/injury/matchup.
+            if home_score > away_score:
                 winner = game.home_team
             else:
                 winner = game.away_team
 
-            # 8. Confidence: baseline 0.50 + scaled differential
+            # 7. Confidence: baseline 0.50 + scaled differential
             diff = abs(home_score - away_score)
             confidence = 0.50 + min(diff * 0.02, 0.45)
             confidence = max(0.50, min(0.95, confidence))
 
-            # 9. Margin: proportional to form differential
+            # 8. Margin: proportional to form differential
             margin = max(1, min(100, int(diff * 0.3 + 1)))
 
             logger.info(
@@ -282,7 +275,7 @@ class PlayerFormModel(BaseModel):
                 f"(diff={diff:.1f})"
             )
 
-            # 10. Cache the result
+            # 9. Cache the result
             await self._store_cache(game, {
                 "winner": winner,
                 "confidence": confidence,
@@ -293,8 +286,10 @@ class PlayerFormModel(BaseModel):
                 "away_games": len(away_game_ids),
             })
 
-            return winner, confidence, margin
+            return Prediction(winner, confidence, margin)
 
-        except Exception as e:
-            logger.error(f"PlayerFormModel: Prediction failed: {e}")
-            return game.home_team, 0.55, 6
+        except Exception:
+            # P0-3: never convert an internal failure into a confident-
+            # looking home-team vote — re-raise so the orchestrator
+            # records an abstention (ORCH-M7).
+            raise

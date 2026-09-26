@@ -62,7 +62,7 @@ class TestModelRetrainJob:
             "status": "skipped",
             "reason": "insufficient_training_rows",
             "rows": 5,
-            "min_required": 20,
+            "min_required": 100,
         }
         service = AsyncMock(return_value=summary)
         monkeypatch.setattr("app.cron.model_retrain.run_model_retrain", service)

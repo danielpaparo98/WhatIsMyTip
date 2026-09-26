@@ -45,6 +45,7 @@ def _make_game_mock(**overrides) -> MagicMock:
         "id": 1,
         "slug": "abc123def4",
         "squiggle_id": 12345,
+        "source": "squiggle",
         "round_id": 1,
         "season": 2025,
         "home_team": "Brisbane",

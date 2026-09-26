@@ -25,8 +25,6 @@ from .game_sync import GameSyncService
 logger = get_logger(__name__)
 
 
-# AFL off-season months (October through February)
-_OFF_SEASON_MONTHS = {10, 11, 12, 1, 2}
 # Off-season hour bounds are now configurable via Settings
 # (LO-008).  The local module-level aliases below keep the rest of
 # the file readable.
@@ -34,14 +32,18 @@ _OFF_SEASON_RUN_START_HOUR = settings.daily_sync_off_season_start_hour
 _OFF_SEASON_RUN_END_HOUR = settings.daily_sync_off_season_end_hour
 
 
-def _is_off_season_skip(now: datetime) -> bool:
+def _is_off_season_skip(now: datetime, context: "SportContext" = None) -> bool:
     """Return True if *now* is in the off-season outside the run window.
 
-    During AFL off-season (Oct-Feb) the sync only runs inside a 2 AM –
-    4 AM AWST window.  This is a noise-reduction policy from the FaaS
-    implementation (no live games to sync).
+    During the sport's off-season the sync only runs inside a 2 AM –
+    4 AM window (P3-4: the months come from the SportContext — AFL's
+    Oct–Feb is the bootstrap default; a year-round sport's empty set
+    never skips).
     """
-    if now.month not in _OFF_SEASON_MONTHS:
+    from ..sport_context import DEFAULT_CONTEXT
+
+    ctx = context or DEFAULT_CONTEXT
+    if not ctx.is_off_season_month(now.month):
         return False
     return now.hour < _OFF_SEASON_RUN_START_HOUR or now.hour >= _OFF_SEASON_RUN_END_HOUR
 

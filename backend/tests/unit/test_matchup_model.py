@@ -1,7 +1,7 @@
 """Unit tests for MatchupModel.
 
 Tests cover head-to-head analysis, venue record lookup, time decay,
-cold-start behaviour, confidence/margin clamping, and backtest safety.
+cold-start abstention, confidence/margin clamping, and backtest safety.
 """
 
 from datetime import datetime, timedelta, timezone
@@ -11,6 +11,7 @@ import pytest
 
 from packages.shared.models import Game
 from packages.shared.models_ml.matchup import MatchupModel
+from packages.shared.models_ml.prediction import ABSTAINED, is_abstained
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -265,26 +266,24 @@ class TestGetVenueRecord:
 
 class TestPredictColdStart:
     @pytest.mark.asyncio
-    async def test_no_h2h_games_cold_start(self, model, game):
-        """No H2H games → cold start default."""
+    async def test_no_h2h_games_abstains(self, model, game):
+        """No H2H games → no usable opinion → ABSTAINED."""
         db = AsyncMock()
         with patch.object(model, "_get_head_to_head", return_value=(0.5, 0, 0.0)):
-            winner, confidence, margin = await model.predict(game, db)
+            result = await model.predict(game, db)
 
-        assert winner == "Brisbane"  # home team default
-        assert confidence == 0.55
-        assert margin == 8
+        assert result is ABSTAINED
+        assert is_abstained(result)
 
     @pytest.mark.asyncio
-    async def test_fewer_than_3_games_cold_start(self, model, game):
-        """Fewer than 3 H2H games → cold start."""
+    async def test_fewer_than_3_games_abstains(self, model, game):
+        """Fewer than 3 H2H games → insufficient data → ABSTAINED."""
         db = AsyncMock()
         with patch.object(model, "_get_head_to_head", return_value=(0.6, 2, 5.0)):
-            winner, confidence, margin = await model.predict(game, db)
+            result = await model.predict(game, db)
 
-        assert winner == "Brisbane"
-        assert confidence == 0.55
-        assert margin == 8
+        assert result is ABSTAINED
+        assert is_abstained(result)
 
     @pytest.mark.asyncio
     async def test_exactly_3_games_not_cold_start(self, model, game):
@@ -296,7 +295,7 @@ class TestPredictColdStart:
 
         # Should produce a real prediction, not cold start
         assert winner == "Brisbane"  # H2H WR 0.7 favours home
-        assert confidence > 0.55  # Higher than cold start
+        assert confidence > 0.55  # Higher than coin-flip baseline
 
 
 # ---------------------------------------------------------------------------
@@ -327,8 +326,9 @@ class TestPredictScenarios:
              patch.object(model, "_get_venue_record", return_value=0.5):
             winner, confidence, margin = await model.predict(game, db)
 
-        # With exactly 0.5 H2H and 0.5 venue, combined = 0 → away wins by convention
-        assert winner in ("Brisbane", "Collingwood")
+        # With exactly 0.5 H2H and 0.5 venue, combined = 0 → strict >
+        # comparison breaks the tie to the away side (deterministic).
+        assert winner == "Collingwood"
         assert 0.50 <= confidence <= 0.95
         assert 1 <= margin <= 100
 
@@ -428,37 +428,32 @@ class TestClamping:
 
 class TestEdgeCases:
     @pytest.mark.asyncio
-    async def test_first_ever_meeting(self, model, game):
-        """First ever meeting between teams → cold start."""
+    async def test_first_ever_meeting_abstains(self, model, game):
+        """First ever meeting between teams → no usable opinion → ABSTAINED."""
         db = AsyncMock()
         with patch.object(model, "_get_head_to_head", return_value=(0.5, 0, 0.0)):
-            winner, confidence, margin = await model.predict(game, db)
+            result = await model.predict(game, db)
 
-        assert winner == "Brisbane"
-        assert confidence == 0.55
-        assert margin == 8
+        assert result is ABSTAINED
+        assert is_abstained(result)
 
     @pytest.mark.asyncio
-    async def test_only_1_historical_game(self, model, game):
-        """Only 1 H2H game → cold start (< 3 threshold)."""
+    async def test_only_1_historical_game_abstains(self, model, game):
+        """Only 1 H2H game → insufficient data (< 3 threshold) → ABSTAINED."""
         db = AsyncMock()
         with patch.object(model, "_get_head_to_head", return_value=(1.0, 1, 20.0)):
-            winner, confidence, margin = await model.predict(game, db)
+            result = await model.predict(game, db)
 
-        assert winner == "Brisbane"
-        assert confidence == 0.55
-        assert margin == 8
+        assert result is ABSTAINED
+        assert is_abstained(result)
 
     @pytest.mark.asyncio
-    async def test_error_returns_safe_default(self, model, game):
-        """Any exception inside predict returns a safe default."""
+    async def test_error_propagates_for_abstention(self, model, game):
+        """Internal errors propagate — the orchestrator abstains (P0-3)."""
         db = AsyncMock()
         with patch.object(model, "_get_head_to_head", side_effect=Exception("DB error")):
-            winner, confidence, margin = await model.predict(game, db)
-
-        assert winner == "Brisbane"
-        assert confidence == 0.55
-        assert margin == 8
+            with pytest.raises(Exception, match="DB error"):
+                await model.predict(game, db)
 
     @pytest.mark.asyncio
     async def test_unknown_venue(self, model, game):
