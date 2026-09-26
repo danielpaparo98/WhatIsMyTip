@@ -220,6 +220,74 @@ export interface MatchReportResponse {
   created_at: string
 }
 
+// ---------------------------------------------------------------------------
+// Multi-league read side (ADR 0001 read APIs, 2026-09).
+// Mirrors backend/.../schemas/events.py and the /api/sports payload —
+// do not rename: the payload keys come straight from the Pydantic models.
+// ---------------------------------------------------------------------------
+
+/** One side of an event (mirrors `EventParticipantResponse`). */
+export interface EventParticipant {
+  side: string // home | away | n/a
+  participant_name: string
+  score: number | null
+  is_winner: boolean | null
+}
+
+/** An event plus its participants (mirrors `EventResponse`). */
+export interface SportEvent {
+  id: number
+  slug: string
+  /** Round/week number; NULL for tournaments and race events. */
+  round_id: number | null
+  venue: string | null
+  /** Venue-local naive timestamp (competition timezone policy). */
+  starts_at: string | null
+  status: string // scheduled | completed | cancelled | void
+  completed: boolean
+  competition: string
+  season: string
+  participants: EventParticipant[]
+}
+
+/** Mirrors `EventListResponse` — envelope for `GET /api/events`. */
+export interface EventListResponse {
+  events: SportEvent[]
+  count: number
+}
+
+/** A season of a competition (entries of `/api/sports` `seasons`). */
+export interface CompetitionSeason {
+  id: number
+  label: string
+  start_date: string | null
+  end_date: string | null
+  is_current: boolean
+}
+
+/** Mirrors the `/api/sports` competitions entries. */
+export interface CompetitionInfo {
+  id: number
+  sport_id: string
+  name: string
+  tier: string
+  format: string
+  timezone: string
+  seasons: CompetitionSeason[]
+}
+
+/** Mirrors the `/api/sports` sports entries. */
+export interface SportInfo {
+  id: string
+  display_name: string
+  competitions: CompetitionInfo[]
+}
+
+/** Mirrors `SportsListResponse` — envelope for `GET /api/sports`. */
+export interface SportsListResponse {
+  sports: SportInfo[]
+}
+
 export const useApi = () => {
   const config = useRuntimeConfig()
   const apiBase = config.public.apiBase as string
@@ -448,6 +516,33 @@ export const useApi = () => {
     return response.json()
   }
 
+  // Multi-league read side (ADR 0001): sport/competition discovery and
+  // the event list per competition season. The 404 "unknown competition
+  // or season" case THROWS like every other non-OK response — callers
+  // that expect absence (leagues not synced yet) catch and degrade.
+  const getSports = async (): Promise<SportsListResponse> => {
+    const response = await fetchWithTimeout('/api/sports')
+    if (!response.ok) throw new Error('Failed to fetch sports')
+    return response.json()
+  }
+
+  const getEvents = async (params: {
+    competition: number
+    season: string
+    round?: number
+    limit?: number
+  }): Promise<EventListResponse> => {
+    const queryParams = new URLSearchParams()
+    queryParams.append('competition', params.competition.toString())
+    queryParams.append('season', params.season)
+    if (params.round) queryParams.append('round', params.round.toString())
+    if (params.limit) queryParams.append('limit', params.limit.toString())
+
+    const response = await fetchWithTimeout(`/api/events?${queryParams}`)
+    if (!response.ok) throw new Error('Failed to fetch events')
+    return response.json()
+  }
+
   return {
     getGames,
     getGame,
@@ -465,5 +560,7 @@ export const useApi = () => {
     getCurrentSeasonPerformance,
     compareModels,
     getActiveModel,
+    getSports,
+    getEvents,
   }
 }
