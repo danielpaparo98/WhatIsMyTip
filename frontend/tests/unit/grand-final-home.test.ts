@@ -118,9 +118,10 @@ describe('index.vue state wiring', () => {
   // ---------------------------------------------------------------------
   it('keeps the standard hero in the grand-final branch', () => {
     // The GF branch renders the same hero the regular weeks use, with
-    // the report flowing below it.
+    // the report flowing below it. (LEAGUE-SWAP: the GF branch is now
+    // an else-branch — the league view owns the page's first branch.)
     expect(INDEX).toMatch(
-      /v-if="isGrandFinal"[\s\S]*?<section class="hero">[\s\S]*?<\/section>[\s\S]*?grandFinalPending/
+      /v-else-if="isGrandFinal"[\s\S]*?<section class="hero">[\s\S]*?<\/section>[\s\S]*?grandFinalPending/
     )
   })
 
@@ -208,12 +209,14 @@ describe('index.vue state wiring', () => {
   it('renders the heuristic tabs/games grid only in the regular branch', () => {
     const regularBranch = INDEX.indexOf('<template v-else>')
     expect(regularBranch).toBeGreaterThan(-1)
-    // GF + post-season branches come BEFORE the regular branch, and the
-    // regular content (hero/tabs/grid) lives inside it.
+    // League + GF + post-season branches come BEFORE the regular branch,
+    // and the regular content (hero/tabs/grid) lives inside it.
+    // (LEAGUE-SWAP: the league fixture view owns the first branch and
+    // also uses the games-grid classes — hence the scoped search below.)
     expect(INDEX.indexOf('<GrandFinalReport')).toBeLessThan(regularBranch)
     expect(INDEX.indexOf('<OffSeasonCelebration')).toBeLessThan(regularBranch)
-    expect(INDEX.indexOf('heuristic-selector')).toBeGreaterThan(regularBranch)
-    expect(INDEX.indexOf('games-grid')).toBeGreaterThan(regularBranch)
+    expect(INDEX.indexOf('heuristic-selector', regularBranch)).toBeGreaterThan(-1)
+    expect(INDEX.indexOf('games-grid', regularBranch)).toBeGreaterThan(-1)
   })
 
   it('keeps the heuristic restore and the single auto-refresh poller', () => {
