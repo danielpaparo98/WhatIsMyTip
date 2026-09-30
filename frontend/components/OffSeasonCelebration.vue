@@ -4,7 +4,7 @@
 
     <template v-if="premier">
       <img
-        :src="getLogoUrl(premier)"
+        :src="premierLogo"
         :alt="`${premier} logo`"
         class="premier-logo"
         loading="lazy"
@@ -33,15 +33,30 @@
 <script setup lang="ts">
 import confetti from 'canvas-confetti'
 import { getTeamColors } from '~/composables/useTeamColors'
+import { leagueColorFor } from '~/composables/useLeagueColors'
+import { useTeamIdentity } from '~/composables/useTeamIdentity'
 
 interface Props {
   premier: string | null
   season: number | null
+  /**
+   * LEAGUE-ROUTES (2026-09-30, user request): the league key for the
+   * identity resolution. When supplied, a premier without a logo file
+   * gets a generated initials badge (club colours) instead of the
+   * neutral placeholder. Omitted (AFL home) keeps the exact previous
+   * resolution: getLogoUrl as before.
+   */
+  league?: string | null
 }
 
 const props = defineProps<Props>()
 
-const { getLogoUrl, getTeamDisplayName } = useTeamLogos()
+const { getTeamDisplayName } = useTeamLogos()
+const { logoFor } = useTeamIdentity()
+
+// AFL callers pass no league: logoFor falls through to getLogoUrl, so
+// the resolution is byte-identical to the previous direct call.
+const premierLogo = computed(() => logoFor(props.premier, props.league ?? undefined))
 
 /**
  * One celebratory burst in the premier's colours on mount.
@@ -54,7 +69,15 @@ const { getLogoUrl, getTeamDisplayName } = useTeamLogos()
  */
 function celebrate() {
   if (!props.premier) return
-  const colors = getTeamColors(props.premier)
+  // LEAGUE-ROUTES (2026-09-30, code review): resolve the burst palette
+  // from the viewed LEAGUE's curated club colours first — getTeamColors
+  // only knows AFL clubs, so a state-league premier burst in the generic
+  // fallback palette, clashing with the page's club-coloured
+  // ConfettiEffect. leagueColorFor returns null when no league is
+  // supplied (the AFL home) or the club is unknown there, and the
+  // getTeamColors fallback keeps AFL behaviour byte-identical.
+  const club = leagueColorFor(props.league, props.premier)
+  const colors = club ? [club.primary, club.secondary] : getTeamColors(props.premier)
   // Left burst
   confetti({
     particleCount: 60,

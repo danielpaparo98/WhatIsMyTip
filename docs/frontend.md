@@ -29,18 +29,31 @@ frontend/
 │   ├── useApi.ts              # API communication composable
 │   ├── useChartTheme.ts       # Shared chart.js theme/options
 │   ├── useFormatters.ts       # Currency / percentage / date helpers
+│   ├── useLeagueMatchRoute.ts # Pure /{league}/match/{slug} route validation rules
+│   ├── useLeagueRedirect.ts   # Pure remembered-league redirect decision
+│   ├── useSeasonState.ts      # Pure season-state + premier derivation for league pages
 │   └── useTeamLogos.ts        # Resolve team logo paths
 ├── layouts/
 │   └── default.vue            # Default page layout
+├── lib/
+│   └── leagueRoutes.ts        # Pure league-route enumeration (prerender hook + sitemap)
+├── middleware/
+│   └── league-redirect.global.ts  # Remembered-league redirect on initial page load
 ├── pages/                     # Page routes
-│   ├── index.vue              # Home page with tips
+│   ├── index.vue              # Home page with tips (AFL)
 │   ├── about.vue              # About page
 │   ├── backtest.vue           # Backtesting results page
-│   └── game/
-│       └── [slug].vue         # Per-game detail page
+│   ├── game/
+│   │   └── [slug].vue         # Per-game detail page (AFL)
+│   └── [league]/
+│       ├── index.vue          # League home page (/{league})
+│       └── match/
+│           └── [slug].vue     # League match detail page (/{league}/match/{slug})
 ├── public/                    # Static assets (team logos, robots.txt, sitemap.xml)
-└── tests/                     # Playwright end-to-end tests
-    └── game-detail-flow.spec.ts
+└── tests/
+    ├── unit/                  # Vitest unit tests (incl. league-routes, league-redirect,
+    │                          #   season-state, team-identity-badge, league-match-page)
+    └── game-detail-flow.spec.ts  # Playwright end-to-end test
 ```
 
 ## Dependencies
@@ -213,6 +226,33 @@ Backtesting results page with:
 - Performance metrics
 - Historical results
 
+### League Routes & Redirect
+
+> LEAGUE-ROUTES (2026-09-30, user request)
+
+The ten non-AFL leagues are first-class URLs of the site, while AFL keeps the root path. **Why:** every league deserves a shareable, SEO-indexable home (and match) URL of its own, while the AFL's search presence stays consolidated on `/`.
+
+#### Routes
+
+- **AFL** lives at `/` (home) and `/game/{slug}` (match detail) — unchanged.
+- **Every other league** has its own home page at `/{league}`: `/wafl`, `/waflw`, `/vfl`, `/vflw`, `/sanfl`, `/aflw`, `/qafl`, `/qaflw`, `/nwfl`, `/sfl`.
+- **Match pages** live at `/{league}/match/{slug}` and render `GET /api/events/{slug}` data. Unknown league keys, malformed slugs, and another league's slug all 404; `/afl/match/{slug}` redirects to `/` since AFL matches live on the legacy surfaces.
+- All of these are prerendered and listed in `sitemap.xml` via the shared enumeration in [`lib/leagueRoutes.ts`](frontend/lib/leagueRoutes.ts:1): `/{league}` for all ten keys (even when a competition is not synced yet — the page degrades gracefully), plus `/{league}/match/{slug}` for each event of the league's derived current round.
+
+#### Remember-redirect rule ([`middleware/league-redirect.global.ts`](frontend/middleware/league-redirect.global.ts:1))
+
+On the app's **initial page load of `/` only** (hard load / external entry — never internal client-side navigation), a visitor whose persisted league (`localStorage['wimt-league']`) is a valid non-AFL league is redirected to `/{league}` with `replace: true` (the back button returns to the real entry URL). The redirect is client-only: the prerendered static `/` remains the AFL page for every visitor.
+
+#### Escape hatch
+
+Any **internal** navigation to `/` — the header logo, the league dropdown's AFL choice, the nav "Tips" link — is intentional and **never redirects**. Only the first route resolution may redirect; afterwards the visitor is treated as deliberately choosing to view AFL.
+
+#### End-of-season treatment
+
+- When every event in the season payload is settled, the league page shows a premier celebration (`OffSeasonCelebration` + `ConfettiEffect`) instead of a bare last-round list; the premier is the winner of the latest-dated completed event ([`useSeasonState.ts`](frontend/composables/useSeasonState.ts:1)).
+- When the season's highest round is still upcoming, the round strip reads `GF • {season}` instead of `R{n} • {season}`.
+- Clubs without logo files render a generated monochrome initials badge coloured from their club's league palette (`useTeamIdentity` + `useLeagueColors`) — no broken images on state-league pages.
+
 ## Composables
 
 ### useApi ([`composables/useApi.ts`](frontend/composables/useApi.ts:1))
@@ -220,7 +260,6 @@ Backtesting results page with:
 API communication composable with:
 - `getTips()` - Fetch tips from API
 - `getGames()` - Fetch games from API
-- `generateTips()` - Generate new tips
 - `runBacktest()` - Run backtest
 - `compareHeuristics()` - Compare heuristics
 
@@ -243,17 +282,6 @@ const { data, error, loading } = await useApi.getTips({
   heuristic: 'best_bet',
   season: 2025,
   round: 1
-})
-```
-
-#### Generate Tips
-
-```typescript
-const { data, error, loading } = await useApi.generateTips({
-  season: 2025,
-  round: 1,
-  heuristics: ['best_bet', 'yolo'],
-  generate_explanations: true
 })
 ```
 

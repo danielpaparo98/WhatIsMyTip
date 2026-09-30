@@ -11,8 +11,14 @@ import { useLatestRound } from '~/composables/useLatestRound'
 // FINALISTS' kit colours instead of a generic gold palette.  The home
 // page passes them in from the resolved GF game; when unknown we fall
 // back to the celebratory golds.
+//
+// LEAGUE-ROUTES (2026-09-30, user request): season-complete /{league}
+// pages own their celebration state (the AFL latest-round store is not
+// populated there), so they force the bursts with `active`. Leaving
+// the prop undefined keeps the AFL grand-final gate for the home page
+// — byte-identical behaviour for the existing caller.
 const props = withDefaults(
-  defineProps<{ colors?: string[] }>(),
+  defineProps<{ colors?: string[]; active?: boolean }>(),
   { colors: () => GRAND_FINAL_COLORS },
 )
 
@@ -85,22 +91,27 @@ function stop() {
 }
 
 watch(
-  latestRound,
-  (data) => {
+  [latestRound, () => props.active],
+  ([data, forcedActive]) => {
     // PRERENDER FIX: mounted from index.vue AFTER the GF data resolves,
     // so the immediate watch now fires on the SERVER during prerender
     // (previously the layout mounted it before the data landed, so the
     // immediate call saw null).  canvas-confetti touches `document`,
     // which does not exist server-side — bursts are client-only.
     if (import.meta.server) return
-    if (!data) return
-    if (data.is_grand_final && !active) {
+    // `active === true` forces the bursts (season-complete league
+    // pages); `undefined` keeps the AFL grand-final gate. An explicit
+    // `false` stops the bursts outright.
+    const shouldFire =
+      forcedActive === true ||
+      (forcedActive === undefined && data?.is_grand_final === true)
+    if (shouldFire && !active) {
       active = true
       // Fire immediately on activation
       fireBurst()
       // Then every 3–5 seconds
       animationTimer = setInterval(fireBurst, 3000 + Math.random() * 2000)
-    } else if (!data.is_grand_final && active) {
+    } else if (!shouldFire && active) {
       stop()
     }
   },
