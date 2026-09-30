@@ -260,7 +260,6 @@ Any **internal** navigation to `/` — the header logo, the league dropdown's AF
 API communication composable with:
 - `getTips()` - Fetch tips from API
 - `getGames()` - Fetch games from API
-- `generateTips()` - Generate new tips
 - `runBacktest()` - Run backtest
 - `compareHeuristics()` - Compare heuristics
 
@@ -283,17 +282,6 @@ const { data, error, loading } = await useApi.getTips({
   heuristic: 'best_bet',
   season: 2025,
   round: 1
-})
-```
-
-#### Generate Tips
-
-```typescript
-const { data, error, loading } = await useApi.generateTips({
-  season: 2025,
-  round: 1,
-  heuristics: ['best_bet', 'yolo'],
-  generate_explanations: true
 })
 ```
 

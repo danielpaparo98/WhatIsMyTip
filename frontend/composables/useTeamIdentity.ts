@@ -39,21 +39,39 @@ const BADGE_MAX_INITIALS = 2
 const MIN_TEXT_CONTRAST = 3
 
 /**
+ * The first ALPHABETIC character of a word, or '' when it has none.
+ */
+const firstAlphaChar = (word: string): string =>
+  word.match(/[A-Za-z]/)?.[0] ?? ''
+
+/**
  * Deterministic initials for a club name: the first letter of each of
  * the first two whitespace-separated words ("Peel Thunder" → "PT");
  * single-word names take the first two characters ("Perth" → "PE").
  * Case/whitespace-insensitive so feed-name drift stays harmless;
  * hyphenated words count as one word ("Woodville-West Torrens" → "WT").
+ *
+ * LEAGUE-ROUTES (2026-09-30, code review): initials derive from
+ * ALPHABETIC leading characters only. The output lands unescaped in
+ * the badge SVG's text node (encodeURIComponent is transport-only,
+ * not XML escaping), so a hostile feed name like "<script" used to
+ * produce fatally invalid XML — now only [A-Za-z] characters can
+ * reach the text node, and names with no letters at all yield ''
+ * (initialsBadge then falls back to the neutral placeholder).
  */
 export function initialsFor(teamName: string): string {
   const words = teamName.trim().split(/\s+/).filter((word) => word.length > 0)
   if (words.length === 0) return ''
   const first = words[0] ?? ''
   if (words.length === 1) {
-    return first.slice(0, BADGE_MAX_INITIALS).toUpperCase()
+    return [...first]
+      .filter((ch) => /[A-Za-z]/.test(ch))
+      .slice(0, BADGE_MAX_INITIALS)
+      .join('')
+      .toUpperCase()
   }
   const second = words[1] ?? ''
-  return (first.charAt(0) + second.charAt(0)).toUpperCase()
+  return (firstAlphaChar(first) + firstAlphaChar(second)).toUpperCase()
 }
 
 const hexToRgb = (hex: string): [number, number, number] | null => {

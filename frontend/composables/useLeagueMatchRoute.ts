@@ -12,7 +12,12 @@
 // auto-imports, no fetch) so it runs under plain vitest.
 
 import { LEAGUES } from './useSportConfig'
-import { LEAGUE_COMPETITION_NAMES } from './useLeagueEvents'
+// LEAGUE-ROUTES (2026-09-30, code review): import the canonical home
+// (lib/leagueRoutes.ts — Nuxt-free, type-only useApi imports) instead
+// of the useLeagueEvents re-export, which transitively dragged the Vue
+// runtime into this deliberately dependency-light module. lib imports
+// no composables, so there is no import cycle.
+import { LEAGUE_COMPETITION_NAMES } from '../lib/leagueRoutes'
 
 /**
  * Event-slug shape, mirroring the backend Path constraint

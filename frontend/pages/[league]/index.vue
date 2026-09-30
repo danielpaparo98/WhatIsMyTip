@@ -180,6 +180,13 @@ watch(leagueKey, (key) => {
 // 2026-09-30): the league key is REQUIRED and comes straight from the
 // URL — the legacy no-arg global-selector mode was removed together
 // with the home page's league branch, so this is the only call site.
+//
+// LEAGUE-ROUTES (2026-09-30, code review): the composable's fetch is
+// an awaited useAsyncData, so it runs AT GENERATE TIME and inlines the
+// fixtures payload into the prerendered HTML — the watch+refs wiring
+// previously baked hero+spinner (an empty shell) into every static
+// league page, the exact SEO-C1 failure pages/index.vue documents as
+// fixed for the AFL home.
 // ---------------------------------------------------------------------------
 const {
   seasonEvents,
@@ -190,7 +197,7 @@ const {
   error,
   unavailable,
   refresh,
-} = useLeagueEvents(leagueKey)
+} = await useLeagueEvents(leagueKey)
 
 // Per-league presentation config resolved from the ROUTE (not the
 // global activeConfig): the prerender bakes every league page in one

@@ -67,13 +67,23 @@ export const LEAGUE_ROUTE_KEYS: string[] = [
 ]
 
 /**
- * Limit for the season events fetch during enumeration. Must be high
- * enough to pull a FULL season in one request — `deriveCurrentRound`
- * needs the future rounds of the fixture to exist to pick the current
- * one (a default-limited fetch would mistake the last fetched round
- * for the season's end).
+ * LEAGUE-ROUTES (2026-09-30, code review): limit for the FULL-SEASON
+ * events fetch — now shared by build-time enumeration AND the runtime
+ * composable (useLeagueEvents), so the name is no longer
+ * prerender-specific. Must be high enough to pull a FULL season in one
+ * request — `deriveCurrentRound` needs the future rounds of the fixture
+ * to exist to pick the current one, and `deriveSeasonState`'s
+ * every-event-settled check needs the whole season, not its first 100
+ * events (the backend default `limit=100` truncated long seasons into
+ * a false mid-season "Premiers" celebration).
  */
-export const PRERENDER_EVENT_LIMIT = 500
+export const SEASON_EVENT_LIMIT = 500
+
+/**
+ * Backward-compat alias for the prerender-era name — external readers
+ * (docs, future callers) may still reference it.
+ */
+export const PRERENDER_EVENT_LIMIT = SEASON_EVENT_LIMIT
 
 /** Result of resolving a league key against the `/api/sports` payload. */
 export interface CompetitionResolution {
@@ -239,7 +249,13 @@ export async function enumerateLeagueRoutes(
 ): Promise<string[]> {
   const eventsByLeague: Record<string, SportEvent[]> = {}
   try {
-    const sportsRes = await fetch(`${apiBase}/api/sports`)
+    // LEAGUE-ROUTES (2026-09-30, code review): every build-time fetch is
+    // bounded by an abort timeout — a hung backend must stall `nuxt
+    // generate` for at most 15s, then fall through to this module's
+    // graceful-degradation contract (Node 18+ ships AbortSignal.timeout).
+    const sportsRes = await fetch(`${apiBase}/api/sports`, {
+      signal: AbortSignal.timeout(15000),
+    })
     if (!sportsRes.ok) throw new Error(`sports HTTP ${sportsRes.status}`)
     const sports = (await sportsRes.json()) as SportsListResponse
 
@@ -251,7 +267,8 @@ export async function enumerateLeagueRoutes(
           const eventsRes = await fetch(
             `${apiBase}/api/events?competition=${resolved.competitionId}` +
             `&season=${encodeURIComponent(resolved.seasonLabel)}` +
-            `&limit=${PRERENDER_EVENT_LIMIT}`,
+            `&limit=${SEASON_EVENT_LIMIT}`,
+            { signal: AbortSignal.timeout(15000) },
           )
           if (!eventsRes.ok) throw new Error(`events HTTP ${eventsRes.status}`)
           const payload = (await eventsRes.json()) as EventListResponse

@@ -80,8 +80,36 @@ export function deriveSeasonState(
  * completed event. Cancelled/void/scheduled events never count, a draw
  * (no participant flagged winner) yields null, and completed events
  * without a date can't establish "latest" — so they are ignored too.
+ *
+ * LEAGUE-ROUTES (2026-09-30, code review): a settled-but-not-completed
+ * (cancelled/void) event in the season's HIGHEST round means the grand
+ * final was never played — the season ended without a result, so there
+ * is no premier (the celebration component's generic "Off Season"
+ * branch renders instead of falsely crowning, say, a preliminary-final
+ * winner). The veto applies only when the season has actually ENDED
+ * (every event settled — the same condition under which the page shows
+ * the celebration): a cancelled round in a season that is still
+ * running (later fixtures merely scheduled) must not veto the eventual
+ * premier. Exhibition-style events without a round number can't define
+ * the final round and are ignored by the guard.
  */
 export function derivePremier(events: SportEvent[]): string | null {
+  if (events.every(isSettled)) {
+    const roundIds = events
+      .map((e) => e.round_id)
+      .filter((r): r is number => typeof r === 'number')
+    if (roundIds.length > 0) {
+      const maxRound = Math.max(...roundIds)
+      const finalRoundStruck = events.some(
+        (e) =>
+          e.round_id === maxRound &&
+          !e.completed &&
+          (e.status === 'cancelled' || e.status === 'void'),
+      )
+      if (finalRoundStruck) return null
+    }
+  }
+
   const datedCompleted = events.filter((e) => e.completed && !!e.starts_at)
   if (datedCompleted.length === 0) return null
 

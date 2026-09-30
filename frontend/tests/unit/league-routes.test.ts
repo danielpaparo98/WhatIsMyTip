@@ -21,7 +21,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   LEAGUE_COMPETITION_NAMES,
   LEAGUE_ROUTE_KEYS,
-  PRERENDER_EVENT_LIMIT,
+  SEASON_EVENT_LIMIT,
   buildLeagueRoutes,
   enumerateLeagueRoutes,
 } from '~/lib/leagueRoutes'
@@ -152,12 +152,16 @@ describe('LEAGUE_ROUTE_KEYS', () => {
   })
 })
 
-describe('PRERENDER_EVENT_LIMIT', () => {
+describe('SEASON_EVENT_LIMIT', () => {
   it('is high enough to hold a full state-league season in one fetch', () => {
     // A state-league season is ~20 rounds x ~9 games plus finals; the
     // limit must comfortably exceed that so round derivation sees the
     // whole season (deriveCurrentRound needs future rounds to exist).
-    expect(PRERENDER_EVENT_LIMIT).toBeGreaterThanOrEqual(300)
+    // LEAGUE-ROUTES (2026-09-30, code review): renamed from
+    // PRERENDER_EVENT_LIMIT — the composable's runtime season fetch now
+    // shares this limit (a truncated season falsely celebrated
+    // "Premiers" mid-season), so it is no longer prerender-only.
+    expect(SEASON_EVENT_LIMIT).toBeGreaterThanOrEqual(300)
   })
 })
 
@@ -259,12 +263,16 @@ describe('enumerateLeagueRoutes', () => {
     expect(routes).toContain('/aflw')
 
     // Every competition fetch asks for the derived season with the
-    // full-season limit.
+    // full-season limit. LEAGUE-ROUTES (2026-09-30, code review): each
+    // fetch is also bounded by an abort signal, so a hung backend can
+    // never stall `nuxt generate` beyond the 15s timeout.
     expect(fetchMock).toHaveBeenCalledWith(
       expect.stringContaining('season=2026'),
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
     )
     expect(fetchMock).toHaveBeenCalledWith(
-      expect.stringContaining(`limit=${PRERENDER_EVENT_LIMIT}`),
+      expect.stringContaining(`limit=${SEASON_EVENT_LIMIT}`),
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
     )
   })
 

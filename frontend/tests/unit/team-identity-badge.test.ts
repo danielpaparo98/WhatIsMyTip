@@ -57,6 +57,19 @@ describe('initialsFor (deterministic initials derivation)', () => {
     expect(initialsFor('')).toBe('')
     expect(initialsFor('   ')).toBe('')
   })
+
+  it('derives initials from alphabetic characters only (hostile feed names)', () => {
+    // LEAGUE-ROUTES (2026-09-30, code review): leading '<', '&' etc. used
+    // to reach the badge SVG's text node and produce fatally invalid XML
+    // (encodeURIComponent is transport-only, not XML escaping). Only
+    // [A-Za-z] characters may be derived now.
+    expect(initialsFor('<script')).toBe('SC') // letters of "<script", markup dropped
+    expect(initialsFor('AT&T Outlaws')).toBe('AO') // 'A' + 'O', '&' skipped
+    expect(initialsFor('AT&T')).toBe('AT') // single-word letters-only
+    expect(initialsFor('9Lives')).toBe('LI') // digits skipped, letters kept
+    expect(initialsFor('&&&')).toBe('') // no letters at all → badge falls back
+    expect(initialsFor('<&> Angle')).toBe('A') // letterless first word
+  })
 })
 
 describe('initialsBadge (pure inline SVG data URI)', () => {
@@ -89,6 +102,28 @@ describe('initialsBadge (pure inline SVG data URI)', () => {
     expect(decodeSvg(initialsBadge('Perth', LEAGUE_COLORS.wafl['Perth'])!)).toContain(
       '>PE<',
     )
+  })
+
+  it('produces a well-formed SVG for hostile names (no raw < or & in the text node)', () => {
+    // LEAGUE-ROUTES (2026-09-30, code review): '<script' and 'AT&T' used
+    // to emit fatally invalid SVG XML. The decoded markup must stay
+    // parseable: balanced elements and XML-safe text content.
+    for (const hostile of ['<script', 'AT&T Outlaws', '&amp & Co', '<b/> Eastside']) {
+      const badge = initialsBadge(hostile, peel)
+      expect(badge, `badge missing for ${hostile}`).not.toBeNull()
+      const svg = decodeSvg(badge!)
+      // The single text element is balanced and carries no XML-hostile
+      // characters in its content.
+      const textContent = svg.match(/<text[^>]*>([\s\S]*?)<\/text>/)?.[1] ?? ''
+      expect(textContent).not.toContain('<')
+      expect(textContent).not.toMatch(/&(?!amp;|lt;|gt;|quot;|apos;|#)/)
+      // One, and only one, text element — opened and closed.
+      expect(svg.match(/<text\b/g)?.length).toBe(1)
+      expect(svg.match(/<\/text>/g)?.length).toBe(1)
+      // The document itself is a single balanced svg element.
+      expect(svg.startsWith('<svg ')).toBe(true)
+      expect(svg.endsWith('</svg>')).toBe(true)
+    }
   })
 
   it('prefers the club secondary for the text when it contrasts with the primary', () => {

@@ -213,6 +213,16 @@ describe('league page season-complete celebration', () => {
     expect(CELEBRATION).toMatch(/league\?:/)
     expect(CELEBRATION).toMatch(/logoFor\(/)
   })
+
+  it('OffSeasonCelebration burst colours prefer the league palette (getTeamColors fallback)', () => {
+    // LEAGUE-ROUTES (2026-09-30, code review): a state-league premier
+    // must burst in their club colours, not the AFL map's generic
+    // fallback (which clashed with the page's club-coloured confetti).
+    expect(CELEBRATION).toMatch(/leagueColorFor\(props\.league, props\.premier\)/)
+    // AFL callers pass no league → leagueColorFor yields null and this
+    // fallback keeps their behaviour byte-identical.
+    expect(CELEBRATION).toMatch(/getTeamColors\(props\.premier\)/)
+  })
 })
 
 // ---------------------------------------------------------------------------
@@ -262,7 +272,9 @@ describe('useLeagueEvents refactor', () => {
   it('requires an explicit league source argument', () => {
     expect(COMPOSABLE).toMatch(/export type LeagueEventsSource/)
     expect(COMPOSABLE).toMatch(
-      /export function useLeagueEvents\(leagueSource: LeagueEventsSource\)/,
+      // LEAGUE-ROUTES (2026-09-30, code review): async — the fetch is an
+      // awaited useAsyncData so the page's setup suspends on it.
+      /export async function useLeagueEvents\(leagueSource: LeagueEventsSource\)/,
     )
   })
 
@@ -281,9 +293,24 @@ describe('useLeagueEvents refactor', () => {
     expect(PAGE).toMatch(/useLeagueEvents\(leagueKey\)/)
   })
 
-  it('preserves the mid-flight stale-league guard contract', () => {
-    expect(COMPOSABLE.match(/superseded mid-flight/g)?.length).toBeGreaterThanOrEqual(2)
-    expect(COMPOSABLE).toMatch(/watch\(drivingLeague/)
+  it('fetches through an awaited useAsyncData so prerender inlines the payload', () => {
+    // LEAGUE-ROUTES (2026-09-30, code review): the watch+refs wiring only
+    // ran on the client, so every prerendered league home baked a
+    // hero+spinner shell with zero fixtures content — the SEO-C1 failure
+    // pages/index.vue documents as fixed for AFL via awaited useAsyncData.
+    expect(COMPOSABLE).toMatch(/await useAsyncData/)
+    // Reactive per-league cache key + dedupe cancel (the game/match
+    // pages' H-5 contract): a league change refetches, a stale response
+    // is cancelled — the replacement for the removed mid-flight guards.
+    expect(COMPOSABLE).toMatch(/league-events-\$\{/)
+    expect(COMPOSABLE).toMatch(/dedupe:\s*'cancel'/)
+  })
+
+  it('refreshes client-side after hydration (preserves the old immediate-watch freshness)', () => {
+    // The payload renders the first paint; onNuxtReady schedules ONE
+    // background refresh on hydrated visits, client-only.
+    expect(COMPOSABLE).toMatch(/import\.meta\.client/)
+    expect(COMPOSABLE).toMatch(/onNuxtReady/)
   })
 
   it('exposes the full season payload for season-state derivation', () => {

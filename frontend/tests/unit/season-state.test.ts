@@ -206,6 +206,84 @@ describe('derivePremier', () => {
     expect(derivePremier(events)).toBe('Peel')
   })
 
+  it('returns null when the season\u2019s final round was cancelled (no false premier)', () => {
+    // LEAGUE-ROUTES (2026-09-30, code review): a struck-out grand final
+    // means the season ended WITHOUT a result — the latest-dated
+    // COMPLETED game (here a preliminary final) must not be crowned.
+    const events = [
+      makeCompleted({ id: 1, round_id: 21, starts_at: '2026-08-01T13:10:00' }, 'Peel'),
+      makeCompleted(
+        { id: 2, round_id: 22, starts_at: '2026-09-19T14:10:00' },
+        'Peel',
+      ),
+      makeEvent({
+        id: 3,
+        round_id: 23,
+        starts_at: '2026-09-26T14:10:00',
+        status: 'cancelled',
+        completed: false,
+      }),
+    ]
+    expect(derivePremier(events)).toBeNull()
+  })
+
+  it('returns null when the season\u2019s final round was voided', () => {
+    const events = [
+      makeCompleted({ id: 1, round_id: 22, starts_at: '2026-09-19T14:10:00' }, 'Peel'),
+      makeEvent({
+        id: 2,
+        round_id: 23,
+        starts_at: '2026-09-26T14:10:00',
+        status: 'void',
+        completed: false,
+      }),
+    ]
+    expect(derivePremier(events)).toBeNull()
+  })
+
+  it('still derives a premier when the completed final round is the max round', () => {
+    // The guard only fires on settled-but-not-completed final rounds —
+    // a played grand final keeps crowning its winner.
+    const events = [
+      makeCompleted({ id: 1, round_id: 22, starts_at: '2026-09-19T14:10:00' }, 'Peel'),
+      makeCompleted({ id: 2, round_id: 23, starts_at: '2026-09-26T14:10:00' }, 'Claremont'),
+    ]
+    expect(derivePremier(events)).toBe('Claremont')
+  })
+
+  it('still derives a premier when only a non-round exhibition was cancelled', () => {
+    // Exhibition-style events have no round number: they can't define
+    // the final round, so they don't veto the played grand final.
+    const events = [
+      makeCompleted({ id: 1, round_id: 23, starts_at: '2026-09-26T14:10:00' }, 'Claremont'),
+      makeEvent({
+        id: 2,
+        round_id: null,
+        starts_at: '2026-10-10T13:10:00',
+        status: 'cancelled',
+        completed: false,
+      }),
+    ]
+    expect(derivePremier(events)).toBe('Claremont')
+  })
+
+  it('still derives a premier when a mid-season round was cancelled', () => {
+    // Only the MAX round matters: a cancelled round 5 in an otherwise
+    // completed season doesn't invalidate the grand final result.
+    const events = [
+      makeCompleted({ id: 1, round_id: 4, starts_at: '2026-04-25T13:10:00' }, 'Peel'),
+      makeEvent({
+        id: 2,
+        round_id: 5,
+        starts_at: '2026-05-02T13:10:00',
+        status: 'cancelled',
+        completed: false,
+      }),
+      makeCompleted({ id: 3, round_id: 23, starts_at: '2026-09-26T14:10:00' }, 'Claremont'),
+    ]
+    expect(derivePremier(events)).toBe('Claremont')
+  })
+
   it('returns null when no event is completed', () => {
     const events = [
       makeEvent({ id: 1, round_id: 1, starts_at: '2026-04-04T13:10:00' }),
