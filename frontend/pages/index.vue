@@ -1,91 +1,18 @@
 <template>
   <!-- =====================================================================
-       STATE 0 — Non-AFL league (header league selector): that league's
-       own current round of fixtures.
-       LEAGUE-SWAP (2026-09-26, user request): leagues swap separately —
-       the AFL grand-final/post-season states must never blank out
-       another league's content, and vice versa.
-       ===================================================================== -->
-  <template v-if="!isAflLeague">
-    <section class="hero">
-      <h1>AI-Powered<br>Footy Tipping</h1>
-      <p>Smart heuristics. Clear explanations. Better tips.</p>
-    </section>
+       LEAGUE-ROUTES (2026-09-30, user request): this page is AFL-only
+       again. Non-AFL leagues are first-class citizens at their own
+       /{league} routes (pages/[league]/index.vue) — the former STATE 0
+       league branch, its league-events wiring, the side* fixture
+       helpers and the league styles all moved there. What remains is
+       purely the AFL state machine:
 
-    <div v-if="leaguePending" class="loading" role="status" aria-live="polite">
-      <div class="spinner"></div>
-    </div>
-
-    <div v-else-if="leagueError" class="error" role="status" aria-live="polite">
-      <p>{{ leagueError }}</p>
-      <button @click="leagueRefresh" class="btn">Retry</button>
-    </div>
-
-    <!-- League not synced yet (no competition/season in /api/sports) -->
-    <div v-else-if="leagueUnavailable" class="empty" role="status" aria-live="polite">
-      <p>No {{ activeConfig.displayName }} fixtures have been synced yet.</p>
-      <p class="empty-hint">Fixtures land automatically once the league's data source is live.</p>
-    </div>
-
-    <section v-else class="section">
-      <div v-if="leagueRound !== null" class="round-display">
-        <span class="round-label">{{ activeConfig.displayName }}</span>
-        <span class="round-value">R{{ leagueRound }} • {{ leagueSeason }}</span>
-        <span class="game-count">{{ leagueEvents.length }} {{ activeConfig.contestNoun }}s</span>
-      </div>
-
-      <div v-if="leagueEvents.length === 0" class="empty" role="status" aria-live="polite">
-        <p>No fixtures found for this round yet.</p>
-      </div>
-      <div v-else class="games-grid">
-        <article v-for="ev in leagueEvents" :key="ev.slug" class="game-card">
-          <div class="match-info">
-            <div class="teams">
-              <div class="team home">
-                <span class="team-name">{{ sideName(ev, 'home') }}</span>
-              </div>
-              <span class="vs">VS</span>
-              <div class="team away">
-                <span class="team-name">{{ sideName(ev, 'away') }}</span>
-              </div>
-            </div>
-            <div class="match-details">
-              <span class="venue">{{ ev.venue ?? '' }}</span>
-              <span class="date">{{ ev.starts_at ? formatDate(ev.starts_at) : '' }}</span>
-            </div>
-          </div>
-
-          <!-- Results when played; state label otherwise. State leagues
-               have no tipping models, so cards show fixtures/results only. -->
-          <div v-if="ev.completed" class="tip-info league-result">
-            <div class="result-row">
-              <span class="result-team" :class="{ winner: sideIsWinner(ev, 'home') }">
-                {{ sideName(ev, 'home') }}
-              </span>
-              <span class="result-score">{{ sideScore(ev, 'home') ?? '—' }}</span>
-            </div>
-            <div class="result-row">
-              <span class="result-team" :class="{ winner: sideIsWinner(ev, 'away') }">
-                {{ sideName(ev, 'away') }}
-              </span>
-              <span class="result-score">{{ sideScore(ev, 'away') ?? '—' }}</span>
-            </div>
-          </div>
-          <div v-else class="no-tip">
-            <p>{{ ev.status === 'scheduled' ? 'Scheduled' : ev.status }}</p>
-          </div>
-        </article>
-      </div>
-    </section>
-  </template>
-
-  <!-- =====================================================================
        STATE 1 — Grand-final week (is_grand_final && !is_post_season):
        the home page becomes the pre-match grand-final report.  If the
        report hasn't been generated yet (404) it falls back to the
        standard detail experience for the game.
        ===================================================================== -->
-  <template v-else-if="isGrandFinal">
+  <template v-if="isGrandFinal">
     <!-- GF-DESIGN (2026-09-20, user request): the standard site hero
          stays; the grand-final content flows below it, in the same
          place the regular weekly content sits. -->
@@ -335,7 +262,6 @@ import type {
   GamesWithTipsResponse,
   LatestRoundResponse,
   MatchReportResponse,
-  SportEvent,
 } from '~/composables/useApi'
 import { HEURISTIC_ORDER } from '~/composables/useFormatters'
 import { AUTO_REFRESH_MS, pickGrandFinalGame, resolveHomeState, useLatestRound } from '~/composables/useLatestRound'
@@ -343,37 +269,6 @@ import { GRAND_FINAL_COLORS, useTeamColors } from '~/composables/useTeamColors'
 const api = useApi()
 const { getLogoUrl, getTeamDisplayName } = useTeamLogos()
 const { formatHeuristic, formatDate: formatDateUtil, formatExplanation, getModelDisplayName } = useFormatters()
-
-// ---------------------------------------------------------------------------
-// League-aware home view (LEAGUE-SWAP, 2026-09-26, user request)
-//
-// The header selector persists the active league; when it is NOT the
-// AFL the page renders that league's own current round of fixtures
-// (STATE 0 above) instead of the AFL state machine below.  AFL keeps
-// the original three states, untouched.
-// ---------------------------------------------------------------------------
-const { activeLeague, activeConfig } = useActiveLeague()
-const isAflLeague = computed(() => activeLeague.value === 'afl')
-
-const {
-  roundId: leagueRound,
-  seasonLabel: leagueSeason,
-  roundEvents: leagueEvents,
-  pending: leaguePending,
-  error: leagueError,
-  unavailable: leagueUnavailable,
-  refresh: leagueRefresh,
-} = useLeagueEvents()
-
-/** Side helpers for the league fixture cards (participants are a list). */
-const sideOf = (ev: SportEvent, side: string) =>
-  ev.participants.find(p => p.side === side)
-const sideName = (ev: SportEvent, side: string): string =>
-  sideOf(ev, side)?.participant_name ?? 'TBD'
-const sideScore = (ev: SportEvent, side: string): number | null =>
-  sideOf(ev, side)?.score ?? null
-const sideIsWinner = (ev: SportEvent, side: string): boolean =>
-  sideOf(ev, side)?.is_winner === true
 
 // ---------------------------------------------------------------------------
 // UI state (declared first — the fetch watcher below reads it)
@@ -940,35 +835,9 @@ useHead({
   justify-content: center;
 }
 
-/* League fixture results (league view cards) — winner emphasised
-   without colour, matching the monochrome card language. */
-.league-result {
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-}
-
-.result-row {
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-  gap: 1rem;
-}
-
-.result-team {
-  font-size: 0.9375rem;
-  font-weight: 600;
-}
-
-.result-team.winner {
-  font-weight: 800;
-}
-
-.result-score {
-  font-size: 1rem;
-  font-weight: 800;
-  font-variant-numeric: tabular-nums;
-}
+/* The league fixture result styles were removed with the league
+   branch — LEAGUE-ROUTES (2026-09-30): the equivalent rules live in
+   pages/[league]/index.vue now. */
 
 /* Mobile styles */
 @media (max-width: 640px) {

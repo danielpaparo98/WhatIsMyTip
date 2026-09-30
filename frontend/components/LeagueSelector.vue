@@ -22,8 +22,16 @@ import { LEAGUES, useActiveLeague } from '~/composables/useSportConfig'
 
 const { activeLeague, setActiveLeague } = useActiveLeague()
 
+// LEAGUE-ROUTES (2026-09-30, user request): leagues are first-class
+// URLs now (`/{league}`, AFL stays at `/`), so a selection must move
+// the address bar as well as the shared store — the URL always has to
+// match the league being viewed (deep links, sharing, back/forward).
+// navigateTo is Nuxt-auto-imported in the app; unit tests stub it
+// globally (see league-selector.test.ts).
 function onSelect(event: Event) {
-  setActiveLeague((event.target as HTMLSelectElement).value)
+  const key = (event.target as HTMLSelectElement).value
+  setActiveLeague(key)
+  navigateTo(key === 'afl' ? '/' : `/${key}`)
 }
 </script>
 

@@ -7,9 +7,18 @@
  * it queries the games API for the current round's games and emits a
  * fresh sitemap including /game/{slug} entries.
  *
+ * LEAGUE-ROUTES (2026-09-30, user request): the first-class league URLs
+ * (/{league} + /{league}/match/{slug}) ship alongside the AFL entries
+ * via the same Nuxt-free enumerer the prerender hook uses
+ * (lib/leagueRoutes.ts) so the sitemap can never disagree with the
+ * prerendered route list.
+ *
  * Graceful degradation: when the API is unreachable at build time the
- * sitemap still renders with the static pages.
+ * sitemap still renders with the static pages (and the always-present
+ * league home routes).
  */
+
+import { enumerateLeagueRoutes } from '../../lib/leagueRoutes'
 
 interface BuildLatestRound {
   season: number | null
@@ -67,6 +76,20 @@ export default defineEventHandler(async (event) => {
     }
   } catch {
     // API unreachable at build time — ship the static pages only.
+  }
+
+  // LEAGUE-ROUTES (2026-09-30, user request): league home routes are
+  // ALWAYS enumerated (even for unsynced leagues — the pages render a
+  // graceful "unavailable" state); match routes only for synced ones.
+  // enumerateLeagueRoutes never throws — the catch is belt-and-braces
+  // so the sitemap can never fail because of leagues.
+  try {
+    const leagueRoutes = await enumerateLeagueRoutes(API_BASE)
+    for (const route of leagueRoutes) {
+      urls.push(buildUrlEntry(route))
+    }
+  } catch {
+    // Enumeration failed — keep the entries collected so far.
   }
 
   const xml = `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${urls.join('\n')}\n</urlset>\n`

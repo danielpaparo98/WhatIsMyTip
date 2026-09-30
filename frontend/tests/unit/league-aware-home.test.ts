@@ -1,12 +1,13 @@
 /**
- * League-aware home page (2026-09-26, user request).
+ * League-aware home page (2026-09-26) — repointed 2026-09-30.
  *
- *  1. The hero renders in EVERY home-page state — grand-final week,
- *     post-season AND the new per-league view (the post-season
- *     celebration previously rendered without it).
- *  2. Selecting a state league (WAFL, VFL, …) in the header swaps the
- *     home page to that league's own current round of fixtures,
- *     independently of whatever the AFL state machine is doing.
+ * LEAGUE-ROUTES (2026-09-30, user request): pages/index.vue is
+ * AFL-only again. League coverage lives in the first-class
+ * pages/[league]/index.vue route; the home page carries no league
+ * branch, no useLeagueEvents dependency and none of the fixture-card
+ * side helpers. What remains on the home page is purely the AFL state
+ * machine (grand-final week / post-season / regular round), with the
+ * hero in every state (the always-hero rule).
  *
  * The pure helpers (`resolveCompetition`, `deriveCurrentRound`,
  * `sortRoundEvents`) are exercised behaviourally; page wiring is
@@ -30,6 +31,7 @@ import { LEAGUES } from '~/composables/useSportConfig'
 const FRONTEND_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..')
 
 const INDEX = readFileSync(resolve(FRONTEND_ROOT, 'pages/index.vue'), 'utf8')
+const LEAGUE_PAGE = readFileSync(resolve(FRONTEND_ROOT, 'pages/[league]/index.vue'), 'utf8')
 const USE_API = readFileSync(resolve(FRONTEND_ROOT, 'composables/useApi.ts'), 'utf8')
 const COMPOSABLE = readFileSync(
   resolve(FRONTEND_ROOT, 'composables/useLeagueEvents.ts'),
@@ -202,26 +204,39 @@ describe('home page wiring (source-grep)', () => {
     const heroAfterBranch = INDEX.indexOf('class="hero"', postBranchIdx)
     expect(heroAfterBranch).toBeGreaterThan(-1)
     expect(heroAfterBranch).toBeLessThan(celebrationIdx)
-    // League, grand-final, post-season AND regular branches each carry a hero.
-    expect(INDEX.match(/class="hero"/g)?.length).toBeGreaterThanOrEqual(4)
   })
 
-  it('routes non-AFL leagues to a dedicated league view ahead of the AFL states', () => {
-    // The league branch is the FIRST branch and keyed off the active league.
-    expect(INDEX).toMatch(/v-if="!isAflLeague"/)
-    // The AFL states become else-branches.
-    expect(INDEX).toMatch(/v-else-if="isGrandFinal"/)
+  it('is AFL-only again — the grand-final state owns the first branch', () => {
+    // LEAGUE-ROUTES (2026-09-30, user request): the league branch is
+    // gone and the page is purely the AFL state machine. With the old
+    // STATE 0 removed, the grand-final branch is the FIRST branch
+    // (v-if) again; post-season and regular remain else-branches.
+    // Exactly three heroes — one per AFL state.
+    expect(INDEX).toMatch(/v-if="isGrandFinal"/)
     expect(INDEX).toMatch(/v-else-if="isPostSeason"/)
+    expect(INDEX).not.toMatch(/!isAflLeague/)
+    expect(INDEX.match(/class="hero"/g)?.length).toBe(3)
   })
 
-  it('consumes the shared active-league composable', () => {
-    expect(INDEX).toMatch(/useActiveLeague\(\)/)
-    expect(INDEX).toMatch(/useLeagueEvents\(\)/)
+  it('carries no league-view code (no composable, no side helpers)', () => {
+    // The league branch, its useLeagueEvents() wiring, the side*
+    // fixture-card helpers and the now-dead league styles all moved to
+    // pages/[league]/index.vue.
+    expect(INDEX).not.toMatch(/useLeagueEvents/)
+    expect(INDEX).not.toMatch(/useActiveLeague/)
+    expect(INDEX).not.toMatch(/\bsideOf\b|\bsideName\b|\bsideScore\b|\bsideIsWinner\b/)
+    expect(INDEX).not.toMatch(/leaguePending|leagueRound\b|leagueEvents\b|league-result/)
   })
 
-  it('renders fixture cards with participants, venue and date', () => {
-    expect(INDEX).toMatch(/roundEvents/)
-    expect(INDEX).toMatch(/participant_name|homeParticipant|homeSide/)
+  it('league coverage lives in pages/[league]/index.vue', () => {
+    // The dedicated route is the single league home: route-driven
+    // composable call, fixture cards with participant helpers, and the
+    // monochrome result rows.
+    expect(LEAGUE_PAGE).toMatch(/useLeagueEvents\(leagueKey\)/)
+    expect(LEAGUE_PAGE).toMatch(/\bsideName\b/)
+    expect(LEAGUE_PAGE).toMatch(/roundEvents/)
+    expect(LEAGUE_PAGE).toMatch(/participant_name/)
+    expect(LEAGUE_PAGE).toMatch(/league-result/)
   })
 })
 

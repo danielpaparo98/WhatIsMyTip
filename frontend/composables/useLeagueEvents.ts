@@ -1,133 +1,51 @@
-// League-aware home view (2026-09-26, user request).
+// League events view state (2026-09-26, user request).
 //
-// Selecting a state league (WAFL, VFL, …) in the header swaps the home
-// page to THAT league's own current round of fixtures — independent of
-// the AFL state machine (grand-final week / post-season must never
-// blank out another league's content).
+// Each non-AFL league renders THAT league's own current round of
+// fixtures — independent of the AFL state machine (grand-final week /
+// post-season must never blank out another league's content).
+//
+// LEAGUE-ROUTES (2026-09-30, user request): the league is ROUTE-driven.
+// The first-class /{league} pages pass the route param, and the legacy
+// no-arg mode (reading the global header selector) was removed along
+// with pages/index.vue's league branch in subtask 07 — this composable
+// now has exactly one call site: pages/[league]/index.vue. The fetch
+// pipeline, the pure helpers and the mid-flight stale-league guards
+// are unchanged.
 //
 // Read side = the ADR 0001 discovery + event APIs (`/api/sports`,
 // `/api/events`), consumed through `useApi`. Pure helpers are exported
 // so the vitest suite can exercise them without mounting components.
 //
 // NOTE: this module imports types only from useApi (type-import), so
-// the pure helpers stay importable from tests without Nuxt runtime.
+// the pure helpers stay importable from tests without Nuxt runtime
+// (they now live in the Nuxt-free lib/leagueRoutes.ts — see below).
 
 import { computed, ref, watch } from 'vue'
-import type { SportEvent, SportsListResponse } from '~/composables/useApi'
+import type { Ref } from 'vue'
+import type { SportEvent } from '~/composables/useApi'
 
-// ---------------------------------------------------------------------------
-// League key → competition name (the `competitions.name` value the
-// backend sync writes, per packages/shared/ingestion/state_leagues.py).
-// Kept explicit rather than guessed from partial names: the mapping is
-// a contract with the STATE_LEAGUES registry on the backend.
-// ---------------------------------------------------------------------------
+// LEAGUE-ROUTES (2026-09-30, user request): the pure helpers used to
+// live in this file; they moved to lib/leagueRoutes.ts — a Nuxt-free
+// module — so the prerender hook and the sitemap can enumerate
+// /{league} + /{league}/match/{slug} at build time (nuxt.config.ts is
+// evaluated in plain Node and cannot import composables that pull the
+// Vue runtime). They are imported here for this composable's own use
+// and re-exported so every existing import path (pages, tests) stays
+// stable.
+import {
+  LEAGUE_COMPETITION_NAMES,
+  deriveCurrentRound,
+  resolveCompetition,
+  sortRoundEvents,
+} from '../lib/leagueRoutes'
 
-export const LEAGUE_COMPETITION_NAMES: Record<string, string> = {
-  wafl: 'West Australian Football League',
-  waflw: "Western Australian Women's Football League",
-  sanfl: 'South Australian National Football League',
-  vfl: 'Victorian Football League',
-  vflw: "Victorian Women's Football League",
-  aflw: "AFL Women's",
-  qafl: 'Queensland Australian Football League',
-  qaflw: "Queensland Australian Football League Women's",
-  nwfl: 'North West Football League',
-  sfl: 'Southern Football League',
+export {
+  LEAGUE_COMPETITION_NAMES,
+  deriveCurrentRound,
+  resolveCompetition,
+  sortRoundEvents,
 }
-
-/** Result of resolving a league key against the `/api/sports` payload. */
-export interface CompetitionResolution {
-  competitionId: number
-  seasonLabel: string
-}
-
-/**
- * Map a league key to its competition id + season label.
- *
- * Season selection: the season marked `is_current` wins; when none is
- * (the production seed does not mark any), the LATEST label wins —
- * labels sort lexicographically for four-digit years.
- * Returns null for the AFL key (the legacy view owns it), unknown
- * keys, and competitions that have not been synced yet.
- */
-export function resolveCompetition(
-  sports: SportsListResponse['sports'] | null | undefined,
-  leagueKey: string,
-): CompetitionResolution | null {
-  const wantedName = LEAGUE_COMPETITION_NAMES[leagueKey]
-  if (!wantedName || !sports) return null
-  for (const sport of sports) {
-    const competition = sport.competitions.find(c => c.name === wantedName)
-    if (!competition || competition.seasons.length === 0) continue
-    const current = competition.seasons.find(s => s.is_current)
-    const latest = [...competition.seasons].sort((a, b) =>
-      b.label.localeCompare(a.label),
-    )[0]
-    const season = current ?? latest
-    if (!season) continue
-    return { competitionId: competition.id, seasonLabel: season.label }
-  }
-  return null
-}
-
-/**
- * Derive the league's "current" round from a full season of events.
- *
- * Mirrors the AFL locator's semantics: during the season the first
- * round that still has live (dated, not completed/cancelled/void)
- * events wins; once nothing is live the latest round WITH RESULTS
- * wins — so a finished (or partially cancelled) league shows its
- * grand final / last played round, never a blank or cancelled round.
- * Events without a round number (tournament-style) are ignored.
- */
-export function deriveCurrentRound(
-  events: SportEvent[],
-  now: Date = new Date(),
-): number | null {
-  const valid = events.filter(e => typeof e.round_id === 'number')
-  if (valid.length === 0) return null
-
-  const isLive = (e: SportEvent): boolean =>
-    !!e.starts_at &&
-    !e.completed &&
-    e.status !== 'cancelled' &&
-    e.status !== 'void'
-
-  const upcoming = valid.filter(isLive)
-  if (upcoming.length > 0) {
-    return Math.min(...upcoming.map(e => e.round_id as number))
-  }
-
-  // Latest round with actual results (completed), then latest-dated,
-  // then the highest round number present.
-  const datedCompleted = valid.filter(e => e.completed && !!e.starts_at)
-  if (datedCompleted.length > 0) {
-    const latest = datedCompleted.reduce((acc, e) =>
-      Date.parse(e.starts_at as string) > Date.parse(acc.starts_at as string) ? e : acc,
-    )
-    return latest.round_id
-  }
-  const dated = valid.filter(e => !!e.starts_at)
-  if (dated.length > 0) {
-    const latest = dated.reduce((acc, e) =>
-      Date.parse(e.starts_at as string) > Date.parse(acc.starts_at as string) ? e : acc,
-    )
-    return latest.round_id
-  }
-  return Math.max(...valid.map(e => e.round_id as number))
-}
-
-/**
- * Order a round's events by start time (undated last), id as the
- * tiebreak.  Returns a new array — never mutates the source.
- */
-export function sortRoundEvents(events: SportEvent[]): SportEvent[] {
-  return [...events].sort((a, b) => {
-    const ta = a.starts_at ? Date.parse(a.starts_at) : Number.POSITIVE_INFINITY
-    const tb = b.starts_at ? Date.parse(b.starts_at) : Number.POSITIVE_INFINITY
-    return ta - tb || a.id - b.id
-  })
-}
+export type { CompetitionResolution } from '../lib/leagueRoutes'
 
 // ---------------------------------------------------------------------------
 // Composable
@@ -138,6 +56,12 @@ export interface LeagueEventsState {
   roundId: number | null
   /** The resolved season label, for the round display. */
   seasonLabel: string | null
+  /**
+   * The FULL season payload as fetched — the /{league} pages feed it to
+   * `deriveSeasonState`/`derivePremier`, which need every event (not
+   * just the displayed round) to detect the end of a season.
+   */
+  seasonEvents: SportEvent[]
   /** The current round's events, ordered for display. */
   roundEvents: SportEvent[]
   pending: boolean
@@ -148,39 +72,66 @@ export interface LeagueEventsState {
 }
 
 /**
- * Reactive league view state for the home page.
+ * Where the composable reads its league from: the route param.
  *
- * Fetches on league change (the selector's localStorage hydration on
- * mount triggers the watch), guards every async step against a rapid
- * league switch (a slow stale response can never paint the wrong
- * league — same contract as the page's `dedupe: 'cancel'` fetches),
- * and degrades to `unavailable` when a league has no synced data.
+ * LEAGUE-ROUTES (2026-09-30, user request): REQUIRED — the /{league}
+ * pages pass the route key, either as a plain string or a reactive
+ * ref/computed (so a param change refetches without remounting). The
+ * ref form may briefly hold null (before a param exists); the guards
+ * below treat that as "nothing to fetch". The legacy no-arg mode that
+ * read the global header selector was removed with the home page's
+ * league branch (subtask 07).
  */
-export function useLeagueEvents() {
+export type LeagueEventsSource =
+  | string
+  | Readonly<Ref<string | null | undefined>>
+
+/**
+ * Reactive league view state.
+ *
+ * Fetches on league change (the route param — hydration or an in-page
+ * navigation between leagues triggers the watch), guards every async
+ * step against a rapid league change (a slow stale response can never
+ * paint the wrong league — same contract as the page's
+ * `dedupe: 'cancel'` fetches), and degrades to `unavailable` when a
+ * league has no synced data.
+ */
+export function useLeagueEvents(leagueSource: LeagueEventsSource) {
   const api = useApi()
-  const { activeLeague } = useActiveLeague()
+
+  // The league that currently owns the in-flight fetch — always the
+  // route-derived source. Normalised to null so the guard contract
+  // stays total.
+  const drivingLeague = computed<string | null>(() =>
+    typeof leagueSource === 'string' ? leagueSource : leagueSource.value ?? null,
+  )
 
   const roundId = ref<number | null>(null)
   const seasonLabel = ref<string | null>(null)
+  const seasonEvents = ref<SportEvent[]>([])
   const roundEvents = ref<SportEvent[]>([])
   const pending = ref(false)
   const error = ref<string | null>(null)
   const unavailable = ref(false)
 
   async function fetchLeagueEvents(): Promise<void> {
-    const league = activeLeague.value
-    if (league === 'afl') return // the legacy AFL view owns this key
+    const league = drivingLeague.value
+    // `null` = no route param yet (never happens past validate(), but
+    // keeps the guards total); 'afl' = the AFL home owns this key
+    // (/afl canonicalises to '/', LEAGUE-ROUTES subtask 07).
+    if (league === null || league === 'afl') return
     pending.value = true
     error.value = null
     unavailable.value = false
     try {
       const sports = await api.getSports().catch(() => null)
-      if (activeLeague.value !== league) return // superseded mid-flight
+      if (drivingLeague.value !== league) return // superseded mid-flight
       const resolved = resolveCompetition(sports?.sports ?? null, league)
       if (!resolved) {
         unavailable.value = true
         roundId.value = null
         seasonLabel.value = null
+        seasonEvents.value = []
         roundEvents.value = []
         return
       }
@@ -188,30 +139,30 @@ export function useLeagueEvents() {
         competition: resolved.competitionId,
         season: resolved.seasonLabel,
       })
-      if (activeLeague.value !== league) return // superseded mid-flight
-      const round = deriveCurrentRound(payload.events ?? [])
+      if (drivingLeague.value !== league) return // superseded mid-flight
+      const events = payload.events ?? []
+      const round = deriveCurrentRound(events)
       roundId.value = round
       seasonLabel.value = resolved.seasonLabel
+      seasonEvents.value = events
       roundEvents.value =
         round === null
           ? []
-          : sortRoundEvents(
-              (payload.events ?? []).filter(e => e.round_id === round),
-            )
+          : sortRoundEvents(events.filter(e => e.round_id === round))
     } catch {
-      if (activeLeague.value !== league) return
+      if (drivingLeague.value !== league) return
       error.value = 'Failed to load fixtures'
     } finally {
-      if (activeLeague.value === league) pending.value = false
+      if (drivingLeague.value === league) pending.value = false
     }
   }
 
-  watch(activeLeague, () => void fetchLeagueEvents(), { immediate: true })
+  watch(drivingLeague, () => void fetchLeagueEvents(), { immediate: true })
 
   return {
-    activeLeague,
     roundId,
     seasonLabel,
+    seasonEvents,
     roundEvents,
     pending,
     error,

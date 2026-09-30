@@ -2,11 +2,13 @@
  * LeagueSelector (top-nav league picker).
  *
  * Covers: rendering the full static league list, the aria contract,
- * and the active-league flow — default AFL, selection updating the
+ * the active-league flow — default AFL, selection updating the
  * shared store, and persistence via localStorage (`wimt-league`,
- * mock-backed by happy-dom's storage).
+ * mock-backed by happy-dom's storage) — and, since leagues became
+ * first-class URLs, the navigation flow: selecting a league moves the
+ * address bar to `/{league}` (AFL back to `/`).
  */
-import { beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { nextTick } from 'vue'
 import type { Component } from 'vue'
@@ -28,8 +30,17 @@ async function mountSelector() {
   return wrapper
 }
 
+// LEAGUE-ROUTES (2026-09-30, user request): the component now calls
+// Nuxt's auto-imported navigateTo on change, which has no plain-vitest
+// global — stub it for EVERY test so any change event resolves. The
+// navigation assertions below install their own spy over this stub.
 beforeEach(() => {
   window.localStorage.clear()
+  vi.stubGlobal('navigateTo', vi.fn())
+})
+
+afterEach(() => {
+  vi.unstubAllGlobals()
 })
 
 describe('LEAGUES registry', () => {
@@ -127,5 +138,64 @@ describe('active league selection', () => {
     setActiveLeague('bogus')
     expect(activeLeague.value).toBe('afl')
     expect(window.localStorage.getItem(LEAGUE_STORAGE_KEY)).toBeNull()
+  })
+})
+
+// LEAGUE-ROUTES (2026-09-30, user request): leagues are first-class
+// URLs now, so selecting a league must ALSO move the address bar —
+// the URL has to match the league being viewed (deep links, sharing,
+// back/forward). AFL intentionally stays at '/' (no /afl URL).
+// navigateTo is stubbed file-wide (see beforeEach); these tests swap
+// in a fresh tracked spy per test to pin the exact call contract.
+describe('league navigation', () => {
+  function stubNavigateTo(): ReturnType<typeof vi.fn> {
+    const navigateTo = vi.fn()
+    vi.stubGlobal('navigateTo', navigateTo)
+    return navigateTo
+  }
+
+  it('navigates to /{league} when a non-AFL league is selected', async () => {
+    const navigateTo = stubNavigateTo()
+    const wrapper = await mountSelector()
+
+    await wrapper.get(SELECT).setValue('sanfl')
+
+    expect(navigateTo).toHaveBeenCalledTimes(1)
+    expect(navigateTo).toHaveBeenCalledWith('/sanfl')
+  })
+
+  it('navigates to / when AFL is selected (AFL stays at the root URL)', async () => {
+    const navigateTo = stubNavigateTo()
+    const wrapper = await mountSelector()
+
+    await wrapper.get(SELECT).setValue('afl')
+
+    expect(navigateTo).toHaveBeenCalledTimes(1)
+    expect(navigateTo).toHaveBeenCalledWith('/')
+  })
+
+  it('every LEAGUES option maps to its own URL (afl → /, rest → /{league})', async () => {
+    const navigateTo = stubNavigateTo()
+    const wrapper = await mountSelector()
+
+    for (const league of LEAGUES) {
+      navigateTo.mockClear()
+      await wrapper.get(SELECT).setValue(league.key)
+      expect(navigateTo).toHaveBeenCalledWith(
+        league.key === 'afl' ? '/' : `/${league.key}`,
+      )
+    }
+  })
+
+  it('updates the shared league store AND navigates on change', async () => {
+    const navigateTo = stubNavigateTo()
+    const wrapper = await mountSelector()
+
+    await wrapper.get(SELECT).setValue('vfl')
+
+    const { activeLeague } = useActiveLeague()
+    expect(activeLeague.value).toBe('vfl')
+    expect(navigateTo).toHaveBeenCalledWith('/vfl')
+    expect(window.localStorage.getItem(LEAGUE_STORAGE_KEY)).toBe('vfl')
   })
 })
