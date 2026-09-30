@@ -121,7 +121,14 @@ export const DEFAULT_LEAGUE_KEY = 'afl'
 
 const activeLeagueKey = ref<string>(DEFAULT_LEAGUE_KEY)
 
-function readStoredLeagueKey(): string | null {
+// LEAGUE-ROUTES (2026-09-30, user request): exported for the global
+// redirect middleware (middleware/league-redirect.global.ts), which
+// runs BEFORE any component's onMounted — so useActiveLeague() has not
+// hydrated from storage yet and the middleware must read the persisted
+// key itself.  Raw and unvalidated by design: validation (known league,
+// non-AFL, root path) is resolveLeagueRedirect's job, keeping this a
+// plain "what is in localStorage" accessor.
+export function readStoredLeagueKey(): string | null {
   if (typeof window === 'undefined' || !('localStorage' in window)) return null
   try {
     return window.localStorage.getItem(LEAGUE_STORAGE_KEY)

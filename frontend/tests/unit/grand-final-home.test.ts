@@ -118,10 +118,12 @@ describe('index.vue state wiring', () => {
   // ---------------------------------------------------------------------
   it('keeps the standard hero in the grand-final branch', () => {
     // The GF branch renders the same hero the regular weeks use, with
-    // the report flowing below it. (LEAGUE-SWAP: the GF branch is now
-    // an else-branch — the league view owns the page's first branch.)
+    // the report flowing below it. (LEAGUE-ROUTES, subtask 07
+    // 2026-09-30: the league branch was removed — the GF branch is the
+    // page's first branch (v-if) again; post-season/regular remain
+    // else-branches.)
     expect(INDEX).toMatch(
-      /v-else-if="isGrandFinal"[\s\S]*?<section class="hero">[\s\S]*?<\/section>[\s\S]*?grandFinalPending/
+      /v-if="isGrandFinal"[\s\S]*?<section class="hero">[\s\S]*?<\/section>[\s\S]*?grandFinalPending/
     )
   })
 

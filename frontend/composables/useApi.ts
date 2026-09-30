@@ -256,6 +256,14 @@ export interface EventListResponse {
   count: number
 }
 
+// LEAGUE-ROUTES (2026-09-30, user request): `GET /api/events/{slug}` returns
+// the backend `EventResponse`, whose shape is exactly `SportEvent` above
+// (field-for-field with backend/.../schemas/events.py).  The alias gives the
+// match pages a named contract without duplicating the shape — if the
+// backend payload ever diverges from the list-item shape, this is the one
+// place to split it.
+export type EventDetailResponse = SportEvent
+
 /** A season of a competition (entries of `/api/sports` `seasons`). */
 export interface CompetitionSeason {
   id: number
@@ -543,6 +551,17 @@ export const useApi = () => {
     return response.json()
   }
 
+  // LEAGUE-ROUTES (2026-09-30, user request): single-event fetch for the
+  // `/{league}/match/{slug}` pages.  Same convention as getSports/getEvents:
+  // the 404 "unknown slug" case THROWS like every other non-OK response —
+  // the match page (validate()/error handling) owns the not-found
+  // presentation, so no getGameReport-style null mapping here.
+  const getEvent = async (slug: string): Promise<EventDetailResponse> => {
+    const response = await fetchWithTimeout(`/api/events/${slug}`)
+    if (!response.ok) throw new Error('Failed to fetch event')
+    return response.json()
+  }
+
   return {
     getGames,
     getGame,
@@ -562,5 +581,6 @@ export const useApi = () => {
     getActiveModel,
     getSports,
     getEvents,
+    getEvent,
   }
 }

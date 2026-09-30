@@ -1,5 +1,11 @@
 // https://nuxt.com/docs/api/configuration/nuxt-config
 
+// LEAGUE-ROUTES (2026-09-30, user request): Nuxt-free league route
+// enumeration (see lib/leagueRoutes.ts). Imported via a RELATIVE path —
+// this config is evaluated in plain Node before any Nuxt aliases exist,
+// which is also why the module must not pull the Vue runtime.
+import { enumerateLeagueRoutes } from './lib/leagueRoutes'
+
 // Build-time API base (defaults to the local dev backend).  Used by the
 // nitro prerender hook below to enumerate /game/{slug} routes so game
 // pages are prerendered with inlined data instead of being
@@ -183,6 +189,41 @@ export default defineNuxtConfig({
         // rely on the SPA fallback until the next successful build.
         nitro.logger.warn(
           `prerender: could not enumerate game routes (API unreachable at build time): ${err}`
+        )
+      }
+
+      // LEAGUE-ROUTES (2026-09-30, user request): enumerate the
+      // first-class league URLs — /{league} for EVERY non-AFL league
+      // key regardless of sync state (the pages degrade to their
+      // "unavailable" state), plus /{league}/match/{slug} for each
+      // event of the derived current round of every synced competition
+      // (mirrors useLeagueEvents' /api/sports → resolveCompetition →
+      // /api/events → deriveCurrentRound pipeline, via the Nuxt-free
+      // lib/leagueRoutes.ts). AFL is deliberately absent: it lives at
+      // '/' with the /game prerender above. Same graceful-degradation
+      // contract as the game block — the build NEVER fails because of
+      // leagues; a per-league failure costs only that league's match
+      // routes until the next successful build.
+      try {
+        const leagueRoutes = await enumerateLeagueRoutes(
+          BUILD_API_BASE,
+          (source, err) => {
+            nitro.logger.warn(
+              `prerender: league enumeration failed for ${source} (skipping its match routes): ${err}`
+            )
+          }
+        )
+        let addedLeagueRoutes = 0
+        for (const route of leagueRoutes) {
+          if (!routes.includes(route)) {
+            routes.push(route)
+            addedLeagueRoutes++
+          }
+        }
+        nitro.logger.info(`prerender: added ${addedLeagueRoutes} league routes`)
+      } catch (err) {
+        nitro.logger.warn(
+          `prerender: could not enumerate league routes (API unreachable at build time): ${err}`
         )
       }
     }
