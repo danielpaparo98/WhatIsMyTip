@@ -158,6 +158,14 @@ export function useActiveLeague() {
   const activeLeague = computed(() => activeLeagueKey.value)
   const activeConfig = computed(() => getLeagueConfig(activeLeagueKey.value))
 
+  // LEAGUE-NAV (2026-09-30, user request): the nav's home/Tips links
+  // stay inside the active league — AFL resolves to the root, every
+  // other league to its own home (/wafl etc.). The league dropdown
+  // remains the explicit escape hatch back to AFL.
+  const homePath = computed(() =>
+    activeLeagueKey.value === DEFAULT_LEAGUE_KEY ? '/' : `/${activeLeagueKey.value}`,
+  )
+
   function setActiveLeague(key: string): void {
     if (!LEAGUES.some((l) => l.key === key)) return
     activeLeagueKey.value = key
@@ -170,5 +178,5 @@ export function useActiveLeague() {
     }
   }
 
-  return { activeLeague, activeConfig, setActiveLeague }
+  return { activeLeague, activeConfig, homePath, setActiveLeague }
 }

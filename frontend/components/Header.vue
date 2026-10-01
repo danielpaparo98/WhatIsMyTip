@@ -1,11 +1,15 @@
 <template>
   <header class="header">
     <nav class="nav">
-      <NuxtLink to="/" class="logo" aria-label="WhatIsMyTip home">
+      <NuxtLink :to="homePath" class="logo" aria-label="WhatIsMyTip home">
         <span class="logo-text">WhatIsMyTip</span>
       </NuxtLink>
       <ul class="nav-links">
-        <li><NuxtLink to="/">Tips</NuxtLink></li>
+        <!-- LEAGUE-NAV (2026-09-30, user request): logo + Tips stay in
+             the active league (/{league} home) instead of bouncing a
+             WAFL/VFL viewer to the AFL root; the league dropdown is the
+             explicit way back to AFL. -->
+        <li><NuxtLink :to="homePath">Tips</NuxtLink></li>
         <li><NuxtLink to="/backtest">Backtest</NuxtLink></li>
         <li><NuxtLink to="/about">About</NuxtLink></li>
       </ul>
@@ -22,6 +26,10 @@
 
 <script setup lang="ts">
 const { isDark, toggle } = useColorMode()
+// LEAGUE-NAV (2026-09-30, user request): home/Tips bind the active
+// league's home path (prerendered HTML defaults to '/', flips to the
+// stored league after hydration — same pattern as LeagueSelector).
+const { homePath } = useActiveLeague()
 </script>
 
 <style scoped>

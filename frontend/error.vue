@@ -3,7 +3,7 @@
     <div class="error-content">
       <h1>{{ error?.statusCode || 'Error' }}</h1>
       <p>{{ error?.statusMessage || 'Something went wrong' }}</p>
-      <NuxtLink to="/" class="back-home">← Back to Home</NuxtLink>
+      <NuxtLink :to="homePath" class="back-home">← Back to Home</NuxtLink>
     </div>
   </div>
 </template>
@@ -17,6 +17,10 @@ interface Props {
 }
 
 const props = defineProps<Props>()
+
+// LEAGUE-NAV (2026-09-30, user request): the error page's home link
+// follows the active league (defaults to '/' before hydration).
+const { homePath } = useActiveLeague()
 </script>
 
 <style scoped>
