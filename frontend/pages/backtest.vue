@@ -5,8 +5,14 @@
       </section>
 
       <!-- Current Season Section -->
-      <section v-if="currentSeasonData" class="current-season-section">
-        <div class="current-season-header">
+      <!-- m-6: the loading/error branches live OUTSIDE the data guard —
+           while a request is in flight (or after a failure) the payload
+           is null, so a data-guarded section would render nothing. -->
+      <section
+        v-if="currentSeasonData || currentSeasonLoading || currentSeasonError"
+        class="current-season-section"
+      >
+        <div v-if="currentSeasonData" class="current-season-header">
           <h2>
             <span class="badge">Current Season {{ currentSeasonData.season }}</span>
           </h2>
@@ -22,104 +28,106 @@
           <p>{{ currentSeasonError }}</p>
         </div>
 
-        <!-- Off-season / pre-Round-1 state: no graded tips yet -->
-        <div v-else-if="!hasSeasonResults" class="season-empty">
-          <p>The {{ currentSeasonData.season }} season hasn't started yet.</p>
-          <p class="season-empty-sub">
-            Performance tracking begins once Round 1 tips are graded. Historical
-            performance feeds the model weights shown below.
-          </p>
-        </div>
-
-        <template v-else>
-          <!-- BT-ODDS: explain exactly how profit is settled -->
-          <div class="profit-basis">
-            <p>
-              <strong>How profit is calculated:</strong> each tip carries a simulated
-              $10 stake. Games with bookmaker odds (The Odds API) settle at the real
-              decimal price for the tipped team; games without an odds snapshot settle
-              at a representative $1.90; drawn games refund the stake.
-              <em>Odds coverage</em> shows the share of tips settled at real prices.
+        <template v-else-if="currentSeasonData">
+          <!-- Off-season / pre-Round-1 state: no graded tips yet -->
+          <div v-if="!hasSeasonResults" class="season-empty">
+            <p>The {{ currentSeasonData.season }} season hasn't started yet.</p>
+            <p class="season-empty-sub">
+              Performance tracking begins once Round 1 tips are graded. Historical
+              performance feeds the model weights shown below.
             </p>
           </div>
 
-          <div class="current-season-cards">
-            <div v-for="heuristic in currentSeasonData.heuristics" :key="heuristic.heuristic" class="current-season-card">
-              <div class="card-header">
-                <h3>{{ formatHeuristic(heuristic.heuristic) }}</h3>
-                <span class="heuristic-badge">Current Season</span>
-              </div>
-              <div class="card-stats">
-                <div class="stat-row">
-                  <span class="stat-label">Year-to-Date Profit</span>
-                  <span class="stat-value" :class="{ positive: heuristic.total_profit > 0, negative: heuristic.total_profit < 0 }">
-                    ${{ heuristic.total_profit.toFixed(2) }}
-                  </span>
-                </div>
-                <div v-if="heuristic.rounds_played > 0" class="stat-row">
-                  <span class="stat-label">Projected Annual Profit</span>
-                  <span class="stat-value projected" :class="{ positive: heuristic.projected_annual_profit > 0, negative: heuristic.projected_annual_profit < 0 }">
-                    ${{ heuristic.projected_annual_profit.toFixed(2) }}
-                  </span>
-                </div>
-                <div v-if="heuristic.rounds_played > 0" class="disclaimer">
-                  <small>Projections are based on early season performance and may change as the season progresses.</small>
-                </div>
-                <div class="stat-row">
-                  <span class="stat-label">Accuracy</span>
-                  <span class="stat-value">
-                    {{ heuristic.rounds_played > 0 ? (heuristic.total_accuracy * 100).toFixed(1) + '%' : '—' }}
-                  </span>
-                </div>
-                <div class="stat-row">
-                  <span class="stat-label">Rounds Played</span>
-                  <span class="stat-value">{{ heuristic.rounds_played }}</span>
-                </div>
-                <div class="stat-row">
-                  <span class="stat-label">Avg Profit/Round</span>
-                  <span class="stat-value" :class="{ positive: heuristic.avg_profit_per_round > 0, negative: heuristic.avg_profit_per_round < 0 }">
-                    ${{ heuristic.avg_profit_per_round.toFixed(2) }}
-                  </span>
-                </div>
-                <div class="stat-row">
-                  <span class="stat-label">Odds Coverage</span>
-                  <span class="stat-value">{{ (heuristic.odds_coverage * 100).toFixed(0) }}%</span>
-                </div>
-              </div>
+          <template v-else>
+            <!-- BT-ODDS: explain exactly how profit is settled -->
+            <div class="profit-basis">
+              <p>
+                <strong>How profit is calculated:</strong> each tip carries a simulated
+                $10 stake. Games with bookmaker odds (The Odds API) settle at the real
+                decimal price for the tipped team; games without an odds snapshot settle
+                at a representative $1.90; drawn games refund the stake.
+                <em>Odds coverage</em> shows the share of tips settled at real prices.
+              </p>
             </div>
-          </div>
-        </template>
 
-        <!-- Current Season: Model Performance -->
-        <div v-if="currentSeasonModels" class="current-season-models">
-          <div class="models-divider">
-            <span>Individual Model Accuracy</span>
-          </div>
-          <div class="model-mini-grid">
-            <div
-              v-for="model in currentSeasonModels"
-              :key="model.model_name"
-              class="model-mini-card"
-              :class="{ 'best-model-card': model.model_name === currentSeasonBestModel }"
-            >
-              <div class="model-mini-header">
-                <span class="model-mini-name">{{ getModelDisplayName(model.model_name) }}</span>
-                <span v-if="model.model_name === currentSeasonBestModel" class="best-dot" title="Best performing model this season">★</span>
+            <div class="current-season-cards">
+              <div v-for="heuristic in currentSeasonData.heuristics" :key="heuristic.heuristic" class="current-season-card">
+                <div class="card-header">
+                  <h3>{{ formatHeuristic(heuristic.heuristic) }}</h3>
+                  <span class="heuristic-badge">Current Season</span>
+                </div>
+                <div class="card-stats">
+                  <div class="stat-row">
+                    <span class="stat-label">Year-to-Date Profit</span>
+                    <span class="stat-value" :class="{ positive: heuristic.total_profit > 0, negative: heuristic.total_profit < 0 }">
+                      ${{ heuristic.total_profit.toFixed(2) }}
+                    </span>
+                  </div>
+                  <div v-if="heuristic.rounds_played > 0" class="stat-row">
+                    <span class="stat-label">Projected Annual Profit</span>
+                    <span class="stat-value projected" :class="{ positive: heuristic.projected_annual_profit > 0, negative: heuristic.projected_annual_profit < 0 }">
+                      ${{ heuristic.projected_annual_profit.toFixed(2) }}
+                    </span>
+                  </div>
+                  <div v-if="heuristic.rounds_played > 0" class="disclaimer">
+                    <small>Projections are based on early season performance and may change as the season progresses.</small>
+                  </div>
+                  <div class="stat-row">
+                    <span class="stat-label">Accuracy</span>
+                    <span class="stat-value">
+                      {{ heuristic.rounds_played > 0 ? (heuristic.total_accuracy * 100).toFixed(1) + '%' : '—' }}
+                    </span>
+                  </div>
+                  <div class="stat-row">
+                    <span class="stat-label">Rounds Played</span>
+                    <span class="stat-value">{{ heuristic.rounds_played }}</span>
+                  </div>
+                  <div class="stat-row">
+                    <span class="stat-label">Avg Profit/Round</span>
+                    <span class="stat-value" :class="{ positive: heuristic.avg_profit_per_round > 0, negative: heuristic.avg_profit_per_round < 0 }">
+                      ${{ heuristic.avg_profit_per_round.toFixed(2) }}
+                    </span>
+                  </div>
+                  <div class="stat-row">
+                    <span class="stat-label">Odds Coverage</span>
+                    <span class="stat-value">{{ (((heuristic.odds_coverage ?? 0) * 100)).toFixed(0) }}%</span>
+                  </div>
+                </div>
               </div>
-              <div class="model-mini-acc">
-                {{ (model.overall_accuracy * 100).toFixed(1) }}%
-              </div>
-              <div class="model-mini-label">Accuracy</div>
-              <div class="model-mini-profit" :class="{ positive: model.total_profit > 0, negative: model.total_profit < 0 }">
-                ${{ model.total_profit.toFixed(0) }}
-              </div>
-              <div class="model-mini-label">Profit</div>
             </div>
-          </div>
-          <div v-if="currentSeasonModelsError" class="model-mini-error">
-            <small>{{ currentSeasonModelsError }}</small>
-          </div>
-        </div>
+
+            <!-- Current Season: Model Performance -->
+            <div v-if="currentSeasonModels" class="current-season-models">
+              <div class="models-divider">
+                <span>Individual Model Accuracy</span>
+              </div>
+              <div class="model-mini-grid">
+                <div
+                  v-for="model in currentSeasonModels"
+                  :key="model.model_name"
+                  class="model-mini-card"
+                  :class="{ 'best-model-card': model.model_name === currentSeasonBestModel }"
+                >
+                  <div class="model-mini-header">
+                    <span class="model-mini-name">{{ getModelDisplayName(model.model_name) }}</span>
+                    <span v-if="model.model_name === currentSeasonBestModel" class="best-dot" title="Best performing model this season">★</span>
+                  </div>
+                  <div class="model-mini-acc">
+                    {{ (model.overall_accuracy * 100).toFixed(1) }}%
+                  </div>
+                  <div class="model-mini-label">Accuracy</div>
+                  <div class="model-mini-profit" :class="{ positive: model.total_profit > 0, negative: model.total_profit < 0 }">
+                    ${{ model.total_profit.toFixed(0) }}
+                  </div>
+                  <div class="model-mini-label">Profit</div>
+                </div>
+              </div>
+              <div v-if="currentSeasonModelsError" class="model-mini-error">
+                <small>{{ currentSeasonModelsError }}</small>
+              </div>
+            </div>
+          </template>
+        </template>
       </section>
 
       <!-- Active Weighted Model Section -->

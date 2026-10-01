@@ -29,10 +29,13 @@ from ..teams import canonical_team
 
 logger = get_logger(__name__)
 
-# The Odds API uses full marketing club names ('North Melbourne
-# Kangaroos', 'Carlton Blues') that the shared canonical map (teams.py)
-# doesn't carry — teams.py is pinned by the migration-0007 alias test,
-# so vendor-specific aliases live here.  Applied BEFORE canonical_team.
+# The Odds API appends marketing suffixes to some club names ('Carlton
+# Blues', 'North Melbourne Kangaroos') that teams.py doesn't carry —
+# teams.py is pinned by the migration-0007 alias test, so vendor-specific
+# suffixes live here.  Plain names ('Sydney Swans', 'West Coast Eagles')
+# already resolve through the shared map.  Applied BEFORE canonical_team.
+# m-5: every alias here must keep all 18 AFL clubs resolvable — pinned by
+# test_all_18_clubs_resolve_through_vendor_aliases.
 _ODDS_API_TEAM_ALIASES = {
     "carlton blues": "Carlton",
     "collingwood magpies": "Collingwood",
@@ -56,8 +59,9 @@ def odds_api_canonical_team(name: str | None) -> str:
     aliased = _ODDS_API_TEAM_ALIASES.get(name.strip().lower())
     return canonical_team(aliased if aliased is not None else name)
 
-# Snapshots taken with every book's price missing are useless — the
-# sync treats them as unmatched rather than writing NULLs over good data.
+
+# Decimal prices at or below 1.0 are impossible (a winning $1 bet paying
+# nothing) — dropped rather than settled.
 _MIN_VALID_DECIMAL_PRICE = 1.01
 
 
@@ -121,9 +125,7 @@ def parse_event(event: Dict[str, Any]) -> Dict[str, Any]:
         "away_team": odds_api_canonical_team(away_name),
         "home_odds": home_odds,
         "away_odds": away_odds,
-        "bookmaker": f"consensus median ({book_count} books)"
-        if book_count
-        else None,
+        "bookmaker": f"consensus median ({book_count} books)" if book_count else None,
         "captured_at": datetime.now(timezone.utc),
     }
 
@@ -161,6 +163,11 @@ class OddsAPIClient:
         Raises:
             httpx.HTTPError: On transport/HTTP failure — callers let
                 BaseJob's retry/backoff handle transient upstream errors.
+                The raised message never contains the API key: the vendor
+                requires key-in-query auth, and ``raise_for_status``
+                embeds the request URL in its message, so it is re-raised
+                with a redacted description (M-1).  BaseJob persists
+                error strings to ``job_executions`` and alert webhooks.
         """
         url = f"{self.base_url}/sports/{self.sport_key}/odds"
         params = {
@@ -171,7 +178,18 @@ class OddsAPIClient:
         }
 
         response = await self.client.get(url, params=params)
-        response.raise_for_status()
+        try:
+            response.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            # M-1 (code review): ``str(exc)`` includes the full request
+            # URL with ``apiKey=...``.  Re-raise with the key stripped so
+            # the credential never reaches logs, ``job_executions`` rows,
+            # or alert webhooks.
+            raise httpx.HTTPStatusError(
+                f"Odds API returned HTTP {exc.response.status_code} for {exc.request.url.path}",
+                request=exc.request,
+                response=exc.response,
+            ) from exc
 
         # Quota headers — log at warning when the free-tier allowance
         # gets low so the sync degrades loudly instead of silently.

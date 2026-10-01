@@ -93,7 +93,7 @@ class GameOdds(Base):
     source = Column(String(30), nullable=False, default="the-odds-api", index=True)
     home_odds = Column(Float, nullable=True)
     away_odds = Column(Float, nullable=True)
-    bookmaker = Column(String(100), nullable=True)  # e.g. "consensus:au (6 books)"
+    bookmaker = Column(String(100), nullable=True)  # e.g. "consensus median (6 books)"
     captured_at = Column(DateTime(timezone=True), nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())

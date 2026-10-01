@@ -114,7 +114,12 @@ async def run_odds_sync(db: AsyncSession) -> dict:
         )
         return {"skipped": True, "reason": "odds_api_key not configured"}
 
-    now_utc = datetime.now(timezone.utc)
+    # B-1 (code review): ``games.date`` is a naive TIMESTAMP WITHOUT TIME
+    # ZONE holding UTC instants — binding a tz-aware datetime makes
+    # asyncpg raise (same failure mode pinned by the regression test on
+    # GameCRUD.get_recently_finished_games).  Strip tzinfo before
+    # binding.
+    now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
 
     async with OddsAPIClient() as client:
         events = await client.get_afl_head_to_head_odds()
@@ -140,16 +145,30 @@ async def run_odds_sync(db: AsyncSession) -> dict:
 
     updated = 0
     errors = 0
+    skipped_no_prices = 0
     for game, event in matched:
+        # m-3 (code review): a fetch day where the market is temporarily
+        # withdrawn yields all-NULL prices — skip so we never overwrite a
+        # previously-good snapshot (and silently degrade settlement to
+        # the fallback price) with NULLs.
+        if event["home_odds"] is None and event["away_odds"] is None:
+            skipped_no_prices += 1
+            continue
         try:
-            await GameOddsCRUD.upsert(
-                db,
-                game_id=game.id,
-                home_odds=event["home_odds"],
-                away_odds=event["away_odds"],
-                bookmaker=event["bookmaker"],
-                captured_at=event["captured_at"],
-            )
+            # M-2 (code review): a failed flush aborts the surrounding
+            # transaction — without a SAVEPOINT every subsequent upsert
+            # and the final commit would fail too, losing the whole
+            # batch.  ``begin_nested`` isolates each write so one bad
+            # row only costs itself.
+            async with db.begin_nested():
+                await GameOddsCRUD.upsert(
+                    db,
+                    game_id=game.id,
+                    home_odds=event["home_odds"],
+                    away_odds=event["away_odds"],
+                    bookmaker=event["bookmaker"],
+                    captured_at=event["captured_at"],
+                )
             updated += 1
         except Exception:  # noqa: BLE001 — one bad row must not lose the batch
             errors += 1
@@ -170,6 +189,7 @@ async def run_odds_sync(db: AsyncSession) -> dict:
         "upcoming_games": len(upcoming_games),
         "games_matched": len(matched),
         "games_updated": updated,
+        "games_skipped_no_prices": skipped_no_prices,
         "unmatched": len(unmatched),
         "errors": errors,
     }

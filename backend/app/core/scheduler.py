@@ -1,8 +1,8 @@
 """APScheduler setup for in-process cron jobs (Phase 3).
 
-Wires the four :class:`app.cron.base.BaseJob` subclasses into an
-:class:`apscheduler.schedulers.asyncio.AsyncIOScheduler` using the
-cron expressions in :mod:`packages.shared.config`.
+Wires the :class:`app.cron.base.BaseJob` subclasses into an
+:class:`apscheduler.schedulers.asyncio.AsyncIOScheduler` using the cron
+expressions in :mod:`packages.shared.config`.
 
 The scheduler is started during the FastAPI ``lifespan`` startup
 phase (see :mod:`app.core.lifespan`) and shut down on app shutdown.

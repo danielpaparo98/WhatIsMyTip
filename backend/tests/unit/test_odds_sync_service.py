@@ -28,6 +28,18 @@ def _game(game_id: int, home: str, away: str, kickoff: datetime):
     return g
 
 
+def _mock_db_with_savepoint():
+    """An AsyncMock session whose ``begin_nested()`` behaves like
+    SQLAlchemy's: a *synchronous* call returning an async context
+    manager (M-2 savepoint isolation)."""
+    db = AsyncMock()
+    nested = AsyncMock()
+    nested.__aenter__ = AsyncMock(return_value=MagicMock())
+    nested.__aexit__ = AsyncMock(return_value=False)
+    db.begin_nested = MagicMock(return_value=nested)
+    return db
+
+
 def _event(home: str, away: str, kickoff: datetime, home_odds=1.55, away_odds=2.45):
     return {
         "external_id": f"evt-{home}-{away}".replace(" ", ""),
@@ -113,7 +125,7 @@ class TestRunOddsSync:
 
     @pytest.mark.asyncio
     async def test_upserts_matched_odds_and_commits(self):
-        db = AsyncMock()
+        db = _mock_db_with_savepoint()
         kickoff = datetime(2026, 4, 4, 5, 20, tzinfo=timezone.utc)
         game = _game(7, "Sydney", "West Coast", kickoff)
 
@@ -148,8 +160,9 @@ class TestRunOddsSync:
 
     @pytest.mark.asyncio
     async def test_upsert_failure_does_not_abort_batch(self):
-        """One bad upsert must not lose the rest of the snapshot batch."""
-        db = AsyncMock()
+        """M-2: one bad upsert must not lose the rest of the snapshot
+        batch — each write runs inside its own SAVEPOINT."""
+        db = _mock_db_with_savepoint()
         kickoff = datetime(2026, 4, 4, 5, 20, tzinfo=timezone.utc)
         games = [
             _game(1, "Sydney", "West Coast", kickoff),
@@ -208,3 +221,80 @@ class TestRunOddsSync:
 
             with pytest.raises(RuntimeError):
                 await run_odds_sync(db)
+
+    @pytest.mark.asyncio
+    async def test_binds_naive_datetimes_only(self):
+        """B-1 regression: ``games.date`` is a naive TIMESTAMP WITHOUT
+        TIME ZONE column — binding tz-aware datetimes makes asyncpg
+        raise (see the GameCRUD timezone regression test).  Every
+        datetime bound by the upcoming-games query must be naive."""
+        db = AsyncMock()
+        captured = []
+        games_result = MagicMock()
+        games_result.scalars.return_value.all.return_value = []
+
+        async def fake_execute(stmt):
+            captured.append(stmt)
+            return games_result
+
+        db.execute = AsyncMock(side_effect=fake_execute)
+
+        with (
+            patch("packages.shared.services.odds_sync.settings") as mock_settings,
+            patch("packages.shared.services.odds_sync.OddsAPIClient") as mock_client_cls,
+        ):
+            mock_settings.odds_api_key = "test-key"
+            mock_client = AsyncMock()
+            mock_client.get_afl_head_to_head_odds = AsyncMock(return_value=[])
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=False)
+            mock_client_cls.return_value = mock_client
+
+            await run_odds_sync(db)
+
+        assert captured, "the upcoming-games query must have run"
+        params = captured[0].compile().params
+        assert params, "expected bound datetime parameters"
+        for value in params.values():
+            if isinstance(value, datetime):
+                assert value.tzinfo is None, (
+                    "tz-aware datetime bound against a naive column — "
+                    "asyncpg will raise on every production run"
+                )
+
+    @pytest.mark.asyncio
+    async def test_both_null_prices_skip_upsert(self):
+        """m-3: an event with no usable prices on either side must not
+        overwrite a previously-good snapshot with NULLs."""
+        db = _mock_db_with_savepoint()
+        kickoff = datetime(2026, 4, 4, 5, 20, tzinfo=timezone.utc)
+        game = _game(7, "Sydney", "West Coast", kickoff)
+
+        games_result = MagicMock()
+        games_result.scalars.return_value.all.return_value = [game]
+        db.execute = AsyncMock(return_value=games_result)
+
+        event = _event("Sydney Swans", "West Coast Eagles", kickoff)
+        event["home_odds"] = None
+        event["away_odds"] = None
+
+        with (
+            patch("packages.shared.services.odds_sync.settings") as mock_settings,
+            patch("packages.shared.services.odds_sync.OddsAPIClient") as mock_client_cls,
+            patch("packages.shared.services.odds_sync.GameOddsCRUD") as mock_crud,
+        ):
+            mock_settings.odds_api_key = "test-key"
+            mock_client = AsyncMock()
+            mock_client.get_afl_head_to_head_odds = AsyncMock(return_value=[event])
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=False)
+            mock_client_cls.return_value = mock_client
+            mock_crud.upsert = AsyncMock()
+
+            result = await run_odds_sync(db)
+
+        assert result["games_matched"] == 1
+        assert result["games_updated"] == 0
+        assert result["games_skipped_no_prices"] == 1
+        mock_crud.upsert.assert_not_awaited()
+        db.commit.assert_awaited_once()
