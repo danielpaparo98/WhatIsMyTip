@@ -190,6 +190,15 @@ describe('match page wiring (source-grep)', () => {
     expect(PAGE).toMatch(/dedupe:\s*'cancel'/)
   })
 
+  it('syncs team identity inside the awaited handler (direct-load crests)', () => {
+    // TEAM-IDENTITY (2026-09-30, user request): the awaited useAsyncData
+    // handler populates TEAM_IDENTITY (no sport filter — payload is tiny
+    // and the one-shot guard makes repeat visits free) so match-page
+    // badges show real crests on direct loads/prerender. Non-fatal: the
+    // call is wrapped so an identity failure never breaks the fixture.
+    expect(PAGE).toMatch(/await syncTeamIdentity\(\)/)
+  })
+
   it('404s cross-league slugs by checking the competition name', () => {
     expect(PAGE).toMatch(/eventMatchesLeague\(/)
     expect(PAGE).toMatch(/showError\(/)

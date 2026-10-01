@@ -89,6 +89,13 @@ export const PRERENDER_EVENT_LIMIT = SEASON_EVENT_LIMIT
 export interface CompetitionResolution {
   competitionId: number
   seasonLabel: string
+  /**
+   * TEAM-IDENTITY (2026-09-30, user request): the matched competition's
+   * own sport id — scopes the club-crest population's
+   * `GET /api/teams?sport=` fetch to the league's sport (all current
+   * state leagues use 'afl', but the param stays generic).
+   */
+  sportId: string
 }
 
 /**
@@ -115,7 +122,13 @@ export function resolveCompetition(
     )[0]
     const season = current ?? latest
     if (!season) continue
-    return { competitionId: competition.id, seasonLabel: season.label }
+    // TEAM-IDENTITY (2026-09-30, user request): sport_id surfaced so the
+    // awaited league fetch handler can scope the crest population.
+    return {
+      competitionId: competition.id,
+      seasonLabel: season.label,
+      sportId: competition.sport_id,
+    }
   }
   return null
 }

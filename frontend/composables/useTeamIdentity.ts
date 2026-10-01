@@ -13,6 +13,9 @@
 import { getTeamColors } from './useTeamColors'
 import { leagueColorFor, type ClubColors } from './useLeagueColors'
 import { useTeamLogos } from './useTeamLogos'
+// TEAM-IDENTITY (2026-09-30, user request): type-only import — the pure
+// helpers below stay importable from vitest without the Nuxt runtime.
+import type { TeamIdentityPayload } from './useApi'
 
 export interface TeamIdentityEntry {
   logoUrl?: string
@@ -21,6 +24,85 @@ export interface TeamIdentityEntry {
 }
 
 export const TEAM_IDENTITY: Record<string, TeamIdentityEntry> = {}
+
+// TEAM-IDENTITY (2026-09-30, user request): module-scoped one-shot guard
+// for syncTeamIdentity, keyed on the sport filter used ('' = unfiltered).
+// Exported so tests can reset it (vitest keeps module state within a
+// file), mirroring how TEAM_IDENTITY itself is cleared in tests. A key
+// is added BEFORE the fetch starts, so repeated visits AND concurrent
+// callers share one fetch; a failed sync stays marked (one attempt per
+// sport per tab — the badge fallback covers the gap until reload).
+export const TEAM_IDENTITY_SYNCED = new Set<string>()
+
+const { normalizeTeam } = useTeamLogos()
+
+/**
+ * TEAM-IDENTITY (2026-09-30, user request): merge the frozen
+ * `GET /api/teams` payload into the module TEAM_IDENTITY map.
+ *
+ * - Keys go through normalizeTeam (shared with the logo map), so
+ *   feed-name drift and AFL aliases resolve to the same entry
+ *   identityFor() looks up.
+ * - snake_case payload keys map to the camelCase entry shape
+ *   (logo_url→logoUrl, primary_color→primaryColor, secondary_color→
+ *   secondaryColor); null/empty identity fields are dropped.
+ * - Entries with NO identity fields at all (the backend's LEFT-JOIN
+ *   null rows) are skipped entirely — they must never shadow the
+ *   badge fallback with an empty entry.
+ * - Pure merge (never wipes existing keys) and idempotent: re-running
+ *   the same payload leaves the map unchanged.
+ *
+ * Returns the number of entries that carried identity and were merged.
+ */
+export function populateTeamIdentity(entries: TeamIdentityPayload[]): number {
+  let populated = 0
+  for (const payloadEntry of entries) {
+    const identity: TeamIdentityEntry = {}
+    if (payloadEntry.logo_url) identity.logoUrl = payloadEntry.logo_url
+    if (payloadEntry.primary_color) identity.primaryColor = payloadEntry.primary_color
+    if (payloadEntry.secondary_color) identity.secondaryColor = payloadEntry.secondary_color
+    if (Object.keys(identity).length === 0) continue
+    const key = normalizeTeam(payloadEntry.name)
+    if (!key) continue
+    TEAM_IDENTITY[key] = identity
+    populated++
+  }
+  return populated
+}
+
+/**
+ * TEAM-IDENTITY (2026-09-30, user request): fetch `GET /api/teams` (sport
+ * filter optional — omit for all sports) and populate TEAM_IDENTITY, once
+ * per sport per tab (guarded by TEAM_IDENTITY_SYNCED, above).
+ *
+ * NEVER throws: every failure — network outage, non-OK response, missing
+ * endpoint — resolves `false`, so league/match pages that await this
+ * inside their data handlers keep rendering fixtures with the initials-
+ * badge fallback. Resolves `true` when identity is available (fetched
+ * now, or already synced by a previous call). Designed to be awaited
+ * inside awaited useAsyncData handlers so crests bake into the
+ * prerendered HTML (SEO-C1 contract).
+ */
+export function syncTeamIdentity(sport?: string): Promise<boolean> {
+  const guardKey = sport ?? ''
+  if (TEAM_IDENTITY_SYNCED.has(guardKey)) {
+    return Promise.resolve(true)
+  }
+  TEAM_IDENTITY_SYNCED.add(guardKey)
+  return (async () => {
+    try {
+      // useApi resolves through Nuxt's auto-import at call time (same
+      // pattern as the other composables) — stubbed as a global in tests.
+      const api = useApi()
+      const payload = await api.getTeams(sport)
+      populateTeamIdentity(payload?.teams ?? [])
+      return true
+    } catch {
+      // Non-fatal by contract — badge fallback survives an API outage.
+      return false
+    }
+  })()
+}
 
 // LEAGUE-ROUTES (2026-09-30, user request): real logo assets for
 // state-league clubs are out of scope, so clubs without a logo file

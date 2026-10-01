@@ -49,6 +49,10 @@ import {
   resolveCompetition,
   sortRoundEvents,
 } from '../lib/leagueRoutes'
+// TEAM-IDENTITY (2026-09-30, user request): club-crest population —
+// awaited inside the fetch handler below so crests bake into the
+// prerendered HTML before the template renders.
+import { syncTeamIdentity } from './useTeamIdentity'
 
 export {
   LEAGUE_COMPETITION_NAMES,
@@ -158,6 +162,20 @@ export async function useLeagueEvents(leagueSource: LeagueEventsSource) {
       season: resolved.seasonLabel,
       limit: SEASON_EVENT_LIMIT,
     })
+    // TEAM-IDENTITY (2026-09-30, user request): populate the club-crest
+    // identity map INSIDE the awaited handler — the side effect lands
+    // before the template renders, so real crests bake into the
+    // prerendered HTML (the SEO-C1 contract that motivated the awaited
+    // useAsyncData). Scoped to the matched competition's own sport_id
+    // (surfaced by resolveCompetition; every current state league uses
+    // 'afl'). NON-FATAL: syncTeamIdentity catches everything; the
+    // try/catch is belt-and-suspenders so an identity failure can never
+    // break the fixtures payload (badges fall back to initials).
+    try {
+      await syncTeamIdentity(resolved.sportId)
+    } catch {
+      // Non-fatal by contract.
+    }
     return {
       seasonLabel: resolved.seasonLabel,
       events: payload.events ?? [],
