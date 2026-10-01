@@ -12,7 +12,7 @@ tables, with the teams.py canonical map as a transitional AFL fallback
 until aliases are fully seeded (ADR 0001 / P1-6).
 """
 
-from typing import Dict, Iterable, Optional
+from typing import Any, Dict, Iterable, Optional
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -241,6 +241,51 @@ class EventCRUD:
         return event
 
 
+# TEAM-IDENTITY (2026-09-30, user request): public identity read over
+# the teams extension rows the ingestion already captured (migration 0011).
+class ParticipantCRUD:
+    """Read access to ``participants`` rows for public surfaces."""
+
+    @staticmethod
+    async def list_team_identities(
+        db: AsyncSession, sport_id: Optional[str] = None
+    ) -> list[dict[str, Any]]:
+        """Team-kind participants with their club identity, name-ordered.
+
+        ``Participant`` rows LEFT JOINed to their ``teams`` extension so
+        clubs captured without identity data still appear (identity
+        fields then ``None`` — the frontend falls back to its badge
+        renderer).  Only the five identity columns are selected.  An
+        unknown ``sport_id`` simply matches no rows — a filter, never an
+        error.
+        """
+        stmt = (
+            select(
+                Participant.name,
+                Team.abbreviation,
+                Team.logo_url,
+                Team.primary_color,
+                Team.secondary_color,
+            )
+            .outerjoin(Team, Team.participant_id == Participant.id)
+            .where(Participant.kind == "team")
+            .order_by(Participant.name.asc())
+        )
+        if sport_id is not None:
+            stmt = stmt.where(Participant.sport_id == sport_id)
+        rows = (await db.execute(stmt)).all()
+        return [
+            {
+                "name": row.name,
+                "abbreviation": row.abbreviation,
+                "logo_url": row.logo_url,
+                "primary_color": row.primary_color,
+                "secondary_color": row.secondary_color,
+            }
+            for row in rows
+        ]
+
+
 class ParticipantResolver:
     """Resolve raw feed/source names to ``participants`` rows.
 
@@ -381,4 +426,4 @@ class ParticipantResolver:
             await self.db.flush()
 
 
-__all__ = ["EventCRUD", "ParticipantResolver"]
+__all__ = ["EventCRUD", "ParticipantCRUD", "ParticipantResolver"]

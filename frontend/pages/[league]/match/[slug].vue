@@ -154,6 +154,18 @@ const {
       showError(createError({ statusCode: 404, statusMessage: 'Match not found' }))
       return null
     }
+    // TEAM-IDENTITY (2026-09-30, user request): populate the club-crest
+    // identity map on direct loads too — no sport filter (the payload is
+    // tiny and the one-shot guard makes repeated visits free). Awaiting
+    // it inside this handler means match-page badges show real crests in
+    // the prerendered HTML (same SEO-C1 rationale as the league home).
+    // NON-FATAL: syncTeamIdentity catches everything; the try/catch is
+    // belt-and-suspenders so identity failure never breaks the match.
+    try {
+      await syncTeamIdentity()
+    } catch {
+      // Non-fatal by contract — badges fall back to initials.
+    }
     return detail
   },
   {

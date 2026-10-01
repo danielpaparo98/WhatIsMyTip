@@ -165,6 +165,39 @@ curl http://localhost:8000/api/events/wafl-abc12345
 }
 ```
 
+### Teams (club identity, TEAM-IDENTITY)
+
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| `GET` | `/api/teams` | public | List identity rows for `kind='team'` participants (name, abbreviation, crest URL, club colours), ordered by `name` ASC. Optional query: `sport` (sport id, e.g. `afl`) — omitted = all sports. Unknown/absent sport values yield an empty list (it's a filter, not a resource lookup — never 404). |
+
+Serves the `teams` extension table captured at ingestion (crest +
+club colours from the provider). Identity columns may be NULL (the
+row LEFT-JOINs to the teams extension): the team is still listed, and
+clients skip entries without identity fields. Discover valid `sport`
+values via `GET /api/sports`.
+
+**Example**:
+
+```bash
+curl 'http://localhost:8000/api/teams?sport=afl'
+curl http://localhost:8000/api/teams
+```
+
+```json
+{
+  "teams": [
+    {
+      "name": "Peel Thunder",
+      "abbreviation": null,
+      "logo_url": "https://.../club.png",
+      "primary_color": "#000066",
+      "secondary_color": "#FFFFFF"
+    }
+  ]
+}
+```
+
 ### Games
 
 > **DEPRECATED (ADR 0001)**: all `/api/games` responses carry
