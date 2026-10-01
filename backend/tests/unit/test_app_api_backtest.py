@@ -253,6 +253,7 @@ class TestBacktestTable:
                 "tips_correct": 6,
                 "accuracy": 0.667,
                 "profit": 10.0,
+                "odds_coverage": 0.5,
             }
         ]
 
