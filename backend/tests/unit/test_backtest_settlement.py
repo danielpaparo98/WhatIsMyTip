@@ -388,3 +388,182 @@ class TestCurrentSeasonFixtureDerivedRounds:
 
         assert result.total_rounds == 24
         assert result.rounds_completed == 0
+
+
+# ---------------------------------------------------------------------------
+# SQL settlement round-trip (m-7): the case expressions in
+# get_round_by_round_data / get_model_round_by_round are only exercised
+# against a real engine here — draw-push ordering, the >1.0 price guard,
+# fallback coalescing, and tipped-side coverage are all invisible to the
+# mock-based suites.
+# ---------------------------------------------------------------------------
+
+
+class TestSqlSettlementRoundTrip:
+    """Run the real settlement SQL against in-memory SQLite."""
+
+    @pytest.fixture
+    async def db_session(self):
+        from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+        from packages.shared.models import Game, GameOdds, ModelPrediction, Tip
+
+        engine = create_async_engine("sqlite+aiosqlite://")
+        async with engine.begin() as conn:
+            for table in (
+                Game.__table__,
+                Tip.__table__,
+                ModelPrediction.__table__,
+                GameOdds.__table__,
+            ):
+                await conn.run_sync(lambda sync_conn, t=table: t.create(sync_conn))
+
+        maker = async_sessionmaker(engine, expire_on_commit=False)
+        async with maker() as session:
+            yield session
+
+        await engine.dispose()
+
+    async def _seed(self, session):
+        from packages.shared.models import Game, GameOdds, ModelPrediction, Tip
+
+        # Round 1 — real odds favourite (correct, +$2), drawn game (push).
+        g1 = Game(
+            id=1,
+            slug="g1",
+            round_id=1,
+            season=2026,
+            home_team="Brisbane",
+            away_team="Carlton",
+            home_score=90,
+            away_score=60,
+            completed=True,
+        )
+        g2 = Game(
+            id=2,
+            slug="g2",
+            round_id=1,
+            season=2026,
+            home_team="Sydney",
+            away_team="Richmond",
+            home_score=80,
+            away_score=80,
+            completed=True,
+        )
+        # Round 2 — no odds (fallback win), corrupt favourite price
+        # (guard must fall back, coverage must NOT count it).
+        g3 = Game(
+            id=3,
+            slug="g3",
+            round_id=2,
+            season=2026,
+            home_team="Geelong",
+            away_team="Hawthorn",
+            home_score=95,
+            away_score=70,
+            completed=True,
+        )
+        g4 = Game(
+            id=4,
+            slug="g4",
+            round_id=2,
+            season=2026,
+            home_team="Melbourne",
+            away_team="Essendon",
+            home_score=100,
+            away_score=30,
+            completed=True,
+        )
+        session.add_all([g1, g2, g3, g4])
+        await session.flush()
+
+        session.add_all(
+            [
+                Tip(game_id=1, heuristic="best_bet", selected_team="Brisbane"),
+                Tip(game_id=2, heuristic="best_bet", selected_team="Sydney"),
+                Tip(game_id=3, heuristic="best_bet", selected_team="Geelong"),
+                Tip(game_id=4, heuristic="best_bet", selected_team="Melbourne"),
+                # Model predictions mirror the same settlement on the model path.
+                ModelPrediction(game_id=1, model_name="elo", winner="Brisbane"),
+                ModelPrediction(game_id=2, model_name="elo", winner="Sydney"),
+                ModelPrediction(game_id=3, model_name="elo", winner="Geelong"),
+                ModelPrediction(game_id=4, model_name="elo", winner="Melbourne"),
+                GameOdds(
+                    game_id=1,
+                    source="the-odds-api",
+                    home_odds=1.20,
+                    away_odds=4.50,
+                    captured_at=datetime(2026, 4, 1),
+                ),
+                GameOdds(
+                    game_id=2,
+                    source="the-odds-api",
+                    home_odds=1.55,
+                    away_odds=2.40,
+                    captured_at=datetime(2026, 4, 1),
+                ),
+                # m-1: corrupt price (≤ 1.0) must never settle a winner at ≤ $0.
+                GameOdds(
+                    game_id=4,
+                    source="the-odds-api",
+                    home_odds=0.5,
+                    away_odds=3.0,
+                    captured_at=datetime(2026, 4, 1),
+                ),
+            ]
+        )
+        await session.commit()
+
+    @pytest.mark.asyncio
+    async def test_heuristic_round_by_round_settlement(self, db_session):
+        from packages.shared.services.backtest import BacktestService
+
+        with patch.object(BacktestService, "__init__", lambda self: None):
+            svc = BacktestService()
+
+        await self._seed(db_session)
+        rounds = await svc.get_round_by_round_data(db_session, 2026, "best_bet")
+        by_round = {r["round_id"]: r for r in rounds}
+
+        # Round 1: favourite win at real odds (+$2), draw push ($0).
+        assert by_round[1]["tips_made"] == 2
+        assert by_round[1]["tips_correct"] == 1
+        assert by_round[1]["profit"] == pytest.approx(2.0)
+        assert by_round[1]["odds_coverage"] == pytest.approx(1.0)
+
+        # Round 2: both winners settle at the fallback (+$9 each);
+        # the corrupt 0.5 favourite price is guarded away.
+        assert by_round[2]["tips_correct"] == 2
+        assert by_round[2]["profit"] == pytest.approx(2 * _FALLBACK_WIN)
+        assert by_round[2]["odds_coverage"] == pytest.approx(0.0)
+
+    @pytest.mark.asyncio
+    async def test_model_round_by_round_settlement(self, db_session):
+        from packages.shared.services.backtest import BacktestService
+
+        with patch.object(BacktestService, "__init__", lambda self: None):
+            svc = BacktestService()
+
+        await self._seed(db_session)
+        rounds = await svc.get_model_round_by_round(db_session, 2026, "elo")
+        by_round = {r["round_id"]: r for r in rounds}
+
+        assert by_round[1]["profit"] == pytest.approx(2.0)  # real odds + push
+        assert by_round[2]["profit"] == pytest.approx(2 * _FALLBACK_WIN)
+        assert by_round[2]["odds_coverage"] == pytest.approx(0.0)
+
+    @pytest.mark.asyncio
+    async def test_python_and_sql_paths_agree(self, db_session):
+        """The Python-settled season metrics and the SQL round-by-round
+        aggregate must produce the same profit for the same data."""
+        from packages.shared.services.backtest import BacktestService
+
+        with patch.object(BacktestService, "__init__", lambda self: None):
+            svc = BacktestService()
+
+        await self._seed(db_session)
+        season = await svc.calculate_backtest_from_tips(db_session, 2026, "best_bet")
+        rounds = await svc.get_round_by_round_data(db_session, 2026, "best_bet")
+
+        assert season["total_profit"] == pytest.approx(sum(r["profit"] for r in rounds))
+        assert season["total_tips"] == sum(r["tips_made"] for r in rounds)

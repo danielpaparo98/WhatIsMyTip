@@ -5,6 +5,7 @@ from sqlalchemy import and_, case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..crud import ModelPredictionCRUD
+from ..crud.game_odds import DEFAULT_SOURCE
 from ..logger import get_logger
 from ..models import Game, GameOdds, ModelPrediction, Tip
 from ..orchestrator import ModelOrchestrator
@@ -14,21 +15,79 @@ from ..schemas.backtest import (
 )
 from .settlement import (
     FALLBACK_DECIMAL_ODDS,
-    STAKE_PER_GAME,
     settle_stake,
     tipped_side_price,
 )
+from .settlement import (
+    # Explicit re-export (PEP 484): callers historically imported
+    # STAKE_PER_GAME from this module.
+    STAKE_PER_GAME as STAKE_PER_GAME,
+)
 
 logger = get_logger(__name__)
-
-# Stake amount per game for profit calculation (re-exported for
-# backwards compatibility — the settlement kernel owns the semantics).
-STAKE_PER_GAME = STAKE_PER_GAME
 
 # Sensible fixture-size fallback when the current season has no games
 # loaded yet (BT-ROUND: real seasons range 23–25 rounds; the projection
 # denominator prefers the actual fixture count).
 DEFAULT_TOTAL_ROUNDS = 24
+
+
+def _odds_join_condition():
+    """SQL join condition for the odds snapshot of a game.
+
+    m-4 (code review): uniqueness on ``game_odds`` is ``(game_id,
+    source)`` — the schema anticipates a second source.  Pinning the
+    join to the canonical source keeps a future source from
+    double-counting every tip (profit, accuracy, and coverage).
+    """
+    return and_(GameOdds.game_id == Game.id, GameOdds.source == DEFAULT_SOURCE)
+
+
+def _sql_side_price(side_odds_column):
+    """Usable decimal price for one side: the snapshot price when it is
+    present and > 1.0, the representative fallback otherwise (m-1 — the
+    SQL paths must enforce the same corrupt-price guard as the Python
+    settlement kernel)."""
+    return case(
+        (side_odds_column > 1.0, side_odds_column),
+        else_=FALLBACK_DECIMAL_ODDS,
+    )
+
+
+def _tipped_price_expression(selected_expr, home_expr, away_expr):
+    """SQL decimal price for the tipped side, mirroring the Python
+    :func:`tipped_side_price` fallback behaviour."""
+    return case(
+        (selected_expr == home_expr, _sql_side_price(GameOdds.home_odds)),
+        (selected_expr == away_expr, _sql_side_price(GameOdds.away_odds)),
+        else_=FALLBACK_DECIMAL_ODDS,
+    )
+
+
+def _tipped_coverage_expression(selected_expr, home_expr, away_expr):
+    """SQL ``1/0`` flag for "settled at a usable real price".
+
+    m-2 (code review): counts the tip as covered only when the *tipped
+    side* has a usable price (> 1.0) — the same semantics as the Python
+    paths, not merely "a snapshot row exists".
+    """
+    return case(
+        (
+            selected_expr == home_expr,
+            case(
+                (and_(GameOdds.home_odds.isnot(None), GameOdds.home_odds > 1.0), 1),
+                else_=0,
+            ),
+        ),
+        (
+            selected_expr == away_expr,
+            case(
+                (and_(GameOdds.away_odds.isnot(None), GameOdds.away_odds > 1.0), 1),
+                else_=0,
+            ),
+        ),
+        else_=0,
+    )
 
 
 def actual_winner_name(game) -> Optional[str]:
@@ -106,7 +165,7 @@ class BacktestService:
         result = await db.execute(
             select(Tip, Game, GameOdds)
             .join(Game, Tip.game_id == Game.id)
-            .outerjoin(GameOdds, GameOdds.game_id == Game.id)
+            .outerjoin(GameOdds, _odds_join_condition())
             .where(
                 and_(
                     Game.season == season,
@@ -200,14 +259,10 @@ class BacktestService:
         result = await db.execute(
             select(
                 Game.round_id,
-                func.count(Tip.id).label('total_tips'),
-                func.sum(
-                    case(
-                        (Tip.selected_team ==
-                         actual_winner_case(), 1),
-                        else_=0
-                    )
-                ).label('correct_tips')
+                func.count(Tip.id).label("total_tips"),
+                func.sum(case((Tip.selected_team == actual_winner_case(), 1), else_=0)).label(
+                    "correct_tips"
+                ),
             )
             .join(Tip, Tip.game_id == Game.id)
             .where(
@@ -245,38 +300,27 @@ class BacktestService:
         """
         draw_expr = Game.home_score == Game.away_score
         correct_expr = Tip.selected_team == actual_winner_case()
-        tipped_price = case(
-            (
-                Tip.selected_team == Game.home_team,
-                func.coalesce(GameOdds.home_odds, FALLBACK_DECIMAL_ODDS),
-            ),
-            (
-                Tip.selected_team == Game.away_team,
-                func.coalesce(GameOdds.away_odds, FALLBACK_DECIMAL_ODDS),
-            ),
-            else_=FALLBACK_DECIMAL_ODDS,
-        )
+        # m-1/m-2 (code review): the SQL paths share the same >1.0 price
+        # guard and tipped-side coverage semantics as the Python kernel.
+        tipped_price = _tipped_price_expression(Tip.selected_team, Game.home_team, Game.away_team)
+        covered = _tipped_coverage_expression(Tip.selected_team, Game.home_team, Game.away_team)
 
         result = await db.execute(
             select(
                 Game.round_id,
-                func.count(Tip.id).label('tips_made'),
-                func.sum(
-                    case((correct_expr, 1), else_=0)
-                ).label('tips_correct'),
+                func.count(Tip.id).label("tips_made"),
+                func.sum(case((correct_expr, 1), else_=0)).label("tips_correct"),
                 func.sum(
                     case(
                         (draw_expr, 0.0),
                         (correct_expr, STAKE_PER_GAME * (tipped_price - 1.0)),
                         else_=-STAKE_PER_GAME,
                     )
-                ).label('profit'),
-                func.sum(
-                    case((GameOdds.id.isnot(None), 1), else_=0)
-                ).label('real_odds_tips'),
+                ).label("profit"),
+                func.sum(covered).label("real_odds_tips"),
             )
             .join(Tip, Tip.game_id == Game.id)
-            .outerjoin(GameOdds, GameOdds.game_id == Game.id)
+            .outerjoin(GameOdds, _odds_join_condition())
             .where(
                 and_(
                     Game.season == season,
@@ -293,14 +337,16 @@ class BacktestService:
         round_data = []
         for round_id, tips_made, tips_correct, profit, real_odds_tips in result.all():
             accuracy = tips_correct / tips_made if tips_made > 0 else 0.0
-            round_data.append({
-                "round_id": round_id,
-                "tips_made": tips_made,
-                "tips_correct": tips_correct,
-                "accuracy": accuracy,
-                "profit": profit,
-                "odds_coverage": (real_odds_tips / tips_made) if tips_made > 0 else 0.0,
-            })
+            round_data.append(
+                {
+                    "round_id": round_id,
+                    "tips_made": tips_made,
+                    "tips_correct": tips_correct,
+                    "accuracy": accuracy,
+                    "profit": profit,
+                    "odds_coverage": (real_odds_tips / tips_made) if tips_made > 0 else 0.0,
+                }
+            )
 
         return round_data
 
@@ -361,12 +407,9 @@ class BacktestService:
 
         # BT-ROUND: rounds where EVERY game is completed.
         rounds_completed_result = await db.execute(
-            select(func.count())
-            .select_from(
+            select(func.count()).select_from(
                 select(Game.round_id)
-                .where(
-                    and_(Game.season == current_year, Game.round_id.isnot(None))
-                )
+                .where(and_(Game.season == current_year, Game.round_id.isnot(None)))
                 .group_by(Game.round_id)
                 .having(func.bool_and(Game.completed).is_(True))
                 .subquery()
@@ -433,7 +476,7 @@ class BacktestService:
         result = await db.execute(
             select(ModelPrediction, Game, GameOdds)
             .join(Game, ModelPrediction.game_id == Game.id)
-            .outerjoin(GameOdds, GameOdds.game_id == Game.id)
+            .outerjoin(GameOdds, _odds_join_condition())
             .where(
                 and_(
                     Game.season == season,
@@ -519,9 +562,7 @@ class BacktestService:
             List of result dicts sorted by accuracy descending
         """
         # Get all distinct model names
-        result = await db.execute(
-            select(ModelPrediction.model_name).distinct()
-        )
+        result = await db.execute(select(ModelPrediction.model_name).distinct())
         model_names = [row[0] for row in result.all()]
 
         comparison = []
@@ -548,38 +589,31 @@ class BacktestService:
         """
         draw_expr = Game.home_score == Game.away_score
         correct_expr = ModelPrediction.winner == actual_winner_case()
-        tipped_price = case(
-            (
-                ModelPrediction.winner == Game.home_team,
-                func.coalesce(GameOdds.home_odds, FALLBACK_DECIMAL_ODDS),
-            ),
-            (
-                ModelPrediction.winner == Game.away_team,
-                func.coalesce(GameOdds.away_odds, FALLBACK_DECIMAL_ODDS),
-            ),
-            else_=FALLBACK_DECIMAL_ODDS,
+        # m-1/m-2 (code review): same shared guard/coverage helpers as
+        # the heuristic SQL path — no drift between the two endpoints.
+        tipped_price = _tipped_price_expression(
+            ModelPrediction.winner, Game.home_team, Game.away_team
+        )
+        covered = _tipped_coverage_expression(
+            ModelPrediction.winner, Game.home_team, Game.away_team
         )
 
         result = await db.execute(
             select(
                 Game.round_id,
-                func.count(ModelPrediction.id).label('tips_made'),
-                func.sum(
-                    case((correct_expr, 1), else_=0)
-                ).label('tips_correct'),
+                func.count(ModelPrediction.id).label("tips_made"),
+                func.sum(case((correct_expr, 1), else_=0)).label("tips_correct"),
                 func.sum(
                     case(
                         (draw_expr, 0.0),
                         (correct_expr, STAKE_PER_GAME * (tipped_price - 1.0)),
                         else_=-STAKE_PER_GAME,
                     )
-                ).label('profit'),
-                func.sum(
-                    case((GameOdds.id.isnot(None), 1), else_=0)
-                ).label('real_odds_tips'),
+                ).label("profit"),
+                func.sum(covered).label("real_odds_tips"),
             )
             .join(ModelPrediction, ModelPrediction.game_id == Game.id)
-            .outerjoin(GameOdds, GameOdds.game_id == Game.id)
+            .outerjoin(GameOdds, _odds_join_condition())
             .where(
                 and_(
                     Game.season == season,
@@ -596,14 +630,16 @@ class BacktestService:
         round_data = []
         for round_id, tips_made, tips_correct, profit, real_odds_tips in result.all():
             accuracy = tips_correct / tips_made if tips_made > 0 else 0.0
-            round_data.append({
-                "round_id": round_id,
-                "tips_made": tips_made,
-                "tips_correct": tips_correct,
-                "accuracy": accuracy,
-                "profit": profit,
-                "odds_coverage": (real_odds_tips / tips_made) if tips_made > 0 else 0.0,
-            })
+            round_data.append(
+                {
+                    "round_id": round_id,
+                    "tips_made": tips_made,
+                    "tips_correct": tips_correct,
+                    "accuracy": accuracy,
+                    "profit": profit,
+                    "odds_coverage": (real_odds_tips / tips_made) if tips_made > 0 else 0.0,
+                }
+            )
 
         return round_data
 
@@ -646,12 +682,14 @@ class BacktestService:
                 model_name = fname
                 ctype = "other"
 
-            coefficients.append({
-                "feature_name": fname,
-                "coefficient": row.coefficient,
-                "model": model_name,
-                "type": ctype,
-            })
+            coefficients.append(
+                {
+                    "feature_name": fname,
+                    "coefficient": row.coefficient,
+                    "model": model_name,
+                    "type": ctype,
+                }
+            )
 
         return {
             "model_name": "weighted_tip",
@@ -685,8 +723,7 @@ class BacktestService:
         """
         # Get all completed games for this season with scores
         games_result = await db.execute(
-            select(Game)
-            .where(
+            select(Game).where(
                 and_(
                     Game.season == season,
                     Game.completed,
@@ -707,9 +744,7 @@ class BacktestService:
                 .where(ModelPrediction.game_id.in_(game_ids))
                 .distinct()
             )
-            existing_predictions = {
-                (row[0], row[1]) for row in existing_result.all()
-            }
+            existing_predictions = {(row[0], row[1]) for row in existing_result.all()}
 
             # Get all models from orchestrator
             models = self.orchestrator.models
@@ -734,9 +769,9 @@ class BacktestService:
                         # the whole backtest, but log the failure (ME-006)
                         # so silent regressions are no longer possible.
                         logger.exception(
-                            'Model %s failed for game %s: %s',
+                            "Model %s failed for game %s: %s",
                             model.get_name(),
-                            getattr(game, 'id', '<unknown>'),
+                            getattr(game, "id", "<unknown>"),
                             exc,
                         )
 
