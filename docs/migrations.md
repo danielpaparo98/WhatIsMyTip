@@ -120,7 +120,7 @@ uv run alembic stamp <revision_id>
 
 The project started with a **consolidated baseline** rather than individual historical migrations: the old SQLite-era incremental migrations were replaced by a single comprehensive PostgreSQL baseline (`0001`).
 
-The current `head` is **`0009_fix_generation_progress_seq`** — there are **9 migrations** on disk (verified September 2026; run `uv run alembic current` / `uv run alembic history` to re-verify).
+The current `head` is **`0012_game_odds`** — there are **12 migrations** on disk (verified October 2026; run `uv run alembic current` / `uv run alembic history` to re-verify).
 
 ### Current Migrations
 
@@ -135,6 +135,9 @@ The current `head` is **`0009_fix_generation_progress_seq`** — there are **9 m
 | 7 | `0007` | [`0007_elo_cache_dedup.py`](../backend/alembic/versions/2026_06_22_1245-0007_elo_cache_dedup.py) | Deduplicate alias rows in `elo_cache` missed by 0004 |
 | 8 | `0008` | [`0008_match_reports.py`](../backend/alembic/versions/2026_09_19_1200-0008_match_reports.py) | `match_reports` table (grand-final pre-match reports) |
 | 9 | `0009` | [`0009_fix_generation_progress_seq.py`](../backend/alembic/versions/2026_09_21_0900-0009_fix_generation_progress_seq.py) | Fix `generation_progress` sequence desync (explicit-ID CSV loads) |
+| 10 | `0010` | [`0010_consolidated_multisport.py`](../backend/alembic/versions/2026_09_22_1930-0010_consolidated_multisport.py) | Sport-generic domain model (ADR 0001) |
+| 11 | `0011` | [`0011_team_identity.py`](../backend/alembic/versions/2026_09_24_2057-0011_team_identity.py) | Team logo/colour identity columns at ingestion |
+| 12 | `0012` | [`0012_game_odds.py`](../backend/alembic/versions/2026_10_01_0900-0012_game_odds.py) | `game_odds` table — bookmaker head-to-head odds snapshots for odds-based backtest settlement (BT-ODDS) |
 
 ### Migration 0001: Consolidated PostgreSQL Schema
 

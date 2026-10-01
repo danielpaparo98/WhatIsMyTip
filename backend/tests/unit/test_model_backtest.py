@@ -2,6 +2,11 @@
 
 Tests the new model backtest methods by mocking DB queries and verifying
 accuracy, profit, and aggregation calculations.
+
+BT-ODDS (2026-10 review): profit settles at real decimal odds where a
+``game_odds`` snapshot exists; rows are ``(prediction, game, odds)``
+triples. Without a snapshot the representative $1.90 fallback price
+applies (win = +$9 per $10 stake), and drawn games push ($0).
 """
 
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -40,6 +45,20 @@ class _FakeGame:
         self.home_score = home_score
         self.away_score = away_score
         self.completed = completed
+
+
+class _FakeOdds:
+    """Mimics a GameOdds ORM object (decimal prices per side)."""
+
+    def __init__(self, game_id: int, home_odds: float, away_odds: float):
+        self.id = 1
+        self.game_id = game_id
+        self.home_odds = home_odds
+        self.away_odds = away_odds
+
+
+# Fallback settlement: $10 stake at the representative $1.90 price.
+_FALLBACK_WIN = 10.0 * (1.90 - 1.0)  # +$9
 
 
 # ---------------------------------------------------------------------------
@@ -85,14 +104,17 @@ class TestCalculateFromModelPredictions:
             (
                 _FakePrediction(1, "elo", "Brisbane", 0.8, 15),
                 _FakeGame(1, 1, 2025, "Brisbane", "Collingwood", 100, 80),
+                _FakeOdds(1, 1.90, 1.95),
             ),
             (
                 _FakePrediction(2, "elo", "Melbourne", 0.7, 10),
                 _FakeGame(2, 1, 2025, "Melbourne", "Richmond", 90, 70),
+                _FakeOdds(2, 2.05, 1.80),
             ),
             (
                 _FakePrediction(3, "elo", "Geelong", 0.9, 20),
                 _FakeGame(3, 2, 2025, "Geelong", "Hawthorn", 110, 85),
+                _FakeOdds(3, 1.50, 2.70),
             ),
         ]
         mock_result = MagicMock()
@@ -106,7 +128,9 @@ class TestCalculateFromModelPredictions:
         assert result["total_tips"] == 3
         assert result["total_correct"] == 3
         assert result["overall_accuracy"] == 1.0
-        assert result["total_profit"] == 30.0  # 3 × $10
+        # BT-ODDS: winners pay (price − 1) × $10 — 9 + 10.5 + 5
+        assert result["total_profit"] == pytest.approx(24.5)
+        assert result["odds_coverage"] == pytest.approx(1.0)
         assert result["avg_margin"] == 15.0  # (15+10+20)/3
 
     @pytest.mark.asyncio
@@ -118,10 +142,12 @@ class TestCalculateFromModelPredictions:
                 # Predicted Brisbane but Collingwood won (away_score > home_score)
                 _FakePrediction(1, "form", "Brisbane", 0.6, 5),
                 _FakeGame(1, 1, 2025, "Brisbane", "Collingwood", 70, 80),
+                None,
             ),
             (
                 _FakePrediction(2, "form", "Melbourne", 0.5, 3),
                 _FakeGame(2, 1, 2025, "Melbourne", "Richmond", 60, 90),
+                None,
             ),
         ]
         mock_result = MagicMock()
@@ -135,32 +161,37 @@ class TestCalculateFromModelPredictions:
         assert result["total_tips"] == 2
         assert result["total_correct"] == 0
         assert result["overall_accuracy"] == 0.0
-        assert result["total_profit"] == -20.0  # -2 × $10
+        assert result["total_profit"] == -20.0  # -2 × $10 stake
+        assert result["odds_coverage"] == 0.0
 
     @pytest.mark.asyncio
     async def test_mixed_predictions(self, service):
-        """Mix of correct and wrong predictions."""
+        """Mix of correct and wrong predictions (no odds → fallback price)."""
         mock_db = AsyncMock()
         predictions = [
             (
                 # Correct: Brisbane won at home
                 _FakePrediction(1, "value", "Brisbane", 0.8, 15),
                 _FakeGame(1, 1, 2025, "Brisbane", "Collingwood", 100, 80),
+                None,
             ),
             (
                 # Wrong: predicted Melbourne but Richmond won (away_score > home_score)
                 _FakePrediction(2, "value", "Melbourne", 0.6, 5),
                 _FakeGame(2, 2, 2025, "Melbourne", "Richmond", 60, 70),
+                None,
             ),
             (
                 # Correct: Geelong won at home
                 _FakePrediction(3, "value", "Geelong", 0.7, 12),
                 _FakeGame(3, 2, 2025, "Geelong", "Hawthorn", 95, 80),
+                None,
             ),
             (
                 # Wrong: predicted Carlton but Essendon won (away_score > home_score)
                 _FakePrediction(4, "value", "Carlton", 0.55, 3),
                 _FakeGame(4, 3, 2025, "Carlton", "Essendon", 65, 70),
+                None,
             ),
         ]
         mock_result = MagicMock()
@@ -174,7 +205,30 @@ class TestCalculateFromModelPredictions:
         assert result["total_tips"] == 4
         assert result["total_correct"] == 2
         assert result["overall_accuracy"] == 0.5
-        assert result["total_profit"] == 0.0  # 2×10 - 2×10 = 0
+        # BT-ODDS: 2 fallback-price wins (+$9 each) − 2 losses (−$10 each)
+        assert result["total_profit"] == pytest.approx(2 * _FALLBACK_WIN - 20.0)
+
+    @pytest.mark.asyncio
+    async def test_draw_pushes_rather_than_loses(self, service):
+        """BT-ODDS: a drawn game refunds the stake — $0 profit."""
+        mock_db = AsyncMock()
+        predictions = [
+            (
+                _FakePrediction(1, "elo", "Brisbane", 0.8, 5),
+                _FakeGame(1, 1, 2025, "Brisbane", "Collingwood", 80, 80),
+                _FakeOdds(1, 1.60, 2.35),
+            ),
+        ]
+        mock_result = MagicMock()
+        mock_result.all.return_value = predictions
+        mock_db.execute.return_value = mock_result
+
+        result = await service.calculate_backtest_from_model_predictions(
+            mock_db, 2025, "elo"
+        )
+
+        assert result["total_correct"] == 0
+        assert result["total_profit"] == 0.0
 
     @pytest.mark.asyncio
     async def test_avg_margin_calculation(self, service):
@@ -184,10 +238,12 @@ class TestCalculateFromModelPredictions:
             (
                 _FakePrediction(1, "elo", "Brisbane", 0.8, 15),
                 _FakeGame(1, 1, 2025, "Brisbane", "Collingwood", 100, 80),
+                None,
             ),
             (
                 _FakePrediction(2, "elo", "Brisbane", 0.7, 5),
                 _FakeGame(2, 2, 2025, "Brisbane", "Carlton", 90, 85),
+                None,
             ),
         ]
         mock_result = MagicMock()
@@ -207,7 +263,7 @@ class TestCalculateFromModelPredictions:
         pred = _FakePrediction(1, "elo", "Brisbane", 0.8, None)
         game = _FakeGame(1, 1, 2025, "Brisbane", "Collingwood", 100, 80)
         mock_result = MagicMock()
-        mock_result.all.return_value = [(pred, game)]
+        mock_result.all.return_value = [(pred, game, None)]
         mock_db.execute.return_value = mock_result
 
         result = await service.calculate_backtest_from_model_predictions(
@@ -326,12 +382,13 @@ class TestGetModelRoundByRound:
     async def test_round_by_round_aggregation(self, service):
         """Per-round accuracy and profit are calculated correctly."""
         mock_db = AsyncMock()
-        # Simulate aggregated rows: (round_id, tips_made, tips_correct, profit)
+        # Simulate aggregated rows:
+        # (round_id, tips_made, tips_correct, profit, real_odds_tips)
         mock_result = MagicMock()
         mock_result.all.return_value = [
-            (1, 4, 3, 20.0),   # Round 1: 3/4 correct, +$20
-            (2, 4, 2, 0.0),    # Round 2: 2/4 correct, $0
-            (3, 3, 1, -10.0),  # Round 3: 1/3 correct, -$10
+            (1, 4, 3, 17.0, 4),   # Round 1: 3/4 correct, +$17 (real odds)
+            (2, 4, 2, 0.0, 0),    # Round 2: 2/4 correct, $0 (fallback)
+            (3, 3, 1, -10.0, 2),  # Round 3: 1/3 correct, -$10
         ]
         mock_db.execute.return_value = mock_result
 
@@ -343,13 +400,16 @@ class TestGetModelRoundByRound:
         assert result[0]["tips_made"] == 4
         assert result[0]["tips_correct"] == 3
         assert result[0]["accuracy"] == 0.75
-        assert result[0]["profit"] == 20.0
+        assert result[0]["profit"] == 17.0
+        assert result[0]["odds_coverage"] == 1.0
 
         assert result[1]["round_id"] == 2
         assert result[1]["accuracy"] == 0.5
+        assert result[1]["odds_coverage"] == 0.0
 
         assert result[2]["round_id"] == 3
         assert result[2]["accuracy"] == pytest.approx(1 / 3)
+        assert result[2]["odds_coverage"] == pytest.approx(2 / 3)
 
     @pytest.mark.asyncio
     async def test_round_by_round_no_data(self, service):
@@ -369,7 +429,7 @@ class TestGetModelRoundByRound:
         mock_db = AsyncMock()
         mock_result = MagicMock()
         mock_result.all.return_value = [
-            (1, 0, 0, 0.0),
+            (1, 0, 0, 0.0, 0),
         ]
         mock_db.execute.return_value = mock_result
 
@@ -377,6 +437,7 @@ class TestGetModelRoundByRound:
 
         assert len(result) == 1
         assert result[0]["accuracy"] == 0.0
+        assert result[0]["odds_coverage"] == 0.0
 
 
 # ---------------------------------------------------------------------------

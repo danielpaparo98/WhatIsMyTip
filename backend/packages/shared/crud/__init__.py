@@ -1,6 +1,7 @@
 from .backtest import BacktestCRUD
 from .elo_cache import EloCacheCRUD
 from .events import EventsCRUD
+from .game_odds import GameOddsCRUD
 from .games import GameCRUD
 from .generation_progress import GenerationProgressCRUD
 from .match_analysis import MatchAnalysisCRUD
@@ -25,6 +26,7 @@ __all__ = [
     "GenerationProgressCRUD",
     "EloCacheCRUD",
     "EventsCRUD",
+    "GameOddsCRUD",
     "MatchAnalysisCRUD",
     "MatchReportCRUD",
     "create_model_version",

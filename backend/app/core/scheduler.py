@@ -1,8 +1,8 @@
 """APScheduler setup for in-process cron jobs (Phase 3).
 
-Wires the four :class:`app.cron.base.BaseJob` subclasses into an
-:class:`apscheduler.schedulers.asyncio.AsyncIOScheduler` using the
-cron expressions in :mod:`packages.shared.config`.
+Wires the :class:`app.cron.base.BaseJob` subclasses into an
+:class:`apscheduler.schedulers.asyncio.AsyncIOScheduler` using the cron
+expressions in :mod:`packages.shared.config`.
 
 The scheduler is started during the FastAPI ``lifespan`` startup
 phase (see :mod:`app.core.lifespan`) and shut down on app shutdown.
@@ -21,6 +21,7 @@ from app.cron.historic_refresh import HistoricRefreshJob
 from app.cron.league_sync import LeagueSyncJob
 from app.cron.match_completion import MatchCompletionJob
 from app.cron.model_retrain import ModelRetrainJob
+from app.cron.odds_sync import OddsSyncJob
 from app.cron.supplementary_sync import SupplementarySyncJob
 from app.cron.tip_generation import TipGenerationJob
 from packages.shared.config import settings
@@ -54,6 +55,7 @@ _MISFIRE_GRACE = {
     "model-retrain": 3600,    # 1 hour — weekly retrain job
     "supplementary-sync": 900, # 15 min — daily injuries/weather refresh
     "league-sync": 900,        # 15 min — daily state-league sweep
+    "odds-sync": 900,          # 15 min — daily bookmaker odds snapshot
 }
 
 
@@ -151,6 +153,18 @@ def build_scheduler(session_factory: Any) -> AsyncIOScheduler:
             max_instances=1,
             coalesce=True,
             misfire_grace_time=_MISFIRE_GRACE["league-sync"],
+        )
+    if settings.odds_sync_enabled:
+        scheduler.add_job(
+            OddsSyncJob(session_factory).execute,
+            CronTrigger.from_crontab(
+                settings.odds_sync_cron, timezone=settings.cron_timezone
+            ),
+            id="odds-sync",
+            name="AFL odds snapshot (The Odds API)",
+            max_instances=1,
+            coalesce=True,
+            misfire_grace_time=_MISFIRE_GRACE["odds-sync"],
         )
     return scheduler
 

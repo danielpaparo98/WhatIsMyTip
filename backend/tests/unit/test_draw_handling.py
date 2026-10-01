@@ -24,7 +24,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from packages.shared.models_ml.elo import EloModel
 from packages.shared.models_ml.form import FormModel
-from packages.shared.services.backtest import STAKE_PER_GAME, BacktestService
+from packages.shared.services.backtest import BacktestService
 
 
 def _drawn_game(*, team_at_home: bool = True):
@@ -112,8 +112,8 @@ class TestBacktestDrawScoring:
         game = _drawn_game()
         db.execute = AsyncMock(
             side_effect=[
-                _result([(tip, game)]),   # tip rows
-                _result([(1, 1, 1)]),     # round accuracies (1 round, 1/1)
+                _result([(tip, game, None)]),  # tip rows (BT-ODDS: + odds slot)
+                _result([(1, 1, 1)]),          # round accuracies (1 round, 1/1)
             ]
         )
 
@@ -122,7 +122,26 @@ class TestBacktestDrawScoring:
         )
 
         assert metrics["total_correct"] == 0
-        assert metrics["total_profit"] == -STAKE_PER_GAME
+
+    @pytest.mark.asyncio
+    async def test_tip_on_drawn_game_is_a_push(self):
+        """BT-ODDS: a drawn game refunds the stake — settlement is $0,
+        not the loss the old even-money scorer charged."""
+        db = AsyncMock(spec=AsyncSession)
+        tip = SimpleNamespace(selected_team="Away")
+        game = _drawn_game()
+        db.execute = AsyncMock(
+            side_effect=[
+                _result([(tip, game, None)]),
+                _result([(1, 1, 1)]),
+            ]
+        )
+
+        metrics = await BacktestService().calculate_backtest_from_tips(
+            db, season=2026, heuristic="best_bet"
+        )
+
+        assert metrics["total_profit"] == 0.0
 
 
 class TestEloDrawScoring:

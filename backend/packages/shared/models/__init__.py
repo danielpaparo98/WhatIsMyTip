@@ -75,6 +75,34 @@ class ModelPrediction(Base):
     __table_args__ = (UniqueConstraint("game_id", "model_name", name="uq_game_model"),)
 
 
+class GameOdds(Base):
+    """Bookmaker head-to-head odds snapshot for one game (BT-ODDS).
+
+    One row per (game, source) — the daily odds-sync job upserts the
+    latest snapshot, so by game day the row approximates closing odds.
+    Prices are decimal (e.g. 1.90).  Games without a row settle at the
+    representative fallback price in the backtest.
+    """
+
+    __tablename__ = "game_odds"
+
+    id = Column(Integer, primary_key=True, index=True)
+    game_id = Column(
+        Integer, ForeignKey("games.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    source = Column(String(30), nullable=False, default="the-odds-api", index=True)
+    home_odds = Column(Float, nullable=True)
+    away_odds = Column(Float, nullable=True)
+    bookmaker = Column(String(100), nullable=True)  # e.g. "consensus median (6 books)"
+    captured_at = Column(DateTime(timezone=True), nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+
+    __table_args__ = (
+        UniqueConstraint("game_id", "source", name="uq_game_odds_game_source"),
+    )
+
+
 class BacktestResult(Base):
     __tablename__ = "backtest_results"
 
