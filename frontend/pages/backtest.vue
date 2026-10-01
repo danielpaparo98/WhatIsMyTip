@@ -14,52 +14,81 @@
             {{ currentSeasonData.rounds_completed }} / {{ currentSeasonData.total_rounds }} rounds completed
           </p>
         </div>
-        
+
         <div v-if="currentSeasonLoading" class="loading" role="status" aria-live="polite">
           <div class="spinner"></div>
         </div>
         <div v-else-if="currentSeasonError" class="error" role="status" aria-live="polite">
           <p>{{ currentSeasonError }}</p>
         </div>
-        <div v-else class="current-season-cards">
-          <div v-for="heuristic in currentSeasonData.heuristics" :key="heuristic.heuristic" class="current-season-card">
-            <div class="card-header">
-              <h3>{{ formatHeuristic(heuristic.heuristic) }}</h3>
-              <span class="heuristic-badge">Current Season</span>
-            </div>
-            <div class="card-stats">
-              <div class="stat-row">
-                <span class="stat-label">Year-to-Date Profit</span>
-                <span class="stat-value" :class="{ positive: heuristic.total_profit > 0, negative: heuristic.total_profit < 0 }">
-                  ${{ heuristic.total_profit.toFixed(2) }}
-                </span>
+
+        <!-- Off-season / pre-Round-1 state: no graded tips yet -->
+        <div v-else-if="!hasSeasonResults" class="season-empty">
+          <p>The {{ currentSeasonData.season }} season hasn't started yet.</p>
+          <p class="season-empty-sub">
+            Performance tracking begins once Round 1 tips are graded. Historical
+            performance feeds the model weights shown below.
+          </p>
+        </div>
+
+        <template v-else>
+          <!-- BT-ODDS: explain exactly how profit is settled -->
+          <div class="profit-basis">
+            <p>
+              <strong>How profit is calculated:</strong> each tip carries a simulated
+              $10 stake. Games with bookmaker odds (The Odds API) settle at the real
+              decimal price for the tipped team; games without an odds snapshot settle
+              at a representative $1.90; drawn games refund the stake.
+              <em>Odds coverage</em> shows the share of tips settled at real prices.
+            </p>
+          </div>
+
+          <div class="current-season-cards">
+            <div v-for="heuristic in currentSeasonData.heuristics" :key="heuristic.heuristic" class="current-season-card">
+              <div class="card-header">
+                <h3>{{ formatHeuristic(heuristic.heuristic) }}</h3>
+                <span class="heuristic-badge">Current Season</span>
               </div>
-              <div class="stat-row">
-                <span class="stat-label">Projected Annual Profit</span>
-                <span class="stat-value projected" :class="{ positive: heuristic.projected_annual_profit > 0, negative: heuristic.projected_annual_profit < 0 }">
-                  ${{ heuristic.projected_annual_profit.toFixed(2) }}
-                </span>
-              </div>
-              <div class="disclaimer">
-                <small>Projections are based on early season performance and may change as the season progresses.</small>
-              </div>
-              <div class="stat-row">
-                <span class="stat-label">Accuracy</span>
-                <span class="stat-value">{{ (heuristic.total_accuracy * 100).toFixed(1) }}%</span>
-              </div>
-              <div class="stat-row">
-                <span class="stat-label">Rounds Played</span>
-                <span class="stat-value">{{ heuristic.rounds_played }}</span>
-              </div>
-              <div class="stat-row">
-                <span class="stat-label">Avg Profit/Round</span>
-                <span class="stat-value" :class="{ positive: heuristic.avg_profit_per_round > 0, negative: heuristic.avg_profit_per_round < 0 }">
-                  ${{ heuristic.avg_profit_per_round.toFixed(2) }}
-                </span>
+              <div class="card-stats">
+                <div class="stat-row">
+                  <span class="stat-label">Year-to-Date Profit</span>
+                  <span class="stat-value" :class="{ positive: heuristic.total_profit > 0, negative: heuristic.total_profit < 0 }">
+                    ${{ heuristic.total_profit.toFixed(2) }}
+                  </span>
+                </div>
+                <div v-if="heuristic.rounds_played > 0" class="stat-row">
+                  <span class="stat-label">Projected Annual Profit</span>
+                  <span class="stat-value projected" :class="{ positive: heuristic.projected_annual_profit > 0, negative: heuristic.projected_annual_profit < 0 }">
+                    ${{ heuristic.projected_annual_profit.toFixed(2) }}
+                  </span>
+                </div>
+                <div v-if="heuristic.rounds_played > 0" class="disclaimer">
+                  <small>Projections are based on early season performance and may change as the season progresses.</small>
+                </div>
+                <div class="stat-row">
+                  <span class="stat-label">Accuracy</span>
+                  <span class="stat-value">
+                    {{ heuristic.rounds_played > 0 ? (heuristic.total_accuracy * 100).toFixed(1) + '%' : '—' }}
+                  </span>
+                </div>
+                <div class="stat-row">
+                  <span class="stat-label">Rounds Played</span>
+                  <span class="stat-value">{{ heuristic.rounds_played }}</span>
+                </div>
+                <div class="stat-row">
+                  <span class="stat-label">Avg Profit/Round</span>
+                  <span class="stat-value" :class="{ positive: heuristic.avg_profit_per_round > 0, negative: heuristic.avg_profit_per_round < 0 }">
+                    ${{ heuristic.avg_profit_per_round.toFixed(2) }}
+                  </span>
+                </div>
+                <div class="stat-row">
+                  <span class="stat-label">Odds Coverage</span>
+                  <span class="stat-value">{{ (heuristic.odds_coverage * 100).toFixed(0) }}%</span>
+                </div>
               </div>
             </div>
           </div>
-        </div>
+        </template>
 
         <!-- Current Season: Model Performance -->
         <div v-if="currentSeasonModels" class="current-season-models">
@@ -225,6 +254,8 @@ interface CurrentSeasonHeuristic {
   rounds_played: number
   avg_profit_per_round: number
   projected_annual_profit: number
+  /** BT-ODDS: share of tips settled at real bookmaker odds (0–1). */
+  odds_coverage: number
 }
 interface CurrentSeasonResponse {
   season: number
@@ -284,6 +315,19 @@ const currentSeasonBestModel = computed(() => {
   return currentSeasonModels.value.reduce((best, m) =>
     m.overall_accuracy > best.overall_accuracy ? m : best,
   ).model_name
+})
+
+/**
+ * BT-ODDS UX: false until at least one round has been graded — drives
+ * the friendly off-season empty state instead of "$0.00" cards.
+ */
+const hasSeasonResults = computed(() => {
+  const data = currentSeasonData.value
+  if (!data) return false
+  return (
+    data.rounds_completed > 0 ||
+    data.heuristics.some((h) => h.rounds_played > 0)
+  )
 })
 
 /** Coefficients grouped by model for the chart. */
@@ -369,11 +413,12 @@ const loadCurrentSeasonData = async () => {
 }
 
 onMounted(async () => {
-  await Promise.all([
-    loadCurrentSeasonData(),
-    loadActiveModelData(),
-    loadCurrentSeasonModels(new Date().getFullYear()),
-  ])
+  // The season used for the model comparison comes from the server's
+  // current-season payload (falls back to the client year) — a client
+  // clock near New Year must not query a season with no data.
+  await Promise.all([loadCurrentSeasonData(), loadActiveModelData()])
+  const season = currentSeasonData.value?.season ?? new Date().getFullYear()
+  await loadCurrentSeasonModels(season)
 })
 </script>
 
@@ -455,7 +500,11 @@ onMounted(async () => {
 
 .heuristic-badge {
   padding: 0.25rem 0.625rem;
-  background: transparent;$2color: var(--color-text);$3border: 1px solid var(--color-text);border-radius: 0;text-transform: uppercase;
+  background: transparent;
+  color: var(--color-text);
+  border: 1px solid var(--color-text);
+  border-radius: 0;
+  text-transform: uppercase;
   font-size: 0.6875rem;
   font-weight: 600;
 }
@@ -675,57 +724,6 @@ onMounted(async () => {
   margin-bottom: 0.75rem;
 }
 
-/* Model Comparison (Models tab) Styles */
-.models-section {
-  padding: 1rem 0;
-}
-
-.model-comparison-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-  gap: 1rem;
-}
-
-.model-stat-card {
-  border: 1px solid var(--color-border);
-  padding: 1.25rem;
-  border-radius: 0;
-  transition: border-color 0.2s;
-}
-
-.model-stat-card.best-card {
-  border-color: var(--color-text);
-  border-width: 2px;
-}
-
-.card-header-row {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 1rem;
-  padding-bottom: 0.75rem;
-  border-bottom: 1px solid var(--color-border);
-}
-
-.card-header-row h3 {
-  font-size: 0.9375rem;
-  font-weight: 700;
-  margin: 0;
-}
-
-.best-badge {
-  display: inline-flex;
-  align-items: center;
-  padding: 0.1875rem 0.5rem;
-  background: var(--color-text);
-  color: var(--color-bg);
-  border-radius: 0;
-  font-size: 0.625rem;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-}
-
 .loading, .error {
   text-align: center;
   padding: 3rem 1.5rem;
@@ -903,6 +901,19 @@ onMounted(async () => {
     font-size: 0.875rem;
   }
 
+  .season-empty {
+    padding: 2rem 1rem;
+  }
+
+  .season-empty p {
+    font-size: 1rem;
+  }
+
+  .profit-basis {
+    padding: 0.75rem;
+    font-size: 0.8125rem;
+  }
+
   .active-model-section {
     padding: 2rem 1rem;
   }
@@ -915,10 +926,6 @@ onMounted(async () => {
 
   .loading, .error {
     padding: 2rem 1rem;
-  }
-
-  .sync-message p {
-    font-size: 0.9375rem;
   }
 }
 
@@ -935,10 +942,41 @@ onMounted(async () => {
   .current-season-cards {
     grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
   }
+}
 
-  .charts-grid {
-    grid-template-columns: 1fr;
-  }
+/* Off-season / pre-Round-1 empty state */
+.season-empty {
+  text-align: center;
+  padding: 2.5rem 1.5rem;
+  color: var(--color-muted);
+}
+
+.season-empty p {
+  font-size: 1.0625rem;
+  font-weight: 600;
+  margin-bottom: 0.375rem;
+}
+
+.season-empty-sub {
+  font-size: 0.875rem;
+  opacity: 0.75;
+}
+
+/* BT-ODDS: profit-settlement explainer shown above the cards */
+.profit-basis {
+  max-width: 900px;
+  margin: 0 auto 1.25rem;
+  padding: 0.875rem 1rem;
+  background: var(--color-bg);
+  border-left: 3px solid var(--color-text);
+  border-radius: 0.25rem;
+  font-size: 0.875rem;
+  line-height: 1.55;
+  color: var(--color-muted);
+}
+
+.profit-basis strong {
+  color: var(--color-text);
 }
 
 /* Disclaimer — visible on all screen sizes */
