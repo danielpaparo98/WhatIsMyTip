@@ -88,8 +88,12 @@ const ev = (overrides: Partial<SportEvent> & { id: number }): SportEvent => ({
 
 describe('resolveCompetition', () => {
   it('maps a league key to its competition id and current season', () => {
+    // TEAM-IDENTITY (2026-09-30, user request): the resolution now also
+    // surfaces the competition's sport_id so the crest population can
+    // scope its GET /api/teams?sport= fetch to the league's own sport.
     expect(resolveCompetition(SPORTS_PAYLOAD, 'wafl')).toEqual({
       competitionId: 42,
+      sportId: 'afl',
       seasonLabel: '2026',
     })
   })
@@ -100,6 +104,7 @@ describe('resolveCompetition', () => {
     payload[0].competitions[1].seasons.forEach(s => (s.is_current = false))
     expect(resolveCompetition(payload, 'wafl')).toEqual({
       competitionId: 42,
+      sportId: 'afl',
       seasonLabel: '2026',
     })
   })

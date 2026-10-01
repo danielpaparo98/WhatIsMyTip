@@ -296,6 +296,30 @@ export interface SportsListResponse {
   sports: SportInfo[]
 }
 
+// ---------------------------------------------------------------------------
+// TEAM-IDENTITY (2026-09-30, user request): club crest/colour identity for
+// the badge chain (useTeamIdentity). Mirrors the frozen
+// `TeamsIdentityResponse` Pydantic shape (backend/.../schemas/teams.py)
+// field-for-field — do not rename: the payload keys come straight from
+// the backend models. Identity columns are nullable (LEFT-JOIN to the
+// teams extension row): a team without identity data is still listed and
+// the frontend's populate step skips it.
+// ---------------------------------------------------------------------------
+
+/** Mirrors `TeamIdentityResponse` — one `kind='team'` participant. */
+export interface TeamIdentityPayload {
+  name: string
+  abbreviation?: string | null
+  logo_url?: string | null
+  primary_color?: string | null
+  secondary_color?: string | null
+}
+
+/** Mirrors `TeamsIdentityResponse` — envelope for `GET /api/teams`. */
+export interface TeamsIdentityResponse {
+  teams: TeamIdentityPayload[]
+}
+
 export const useApi = () => {
   const config = useRuntimeConfig()
   const apiBase = config.public.apiBase as string
@@ -562,6 +586,23 @@ export const useApi = () => {
     return response.json()
   }
 
+  // TEAM-IDENTITY (2026-09-30, user request): club identity fetch for the
+  // badge chain. Frozen contract: `sport` is OPTIONAL (omit = all sports),
+  // so the query string is appended ONLY when a filter is given — never a
+  // bare trailing '?'. Non-OK THROWS like getSports; the degradation
+  // (catch → badge fallback) is syncTeamIdentity's contract, not this
+  // method's.
+  const getTeams = async (sport?: string): Promise<TeamsIdentityResponse> => {
+    const queryParams = new URLSearchParams()
+    if (sport) queryParams.append('sport', sport)
+    const queryString = queryParams.toString()
+    const response = await fetchWithTimeout(
+      queryString ? `/api/teams?${queryString}` : '/api/teams',
+    )
+    if (!response.ok) throw new Error('Failed to fetch teams')
+    return response.json()
+  }
+
   return {
     getGames,
     getGame,
@@ -582,5 +623,6 @@ export const useApi = () => {
     getSports,
     getEvents,
     getEvent,
+    getTeams,
   }
 }

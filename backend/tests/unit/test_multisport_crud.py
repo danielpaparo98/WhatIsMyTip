@@ -9,6 +9,7 @@ not silent cross-sport row mixing at runtime.
 from __future__ import annotations
 
 import inspect
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -253,3 +254,84 @@ class TestParticipantResolverIdentity:
 
         assert resolved is participant
         assert db.execute.await_count == 1
+
+
+class TestParticipantCRUDIdentity:
+    """TEAM-IDENTITY (2026-09-30, user request): public identity read.
+
+    Team-kind participants LEFT JOINed to their ``teams`` extension,
+    mapped to API-shaped dicts (identity fields ``None`` when the feed
+    supplied nothing); an unknown sport simply matches no rows.
+    """
+
+    @pytest.mark.asyncio
+    async def test_list_team_identities_maps_rows(self):
+        from packages.shared.crud.multisport import ParticipantCRUD
+
+        row = SimpleNamespace(
+            name="Peel Thunder",
+            abbreviation=None,
+            logo_url="https://cdn.example/peel.png",
+            primary_color="#000066",
+            secondary_color="#FFFFFF",
+        )
+        db = AsyncMock(spec=AsyncSession)
+        result = MagicMock()
+        result.all.return_value = [row]
+        db.execute = AsyncMock(return_value=result)
+
+        teams = await ParticipantCRUD.list_team_identities(db, "afl")
+
+        assert teams == [
+            {
+                "name": "Peel Thunder",
+                "abbreviation": None,
+                "logo_url": "https://cdn.example/peel.png",
+                "primary_color": "#000066",
+                "secondary_color": "#FFFFFF",
+            }
+        ]
+        assert db.execute.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_list_team_identities_unknown_sport_yields_empty(self):
+        from packages.shared.crud.multisport import ParticipantCRUD
+
+        db = AsyncMock(spec=AsyncSession)
+        result = MagicMock()
+        result.all.return_value = []
+        db.execute = AsyncMock(return_value=result)
+
+        assert await ParticipantCRUD.list_team_identities(db, "tiddlywinks") == []
+
+    @pytest.mark.asyncio
+    async def test_list_team_identities_without_filter(self):
+        """Omitting the sport filter queries across all sports."""
+        from packages.shared.crud.multisport import ParticipantCRUD
+
+        rows = [
+            SimpleNamespace(
+                name="Adelaide",
+                abbreviation="ADL",
+                logo_url=None,
+                primary_color="#002B5C",
+                secondary_color="#E31937",
+            ),
+            SimpleNamespace(
+                name="Mt Gravatt Vultures",
+                abbreviation=None,
+                logo_url=None,
+                primary_color=None,
+                secondary_color=None,
+            ),
+        ]
+        db = AsyncMock(spec=AsyncSession)
+        result = MagicMock()
+        result.all.return_value = rows
+        db.execute = AsyncMock(return_value=result)
+
+        teams = await ParticipantCRUD.list_team_identities(db)
+
+        assert [t["name"] for t in teams] == ["Adelaide", "Mt Gravatt Vultures"]
+        assert teams[0]["abbreviation"] == "ADL"
+        assert teams[1]["logo_url"] is None

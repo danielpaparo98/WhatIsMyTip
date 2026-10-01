@@ -342,6 +342,16 @@ describe('useLeagueEvents refactor', () => {
     // truth for the league/competition mapping and round derivation.
     expect(COMPOSABLE).toMatch(/from '\.\.\/lib\/leagueRoutes'/)
   })
+
+  it('populates team identity inside the awaited fetch handler (crests bake into prerender)', () => {
+    // TEAM-IDENTITY (2026-09-30, user request): the club-crest sync runs
+    // INSIDE the awaited useAsyncData handler — population completes
+    // before the template renders, so real crests bake into the
+    // prerendered HTML (the SEO-C1 contract that motivated the awaited
+    // fetch), keyed to the matched competition's own sport_id.
+    expect(COMPOSABLE).toMatch(/import \{ syncTeamIdentity \} from '\.\/useTeamIdentity'/)
+    expect(COMPOSABLE).toMatch(/await syncTeamIdentity\(resolved\.sportId\)/)
+  })
 })
 
 // ---------------------------------------------------------------------------

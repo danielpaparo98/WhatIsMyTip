@@ -173,6 +173,7 @@ from app.api.tips import router as tips_router
 from app.api.backtest import router as backtest_router
 from app.api.admin import router as admin_router
 from app.api.sports import router as sports_router
+from app.api.teams import router as teams_router
 
 # NOTE — DigitalOcean App Platform ingress path-prefix routing trims the
 # matched prefix before the request reaches this service: a public
@@ -206,3 +207,9 @@ app.include_router(sports_router, prefix="/sports", tags=["sports"], include_in_
 # untouched during the deprecation window.
 app.include_router(events_router, prefix="/api/events", tags=["events"])
 app.include_router(events_router, prefix="/events", tags=["events"], include_in_schema=False)
+
+# TEAM-IDENTITY (2026-09-30, user request): expose the club crests the
+# ingestion already captured on the teams extension rows (migration 0011)
+# so state-league clubs render real badges instead of initials.
+app.include_router(teams_router, prefix="/api/teams", tags=["teams"])
+app.include_router(teams_router, prefix="/teams", tags=["teams"], include_in_schema=False)
