@@ -31,6 +31,19 @@ class Settings(BaseSettings):
     squiggle_api_base: str = "https://api.squiggle.com.au"
     squiggle_contact_email: str = "contact@whatismytip.com"
 
+    # --- The Odds API (BT-ODDS, 2026-10 review) -----------------------------
+    # Bookmaker head-to-head odds for AFL.  The daily odds-sync job takes
+    # one snapshot per day (~30 credits/month, well inside the free tier's
+    # 500/month).  Backtests settle games that have a snapshot at their
+    # real decimal price and everything else at the representative
+    # fallback price (see services/settlement.py).
+    odds_api_key: str = ""  # Set via ODDS_API_KEY env var
+    odds_api_base: str = "https://api.the-odds-api.com/v4"
+    odds_api_sport_key: str = "aussie_rules_afl"
+    odds_api_regions: str = "au"
+    odds_sync_enabled: bool = True
+    odds_sync_cron: str = "15 6 * * *"  # daily 06:15 app-tz
+
     # OpenRouter Configuration
     openrouter_api_key: str = ""
     openrouter_model: str = "deepseek/deepseek-v4-flash"
