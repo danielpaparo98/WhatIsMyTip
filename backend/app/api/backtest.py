@@ -200,6 +200,7 @@ async def get_table(
                         tips_correct=r["tips_correct"],
                         accuracy=r["accuracy"],
                         profit=r["profit"],
+                        odds_coverage=r["odds_coverage"],
                     )
                     for r in round_data
                 ],

@@ -84,7 +84,8 @@ backend/
 │       ├── daily_sync.py
 │       ├── match_completion.py
 │       ├── tip_generation.py
-│       └── historic_refresh.py
+│       ├── historic_refresh.py
+│       └── odds_sync.py               # Daily AFL odds snapshot (The Odds API)
 ├── packages/                          # Shared business logic
 │   └── shared/                        # Imported as `packages.shared.*`
 │       ├── config.py                  # Pydantic Settings (env vars + cron expressions)
@@ -100,6 +101,7 @@ backend/
 │       ├── schemas/                   # Pydantic validation schemas
 │       ├── services/                  # Business logic services
 │       ├── squiggle/                  # Squiggle API client
+│       ├── odds_api/                  # The Odds API client (bookmaker odds)
 │       ├── afl_data/                  # AFLTables + FootyWire clients
 │       ├── weather/                   # Open-Meteo weather client
 │       └── openrouter/                # OpenRouter AI client
@@ -219,6 +221,10 @@ All configuration is managed through [`packages/shared/config.py`](../backend/pa
 | `OPENROUTER_API_KEY` | OpenRouter API key for AI explanations |
 | `OPENROUTER_MODEL` | Model identifier (e.g., `deepseek/deepseek-v4-flash`) |
 | `OPENROUTER_BASE_URL` | OpenRouter API base URL (`https://openrouter.ai/api/v1`) |
+| `ODDS_API_KEY` | The Odds API key for bookmaker AFL odds (blank = odds sync disabled, backtests settle at the representative fallback price) |
+| `ODDS_API_BASE` | The Odds API base URL (`https://api.the-odds-api.com/v4`) |
+| `ODDS_API_SPORT_KEY` | Sport key for AFL odds (`aussie_rules_afl`) |
+| `ODDS_API_REGIONS` | Bookmaker regions (`au`) |
 
 ### Admin & Security
 
@@ -296,7 +302,7 @@ The full machine-readable schema is available at:
 
 ## Scheduled Jobs
 
-The backend runs **4 scheduled jobs** in-process via APScheduler (see [`app/core/scheduler.py`](../backend/app/core/scheduler.py:1)).  The scheduler is started in the FastAPI lifespan (see [`app/core/lifespan.py`](../backend/app/core/lifespan.py:1)) and stopped on shutdown.
+The backend runs its scheduled jobs in-process via APScheduler (see [`app/core/scheduler.py`](../backend/app/core/scheduler.py:1)).  The scheduler is started in the FastAPI lifespan (see [`app/core/lifespan.py`](../backend/app/core/lifespan.py:1)) and stopped on shutdown.
 
 All schedules are in **`CRON_TIMEZONE`** (default `Australia/Perth`, UTC+8).  Schedules can be overridden per-environment with the env vars listed in the table below.
 
@@ -306,6 +312,7 @@ All schedules are in **`CRON_TIMEZONE`** (default `Australia/Perth`, UTC+8).  Sc
 | `match-completion` | `5,20,35,50 * * * *` | `MATCH_COMPLETION_CRON` | [`match_completion.py`](../backend/packages/shared/services/match_completion.py:1) — Detects completed matches, updates final scores, invalidates affected game caches |
 | `tip-generation` | `0 3 * * *` | `TIP_GENERATION_CRON` | [`tip_generation.py`](../backend/packages/shared/services/tip_generation.py:1) — Runs 8 models in parallel via [`ModelOrchestrator`](../backend/packages/shared/orchestrator.py:1), applies 3 heuristics, generates AI explanations |
 | `historic-refresh` | `0 4 * * 0` | `HISTORIC_REFRESH_CRON` | [`historic_data_refresh.py`](../backend/packages/shared/services/historic_data_refresh.py:1) — Fetches player stats, injuries, and weather from AFLTables, FootyWire, Open-Meteo |
+| `odds-sync` | `15 6 * * *` | `ODDS_SYNC_CRON` | [`odds_sync.py`](../backend/packages/shared/services/odds_sync.py:1) — Daily AFL head-to-head odds snapshot from The Odds API into `game_odds` (BT-ODDS); skips cleanly when `ODDS_API_KEY` is unset. Backtests settle games with a snapshot at real decimal prices, all others at the representative $1.90 fallback |
 
 ### Concurrency / multi-instance safety
 

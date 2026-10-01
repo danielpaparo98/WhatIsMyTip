@@ -371,13 +371,13 @@ def test_migration_0008_downgrade_drops_table():
     assert "ix_match_reports_game_id" in src
 
 
-def test_migration_head_is_0011():
-    """After adding 0011 (team identity columns), the migration tree
-    must have exactly one head: 0011_team_identity.
+def test_migration_head_is_0012():
+    """After adding 0012 (game odds snapshots), the migration tree
+    must have exactly one head: 0012_game_odds.
     """
     revisions = _all_migrations()
     heads = [rev for rev in revisions if rev not in set(revisions.values())]
-    assert "0011_team_identity" in heads
+    assert "0012_game_odds" in heads
     assert len(heads) == 1, f"expected a single head, got {heads}"
 
 
@@ -388,6 +388,29 @@ def test_migration_0011_chains_off_0010():
     """0011 must chain directly off 0010 (the previous head)."""
     revisions = _all_migrations()
     assert revisions.get("0011_team_identity") == "0010_consolidated_multisport"
+
+
+def test_migration_0012_chains_off_0011():
+    """0012 must chain directly off 0011 (the previous head)."""
+    revisions = _all_migrations()
+    assert revisions.get("0012_game_odds") == "0011_team_identity"
+
+
+def test_migration_0012_creates_game_odds_table():
+    """BT-ODDS: the upgrade must create ``game_odds`` with the decimal
+    price columns, captured_at, and the (game, source) uniqueness; the
+    downgrade must drop it."""
+    up_src = _read_source("2026_10_01_0900-0012_game_odds", "upgrade")
+    assert '"game_odds"' in up_src
+    assert '"home_odds"' in up_src
+    assert '"away_odds"' in up_src
+    assert '"captured_at"' in up_src
+    assert "uq_game_odds_game_source" in up_src
+    # Decimal prices are nullable (a book may quote only one side).
+    assert "sa.Float()" in up_src
+
+    down_src = _read_source("2026_10_01_0900-0012_game_odds", "downgrade")
+    assert 'op.drop_table("game_odds")' in down_src
 
 
 def test_migration_0011_adds_team_identity_columns():

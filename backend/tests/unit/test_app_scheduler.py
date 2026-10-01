@@ -39,8 +39,9 @@ class TestBuildScheduler:
     def test_registers_all_scheduled_jobs(self):
         scheduler = build_scheduler(_make_session_factory())
         job_ids = {job.id for job in scheduler.get_jobs()}
-        # 7 jobs registered with these IDs (model-retrain,
-        # supplementary-sync and league-sync are enabled by default)
+        # 8 jobs registered with these IDs (model-retrain,
+        # supplementary-sync, league-sync and odds-sync are enabled by
+        # default)
         assert "daily-sync" in job_ids
         assert "match-completion" in job_ids
         assert "tip-generation" in job_ids
@@ -48,13 +49,15 @@ class TestBuildScheduler:
         assert "model-retrain" in job_ids
         assert "supplementary-sync" in job_ids
         assert "league-sync" in job_ids
-        assert len(job_ids) == 7
+        assert "odds-sync" in job_ids
+        assert len(job_ids) == 8
 
     def test_jobs_use_cron_triggers(self):
         scheduler = build_scheduler(_make_session_factory())
         for job_id in (
             "daily-sync", "match-completion", "tip-generation",
             "historic-refresh", "model-retrain", "league-sync",
+            "odds-sync",
         ):
             job = scheduler.get_job(job_id)
             assert job is not None
@@ -69,6 +72,7 @@ class TestBuildScheduler:
         for job_id in (
             "daily-sync", "match-completion", "tip-generation",
             "historic-refresh", "model-retrain", "league-sync",
+            "odds-sync",
         ):
             job = scheduler.get_job(job_id)
             assert job.max_instances == 1, f"{job_id} allows > 1 instance"
@@ -79,6 +83,7 @@ class TestBuildScheduler:
         for job_id in (
             "daily-sync", "match-completion", "tip-generation",
             "historic-refresh", "model-retrain", "league-sync",
+            "odds-sync",
         ):
             job = scheduler.get_job(job_id)
             assert job.coalesce is True, f"{job_id} coalesce is False"
@@ -169,6 +174,49 @@ class TestBuildScheduler:
         fields = {f.name: str(f) for f in job.trigger.fields}
         assert fields["minute"] == "15"
         assert fields["hour"] == "4"
+
+    def test_odds_sync_registered_when_enabled(self, monkeypatch):
+        """BT-ODDS: the odds-sync job is registered when enabled."""
+        from packages.shared import config as config_module
+
+        fake_settings = config_module.Settings(odds_sync_enabled=True)
+        monkeypatch.setattr(scheduler_module, "settings", fake_settings)
+
+        scheduler = build_scheduler(_make_session_factory())
+        job = scheduler.get_job("odds-sync")
+        assert job is not None
+        assert isinstance(job.trigger, CronTrigger)
+        assert job.max_instances == 1
+        assert job.coalesce is True
+
+    def test_odds_sync_not_registered_when_disabled(self, monkeypatch):
+        """The odds-sync job is absent when ``odds_sync_enabled`` is False."""
+        from packages.shared import config as config_module
+
+        fake_settings = config_module.Settings(odds_sync_enabled=False)
+        monkeypatch.setattr(scheduler_module, "settings", fake_settings)
+
+        scheduler = build_scheduler(_make_session_factory())
+        assert scheduler.get_job("odds-sync") is None
+        # The core jobs are still registered.
+        job_ids = {job.id for job in scheduler.get_jobs()}
+        assert {"daily-sync", "match-completion", "tip-generation", "historic-refresh"} <= job_ids
+
+    def test_odds_sync_uses_cron_string_from_settings(self, monkeypatch):
+        """A custom ``odds_sync_cron`` expression is plumbed into the trigger."""
+        from packages.shared import config as config_module
+
+        fake_settings = config_module.Settings(
+            odds_sync_cron="45 7 * * *", odds_sync_enabled=True
+        )
+        monkeypatch.setattr(scheduler_module, "settings", fake_settings)
+
+        scheduler = build_scheduler(_make_session_factory())
+        job = scheduler.get_job("odds-sync")
+        assert job is not None
+        fields = {f.name: str(f) for f in job.trigger.fields}
+        assert fields["minute"] == "45"
+        assert fields["hour"] == "7"
 
     def test_reads_cron_expressions_from_settings(self, monkeypatch):
         """Custom cron expressions in settings should be picked up by the scheduler."""

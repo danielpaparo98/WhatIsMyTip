@@ -37,6 +37,10 @@ class BacktestTableRow(BaseModel):
     tips_correct: int
     accuracy: float
     profit: float
+    # BT-ODDS: share of the round's tips settled at real bookmaker odds
+    # (0.0–1.0). Tips without a snapshot settle at the representative
+    # fallback price.
+    odds_coverage: float = 0.0
 
 
 class BacktestTableData(BaseModel):
@@ -70,6 +74,10 @@ class CurrentSeasonHeuristicPerformance(BaseModel):
     rounds_played: int
     avg_profit_per_round: float
     projected_annual_profit: float
+    # BT-ODDS: share of tips settled at real bookmaker odds (0.0–1.0).
+    # Tips without an odds snapshot settle at the representative $1.90
+    # fallback price — surface this so users can read profit honestly.
+    odds_coverage: float = 0.0
 
 
 class CurrentSeasonResponse(BaseModel):
