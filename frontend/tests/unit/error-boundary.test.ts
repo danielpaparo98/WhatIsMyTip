@@ -40,6 +40,10 @@ describe('FX-10: error page exists', () => {
   })
 
   it('provides a link back to the home page', () => {
-    expect(source).toMatch(/to="\/"/)
+    // LEAGUE-NAV (2026-09-30, user request): the home link is
+    // league-aware — it binds the shared `homePath` (AFL root or
+    // /{league}) instead of a hardcoded "/". Pinned behaviourally in
+    // league-nav.test.ts.
+    expect(source).toMatch(/:to="homePath"/)
   })
 })
