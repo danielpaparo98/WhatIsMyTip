@@ -371,14 +371,41 @@ def test_migration_0008_downgrade_drops_table():
     assert "ix_match_reports_game_id" in src
 
 
-def test_migration_head_is_0012():
-    """After adding 0012 (game odds snapshots), the migration tree
-    must have exactly one head: 0012_game_odds.
+def test_migration_head_is_0013():
+    """After adding 0013 (model artifact columns, BT-1), the migration
+    tree must have exactly one head: 0013_add_model_artifact_columns.
     """
     revisions = _all_migrations()
     heads = [rev for rev in revisions if rev not in set(revisions.values())]
-    assert "0012_game_odds" in heads
+    assert "0013_add_model_artifact_columns" in heads
     assert len(heads) == 1, f"expected a single head, got {heads}"
+
+
+_MIG_0013 = "2026_10_04_1200-0013_add_model_artifact_columns"
+
+
+def test_migration_0013_chains_off_0012():
+    """0013 must chain directly off 0012 (the previous head)."""
+    revisions = _all_migrations()
+    assert revisions.get("0013_add_model_artifact_columns") == "0012_game_odds"
+
+
+def test_migration_0013_adds_artifact_columns():
+    """BT-1: the upgrade must add the three nullable artifact columns to
+    ``model_versions``; the downgrade must drop them in reverse order."""
+    up_src = _read_source(_MIG_0013, "upgrade")
+    assert '"model_versions"' in up_src
+    assert '"artifact"' in up_src
+    assert "sa.LargeBinary()" in up_src
+    assert '"artifact_format"' in up_src
+    assert "sa.String(length=16)" in up_src
+    assert '"shap_base_value"' in up_src
+    assert "sa.Float()" in up_src
+
+    down_src = _read_source(_MIG_0013, "downgrade")
+    assert 'op.drop_column("model_versions", "artifact")' in down_src
+    assert 'op.drop_column("model_versions", "artifact_format")' in down_src
+    assert 'op.drop_column("model_versions", "shap_base_value")' in down_src
 
 
 _MIG_0011 = "2026_09_24_2057-0011_team_identity"

@@ -21,7 +21,8 @@ from packages.shared.models_ml.elo import EloModel
 from packages.shared.models_ml.prediction import Prediction
 from packages.shared.models_ml.registry import ModelRegistry, build_default_registry
 from packages.shared.orchestrator import ModelOrchestrator
-from packages.shared.sport_context import AFL, SportContext
+from packages.shared.sport_context import AFL
+
 
 class TestDefaultRegistry:
     def test_default_registry_matches_legacy_model_names(self):
@@ -64,8 +65,9 @@ class TestCustomRegistry:
         )
         assert [m.get_name() for m in orch.models] == ["elo", "form"]
         # heuristics are still constructed over the registry's models
+        # (BT-1 decision 3: boosted_tip replaced best_bet)
         assert set(orch.get_available_heuristics()) == {
-            "best_bet",
+            "boosted_tip",
             "yolo",
             "weighted_tip",
         }
