@@ -12,7 +12,7 @@ export const MODEL_DISPLAY_NAMES: Record<string, string> = SPORT_CONFIG.modelDis
 
 /**
  * Sort an array of objects by their heuristic field matching
- * HEURISTIC_ORDER (Weighted Tip → Best Bet → YOLO).
+ * HEURISTIC_ORDER (Boosted Tip → Weighted Tip → Best Bet → YOLO).
  * Items whose heuristic is not in the list sink to the end.
  */
 export function sortByHeuristicOrder<T extends { heuristic: string }>(

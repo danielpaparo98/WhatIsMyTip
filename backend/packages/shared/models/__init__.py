@@ -1,3 +1,13 @@
+"""SQLAlchemy models for the WhatIsMyTip backend.
+
+Aggregates every ORM table so ``Base.metadata`` registers them all for
+alembic autogenerate.  BT-1: :class:`ModelVersion` additionally carries
+nullable artifact columns (``artifact`` / ``artifact_format`` /
+``shap_base_value``) so the ``boosted_tip`` XGBoost heuristic can
+persist its serialized ensemble alongside the ``weighted_tip`` linear
+state in the same table.
+"""
+
 from datetime import datetime, timezone
 
 from sqlalchemy import (
@@ -8,6 +18,7 @@ from sqlalchemy import (
     Float,
     ForeignKey,
     Integer,
+    LargeBinary,
     String,
     Text,
     UniqueConstraint,
@@ -328,6 +339,14 @@ class ModelVersion(Base):
     metadata and quality metrics.  ``is_active`` marks the version the
     runtime should serve; weekly retraining promotes a new version by
     flipping this flag so reads are never blocked.
+
+    BT-1: versions of the ``boosted_tip`` XGBoost heuristic reuse this
+    table with three nullable artifact columns — ``artifact`` holds the
+    ``get_booster().save_raw(raw_format="json")`` bytes, ``artifact_format``
+    tags the serialization (``"json"``), and ``shap_base_value`` stores the
+    TreeExplainer expected value.  All three are ``NULL`` for linear
+    (``weighted_tip``) versions, which keep their weights in
+    :class:`ModelCoefficient` rows instead.
     """
 
     __tablename__ = "model_versions"
@@ -343,6 +362,13 @@ class ModelVersion(Base):
     )
     training_rows = Column(Integer, nullable=False, default=0)
     metrics = Column(JSONB, nullable=True)  # e.g. {"r2": ..., "mae": ...}
+    # BT-1: boosted_tip stores its trained XGBoost ensemble as an opaque
+    # byte blob — a tree ensemble has no per-feature intercept/weights to
+    # express as rows.  Nullable so weighted_tip versions are unaffected.
+    artifact = Column(LargeBinary, nullable=True)
+    artifact_format = Column(String(16), nullable=True)  # e.g. "json"
+    #: TreeExplainer expected value (SHAP base) for boosted_tip versions.
+    shap_base_value = Column(Float, nullable=True)
     is_active = Column(Boolean, nullable=False, default=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
@@ -363,6 +389,15 @@ class ModelCoefficient(Base):
     ``feature_name`` is the name of an underlying model (e.g. ``elo``,
     ``form``) and ``coefficient`` is the weight the LinearRegression
     learned for combining it.
+
+    BT-1 (intentional overload): for ``boosted_tip`` versions this row
+    instead stores the global SHAP feature importance —
+    ``coefficient = mean |SHAP value|`` for ``feature_name``.  Same
+    table and shape, different semantics, so the existing
+    coefficient-chart pipeline renders boosted-tip importances with no
+    changes.  Which semantics apply follows from the owning version's
+    ``model_name`` (``weighted_tip`` → linear weight, ``boosted_tip`` →
+    mean |SHAP|).
     """
 
     __tablename__ = "model_coefficients"

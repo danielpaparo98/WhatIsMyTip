@@ -230,12 +230,15 @@ const props = withDefaults(defineProps<Props>(), {
 const { getLogoUrl, getTeamDisplayName } = useTeamLogos()
 const { formatDate, formatHeuristic, getModelDisplayName } = useFormatters()
 
-// GF-DESIGN (user request): the weighted tip is the site's primary
-// recommendation — it leads the card row.  best_bet and yolo follow.
+// BT-1 (boosted-tip): boosted_tip is the site's flagship recommendation
+// — it leads the card row, weighted_tip and yolo follow.  best_bet is
+// KEPT so historical seasons' stored tips still render in order; it is
+// simply no longer generated for new games.
 const TIP_ORDER: Record<string, number> = {
-  weighted_tip: 0,
-  best_bet: 1,
-  yolo: 2,
+  boosted_tip: 0,
+  weighted_tip: 1,
+  best_bet: 2,
+  yolo: 3,
 }
 
 // Optional-safe section data: every list degrades to an empty array so

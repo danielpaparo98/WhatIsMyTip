@@ -8,7 +8,7 @@ Routes (mounted at ``/api/tips``):
 * ``GET  /``                    — list tips (filters: season, round, heuristic, limit)
 * ``GET  /games-with-tips``     — games-with-tips for a round (requires season, round)
 * ``GET  /{heuristic}``         — tips for one heuristic (``best_bet`` /
-                                   ``weighted_tip`` / ``yolo``)
+                                   ``weighted_tip`` / ``yolo`` / ``boosted_tip``)
 * ``POST /generate``            — generate tips for a round
                                    (requires the admin ``X-API-Key``; the
                                    nightly ``tip-generation`` cron is the
@@ -47,8 +47,11 @@ router = APIRouter()
 
 
 # Heuristics allow-list (mirrors the FaaS handler).
-VALID_HEURISTICS = ["best_bet", "weighted_tip", "yolo"]
-_HEURISTIC_PATTERN = r"^(best_bet|weighted_tip|yolo)$"
+# ``boosted_tip`` joined with the boosted-tip feature; ``best_bet`` is
+# KEPT so historical tips rows remain queryable (feature decision 3) —
+# it no longer generates new tips (removed from the orchestrator).
+VALID_HEURISTICS = ["best_bet", "weighted_tip", "yolo", "boosted_tip"]
+_HEURISTIC_PATTERN = r"^(best_bet|weighted_tip|yolo|boosted_tip)$"
 
 # Hard ceiling for on-demand generation inside an HTTP request.  The
 # nightly cron allows 30 minutes, but an HTTP request hanging that long
@@ -281,7 +284,7 @@ async def tips_by_heuristic(
         str,
         Path(
             pattern=_HEURISTIC_PATTERN,
-            description="Heuristic name (best_bet, weighted_tip, yolo)",
+            description="Heuristic name (best_bet, weighted_tip, yolo, boosted_tip)",
         ),
     ],
     db: Annotated[AsyncSession, Depends(get_db)],

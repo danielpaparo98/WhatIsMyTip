@@ -22,7 +22,7 @@ export interface SportConfig {
   stageNoun: string
   /** Display timezone — pinned so prerendered HTML matches the client. */
   displayTimezone: string
-  /** Heuristic display order (Weighted Tip first). */
+  /** Heuristic display order (Boosted Tip first — BT-1 flagship). */
   heuristicOrder: string[]
   heuristicLabels: Record<string, string>
   modelDisplayNames: Record<string, string>
@@ -36,8 +36,12 @@ export const AFL_CONFIG: SportConfig = {
   contestNoun: 'Game',
   stageNoun: 'Round',
   displayTimezone: 'Australia/Sydney',
-  heuristicOrder: ['weighted_tip', 'best_bet', 'yolo'],
+  // BT-1 (boosted-tip): boosted_tip leads as the flagship heuristic;
+  // best_bet is no longer generated (removed from the orchestrator) but
+  // stays listed so historical tips/backtest rows still render.
+  heuristicOrder: ['boosted_tip', 'weighted_tip', 'best_bet', 'yolo'],
   heuristicLabels: {
+    boosted_tip: 'Boosted Tip',
     weighted_tip: 'Weighted Tip',
     best_bet: 'Best Bet',
     yolo: 'YOLO',

@@ -156,6 +156,11 @@ class Settings(BaseSettings):
     # (default Australia/Perth).  Toggle ``model_retrain_enabled`` to
     # register/skip the job in the scheduler.
     model_retrain_enabled: bool = True
+    # BT-1: boosted companion of the weekly retrain — the SAME
+    # ``model_retrain_cron`` slot trains the ``boosted_tip`` XGBoost model
+    # right after the linear fit (one job, two models; no separate cron
+    # entry).  Flip to False for a linear-only weekly run.
+    boosted_retrain_enabled: bool = True
 
     # Supplementary Data Sync (P3-3): scheduled refresh of the injury
     # (FootyWire) and weather (Open-Meteo) feeds.  These were previously

@@ -6,12 +6,38 @@ with its :class:`ModelCoefficient` rows in a single transaction, and
 atomically promotes it to the active version when ``set_active=True``.
 
 The runtime reads the currently-serving weights via
-:func:`get_active_coefficients`; weekly retraining (Subtask 3) writes a
+:func:`get_active_coefficients`; weekly retraining writes a
 new version here and flips ``is_active`` so the changeover is
 non-blocking.
+
+BT-1 (boosted_tip XGBoost heuristic): the same table now also stores
+gradient-boosted models.  Decision recorded here on purpose — we
+EXTENDED :func:`create_model_version` with optional ``artifact`` /
+``artifact_format`` / ``shap_base_value`` keyword arguments instead of
+adding a parallel ``create_boosted_model_version``, because both
+heuristics share the identical insert/activate/deactivate transaction
+and a second function would duplicate it.  Omitting the new arguments
+(None defaults) reproduces the exact pre-BT-1 behaviour, so every
+``weighted_tip`` caller is unchanged.  Two overloads to know about:
+
+* ``artifact`` — the serialized XGBoost ensemble
+  (``get_booster().save_raw(raw_format="json")`` bytes) stored as
+  ``BYTEA``; read back via :func:`get_active_model_artifact`.  A tree
+  ensemble has no per-feature weights, so the blob IS the model.
+* ``coefficients`` — for ``boosted_tip`` versions this mapping carries
+  the global SHAP feature importance (``feature_name -> mean |SHAP
+  value|``) instead of linear weights.  Same rows, same unique
+  constraint, different semantics — documented on the
+  :class:`~packages.shared.models.ModelCoefficient` model too — so the
+  existing coefficient-chart pipeline works unchanged.
+
+This module deliberately imports NO heavy ML library (no xgboost, shap
+or sklearn at module level): artifacts are opaque bytes here and
+serialisation stays in the (lazy) retrain/heuristic code paths — pinned
+by ``tests/unit/test_lazy_sklearn.py``.
 """
 
-from typing import Optional
+from typing import Any, Optional
 
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -29,23 +55,44 @@ async def create_model_version(
     version: int,
     intercept: float,
     training_rows: int,
-    metrics: Optional[dict],
+    metrics: Optional[dict[str, Any]],
     coefficients: dict[str, float],
     set_active: bool = True,
+    artifact: Optional[bytes] = None,
+    artifact_format: Optional[str] = None,
+    shap_base_value: Optional[float] = None,
 ) -> ModelVersion:
     """Insert a model version and its coefficient rows in one transaction.
 
     Args:
         session: Async database session.
-        model_name: Name of the model (e.g. ``"weighted_tip"``).
+        model_name: Name of the model (e.g. ``"weighted_tip"`` or the
+            BT-1 ``"boosted_tip"``).
         version: Monotonically increasing version number for the model.
-        intercept: The ``LinearRegression`` intercept term.
+        intercept: The ``LinearRegression`` intercept term (``0.0`` for
+            boosted_tip versions — the ensemble has no intercept, the
+            SHAP base value plays that role, see ``shap_base_value``).
         training_rows: Number of rows the model was trained on.
-        metrics: Optional quality metrics, e.g. ``{"r2": ..., "mae": ...}``.
+        metrics: Optional quality metrics, e.g. ``{"r2": ..., "mae": ...}``
+            (boosted_tip adds ``"shap_base_value"``).
         coefficients: Mapping of ``feature_name -> coefficient`` weight.
+            BT-1 overload: for ``boosted_tip`` versions this carries the
+            global SHAP feature importance — ``feature_name -> mean
+            |SHAP value|`` — stored in the same ``model_coefficients``
+            rows so the existing coefficient-chart pipeline works
+            unchanged.
         set_active: When ``True`` (the default), deactivate every other
             version with the same ``model_name`` and mark this one active,
             so only one version per model is active at a time.
+        artifact: Optional serialized model blob (BT-1).  For
+            ``boosted_tip`` this is ``get_booster().save_raw(raw_format=
+            "json")`` bytes; ``weighted_tip`` callers omit it.
+        artifact_format: Serialization tag for ``artifact`` (e.g.
+            ``"json"``).  Should accompany every artifact so readers
+            never guess the format.
+        shap_base_value: Optional TreeExplainer expected value — the
+            SHAP base that per-feature contributions sum against
+            (BT-1, ``boosted_tip`` only).
 
     Returns:
         The freshly inserted, refreshed :class:`ModelVersion`.
@@ -56,6 +103,9 @@ async def create_model_version(
         intercept=intercept,
         training_rows=training_rows,
         metrics=metrics,
+        artifact=artifact,
+        artifact_format=artifact_format,
+        shap_base_value=shap_base_value,
         is_active=bool(set_active),
     )
     session.add(version_row)
@@ -133,6 +183,37 @@ async def get_active_coefficients(
         return None
     coefficients = await get_model_coefficients(session, active.id)
     return active.intercept, {c.feature_name: c.coefficient for c in coefficients}
+
+
+async def get_active_model_artifact(
+    session: AsyncSession, model_name: str
+) -> tuple[bytes, str, ModelVersion] | None:
+    """Return ``(artifact_bytes, artifact_format, version_row)`` for the active version.
+
+    BT-1 read path for the ``boosted_tip`` XGBoost heuristic: the caller
+    lazily deserializes ``artifact_bytes`` (``xgboost`` import stays
+    inside the caller) and predicts against it.
+
+    Returns ``None`` when either:
+
+    * no version of ``model_name`` is active (e.g. before the first
+      weekly retrain), or
+    * the active version stores no artifact (every ``weighted_tip``
+      version keeps its weights in coefficient rows instead).
+
+    Callers must treat ``None`` as "no learned model available" and fall
+    back to the deterministic heuristic — a ``None`` here must never
+    crash tip generation.
+
+    A legacy row that stored bytes without an ``artifact_format`` tag
+    reads back as ``"json"`` — the canonical format this CRUD writes
+    (``save_raw(raw_format="json")``), so the default is always correct
+    for artifacts created by this codebase.
+    """
+    active = await get_active_model_version(session, model_name)
+    if active is None or active.artifact is None:
+        return None
+    return active.artifact, active.artifact_format or "json", active
 
 
 async def next_version_number(session: AsyncSession, model_name: str) -> int:

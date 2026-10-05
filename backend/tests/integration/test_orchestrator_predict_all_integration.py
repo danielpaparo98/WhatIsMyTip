@@ -75,7 +75,8 @@ async def test_predict_all_real_models_real_postgres(seeded_db):
         game = await session.get(Game, 2)
         results = await orchestrator.predict_all(game, db=session)
 
-    assert set(results.keys()) == {"best_bet", "yolo", "weighted_tip"}
+    # BT-1 decision 3: boosted_tip replaced best_bet in the registry.
+    assert set(results.keys()) == {"boosted_tip", "yolo", "weighted_tip"}
 
     for heuristic_name, payload in results.items():
         preds = payload["model_predictions"]
@@ -122,6 +123,7 @@ async def test_concurrent_predict_all_no_session_collision(seeded_db):
     results_a, results_b = await asyncio.gather(run_one(3), run_one(4))
 
     for results in (results_a, results_b):
-        assert set(results.keys()) == {"best_bet", "yolo", "weighted_tip"}
-        payload = results["best_bet"]
+        # BT-1 decision 3: boosted_tip replaced best_bet in the registry.
+        assert set(results.keys()) == {"boosted_tip", "yolo", "weighted_tip"}
+        payload = results["boosted_tip"]
         assert len(payload["model_predictions"]) + len(payload["failed_models"]) == MODEL_COUNT

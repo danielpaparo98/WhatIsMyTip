@@ -11,6 +11,11 @@ Routes (mounted at ``/api/backtest``):
 * ``GET  /table``           — round-by-round table for a season
 * ``GET  /seasons``         — available seasons
 * ``GET  /current-season``  — current season performance
+* ``GET  /active-model``   — active weighted_tip model + coefficients
+* ``GET  /active-boosted-model`` — active boosted_tip model + SHAP
+  importances (BT-1)
+* ``GET  /boosted-shap/{game_id}`` — per-game SHAP explanation for the
+  boosted model (BT-1)
 * ``POST /run``             — admin-only: run model backtest
 """
 
@@ -19,11 +24,12 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Annotated, Optional
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Path, Query
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.db_deps import get_db
+from app.core.exceptions import http_error
 from app.core.security import require_admin_key
 from packages.shared.schemas import (
     BacktestListResponse,
@@ -32,6 +38,16 @@ from packages.shared.schemas import (
     BacktestTableRow,
 )
 from packages.shared.services.backtest import BacktestService
+
+# BT-1: importing these symbols at module level is safe *only* because
+# ``boosted_explanations`` defers every heavy import (xgboost, shap,
+# numpy) to function bodies — the always-on API workers must not pay
+# the resident-memory cost at import time.  Pinned by
+# ``TestBacktestRouterLazyImports`` and ``tests/unit/test_lazy_sklearn.py``.
+from packages.shared.services.boosted_explanations import (
+    get_active_boosted_model,
+    get_game_shap_explanation,
+)
 
 router = APIRouter()
 
@@ -279,6 +295,67 @@ async def get_active_model(
             "The model will be trained after the first weekly retrain job runs.",
         }
     return {"active": True, "model": result}
+
+
+# ---------------------------------------------------------------------------
+# GET /active-boosted-model  (BT-1)
+# ---------------------------------------------------------------------------
+
+
+@router.get("/active-boosted-model")
+async def get_boosted_active_model(
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Return the currently-active ``boosted_tip`` (XGBoost) model version
+    with its global SHAP feature importances and training metadata (BT-1).
+
+    Mirrors ``GET /active-model`` but raises 404 ``not_found`` when no
+    active boosted version exists (e.g. before the first weekly retrain,
+    or while ``BOOSTED_RETRAIN_ENABLED=false``) — unlike the weighted
+    section, the SHAP section has no meaningful "empty" rendering, so the
+    client gets the repo-standard error shape.
+    """
+    result = await get_active_boosted_model(db)
+    if result is None:
+        raise http_error(
+            404,
+            "not_found",
+            "No active boosted_tip model version found. "
+            "The model will be trained after the first weekly retrain job runs.",
+        )
+    return result
+
+
+# ---------------------------------------------------------------------------
+# GET /boosted-shap/{game_id}  (BT-1)
+# ---------------------------------------------------------------------------
+
+
+@router.get("/boosted-shap/{game_id}")
+async def get_boosted_shap(
+    game_id: Annotated[int, Path(gt=0, description="Game id to explain")],
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Return the SHAP explanation of the boosted model's prediction for
+    one game: ``base_value``, the raw margin ``prediction``, per-feature
+    signed ``contributions`` (sorted by |value|), the ``winner`` and the
+    derived ``pick`` (BT-1).
+
+    All heavy work (xgboost/shap loading, the explainer cache) happens
+    inside the service behind lazy imports — this handler only reads.
+    Raises 404 ``not_found`` when there is no active boosted model or
+    the game has no stored predictions; the service returns ``None`` for
+    both, so a single generic message is used.
+    """
+    result = await get_game_shap_explanation(db, game_id)
+    if result is None:
+        raise http_error(
+            404,
+            "not_found",
+            "No SHAP explanation available for this game (no active "
+            "boosted model or no model predictions for the game).",
+        )
+    return result
 
 
 # ---------------------------------------------------------------------------
