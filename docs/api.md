@@ -236,8 +236,8 @@ no home/away sides (races, field events) are skipped.
 |--------|------|------|-------------|
 | `GET` | `/api/tips` | public | List tips (filter: `heuristic`, `season`, `round`, `limit`) |
 | `GET` | `/api/tips/games-with-tips` | public | Games with their best-bet tips for a round (filter: `season`, `round`, `heuristic` default `best_bet`) |
-| `GET` | `/api/tips/{heuristic}` | public | Tips for one heuristic (`best_bet` \| `yolo` \| `weighted_tip`); filter: `limit` |
-| `POST` | `/api/tips/generate` | public (rate-limited) | Generate tips for a round. Body: `season`, `round_id`, `heuristics` (optional, comma-separated), `regenerate` (default `false`). See [`app/api/tips.py`](../backend/app/api/tips.py:261). |
+| `GET` | `/api/tips/{heuristic}` | public | Tips for one heuristic (`best_bet` \| `yolo` \| `weighted_tip` \| `boosted_tip`); filter: `limit` |
+| `POST` | `/api/tips/generate` | admin (rate-limited) | Generate tips for a round. Body: `season`, `round_id`, `heuristics` (optional, comma-separated), `regenerate` (default `false`). See [`app/api/tips.py`](../backend/app/api/tips.py:261). |
 | `POST` | `/api/tips/explanations/generate` | public | Generate AI explanations for a round |
 
 **Example**:
@@ -256,9 +256,11 @@ curl -X POST 'http://localhost:8000/api/tips/generate?season=2025&round=1&heuris
 | `GET` | `/api/backtest/seasons` | public | List seasons with backtest data |
 | `GET` | `/api/backtest/current-season` | public | Current-season performance across all heuristics |
 | `GET` | `/api/backtest/table` | public | Per-round table data (query: `season`) |
-| `GET` | `/api/backtest/{heuristic}/performance` | public | Heuristic performance metrics |
 | `GET` | `/api/backtest/compare` | public | Compare all heuristics for a season (query: `season`) |
 | `GET` | `/api/backtest/model-compare` | public | Compare individual ML models (query: `season`, optional `models` list) |
+| `GET` | `/api/backtest/active-model` | public | Active weighted-tip model version + its learned coefficients |
+| `GET` | `/api/backtest/active-boosted-model` | public | Active boosted-tip (XGBoost) version + mean \|SHAP\| feature importances |
+| `GET` | `/api/backtest/boosted-shap/{game_id}` | public | Per-game SHAP contributions for the active boosted model (base value → prediction additivity) |
 | `POST` | `/api/backtest/run` | admin | Trigger a backtest. Query: `season` (required), `round` (optional), `heuristic` (optional) |
 
 **Example**:
@@ -289,13 +291,14 @@ curl -X POST -H "X-API-Key: $ADMIN_API_KEY" http://localhost:8000/api/admin/tip-
 
 ## Heuristics
 
-The API supports three heuristic strategies. Per-class implementation details (confidence thresholds, consensus rules) live in the source files.
+The API supports four heuristic strategies. Per-class implementation details (confidence thresholds, consensus rules) live in the source files.
 
 | Heuristic | Source | Description |
 |-----------|--------|-------------|
-| **Best Bet** | [`heuristics/best_bet.py`](../backend/packages/shared/heuristics/best_bet.py:1) | Conservative picks with high confidence. Best for long-term betting. |
+| **Boosted Tip** | [`heuristics/boosted_tip.py`](../backend/packages/shared/heuristics/boosted_tip.py:1) | XGBoost (gradient-boosted trees) over the same model-prediction features as Weighted Tip; retrained weekly alongside the linear model and explained via SHAP on the backtest page. The flagship tip. |
+| **Weighted Tip** | [`heuristics/weighted_tip.py`](../backend/packages/shared/heuristics/weighted_tip.py:1) | Data-driven tip combining model predictions with learned linear weights; retrained weekly. |
+| **Best Bet** | [`heuristics/best_bet.py`](../backend/packages/shared/heuristics/best_bet.py:1) | Conservative consensus picks. Retired from tip generation (BT-1) — historical tips remain queryable. |
 | **YOLO** | [`heuristics/yolo.py`](../backend/packages/shared/heuristics/yolo.py:1) | High-risk, high-reward selections. Ignores confidence thresholds. |
-| **Weighted Tip** | [`heuristics/weighted_tip.py`](../backend/packages/shared/heuristics/weighted_tip.py:1) | Data-driven tip combining model predictions with learned weights; retrained weekly. |
 
 ## ML Models
 
