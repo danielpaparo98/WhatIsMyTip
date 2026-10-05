@@ -24,7 +24,10 @@ from pathlib import Path
 BACKEND_DIR = Path(__file__).resolve().parents[2]  # backend/
 
 # Heavy ML libraries that must NOT be loaded by importing the always-on path.
-_HEAVY_LIBS = ("sklearn", "scipy", "numpy")
+# BT-1: xgboost and shap join the guard when the boosted_tip heuristic
+# lands — they are MAIN dependencies (the weekly cron trains in-process)
+# but ONLY function bodies may import them, never module top-levels.
+_HEAVY_LIBS = ("sklearn", "scipy", "numpy", "xgboost", "shap")
 
 
 def _assert_import_does_not_load_heavy_libs(import_stmts: str) -> None:
@@ -80,3 +83,24 @@ def test_importing_retrain_cron_job_does_not_load_sklearn():
     _assert_import_does_not_load_heavy_libs(
         "from app.cron.model_retrain import ModelRetrainJob"
     )
+
+
+def test_importing_model_artifact_crud_does_not_load_heavy_libs():
+    """BT-1: the artifact CRUD must not pull xgboost/shap/sklearn at import.
+
+    ``packages.shared.crud.model_versions`` stores boosted_tip model
+    bytes as opaque ``BYTEA`` blobs — it serialises/deserialises nothing
+    itself, so it never needs a heavy ML import at module level.
+    """
+    _assert_import_does_not_load_heavy_libs(
+        "import packages.shared.crud.model_versions"
+    )
+
+
+def test_importing_models_module_does_not_load_heavy_libs():
+    """BT-1: ``packages.shared.models`` stays import-cheap for every worker.
+
+    The ``ModelVersion.artifact`` column is a plain ``LargeBinary`` —
+    defining the schema must not require xgboost/shap to be importable.
+    """
+    _assert_import_does_not_load_heavy_libs("import packages.shared.models")
