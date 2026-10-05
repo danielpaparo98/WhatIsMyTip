@@ -1,4 +1,11 @@
 export const HEURISTIC_CHART_COLORS: Record<string, { border: string; background: string }> = {
+  // BT-1 (boosted-tip): flagship heuristic leads the palette — emerald
+  // is distinct from the existing orange/blue/red trio (all Tailwind
+  // 500-series, so the family stays visually consistent).
+  boosted_tip: {
+    border: '#10b981',
+    background: 'rgba(16, 185, 129, 0.8)',
+  },
   weighted_tip: {
     border: '#f97316',
     background: 'rgba(249, 115, 22, 0.8)',
@@ -14,6 +21,7 @@ export const HEURISTIC_CHART_COLORS: Record<string, { border: string; background
 }
 
 export const HEURISTIC_CHART_LABELS: Record<string, string> = {
+  boosted_tip: 'Boosted Tip',
   weighted_tip: 'Weighted Tip',
   best_bet: 'Best Bet',
   yolo: 'YOLO',

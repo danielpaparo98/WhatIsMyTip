@@ -45,6 +45,11 @@ interface CoefficientRow {
 interface Props {
   coefficients: CoefficientRow[]
   intercept: number
+  // BT-1 (boosted-tip): optional axis override so the boosted model's
+  // SHAP chart can label the x-axis "Mean |SHAP| Importance" instead of
+  // the linear-model default.  Additive only — omitting it keeps the
+  // existing Weighted Tip chart pixel-identical.
+  xAxisLabel?: string
 }
 
 const props = defineProps<Props>()
@@ -121,7 +126,7 @@ const chartOptions = computed<ChartOptions<'bar'>>(() => ({
     x: {
       title: {
         display: true,
-        text: 'Coefficient Weight',
+        text: props.xAxisLabel ?? 'Coefficient Weight',
         color: isDark.value ? '#9ca3af' : '#6b7280',
         font: { size: 11, weight: '600' },
       },

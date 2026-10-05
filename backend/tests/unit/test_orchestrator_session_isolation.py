@@ -12,9 +12,14 @@ Guards two production incidents found in the 2026-09 comprehensive review:
   ``(home_team, 0.5, 0)``, systematically biasing consensus toward home
   sides during partial outages.  Failed models now **abstain**: they are
   excluded from ``model_predictions`` (all heuristics have documented
-  missing-model handling: best_bet/yolo empty-checks, weighted_tip
+  missing-model handling: yolo empty-checks, weighted_tip/boosted_tip
   zero-fill in ``build_feature_vector``) and are reported via the
   ``failed_models`` key of the ``predict_all`` payload.
+
+BT-1 (decision 3) drift note: ``best_bet`` was removed from the
+heuristic registry (replaced by ``boosted_tip``), so the payload keys
+asserted below are ``boosted_tip``/``yolo``/``weighted_tip``.  The
+session-isolation and abstain semantics under test are unchanged.
 """
 
 from typing import Any, List, Optional, Tuple
@@ -117,7 +122,7 @@ class TestSessionIsolation:
         orch, _ = _make_orchestrator(models)
 
         caller_db = object()
-        await orch.predict(_make_game(), "best_bet", db=caller_db)
+        await orch.predict(_make_game(), "yolo", db=caller_db)
 
         all_sessions = [s for m in models for s in m.sessions]
         assert len(all_sessions) == 4
@@ -155,8 +160,8 @@ class TestSessionIsolation:
         results = await orch.predict_all(_make_game())
 
         # Every model must have actually run (not silently abstained):
-        preds = results["best_bet"]["model_predictions"]
-        failed = results["best_bet"]["failed_models"]
+        preds = results["boosted_tip"]["model_predictions"]
+        failed = results["boosted_tip"]["failed_models"]
         assert len(preds) == 3, f"models silently failed on the default path: {failed}"
         assert failed == []
         assert len(created) == 3
@@ -178,7 +183,7 @@ class TestFailedModelAbstains:
 
         results = await orch.predict_all(_make_game())
 
-        preds = results["best_bet"]["model_predictions"]
+        preds = results["boosted_tip"]["model_predictions"]
         assert "bad_one" not in preds
         assert "good_one" in preds and "good_two" in preds
 
@@ -197,11 +202,12 @@ class TestFailedModelAbstains:
 
         results = await orch.predict_all(game)
 
-        preds = results["best_bet"]["model_predictions"]
+        preds = results["boosted_tip"]["model_predictions"]
         # No phantom (home, 0.5, 0) entry:
         assert home_team not in preds.values()
-        # The lone healthy model's away vote decides best_bet:
-        assert results["best_bet"]["tip"][0] == "Carlton"
+        # The lone healthy model's away vote decides the consensus
+        # fallback (boosted_tip majority vote, post-BT-1):
+        assert results["boosted_tip"]["tip"][0] == "Carlton"
 
     @pytest.mark.asyncio
     async def test_failed_models_reported_in_payload(self):
@@ -214,7 +220,7 @@ class TestFailedModelAbstains:
 
         results = await orch.predict_all(_make_game())
 
-        assert sorted(results["best_bet"]["failed_models"]) == ["bad_one", "bad_two"]
+        assert sorted(results["boosted_tip"]["failed_models"]) == ["bad_one", "bad_two"]
 
     @pytest.mark.asyncio
     async def test_all_models_fail_heuristics_still_return(self):
@@ -226,13 +232,17 @@ class TestFailedModelAbstains:
 
         results = await orch.predict_all(game)
 
-        assert set(results.keys()) == {"best_bet", "yolo", "weighted_tip"}
+        # BT-1 decision 3: best_bet left the registry, boosted_tip took
+        # its slot.
+        assert set(results.keys()) == {"boosted_tip", "yolo", "weighted_tip"}
         # Documented empty-predictions fallbacks — home/away-neutral
         # (alphabetically first of Richmond/Carlton) with no fake confidence:
-        assert results["best_bet"]["tip"] == ("Carlton", 0.50, 5)
+        # boosted_tip shares weighted_tip's majority-vote fallback, so the
+        # two tips must be identical (fallback-parity pin).
+        assert results["boosted_tip"]["tip"] == ("Carlton", 0.55, 6)
         assert results["yolo"]["tip"] == ("Carlton", 0.50, 10)
         assert results["weighted_tip"]["tip"] == ("Carlton", 0.55, 6)
-        assert sorted(results["best_bet"]["failed_models"]) == ["m0", "m1", "m2"]
+        assert sorted(results["boosted_tip"]["failed_models"]) == ["m0", "m1", "m2"]
 
     @pytest.mark.asyncio
     async def test_no_failures_reports_empty_list(self):
@@ -241,4 +251,4 @@ class TestFailedModelAbstains:
 
         results = await orch.predict_all(_make_game())
 
-        assert results["best_bet"]["failed_models"] == []
+        assert results["boosted_tip"]["failed_models"] == []

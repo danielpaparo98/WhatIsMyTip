@@ -1,16 +1,17 @@
 import asyncio
 import time
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple, cast
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .crud.model_versions import get_active_coefficients
-from .heuristics import BaseHeuristic, BestBetHeuristic, WeightedTipHeuristic, YOLOHeuristic
+from .crud.model_versions import get_active_coefficients, get_active_model_artifact
+from .heuristics import BaseHeuristic, BoostedTipHeuristic, WeightedTipHeuristic, YOLOHeuristic
+from .heuristics.boosted_tip import load_boosted_model
 from .logger import get_logger
 from .models import Game
 from .models_ml import BaseModel
+from .models_ml.prediction import Abstained
 from .models_ml.registry import ModelRegistry, build_default_registry
-from .models_ml.prediction import Abstained, is_abstained
 from .sport_context import DEFAULT_CONTEXT, SportContext
 
 logger = get_logger(__name__)
@@ -20,6 +21,13 @@ logger = get_logger(__name__)
 # does not), so it reloads the active model version's weights on this
 # cadence and pushes them into the WeightedTipHeuristic.
 WEIGHTED_TIP_COEFFICIENT_TTL_SECONDS = 3600
+
+# BT-1: how long the in-memory boosted-tip (XGBoost) model cache is
+# considered fresh.  Mirrors WEIGHTED_TIP_COEFFICIENT_TTL_SECONDS: the
+# orchestrator owns the db session, so it re-reads the active
+# ``boosted_tip`` ModelVersion artifact on this cadence, deserializes it
+# ONCE (BT-2) and pushes the loaded model into the BoostedTipHeuristic.
+BOOSTED_TIP_MODEL_TTL_SECONDS = 3600
 
 # A session factory is any callable returning an async context manager
 # that yields an AsyncSession (e.g. ``async_sessionmaker``).  Each model
@@ -74,9 +82,12 @@ class ModelOrchestrator:
         # Initialize ML models
         self.models: List[BaseModel] = self._registry.create(self.context)
 
-        # Initialize heuristics
+        # Initialize heuristics.  BT-1 (decision 3): boosted_tip replaces
+        # best_bet as the consensus layer — BestBetHeuristic stays
+        # importable and historical best_bet tips stay queryable via the
+        # API allowlists, but it no longer generates NEW tips.
         self.heuristics: Dict[str, BaseHeuristic] = {
-            "best_bet": BestBetHeuristic(self.models),
+            "boosted_tip": BoostedTipHeuristic(self.models),
             "yolo": YOLOHeuristic(self.models),
             "weighted_tip": WeightedTipHeuristic(self.models),
         }
@@ -87,6 +98,13 @@ class ModelOrchestrator:
         # version is active / not yet loaded.
         self._wt_coeffs: Tuple[float, Dict[str, float]] | None = None
         self._wt_coeffs_loaded_at: float = 0.0
+
+        # BT-1: in-memory cache of the active boosted-tip artifact so we
+        # deserialize ONCE per TTL window (BT-2) instead of per tip.
+        # ``_boosted_artifact`` is the ``(artifact_bytes, artifact_format)``
+        # tuple, or ``None`` when no version is active / not yet loaded.
+        self._boosted_artifact: Tuple[bytes, str] | None = None
+        self._boosted_model_loaded_at: float = 0.0
 
     async def _ensure_weighted_tip_coefficients(self, db) -> None:
         """Refresh the weighted-tip coefficient cache and push it into the heuristic.
@@ -116,7 +134,9 @@ class ModelOrchestrator:
             )
             return
 
-        heuristic = self.heuristics["weighted_tip"]
+        heuristic = cast(
+            WeightedTipHeuristic, self.heuristics["weighted_tip"]
+        )
         if result is None:
             heuristic.clear_coefficients()
             self._wt_coeffs = None
@@ -125,6 +145,61 @@ class ModelOrchestrator:
             heuristic.set_coefficients(intercept, coefficients)
             self._wt_coeffs = result
         self._wt_coeffs_loaded_at = now
+
+    async def _ensure_boosted_tip_model(self, db) -> None:
+        """Refresh the boosted-tip model cache and push it into the heuristic.
+
+        BT-1: mirrors :meth:`_ensure_weighted_tip_coefficients` exactly.
+        Called at the start of :meth:`predict` / :meth:`predict_all` (the
+        orchestrator owns the db session; the heuristic's ``apply`` does
+        not).  Uses a TTL cache so repeated tip generation within
+        ``BOOSTED_TIP_MODEL_TTL_SECONDS`` does not re-read the DB, and
+        deserializes the artifact ONCE per window (BT-2) via
+        :func:`load_boosted_model` — ``apply`` receives the loaded model
+        object, never raw bytes.  When no active version exists the
+        heuristic is switched back to its majority-vote fallback.  Any
+        error (DB read or deserialization) is logged and swallowed so
+        tip generation never crashes because of a model-load failure.
+        """
+        now = time.monotonic()
+        if (
+            self._boosted_artifact is not None
+            and (now - self._boosted_model_loaded_at) < BOOSTED_TIP_MODEL_TTL_SECONDS
+        ):
+            return  # cache still fresh
+
+        try:
+            result = await get_active_model_artifact(db, "boosted_tip")
+        except Exception as e:  # noqa: BLE001 — never crash tip generation
+            logger.error(
+                "boosted_tip model load failed; staying on fallback: %s",
+                e,
+                exc_info=True,
+            )
+            return
+
+        heuristic = cast(BoostedTipHeuristic, self.heuristics["boosted_tip"])
+        if result is None:
+            heuristic.clear_model()
+            self._boosted_artifact = None
+        else:
+            artifact_bytes, artifact_format, _version = result
+            try:
+                # BT-2: deserialize once per TTL window here, not once
+                # per tip inside apply() — XGBoost load_model is ms-scale.
+                loaded = load_boosted_model(artifact_bytes, artifact_format)
+            except Exception as e:  # noqa: BLE001 — corrupt artifact must
+                # never crash tip generation; retried on the next call.
+                logger.error(
+                    "boosted_tip artifact deserialization failed; "
+                    "staying on fallback: %s",
+                    e,
+                    exc_info=True,
+                )
+                return
+            heuristic.set_loaded_model(loaded)
+            self._boosted_artifact = (artifact_bytes, artifact_format)
+        self._boosted_model_loaded_at = now
 
     async def _predict_one(
         self, model: BaseModel, game: Game, ctx: str
@@ -214,16 +289,18 @@ class ModelOrchestrator:
         return model_predictions, failed_models
 
     async def predict(
-        self, game: Game, heuristic: str = "best_bet", db: AsyncSession = None
+        self, game: Game, heuristic: str = "boosted_tip", db: Optional[AsyncSession] = None
     ) -> Tuple[str, float, int]:
         """Generate a prediction for a game using specified heuristic.
 
         Args:
             game: Game to predict
-            heuristic: Heuristic to apply (best_bet, yolo, weighted_tip)
+            heuristic: Heuristic to apply (boosted_tip, yolo, weighted_tip).
+                Defaults to ``boosted_tip`` (BT-1 decision 3: it replaced
+                best_bet as the flagship consensus heuristic).
             db: Database session used for heuristic-support queries
-                (e.g. weighted-tip coefficient loading).  Model tasks
-                open their own sessions.
+                (e.g. weighted-tip coefficient + boosted-tip artifact
+                loading).  Model tasks open their own sessions.
 
         Returns:
             Tuple of (winner, confidence, margin)
@@ -231,6 +308,9 @@ class ModelOrchestrator:
         # Load the active weighted-tip coefficients (cached) before
         # applying any heuristic.  Harmless for non-weighted_tip heuristics.
         await self._ensure_weighted_tip_coefficients(db)
+        # BT-1: likewise load the active boosted-tip model (cached) —
+        # harmless for non-boosted_tip heuristics.
+        await self._ensure_boosted_tip_model(db)
 
         start_time = time.time()
         logger.debug(
@@ -260,7 +340,9 @@ class ModelOrchestrator:
 
         return result
 
-    async def predict_all(self, game: Game, db: AsyncSession = None) -> Dict[str, Dict[str, Any]]:
+    async def predict_all(
+        self, game: Game, db: Optional[AsyncSession] = None
+    ) -> Dict[str, Dict[str, Any]]:
         """Generate predictions for all heuristics.
 
         Runs all models ONCE, then applies all heuristics to the same
@@ -269,8 +351,8 @@ class ModelOrchestrator:
         Args:
             game: Game to predict
             db: Database session used for heuristic-support queries
-                (e.g. weighted-tip coefficient loading).  Model tasks
-                open their own sessions.
+                (e.g. weighted-tip coefficient + boosted-tip artifact
+                loading).  Model tasks open their own sessions.
 
         Returns:
             Dict of heuristic -> {"model_predictions": dict, "tip": tuple,
@@ -279,6 +361,8 @@ class ModelOrchestrator:
         # Load the active weighted-tip coefficients (cached) before
         # applying any heuristic.
         await self._ensure_weighted_tip_coefficients(db)
+        # BT-1: and the active boosted-tip model (cached).
+        await self._ensure_boosted_tip_model(db)
 
         start_time = time.time()
         logger.debug(f"ModelOrchestrator.predict_all: STARTING for game {game.id}")

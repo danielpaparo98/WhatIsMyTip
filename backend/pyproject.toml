@@ -33,6 +33,13 @@ dependencies = [
     "alembic>=1.14.0",
     "psycopg2-binary>=2.9.12",
     "scikit-learn>=1.9.0",
+    # BT-1: boosted_tip (XGBoost) heuristic.  These are MAIN dependencies
+    # because the weekly retrain runs IN-PROCESS (the same cron job as
+    # weighted_tip).  Always-on API workers never import them at module
+    # level (lazy imports only, pinned by tests/unit/test_lazy_sklearn.py),
+    # but the single production image must still be able to train.
+    "xgboost>=3.4.0",
+    "shap>=0.52.0",
 ]
 
 [project.optional-dependencies]
@@ -83,4 +90,13 @@ exclude = [
 [dependency-groups]
 dev = [
     "aiosqlite>=0.22.1",
+]
+# BT-1: Jupyter scaffolding for notebooks/boosted_tip_experiments.ipynb.
+# Deliberately NOT main dependencies — only `uv sync --group notebooks`
+# installs them; the production image stays lean.
+notebooks = [
+    "jupyter",
+    "notebook",
+    "matplotlib",
+    "python-dotenv",
 ]

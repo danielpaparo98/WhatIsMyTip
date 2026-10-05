@@ -205,13 +205,142 @@
           </div>
         </div>
       </section>
+
+      <!-- Active Boosted Model (XGBoost) Section (BT-1) -->
+      <!-- Degradation contract: both boosted endpoints map "no active
+           model / no data" to 404, and the api method THROWS on every
+           non-OK response.  loadActiveBoostedModelData catches, nulls
+           the payload and the section simply never renders — a missing
+           model must never break the page. -->
+      <section v-if="boostedModelLoading || boostedModelData" class="active-model-section">
+        <div class="active-model-header">
+          <h2>Active Boosted Model (XGBoost)</h2>
+          <span v-if="boostedModelData" class="version-badge">
+            v{{ boostedModelData.version }}
+          </span>
+        </div>
+
+        <div v-if="boostedModelLoading" class="loading" role="status" aria-live="polite">
+          <div class="spinner"></div>
+        </div>
+        <div v-else-if="boostedModelData" class="model-content">
+          <div class="model-meta-row">
+            <span class="meta-item">
+              <strong>Trained:</strong> {{ formatDate(boostedModelData.trained_at) }}
+            </span>
+            <span class="meta-item">
+              <strong>Training rows:</strong> {{ boostedModelData.training_rows }}
+            </span>
+            <span v-if="boostedModelData.metrics.r2 != null" class="meta-item">
+              <strong>R²:</strong> {{ boostedModelData.metrics.r2.toFixed(4) }}
+            </span>
+            <span v-if="boostedModelData.metrics.mae != null" class="meta-item">
+              <strong>MAE:</strong> {{ boostedModelData.metrics.mae.toFixed(1) }}
+            </span>
+            <span v-if="boostedModelData.metrics.shap_base_value != null" class="meta-item">
+              <strong>SHAP base value:</strong> {{ boostedModelData.metrics.shap_base_value.toFixed(2) }}
+            </span>
+          </div>
+
+          <div class="model-explanation">
+            <p>{{ boostedModelExplanationText }}</p>
+          </div>
+
+          <div v-if="groupedShapImportances.length > 0" class="coefficients-visual">
+            <!-- SHAP Importance Bar Chart (reuses the coefficient chart) -->
+            <div class="chart-row">
+              <div class="chart-col">
+                <h3 class="chart-heading">SHAP Feature Importance</h3>
+                <ModelCoefficientChart
+                  :coefficients="groupedShapImportances"
+                  :intercept="boostedShapIntercept"
+                  x-axis-label="Mean |SHAP| Importance"
+                />
+              </div>
+            </div>
+          </div>
+
+          <!-- Game-level SHAP explanation card -->
+          <div v-if="shapGames.length > 0" class="shap-card">
+            <div class="shap-card-header">
+              <label class="shap-select-label" for="shap-game-select">Explain a recent game</label>
+              <select
+                id="shap-game-select"
+                v-model="selectedShapGameId"
+                class="shap-game-select"
+                @change="onShapGameChange"
+              >
+                <option v-for="game in shapGames" :key="game.id" :value="game.id">
+                  {{ shapGameOptionLabel(game) }}
+                </option>
+              </select>
+            </div>
+
+            <div v-if="gameShapLoading" class="loading" role="status" aria-live="polite">
+              <div class="spinner"></div>
+            </div>
+            <div v-else-if="gameShapError" class="error" role="status" aria-live="polite">
+              <p>{{ gameShapError }}</p>
+            </div>
+            <div v-else-if="gameShap" class="shap-explanation">
+              <div class="shap-summary">
+                <span class="shap-teams">{{ shapGameTeams }}</span>
+                <span class="shap-pick">{{ shapPickSummary }}</span>
+              </div>
+              <div class="shap-flow">
+                <span class="shap-flow-item"><strong>Base</strong> {{ formatSignedPoints(gameShap.base_value) }}</span>
+                <span class="shap-flow-arrow">→</span>
+                <span class="shap-flow-item">
+                  <strong>Prediction</strong> {{ formatSignedPoints(gameShap.prediction) }} pts
+                </span>
+                <span class="shap-flow-note">
+                  ({{ gameShap.winner === 'home' ? 'home' : 'away' }} team favoured, home-signed)
+                </span>
+              </div>
+
+              <div class="shap-rows">
+                <div v-for="row in topShapContributionRows" :key="row.feature_name" class="shap-row">
+                  <span class="shap-label" :title="row.feature_name">
+                    {{ shapFeatureLabel(row.feature_name, getModelDisplayName) }}
+                  </span>
+                  <div class="shap-bar-track">
+                    <div
+                      class="shap-bar"
+                      :class="row.value >= 0 ? 'shap-bar-home' : 'shap-bar-away'"
+                      :style="shapBarStyle(row.value)"
+                    ></div>
+                  </div>
+                  <span class="shap-value">{{ formatSignedPoints(row.value) }}</span>
+                </div>
+              </div>
+
+              <p class="shap-footnote">
+                Positive values push the prediction toward the home team, negative values toward the
+                away team. SHAP additivity: base value + contributions = prediction.
+              </p>
+            </div>
+          </div>
+        </div>
+      </section>
 </template>
 
 <script setup lang="ts">
 import { sortByHeuristicOrder } from '~/composables/useFormatters'
+import type { Game } from '~/composables/useApi'
+import type { ActiveBoostedModel, GameShapExplanation } from '~/composables/useApi'
+import {
+  formatSignedPoints,
+  groupShapImportances,
+  maxAbsShapValue,
+  shapBarPercent,
+  shapFeatureLabel,
+  topShapContributions,
+} from '~/composables/useBoostedShap'
+import { DEFAULT_CHART_COLORS, useChartTheme } from '~/composables/useChartTheme'
 
 const api = useApi()
-const { formatHeuristic, getModelDisplayName, formatDate } = useFormatters()
+const { formatHeuristic, getModelDisplayName, formatDate, formatDateShort } = useFormatters()
+const { getHeuristicColors } = useChartTheme()
 
 // FX-05 / FX-20 / H-2: canonical derived from the siteUrl runtime
 // config (was hardcoded to the production domain).
@@ -317,6 +446,18 @@ const activeModelLoading = ref(false)
 const activeModelError = ref<string | null>(null)
 const activeModelData = ref<ActiveModelResponse | null>(null)
 
+// BT-1 (boosted-tip): active XGBoost model + per-game SHAP state.
+// No error ref for the boosted model itself — any failure (404 "no
+// active model yet" included) degrades to a hidden section instead of
+// an error block, so a pre-first-retrain deployment stays clean.
+const boostedModelLoading = ref(false)
+const boostedModelData = ref<ActiveBoostedModel | null>(null)
+const shapGames = ref<Game[]>([])
+const selectedShapGameId = ref<number | null>(null)
+const gameShapLoading = ref(false)
+const gameShapError = ref<string | null>(null)
+const gameShap = ref<GameShapExplanation | null>(null)
+
 /** Best model name for the current season (highest accuracy). */
 const currentSeasonBestModel = computed(() => {
   if (!currentSeasonModels.value || currentSeasonModels.value.length === 0) return null
@@ -378,6 +519,81 @@ const modelExplanationText = computed(() => {
   )
 })
 
+// ---------------------------------------------------------------------------
+// BT-1 (boosted-tip): Active Boosted Model (XGBoost) presentation
+// ---------------------------------------------------------------------------
+
+/** Importances grouped per model for the reused coefficient chart. */
+const groupedShapImportances = computed(() =>
+  boostedModelData.value ? groupShapImportances(boostedModelData.value.importances) : [],
+)
+
+/** The chart requires an intercept; the SHAP base value fills that
+ *  semantic slot (the component never renders it directly). */
+const boostedShapIntercept = computed(() => boostedModelData.value?.metrics.shap_base_value ?? 0)
+
+/** Friendly explanation text for the active boosted model. */
+const boostedModelExplanationText = computed(() => {
+  const m = boostedModelData.value
+  if (!m) return ''
+  const r2 = m.metrics.r2 != null ? m.metrics.r2.toFixed(3) : 'N/A'
+  const mae = m.metrics.mae != null ? m.metrics.mae.toFixed(1) : 'N/A'
+  const top = groupedShapImportances.value.slice(0, 3)
+  const topNames = top.map((r) => getModelDisplayName(r.model)).join(', ')
+  return (
+    `The Boosted Tip model is a gradient-boosted tree ensemble (XGBoost) trained on ` +
+    `${m.training_rows} historical games to predict the home-team-signed margin from the ` +
+    `same 8 model predictions the Weighted Tip model uses. ` +
+    `The current model (v${m.version}) reaches R² = ${r2} with MAE = ${mae} points and is ` +
+    `retrained weekly. ` +
+    `Feature importances below are mean |SHAP| values — how much each model's margin and ` +
+    `confidence signal moves the prediction, with ${topNames} the most influential.`
+  )
+})
+
+/** Top 10 per-game contributions by |value| (defensively re-sorted). */
+const topShapContributionRows = computed(() =>
+  gameShap.value ? topShapContributions(gameShap.value.contributions, 10) : [],
+)
+
+const shapGameTeams = computed(() => {
+  const s = gameShap.value
+  if (!s) return ''
+  return `${s.home_team ?? 'Home'} v ${s.away_team ?? 'Away'}`
+})
+
+const shapPickSummary = computed(() => {
+  const p = gameShap.value?.pick
+  if (!p) return ''
+  const conf = `${Math.round(p.confidence * 100)}%`
+  const margin = p.margin != null ? ` by ${p.margin} pts` : ''
+  return `Pick: ${p.winner}${margin} (${conf} confidence)`
+})
+
+/** Dropdown label: "Home v Away — date", null-safe for stub fixtures. */
+const shapGameOptionLabel = (game: Game): string => {
+  const home = game.home_team ?? 'Home'
+  const away = game.away_team ?? 'Away'
+  const date = game.date ? formatDateShort(game.date) : ''
+  return date ? `${home} v ${away} — ${date}` : `${home} v ${away}`
+}
+
+/**
+ * Diverging bar style: |value| scaled against the top contribution
+ * (which spans half the track from the centre line).  Home-push bars
+ * take the boosted_tip chart colour from useChartTheme; away-push bars
+ * take the neutral grey so direction stays readable in the page's
+ * largely monochrome language.
+ */
+const shapBarColors = {
+  home: getHeuristicColors('boosted_tip').background,
+  away: DEFAULT_CHART_COLORS.background,
+}
+const shapBarStyle = (value: number) => ({
+  width: `${shapBarPercent(value, maxAbsShapValue(topShapContributionRows.value))}%`,
+  backgroundColor: value >= 0 ? shapBarColors.home : shapBarColors.away,
+})
+
 const loadCurrentSeasonModels = async (season: number) => {
   currentSeasonModelsError.value = null
   try {
@@ -402,6 +618,86 @@ const loadActiveModelData = async () => {
   }
 }
 
+/**
+ * BT-1: load the active boosted (XGBoost) model.  Mirrors
+ * loadActiveModelData's structure, but the degradation contract is
+ * "hide, never error": both boosted endpoints map "no active model"
+ * (and any failure we cannot distinguish from it) to a thrown error,
+ * so the catch nulls the payload and the whole section stays hidden.
+ * Runs in its own try/catch so it can never break the page's other
+ * sections.
+ */
+const loadActiveBoostedModelData = async () => {
+  boostedModelLoading.value = true
+  try {
+    const data = await api.getActiveBoostedModel()
+    boostedModelData.value = data.is_active ? data : null
+  } catch (e) {
+    boostedModelData.value = null
+    if (import.meta.dev) console.error(e)
+  } finally {
+    boostedModelLoading.value = false
+  }
+}
+
+/**
+ * BT-1: recent-game options for the per-game SHAP card.  Reuses the
+ * season games list endpoint, keeps the latest 20 completed games with
+ * named teams, and auto-selects the most recent one.  A missing or
+ * failed list degrades to "card hidden" — it never breaks the page.
+ */
+const loadShapGameOptions = async (season: number) => {
+  // No active boosted model -> the whole section (card included) is
+  // hidden, so skip the fetch entirely.
+  if (!boostedModelData.value) return
+  try {
+    const payload = (await api.getGames({ season })) as { games?: Game[] }
+    shapGames.value = (payload.games ?? [])
+      .filter((g) => g.completed && g.home_team && g.away_team)
+      .sort((a, b) => (b.date ?? '').localeCompare(a.date ?? ''))
+      .slice(0, 20)
+    const first = shapGames.value[0]
+    if (first) {
+      selectedShapGameId.value = first.id
+      await loadGameShap(first.id)
+    }
+  } catch (e) {
+    shapGames.value = []
+    if (import.meta.dev) console.error(e)
+  }
+}
+
+/**
+ * BT-1: per-game SHAP explanation.  404 (game predates the model, or
+ * no stored predictions) and real failures both land in the catch —
+ * the card shows a friendly inline message either way.
+ */
+const loadGameShap = async (gameId: number) => {
+  if (!gameId) {
+    gameShap.value = null
+    return
+  }
+  gameShapLoading.value = true
+  gameShapError.value = null
+  try {
+    gameShap.value = await api.getGameShapExplanation(gameId)
+  } catch {
+    gameShap.value = null
+    gameShapError.value = 'No SHAP explanation is available for this game yet.'
+  } finally {
+    gameShapLoading.value = false
+  }
+}
+
+const onShapGameChange = async () => {
+  if (selectedShapGameId.value == null) {
+    gameShap.value = null
+    gameShapError.value = null
+    return
+  }
+  await loadGameShap(selectedShapGameId.value)
+}
+
 const loadCurrentSeasonData = async () => {
   currentSeasonLoading.value = true
   currentSeasonError.value = null
@@ -424,9 +720,11 @@ onMounted(async () => {
   // The season used for the model comparison comes from the server's
   // current-season payload (falls back to the client year) — a client
   // clock near New Year must not query a season with no data.
-  await Promise.all([loadCurrentSeasonData(), loadActiveModelData()])
+  // BT-1: the boosted model load is independent (own try/catch, hidden
+  // on failure) so it rides along in the parallel batch.
+  await Promise.all([loadCurrentSeasonData(), loadActiveModelData(), loadActiveBoostedModelData()])
   const season = currentSeasonData.value?.season ?? new Date().getFullYear()
-  await loadCurrentSeasonModels(season)
+  await Promise.all([loadCurrentSeasonModels(season), loadShapGameOptions(season)])
 })
 </script>
 
@@ -732,6 +1030,161 @@ onMounted(async () => {
   margin-bottom: 0.75rem;
 }
 
+/* BT-1: Game-level SHAP explanation card */
+.shap-card {
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border);
+  border-radius: 0;
+  padding: 1.25rem;
+  margin-top: 1.5rem;
+}
+
+.shap-card-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+}
+
+.shap-select-label {
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--color-muted);
+}
+
+.shap-game-select {
+  flex: 1;
+  min-width: 220px;
+  max-width: 480px;
+  padding: 0.5rem 0.75rem;
+  background: var(--color-bg);
+  color: var(--color-text);
+  border: 1px solid var(--color-text);
+  border-radius: 0;
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+
+.shap-summary {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 0.375rem 1rem;
+  margin-bottom: 0.75rem;
+}
+
+.shap-teams {
+  font-size: 1rem;
+  font-weight: 800;
+}
+
+.shap-pick {
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--color-muted);
+}
+
+.shap-flow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.375rem 0.5rem;
+  font-size: 0.875rem;
+  font-family: 'Courier New', Courier, monospace;
+  margin-bottom: 1rem;
+}
+
+.shap-flow-item strong {
+  color: var(--color-text);
+}
+
+.shap-flow-arrow {
+  color: var(--color-muted);
+}
+
+.shap-flow-note {
+  font-size: 0.75rem;
+  color: var(--color-muted);
+}
+
+/* Diverging bars: track split at the centre line — home-push bars grow
+   right, away-push bars grow left.  Width comes from shapBarStyle
+   (max contribution = half the track). */
+.shap-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.shap-row {
+  display: grid;
+  grid-template-columns: minmax(130px, 200px) 1fr 64px;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.shap-label {
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--color-text);
+  text-align: right;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.shap-bar-track {
+  position: relative;
+  height: 14px;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  overflow: hidden;
+}
+
+.shap-bar-track::before {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--color-border);
+}
+
+.shap-bar {
+  position: absolute;
+  top: 0;
+  height: 100%;
+}
+
+.shap-bar-home {
+  left: 50%;
+}
+
+.shap-bar-away {
+  right: 50%;
+}
+
+.shap-value {
+  font-size: 0.8125rem;
+  font-weight: 700;
+  font-family: 'Courier New', Courier, monospace;
+  white-space: nowrap;
+}
+
+.shap-footnote {
+  margin-top: 0.875rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--color-border);
+  font-size: 0.75rem;
+  line-height: 1.5;
+  color: var(--color-muted);
+}
+
 .loading, .error {
   text-align: center;
   padding: 3rem 1.5rem;
@@ -930,6 +1383,34 @@ onMounted(async () => {
     flex-direction: column;
     align-items: center;
     gap: 0.5rem;
+  }
+
+  .shap-card {
+    padding: 1rem;
+  }
+
+  /* Stack each SHAP row: label + value on one line, full-width
+     diverging bar beneath. */
+  .shap-row {
+    grid-template-columns: 1fr 64px;
+    grid-template-areas:
+      'label value'
+      'track track';
+    gap: 0.25rem 0.5rem;
+  }
+
+  .shap-label {
+    grid-area: label;
+    text-align: left;
+  }
+
+  .shap-bar-track {
+    grid-area: track;
+  }
+
+  .shap-value {
+    grid-area: value;
+    text-align: right;
   }
 
   .loading, .error {

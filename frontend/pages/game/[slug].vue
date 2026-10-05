@@ -157,7 +157,8 @@ const {
       throw new Error('Invalid game slug')
     }
     const detail = await getGameDetail(slug.value)
-    // Sort tips by canonical heuristic order (Weighted → Best Bet → YOLO)
+    // Sort tips by canonical heuristic order
+    // (Boosted → Weighted → Best Bet → YOLO)
     if (detail?.tips) {
       detail.tips = sortByHeuristicOrder(detail.tips)
     }
@@ -186,7 +187,8 @@ const getHeuristicClass = (heuristic: string): string => {
   const classes: Record<string, string> = {
     'best_bet': 'best-bet',
     'yolo': 'yolo',
-    'weighted_tip': 'weighted-tip'
+    'weighted_tip': 'weighted-tip',
+    'boosted_tip': 'boosted-tip'
   }
   return classes[heuristic] || ''
 }
@@ -471,7 +473,8 @@ useHead({
    all tips now carry the same strong monochrome spine. */
 .tip-card.best-bet,
 .tip-card.yolo,
-.tip-card.weighted-tip {
+.tip-card.weighted-tip,
+.tip-card.boosted-tip {
   border-left: 4px solid var(--color-text);
 }
 
