@@ -657,7 +657,6 @@ class TestGamesWithTipsNoRowLock:
         With the FOR UPDATE removed, there's no lock to wait on; both
         requests run independently and complete cleanly.
         """
-        import asyncio
 
         from fastapi import FastAPI
         from fastapi.testclient import TestClient
@@ -717,9 +716,7 @@ class TestGamesWithTipsNoRowLock:
         the SQL; with the fix it is gone.
         """
         from sqlalchemy.dialects import postgresql
-        from sqlalchemy.orm import Query
 
-        from app.api.tips import games_with_tips
         from packages.shared.models import Game
 
         # Build the same query the endpoint builds (post-fix).
@@ -737,3 +734,242 @@ class TestGamesWithTipsNoRowLock:
             "The fix must drop the .with_for_update() call from the "
             "games_with_tips endpoint."
         )
+
+
+# ---------------------------------------------------------------------------
+# Heuristic allowlists — boosted_tip added, best_bet KEPT (boosted-tip-06)
+# ---------------------------------------------------------------------------
+
+
+class TestHeuristicAllowlists:
+    """``boosted_tip`` joins the allowlists; ``best_bet`` stays queryable.
+
+    Feature decision 3 (boosted-tip): ``best_bet`` left the tip
+    *generation* registry, but historical ``tips`` rows with
+    ``heuristic='best_bet'`` must remain queryable through every read
+    endpoint (AC5).  ``boosted_tip`` is added to the static allowlist
+    and the path/query regexes in lockstep; garbage names keep
+    failing with 422.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _reset_post_generate_limiter(self):
+        """Reset the shared module-level limiter (mirrors TestGenerateTips)."""
+        from app.api.tips import _post_generate_limiter
+
+        if hasattr(_post_generate_limiter, "reset"):
+            try:
+                _post_generate_limiter.reset()
+            except Exception:  # noqa: BLE001 — best-effort reset
+                pass
+        yield
+
+    # -- static allowlist / pattern shape ----------------------------------
+
+    def test_valid_heuristics_keeps_best_bet_and_adds_boosted_tip(self):
+        """The static allowlist is exactly the four known heuristics."""
+        from app.api.tips import VALID_HEURISTICS
+
+        assert set(VALID_HEURISTICS) == {
+            "best_bet",
+            "weighted_tip",
+            "yolo",
+            "boosted_tip",
+        }
+
+    def test_heuristic_pattern_exact_anchored_alternation(self):
+        """Anti-drift: pattern is the anchored four-way alternation."""
+        from app.api.tips import _HEURISTIC_PATTERN
+
+        assert _HEURISTIC_PATTERN == r"^(best_bet|weighted_tip|yolo|boosted_tip)$"
+
+    # -- GET /{heuristic}  (historical + new) -------------------------------
+
+    def test_best_bet_heuristic_still_queryable(self):
+        """AC5 historical contract: GET /api/tips/best_bet → 200."""
+        mock_session = AsyncMock(spec=AsyncSession)
+        mock_tips = [_make_tip_mock(heuristic="best_bet")]
+        app = _build_app_with_tips_router()
+        _override_db(app, mock_session)
+
+        with patch("app.api.tips.TipCRUD") as mock_crud:
+            mock_crud.get_by_heuristic = AsyncMock(return_value=mock_tips)
+            client = TestClient(app)
+            resp = client.get("/api/tips/best_bet")
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["count"] == 1
+        assert body["tips"][0]["heuristic"] == "best_bet"
+        args, _kwargs = mock_crud.get_by_heuristic.call_args
+        assert args[1] == "best_bet"
+
+    def test_boosted_tip_heuristic_accepted(self):
+        """GET /api/tips/boosted_tip → 200 (empty until tips are generated)."""
+        mock_session = AsyncMock(spec=AsyncSession)
+        app = _build_app_with_tips_router()
+        _override_db(app, mock_session)
+
+        with patch("app.api.tips.TipCRUD") as mock_crud:
+            mock_crud.get_by_heuristic = AsyncMock(return_value=[])
+            client = TestClient(app)
+            resp = client.get("/api/tips/boosted_tip")
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["count"] == 0
+        args, _kwargs = mock_crud.get_by_heuristic.call_args
+        assert args[1] == "boosted_tip"
+
+    def test_unknown_heuristic_path_still_rejected(self):
+        """Regression guard: garbage heuristic names still 422 on the path."""
+        app = _build_app_with_tips_router()
+        _override_db(app, AsyncMock(spec=AsyncSession))
+        client = TestClient(app)
+        resp = client.get("/api/tips/not_a_real_heuristic")
+
+        assert resp.status_code == 422
+
+    # -- GET /  (query-string pattern) --------------------------------------
+
+    def test_boosted_tip_list_filter_accepted(self):
+        """GET /api/tips?heuristic=boosted_tip → 200."""
+        mock_session = AsyncMock(spec=AsyncSession)
+        app = _build_app_with_tips_router()
+        _override_db(app, mock_session)
+
+        with patch("app.api.tips.TipCRUD") as mock_crud:
+            mock_crud.get_by_heuristic = AsyncMock(return_value=[])
+            client = TestClient(app)
+            resp = client.get("/api/tips?heuristic=boosted_tip")
+
+        assert resp.status_code == 200
+        args, _kwargs = mock_crud.get_by_heuristic.call_args
+        assert args[1] == "boosted_tip"
+
+    def test_list_tips_rejects_unknown_heuristic(self):
+        """Regression guard: garbage heuristic on the list filter → 422."""
+        app = _build_app_with_tips_router()
+        _override_db(app, AsyncMock(spec=AsyncSession))
+        client = TestClient(app)
+        resp = client.get("/api/tips?heuristic=not_a_real_heuristic")
+
+        assert resp.status_code == 422
+
+    # -- GET /games-with-tips  (query-string pattern) -----------------------
+
+    def test_games_with_tips_accepts_boosted_tip(self):
+        """games-with-tips?heuristic=boosted_tip → 200 (pattern accepts)."""
+        mock_session = AsyncMock(spec=AsyncSession)
+        games_result = MagicMock()
+        games_result.scalars.return_value.all.return_value = []
+        mock_session.execute = AsyncMock(side_effect=[games_result])
+
+        app = _build_app_with_tips_router()
+        _override_db(app, mock_session)
+
+        client = TestClient(app)
+        resp = client.get(
+            "/api/tips/games-with-tips?season=2025&round=1&heuristic=boosted_tip"
+        )
+
+        assert resp.status_code == 200
+        assert resp.json() == {"games": [], "count": 0}
+
+    # -- POST /generate  (business-logic gate against VALID_HEURISTICS) -----
+
+    def test_generate_accepts_boosted_tip(self, monkeypatch):
+        """POST /generate with heuristics=['boosted_tip'] passes the
+        VALID_HEURISTICS gate and reaches the generation service."""
+        mock_session = AsyncMock(spec=AsyncSession)
+        mock_stats = {
+            "games_processed": 9,
+            "tips_created": 9,
+            "tips_skipped": 0,
+            "tips_updated": 0,
+            "errors": [],
+        }
+
+        app = _build_app_with_tips_router(monkeypatch=monkeypatch)
+        _override_db(app, mock_session)
+
+        with patch("app.api.tips.GameCRUD") as mock_game_crud, \
+             patch("app.api.tips.TipGenerationService") as mock_service_cls:
+            mock_game_crud.get_by_round = AsyncMock(return_value=[_make_game_mock()])
+            mock_service_cls.return_value.generate_for_round = AsyncMock(
+                return_value=mock_stats
+            )
+
+            client = TestClient(app)
+            resp = client.post(
+                "/api/tips/generate",
+                json={
+                    "season": 2025,
+                    "round_id": 1,
+                    "regenerate": False,
+                    "heuristics": ["boosted_tip"],
+                },
+                headers={"X-API-Key": "the-secret-key"},
+            )
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["status"] == "success"
+        mock_service_cls.return_value.generate_for_round.assert_awaited_once()
+
+    def test_generate_accepts_best_bet(self, monkeypatch):
+        """Historical contract: best_bet still passes the generation gate
+        (backfills of historical rounds rely on it)."""
+        mock_session = AsyncMock(spec=AsyncSession)
+        mock_stats = {
+            "games_processed": 9,
+            "tips_created": 9,
+            "tips_skipped": 0,
+            "tips_updated": 0,
+            "errors": [],
+        }
+
+        app = _build_app_with_tips_router(monkeypatch=monkeypatch)
+        _override_db(app, mock_session)
+
+        with patch("app.api.tips.GameCRUD") as mock_game_crud, \
+             patch("app.api.tips.TipGenerationService") as mock_service_cls:
+            mock_game_crud.get_by_round = AsyncMock(return_value=[_make_game_mock()])
+            mock_service_cls.return_value.generate_for_round = AsyncMock(
+                return_value=mock_stats
+            )
+
+            client = TestClient(app)
+            resp = client.post(
+                "/api/tips/generate",
+                json={
+                    "season": 2025,
+                    "round_id": 1,
+                    "regenerate": False,
+                    "heuristics": ["best_bet"],
+                },
+                headers={"X-API-Key": "the-secret-key"},
+            )
+
+        assert resp.status_code == 200
+        mock_service_cls.return_value.generate_for_round.assert_awaited_once()
+
+    def test_generate_rejects_unknown_heuristic(self, monkeypatch):
+        """Regression guard: unknown heuristic in /generate → 422."""
+        app = _build_app_with_tips_router(monkeypatch=monkeypatch)
+        _override_db(app, AsyncMock(spec=AsyncSession))
+        client = TestClient(app)
+        resp = client.post(
+            "/api/tips/generate",
+            json={
+                "season": 2025,
+                "round_id": 1,
+                "regenerate": False,
+                "heuristics": ["not_a_real_heuristic"],
+            },
+            headers={"X-API-Key": "the-secret-key"},
+        )
+
+        assert resp.status_code == 422
+        body = resp.json()
+        assert body["code"] == "invalid_heuristics"

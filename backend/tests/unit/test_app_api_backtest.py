@@ -7,14 +7,17 @@ and that the BacktestService is called with the right arguments.
 
 from __future__ import annotations
 
+import subprocess
+import sys
+import textwrap
 from datetime import datetime
-from unittest.mock import AsyncMock, MagicMock, patch
+from pathlib import Path
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy.ext.asyncio import AsyncSession
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -23,10 +26,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 def _build_app_with_backtest_router(monkeypatch=None):
     """Build a minimal FastAPI app with the backtest router + handlers."""
-    from app.api.backtest import router
-    from app.core.exceptions import BackendServiceError
     from fastapi.exceptions import RequestValidationError
     from fastapi.responses import JSONResponse
+
+    from app.api.backtest import router
+    from app.core.exceptions import BackendServiceError
 
     app = FastAPI()
     app.include_router(router, prefix="/api/backtest")
@@ -89,6 +93,10 @@ class TestRouterPaths:
         assert "/table" in paths
         assert "/seasons" in paths
         assert "/current-season" in paths
+        assert "/active-model" in paths
+        # BT-1: boosted-tip SHAP routes
+        assert "/active-boosted-model" in paths
+        assert "/boosted-shap/{game_id}" in paths
         assert "/run" in paths
 
 
@@ -356,6 +364,163 @@ class TestBacktestCurrentSeason:
 
 
 # ---------------------------------------------------------------------------
+# GET /active-boosted-model  (BT-1)
+# ---------------------------------------------------------------------------
+
+
+class TestBacktestActiveBoostedModel:
+    """``GET /api/backtest/active-boosted-model`` returns boosted SHAP meta."""
+
+    def test_active_boosted_model_returns_shap_payload(self):
+        mock_session = AsyncMock(spec=AsyncSession)
+        mock_model = {
+            "model_name": "boosted_tip",
+            "version": 3,
+            "trained_at": "2026-09-28T05:00:11+08:00",
+            "training_rows": 1234,
+            "is_active": True,
+            "metrics": {"r2": 0.21, "mae": 24.7, "shap_base_value": 1.8},
+            "importances": [
+                {
+                    "feature_name": "elo_margin_home",
+                    "shap_value": 5.2,
+                    "model": "elo",
+                    "type": "margin",
+                },
+                {
+                    "feature_name": "form_conf",
+                    "shap_value": -1.4,
+                    "model": "form",
+                    "type": "confidence",
+                },
+            ],
+        }
+
+        app = _build_app_with_backtest_router()
+        _override_db(app, mock_session)
+
+        with patch(
+            "app.api.backtest.get_active_boosted_model",
+            new_callable=AsyncMock,
+            return_value=mock_model,
+        ) as mock_get:
+            client = TestClient(app)
+            resp = client.get("/api/backtest/active-boosted-model")
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body == mock_model
+        assert body["model_name"] == "boosted_tip"
+        assert body["metrics"]["r2"] == pytest.approx(0.21)
+        assert body["importances"][0]["feature_name"] == "elo_margin_home"
+        assert body["importances"][0]["model"] == "elo"
+        assert body["importances"][0]["type"] == "margin"
+        mock_get.assert_awaited_once_with(mock_session)
+
+    def test_active_boosted_model_without_active_version_returns_404(self):
+        mock_session = AsyncMock(spec=AsyncSession)
+        app = _build_app_with_backtest_router()
+        _override_db(app, mock_session)
+
+        with patch(
+            "app.api.backtest.get_active_boosted_model",
+            new_callable=AsyncMock,
+            return_value=None,
+        ):
+            client = TestClient(app)
+            resp = client.get("/api/backtest/active-boosted-model")
+
+        assert resp.status_code == 404
+        body = resp.json()
+        # Same error shape the repo-wide 404s use (games/events/admin).
+        assert body["code"] == "not_found"
+        assert "boosted" in body["message"].lower()
+
+
+# ---------------------------------------------------------------------------
+# GET /boosted-shap/{game_id}  (BT-1)
+# ---------------------------------------------------------------------------
+
+
+class TestBacktestBoostedShap:
+    """``GET /api/backtest/boosted-shap/{game_id}`` per-game SHAP card."""
+
+    def test_boosted_shap_returns_explanation(self):
+        mock_session = AsyncMock(spec=AsyncSession)
+        mock_explanation = {
+            "game_id": 42,
+            "home_team": "Richmond",
+            "away_team": "Carlton",
+            "base_value": 1.8,
+            "prediction": 9.4,
+            "contributions": {"elo_margin_home": 5.2, "elo_conf": 2.4},
+            "winner": "home",
+            "pick": {"winner": "Richmond", "margin": 9, "confidence": 0.641},
+        }
+
+        app = _build_app_with_backtest_router()
+        _override_db(app, mock_session)
+
+        with patch(
+            "app.api.backtest.get_game_shap_explanation",
+            new_callable=AsyncMock,
+            return_value=mock_explanation,
+        ) as mock_get:
+            client = TestClient(app)
+            resp = client.get("/api/backtest/boosted-shap/42")
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body == mock_explanation
+        for key in (
+            "game_id",
+            "home_team",
+            "away_team",
+            "base_value",
+            "prediction",
+            "contributions",
+            "winner",
+            "pick",
+        ):
+            assert key in body
+        assert body["winner"] == "home"
+        assert body["pick"]["winner"] == "Richmond"
+        # SHAP additivity sanity on the payload itself: base + Σ == prediction.
+        assert body["base_value"] + sum(body["contributions"].values()) == pytest.approx(
+            body["prediction"]
+        )
+        mock_get.assert_awaited_once_with(mock_session, 42)
+
+    def test_boosted_shap_without_model_or_predictions_returns_404(self):
+        mock_session = AsyncMock(spec=AsyncSession)
+        app = _build_app_with_backtest_router()
+        _override_db(app, mock_session)
+
+        with patch(
+            "app.api.backtest.get_game_shap_explanation",
+            new_callable=AsyncMock,
+            return_value=None,
+        ):
+            client = TestClient(app)
+            resp = client.get("/api/backtest/boosted-shap/999999")
+
+        assert resp.status_code == 404
+        body = resp.json()
+        # Single generic message: the service cannot distinguish "no active
+        # model" from "no predictions for the game" (both are None).
+        assert body["code"] == "not_found"
+        assert body["message"]
+
+    def test_boosted_shap_invalid_game_id_returns_422(self):
+        app = _build_app_with_backtest_router()
+        _override_db(app, AsyncMock(spec=AsyncSession))
+        client = TestClient(app)
+        resp = client.get("/api/backtest/boosted-shap/not-an-int")
+
+        assert resp.status_code == 422
+
+
+# ---------------------------------------------------------------------------
 # POST /run  — admin
 # ---------------------------------------------------------------------------
 
@@ -428,3 +593,55 @@ class TestBacktestRun:
         assert body["season"] == 2025
         assert body["count"] == 1
         assert body["results"] == mock_stats
+
+
+# ---------------------------------------------------------------------------
+# Lazy heavy-import pin (BT-1 / S3)
+# ---------------------------------------------------------------------------
+
+
+BACKEND_DIR = Path(__file__).resolve().parents[2]  # backend/
+
+# Same guard list as tests/unit/test_lazy_sklearn.py: importing the
+# always-on backtest router (pulled by every API worker) must not pay
+# the resident-memory cost of any heavy ML library at module import time.
+_HEAVY_LIBS = ("sklearn", "scipy", "numpy", "xgboost", "shap")
+
+
+class TestBacktestRouterLazyImports:
+    """Importing ``app.api.backtest`` must not load heavy ML libs (BT-1)."""
+
+    def test_importing_backtest_router_does_not_load_heavy_libs(self):
+        """xgboost/shap/sklearn/numpy load only inside request handlers.
+
+        The boosted-tip SHAP routes import the explanation service at
+        module level; that is only safe because the service (and its
+        whole transitive graph) defers xgboost/shap/numpy imports to
+        function bodies.  Runs in an ISOLATED subprocess so the result
+        is not polluted by tests that legitimately import heavy libs.
+        """
+        code = textwrap.dedent(
+            f"""
+            import sys
+            import app.api.backtest
+            offenders = sorted(lib for lib in {_HEAVY_LIBS!r} if lib in sys.modules)
+            assert not offenders, (
+                "Importing app.api.backtest loaded heavy ML libs at module "
+                "load time: " + repr(offenders)
+            )
+            """
+        )
+        result = subprocess.run(
+            [sys.executable, "-c", code],
+            capture_output=True,
+            text=True,
+            cwd=str(BACKEND_DIR),
+            timeout=120,
+        )
+        assert result.returncode == 0, (
+            "Isolated import check failed — a heavy ML lib was loaded at "
+            "import time (or the import itself errored):\n"
+            f"--- code ---\n{code}"
+            f"--- stdout ---\n{result.stdout}"
+            f"--- stderr ---\n{result.stderr}"
+        )

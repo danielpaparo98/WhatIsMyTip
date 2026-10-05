@@ -108,6 +108,6 @@ class TipGenerateRequest(BaseModel):
         default=None,
         description=(
             "List of heuristic types to generate. Must be from the allowed "
-            "set (best_bet, weighted_tip, yolo)."
+            "set (best_bet, weighted_tip, yolo, boosted_tip)."
         ),
     )

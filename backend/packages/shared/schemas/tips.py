@@ -19,7 +19,9 @@ class TipResponse(BaseModel):
 
 class TipCreate(BaseModel):
     game_id: int
-    heuristic: str = Field(..., description="Heuristic type: best_bet, yolo, weighted_tip")
+    heuristic: str = Field(
+        ..., description="Heuristic type: best_bet, yolo, weighted_tip, boosted_tip"
+    )
     selected_team: str
     margin: int
     confidence: float = Field(..., ge=0, le=1)

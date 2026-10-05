@@ -9,7 +9,10 @@ from typing import Optional
 
 from pydantic import BaseModel, Field
 
-_VALID_HEURISTICS = {"best_bet", "weighted_tip", "yolo"}
+# ``boosted_tip`` added; ``best_bet`` KEPT for historical queryability
+# (boosted-tip feature decision 3).  Must stay in lockstep with the
+# two regex Fields below and with ``app/api/tips.py``'s allowlist.
+_VALID_HEURISTICS = {"best_bet", "weighted_tip", "yolo", "boosted_tip"}
 
 
 class GamesQuery(BaseModel):
@@ -26,7 +29,9 @@ class TipsQuery(BaseModel):
 
     season: Optional[int] = Field(default=None, ge=2000)
     round: Optional[int] = Field(default=None, ge=1, alias="round_id")
-    heuristic: Optional[str] = Field(default=None, pattern=r"^(best_bet|weighted_tip|yolo)$")
+    heuristic: Optional[str] = Field(
+        default=None, pattern=r"^(best_bet|weighted_tip|yolo|boosted_tip)$"
+    )
     limit: int = Field(default=100, ge=1, le=500)
 
 
@@ -35,7 +40,9 @@ class TipsGameWithTipsQuery(BaseModel):
 
     season: int = Field(..., ge=2000)
     round: int = Field(..., ge=1, alias="round_id")
-    heuristic: str = Field(default="best_bet", pattern=r"^(best_bet|weighted_tip|yolo)$")
+    heuristic: str = Field(
+        default="best_bet", pattern=r"^(best_bet|weighted_tip|yolo|boosted_tip)$"
+    )
 
 
 class TipsByHeuristicQuery(BaseModel):
