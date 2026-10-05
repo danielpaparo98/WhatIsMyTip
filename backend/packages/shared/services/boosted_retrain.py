@@ -173,11 +173,17 @@ async def run_boosted_retrain(
     # prediction_i == base + sum_j shap_values[i, j].  Tolerance is 1e-4,
     # not machine epsilon: shap_values are float32 (accumulated over 16
     # features), so real-data deviations of ~1e-5 are expected.
+    # Deliberately a raise, not an assert: this is the only runtime check
+    # that the artifact, shap_base_value and the SHAP-importance
+    # coefficient rows all describe the SAME model — it must survive
+    # ``python -O`` (which strips asserts).  The cron's try/except turns
+    # the raise into the documented partial-success summary.
     max_deviation = float(np.abs(base + sv.sum(axis=1) - preds).max())
-    assert max_deviation <= 1e-4, (
-        f"SHAP additivity violated for {BOOSTED_TIP_MODEL_NAME}: "
-        f"max |base + sum(shap) - prediction| = {max_deviation:.3e}"
-    )
+    if max_deviation > 1e-4:
+        raise RuntimeError(
+            f"SHAP additivity violated for {BOOSTED_TIP_MODEL_NAME}: "
+            f"max |base + sum(shap) - prediction| = {max_deviation:.3e}"
+        )
 
     model_bytes: bytes = model.get_booster().save_raw(raw_format="json")
 

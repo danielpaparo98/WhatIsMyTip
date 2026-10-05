@@ -468,15 +468,16 @@ All models inherit from [`BaseModel`](../backend/packages/shared/models_ml/base.
 | **Matchup** | [`models_ml/matchup.py`](../backend/packages/shared/models_ml/matchup.py:1) |
 | **Player Form** | [`models_ml/player_form.py`](../backend/packages/shared/models_ml/player_form.py:1) |
 
-### Heuristics (3)
+### Heuristics (4)
 
 All heuristics inherit from [`BaseHeuristic`](../backend/packages/shared/heuristics/base.py:1):
 
 | Heuristic | Source |
 |-----------|--------|
-| **Best Bet** | [`heuristics/best_bet.py`](../backend/packages/shared/heuristics/best_bet.py:1) |
-| **YOLO** | [`heuristics/yolo.py`](../backend/packages/shared/heuristics/yolo.py:1) |
+| **Boosted Tip** | [`heuristics/boosted_tip.py`](../backend/packages/shared/heuristics/boosted_tip.py:1) |
 | **Weighted Tip** | [`heuristics/weighted_tip.py`](../backend/packages/shared/heuristics/weighted_tip.py:1) |
+| **Best Bet** | [`heuristics/best_bet.py`](../backend/packages/shared/heuristics/best_bet.py:1) (retired from generation — historical tips remain queryable) |
+| **YOLO** | [`heuristics/yolo.py`](../backend/packages/shared/heuristics/yolo.py:1) |
 
 The [`ModelOrchestrator`](../backend/packages/shared/orchestrator.py:1) runs all 8 models in parallel using `asyncio.gather()`, then each heuristic combines the model outputs into a final prediction with a team, confidence score, and predicted margin. Models that return `ABSTAINED` are excluded from the consensus vote — heuristics see fewer voters, not abstentions.
 
@@ -486,11 +487,11 @@ from packages.shared.orchestrator import ModelOrchestrator
 orchestrator = ModelOrchestrator()
 
 # Single heuristic prediction
-result = await orchestrator.predict(game, db=session, heuristic="best_bet")
+result = await orchestrator.predict(game, db=session, heuristic="boosted_tip")
 
 # All heuristics
 results = await orchestrator.predict_all(game, db=session)
-# Returns: {"best_bet": {...}, "yolo": {...}, "weighted_tip": {...}}
+# Returns: {"boosted_tip": {...}, "yolo": {...}, "weighted_tip": {...}}
 ```
 
 ### Neutrality & abstention policy
@@ -519,6 +520,7 @@ Two rules apply across the prediction pipeline:
 | **Player Form** | `tog_pct` normalized to a 0–1 scale so its contribution is comparable to the other composite terms |
 | **Heuristic zero-information defaults** | When no model voted: Best Bet → (alphabetically-first team, 0.50, 5), YOLO → (alphabetically-first team, 0.50, 10); Weighted Tip → (alphabetically-first team, 0.55, 6) on vote ties and empty input (0.55 is the long-standing fixed fallback confidence). Vote ties in Best Bet resolve to the alphabetically-first team too. Deterministic and home/away-neutral — Best Bet and YOLO never inflate confidence on a no-information default. |
 | **Weighted Tip training** | Feature vectors and coefficients are aligned via `feature_names_for` — a length mismatch raises `ValueError` instead of silently mis-weighting. Retrain guard: `MIN_TRAINING_ROWS = 100` (16-feature OLS needs rows ≫ features); below 100 rows the previously-active version keeps serving. |
+| **Boosted Tip training (BT-1)** | Same feature contract and `MIN_TRAINING_ROWS = 100` skip gate as Weighted Tip, trained in the same Monday 05:00 AWST cron (gated by `BOOSTED_RETRAIN_ENABLED`). The serialized XGBoost ensemble is persisted as a BYTEA artifact (`save_raw` JSON); mean \|SHAP\| per feature is stored in the coefficient rows and the TreeExplainer base value in `shap_base_value`. An additivity check (`base + Σ SHAP = prediction`, tol 1e-4) raises - deliberately not an `assert`, so it survives `python -O` - rather than persisting a mismatched artifact. |
 
 ---
 
