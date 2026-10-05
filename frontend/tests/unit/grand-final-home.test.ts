@@ -273,6 +273,10 @@ describe('GrandFinalReport component contract', () => {
   it('GF-DESIGN: weighted tip leads the tip cards', () => {
     const tipIdx = GF_REPORT.indexOf('TIP_ORDER')
     expect(tipIdx).toBeGreaterThan(-1)
+    // BT-1 (boosted-tip): the flagship boosted tip now leads.
+    expect(GF_REPORT.indexOf('boosted_tip', tipIdx)).toBeLessThan(
+      GF_REPORT.indexOf('weighted_tip', tipIdx),
+    )
     expect(GF_REPORT.indexOf('weighted_tip', tipIdx)).toBeLessThan(
       GF_REPORT.indexOf('best_bet', tipIdx),
     )

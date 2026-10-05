@@ -320,6 +320,65 @@ export interface TeamsIdentityResponse {
   teams: TeamIdentityPayload[]
 }
 
+// ---------------------------------------------------------------------------
+// Boosted Tip (XGBoost) + SHAP (BT-1, boosted-tip feature).  Mirrors the
+// dict payloads returned by backend/.../services/boosted_explanations.py
+// field-for-field — do not rename: the payload keys come straight from
+// the service.  NOTE: unlike GET /active-model (which wraps its payload
+// in `{active, model}`), BOTH boosted endpoints return the payload
+// directly and map "no active model / no explanation for the game" to
+// 404 — callers catch and degrade (the section simply stays hidden).
+// ---------------------------------------------------------------------------
+
+/** One global SHAP importance row (mirrors `_enrich_importance`). */
+export interface ShapImportanceEntry {
+  feature_name: string
+  /** Mean |SHAP value| across the training rows (global importance). */
+  shap_value: number
+  /** Underlying model the feature belongs to (feature-name convention). */
+  model: string
+  type: 'margin' | 'confidence' | 'other'
+}
+
+/** Mirrors `get_active_boosted_model` — active `boosted_tip` version. */
+export interface ActiveBoostedModel {
+  model_name: string
+  version: number
+  trained_at: string | null
+  training_rows: number
+  is_active: boolean
+  /** JSONB metrics written by the weekly retrain (train-set r2/mae). */
+  metrics: {
+    r2: number | null
+    mae: number | null
+    /** TreeExplainer expected value — the SHAP bar chart's baseline. */
+    shap_base_value: number | null
+  }
+  /** Sorted by |shap_value| descending, feature name as tie-break. */
+  importances: ShapImportanceEntry[]
+}
+
+/** Mirrors `get_game_shap_explanation` — per-game local SHAP card. */
+export interface GameShapExplanation {
+  game_id: number
+  home_team: string | null
+  away_team: string | null
+  /** TreeExplainer expected value (signed home-margin points). */
+  base_value: number
+  /** Raw signed home-margin prediction (points). */
+  prediction: number
+  /** Per-feature signed SHAP contributions, sorted by |value| desc. */
+  contributions: Record<string, number>
+  /** Sign of `prediction`: home when >= 0, away otherwise. */
+  winner: 'home' | 'away'
+  /** Contextual tip for the card (home_margin_to_tip of `prediction`). */
+  pick: {
+    winner: string
+    margin: number | null
+    confidence: number
+  }
+}
+
 export const useApi = () => {
   const config = useRuntimeConfig()
   const apiBase = config.public.apiBase as string
@@ -548,6 +607,25 @@ export const useApi = () => {
     return response.json()
   }
 
+  // BT-1 (boosted-tip): active boosted_tip (XGBoost) version + global
+  // SHAP importances.  404 = no active model yet (pre-first-retrain or
+  // BOOSTED_RETRAIN_ENABLED=false) — throws like getActiveModel; the
+  // backtest section catches and hides itself.
+  const getActiveBoostedModel = async (): Promise<ActiveBoostedModel> => {
+    const response = await fetchWithTimeout('/api/backtest/active-boosted-model')
+    if (!response.ok) throw new Error('Failed to fetch active boosted model')
+    return response.json()
+  }
+
+  // BT-1: per-game local SHAP explanation.  404 = no active boosted
+  // model OR the game has no stored model predictions — an expected,
+  // non-error state callers catch and degrade on.
+  const getGameShapExplanation = async (gameId: number): Promise<GameShapExplanation> => {
+    const response = await fetchWithTimeout(`/api/backtest/boosted-shap/${gameId}`)
+    if (!response.ok) throw new Error('Failed to fetch game SHAP explanation')
+    return response.json()
+  }
+
   // Multi-league read side (ADR 0001): sport/competition discovery and
   // the event list per competition season. The 404 "unknown competition
   // or season" case THROWS like every other non-OK response — callers
@@ -620,6 +698,8 @@ export const useApi = () => {
     getCurrentSeasonPerformance,
     compareModels,
     getActiveModel,
+    getActiveBoostedModel,
+    getGameShapExplanation,
     getSports,
     getEvents,
     getEvent,

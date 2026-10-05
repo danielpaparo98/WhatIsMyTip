@@ -35,8 +35,15 @@ describe('SPORT_CONFIG', () => {
     }
   })
 
-  it('labels all three heuristics in weighted-tip-first order', () => {
-    expect(SPORT_CONFIG.heuristicOrder).toEqual(['weighted_tip', 'best_bet', 'yolo'])
+  // BT-1 (boosted-tip): four heuristics now — boosted_tip leads as the
+  // flagship; best_bet is retained for historical-season display.
+  it('labels all four heuristics in boosted-tip-first order', () => {
+    expect(SPORT_CONFIG.heuristicOrder).toEqual([
+      'boosted_tip',
+      'weighted_tip',
+      'best_bet',
+      'yolo',
+    ])
     for (const h of SPORT_CONFIG.heuristicOrder) {
       expect(SPORT_CONFIG.heuristicLabels, `Missing label for heuristic: ${h}`).toHaveProperty(h)
     }

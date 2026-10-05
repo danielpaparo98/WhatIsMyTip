@@ -24,6 +24,7 @@ const EXPECTED_MODELS = [
 ] as const
 
 const EXPECTED_HEURISTICS = [
+  'boosted_tip',
   'best_bet',
   'yolo',
   'weighted_tip',
@@ -63,6 +64,11 @@ describe('HEURISTIC_LABELS', () => {
 
   it('maps weighted_tip to the "Weighted Tip" human label', () => {
     expect(HEURISTIC_LABELS.weighted_tip).toBe('Weighted Tip')
+  })
+
+  // BT-1 (boosted-tip): flagship heuristic gets its human label too.
+  it('maps boosted_tip to the "Boosted Tip" human label', () => {
+    expect(HEURISTIC_LABELS.boosted_tip).toBe('Boosted Tip')
   })
 })
 
