@@ -70,6 +70,9 @@ COPY pyproject.toml uv.lock ./
 # Install Python dependencies using uv
 # --frozen ensures exact versions from uv.lock are used
 # --no-dev skips development dependencies for smaller production image
+# UV_HTTP_TIMEOUT: BT-1 added large ML wheels (xgboost ~58 MB, shap/numba/
+# llvmlite ~50 MB) — uv's 30 s default download timeout made builds flaky.
+ENV UV_HTTP_TIMEOUT=300
 RUN uv sync --frozen --no-dev --no-install-project
 
 # Copy the rest of the application code
