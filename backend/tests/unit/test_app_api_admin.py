@@ -9,13 +9,11 @@ the right arguments.
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
-import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy.ext.asyncio import AsyncSession
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -24,10 +22,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 def _build_app_with_admin_router(monkeypatch=None):
     """Build a minimal FastAPI app with the admin router and handlers."""
-    from app.api.admin import router
-    from app.core.exceptions import BackendServiceError
     from fastapi.exceptions import RequestValidationError
     from fastapi.responses import JSONResponse
+
+    from app.api.admin import router
+    from app.core.exceptions import BackendServiceError
 
     app = FastAPI()
     app.include_router(router, prefix="/api/admin")
@@ -331,6 +330,50 @@ class TestAdminTriggers:
         assert body["fixtures_synced"] == 42
         assert body["leagues_synced"] == ["nwfl", "sfl"]
 
+    def test_model_retrain_trigger_success(self, monkeypatch):
+        """BT-1: ``model-retrain`` is a manually-triggerable
+        ALLOWED_JOB_NAME so operators can train both models on demand
+        instead of waiting for the Monday 05:00 AWST cron.
+
+        The trigger reuses the cron ``ModelRetrainJob`` machinery
+        verbatim (locking, JobExecution row, retries, alerting) via its
+        ``execute()``; the job runs on its OWN session factory
+        (scheduler parity), not the request-scoped session.
+        """
+        mock_session = AsyncMock(spec=AsyncSession)
+        mock_summary = {
+            "status": "trained",
+            "model_name": "weighted_tip",
+            "version": 12,
+            "training_rows": 1500,
+            "boosted_tip": {"status": "trained", "version": 4},
+        }
+
+        app = _build_app_with_admin_router(monkeypatch=monkeypatch)
+        _override_db(app, mock_session)
+
+        with patch("app.api.admin.ModelRetrainJob") as mock_job_cls:
+            mock_job = mock_job_cls.return_value
+            mock_job.execute = AsyncMock(return_value=mock_summary)
+
+            client = TestClient(app)
+            resp = client.post(
+                "/api/admin/model-retrain/trigger",
+                json={},
+                headers=ADMIN_HEADERS,
+            )
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["success"] is True
+        assert body["status"] == "trained"
+        assert body["summary"] == mock_summary
+        mock_job_cls.assert_called_once()
+        # Constructed with a callable session factory (BaseJob contract).
+        args, _kwargs = mock_job_cls.call_args
+        assert callable(args[0])
+        assert mock_job.execute.await_count == 1
+
 
 # ---------------------------------------------------------------------------
 # GET /historic-refresh/progress
@@ -512,13 +555,14 @@ class TestAdminMetrics:
         assert "metrics" in body
         assert "system" in body
         assert "alerting_enabled" in body
-        # Five job names, all populated
+        # Six job names, all populated
         assert set(body["metrics"].keys()) == {
             "daily-sync",
             "match-completion",
             "tip-generation",
             "historic-refresh",
             "league-sync",
+            "model-retrain",
         }
         for name, metric in body["metrics"].items():
             assert metric["job_name"] == name

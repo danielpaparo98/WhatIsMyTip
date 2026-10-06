@@ -33,6 +33,8 @@ on:
           - match-completion
           - tip-generation
           - historic-refresh
+          - league-sync
+          - model-retrain
       user_note:
         description: Why are you triggering this? (free text, logged for audit)
         required: true
