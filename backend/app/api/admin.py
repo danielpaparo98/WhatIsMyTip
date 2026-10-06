@@ -12,7 +12,8 @@ Routes (mounted at ``/api/admin``):
 * ``POST /{job_name}/trigger``         â€” for ``daily-sync``,
                                         ``match-completion``,
                                         ``tip-generation``,
-                                        ``historic-refresh`` (422 on
+                                        ``historic-refresh``,
+                                        ``model-retrain`` (422 on
                                         unknown name)
 * ``POST /match-report/regenerate``    â€” delete + regenerate the
                                         grand-final pre-match report
@@ -34,16 +35,19 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.db_deps import get_db
 from app.core.exceptions import http_error
 from app.core.security import require_admin_key
+from app.cron.model_retrain import ModelRetrainJob
 from packages.shared.cache import short_cache
 from packages.shared.config import settings
 from packages.shared.crud import GameCRUD, MatchReportCRUD
 from packages.shared.crud.jobs import JobExecutionCRUD
+from packages.shared.db import _get_session_factory
 from packages.shared.models_ml.elo import EloModel
 from packages.shared.schemas.admin import (
     DailySyncTriggerRequest,
     HistoricRefreshTriggerRequest,
     LeagueSyncTriggerRequest,
     MatchCompletionTriggerRequest,
+    ModelRetrainTriggerRequest,
     TipGenerationTriggerRequest,
 )
 from packages.shared.services.game_sync import GameSyncService
@@ -76,6 +80,7 @@ ALLOWED_JOB_NAMES = {
     "tip-generation",
     "historic-refresh",
     "league-sync",
+    "model-retrain",
 }
 
 
@@ -147,6 +152,9 @@ async def trigger_job(
     elif job_name == "league-sync":
         parsed = LeagueSyncTriggerRequest.model_validate(body)
         return await _run_league_sync(db, parsed)
+    elif job_name == "model-retrain":
+        parsed = ModelRetrainTriggerRequest.model_validate(body)
+        return await _run_model_retrain(db, parsed)
     # Unreachable â€” job_name is validated above
     raise http_error(500, "internal_error", "unreachable")
 
@@ -207,6 +215,33 @@ async def _run_league_sync(
         "leagues_failed": stats["leagues_failed"],
         "fixtures_synced": stats["fixtures_synced"],
         "errors": stats["errors"],
+    }
+
+
+async def _run_model_retrain(
+    db: AsyncSession, body: ModelRetrainTriggerRequest
+) -> dict:
+    """Trigger the weekly model-retrain job on demand (BT-1).
+
+    Reuses the cron :class:`ModelRetrainJob` machinery verbatim —
+    locking, ``JobExecution`` bookkeeping, retries and alerting all
+    behave exactly like the scheduled Monday 05:00 AWST run, so the
+    admin metrics dashboard reflects manual runs identically.  The job
+    opens its OWN sessions via the shared session factory (scheduler
+    parity): a long fit must not hold the request-scoped ``db`` session
+    open, so ``db`` is intentionally unused here.
+    """
+    job = ModelRetrainJob(_get_session_factory())
+    summary = await job.execute()
+    return {
+        "success": True,
+        "status": summary.get("status"),
+        "message": (
+            "Model retrain completed. Top-level status is the linear "
+            "weighted_tip outcome ('trained' or 'skipped'); the boosted "
+            "XGBoost outcome is nested under 'summary.boosted_tip'."
+        ),
+        "summary": summary,
     }
 
 

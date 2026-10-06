@@ -111,3 +111,15 @@ class TipGenerateRequest(BaseModel):
             "set (best_bet, weighted_tip, yolo, boosted_tip)."
         ),
     )
+
+
+class ModelRetrainTriggerRequest(BaseModel):
+    """Request model for triggering the weekly model-retrain job (BT-1).
+
+    Takes no body fields on purpose: the run trains BOTH models
+    (``weighted_tip`` linear + ``boosted_tip`` XGBoost) exactly like the
+    Monday 05:00 AWST cron, and the boosted step is governed by
+    ``BOOSTED_RETRAIN_ENABLED``.  Send an empty JSON object (``{}``).
+    """
+
+    model_config = ConfigDict(extra="ignore")

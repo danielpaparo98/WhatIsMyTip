@@ -276,7 +276,7 @@ All admin endpoints **require `X-API-Key` header**.
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `POST` | `/api/admin/{job_name}/trigger` | Manually trigger one of: `daily-sync`, `match-completion`, `tip-generation`, `historic-refresh` |
+| `POST` | `/api/admin/{job_name}/trigger` | Manually trigger one of: `daily-sync`, `match-completion`, `tip-generation`, `historic-refresh`, `league-sync`, `model-retrain` |
 | `GET` | `/api/admin/historic-refresh/progress` | Current progress of the historic-refresh job (current season, current round, items processed, ETA, etc.) |
 | `GET` | `/api/admin/metrics` | Per-job execution metrics: success rate, last-run timestamp, average duration, etc. |
 
