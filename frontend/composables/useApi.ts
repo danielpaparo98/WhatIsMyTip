@@ -358,27 +358,6 @@ export interface ActiveBoostedModel {
   importances: ShapImportanceEntry[]
 }
 
-/** Mirrors `get_game_shap_explanation` — per-game local SHAP card. */
-export interface GameShapExplanation {
-  game_id: number
-  home_team: string | null
-  away_team: string | null
-  /** TreeExplainer expected value (signed home-margin points). */
-  base_value: number
-  /** Raw signed home-margin prediction (points). */
-  prediction: number
-  /** Per-feature signed SHAP contributions, sorted by |value| desc. */
-  contributions: Record<string, number>
-  /** Sign of `prediction`: home when >= 0, away otherwise. */
-  winner: 'home' | 'away'
-  /** Contextual tip for the card (home_margin_to_tip of `prediction`). */
-  pick: {
-    winner: string
-    margin: number | null
-    confidence: number
-  }
-}
-
 export const useApi = () => {
   const config = useRuntimeConfig()
   const apiBase = config.public.apiBase as string
@@ -617,15 +596,6 @@ export const useApi = () => {
     return response.json()
   }
 
-  // BT-1: per-game local SHAP explanation.  404 = no active boosted
-  // model OR the game has no stored model predictions — an expected,
-  // non-error state callers catch and degrade on.
-  const getGameShapExplanation = async (gameId: number): Promise<GameShapExplanation> => {
-    const response = await fetchWithTimeout(`/api/backtest/boosted-shap/${gameId}`)
-    if (!response.ok) throw new Error('Failed to fetch game SHAP explanation')
-    return response.json()
-  }
-
   // Multi-league read side (ADR 0001): sport/competition discovery and
   // the event list per competition season. The 404 "unknown competition
   // or season" case THROWS like every other non-OK response — callers
@@ -699,7 +669,6 @@ export const useApi = () => {
     compareModels,
     getActiveModel,
     getActiveBoostedModel,
-    getGameShapExplanation,
     getSports,
     getEvents,
     getEvent,
