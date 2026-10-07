@@ -123,3 +123,23 @@ class ModelRetrainTriggerRequest(BaseModel):
     """
 
     model_config = ConfigDict(extra="ignore")
+
+
+class BoostedBackfillTriggerRequest(BaseModel):
+    """Request model for the boosted-tip walk-forward backfill (BT-1).
+
+    ``seasons`` defaults to the current season when omitted.  Set
+    ``dry_run`` to compute the full per-round plan and return the
+    preview without writing any tips.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    seasons: Optional[List[int]] = Field(
+        default=None,
+        description="Seasons whose rounds receive backfilled boosted_tip tips.",
+    )
+    dry_run: bool = Field(
+        default=False,
+        description="Compute the plan and return the preview without persisting.",
+    )

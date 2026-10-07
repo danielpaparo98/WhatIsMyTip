@@ -43,12 +43,16 @@ from packages.shared.crud.jobs import JobExecutionCRUD
 from packages.shared.db import _get_session_factory
 from packages.shared.models_ml.elo import EloModel
 from packages.shared.schemas.admin import (
+    BoostedBackfillTriggerRequest,
     DailySyncTriggerRequest,
     HistoricRefreshTriggerRequest,
     LeagueSyncTriggerRequest,
     MatchCompletionTriggerRequest,
     ModelRetrainTriggerRequest,
     TipGenerationTriggerRequest,
+)
+from packages.shared.services.boosted_walkforward import (
+    run_boosted_walkforward_backfill,
 )
 from packages.shared.services.game_sync import GameSyncService
 from packages.shared.services.historic_data_refresh import (
@@ -81,6 +85,7 @@ ALLOWED_JOB_NAMES = {
     "historic-refresh",
     "league-sync",
     "model-retrain",
+    "boosted-backfill",
 }
 
 
@@ -155,6 +160,9 @@ async def trigger_job(
     elif job_name == "model-retrain":
         parsed = ModelRetrainTriggerRequest.model_validate(body)
         return await _run_model_retrain(db, parsed)
+    elif job_name == "boosted-backfill":
+        parsed = BoostedBackfillTriggerRequest.model_validate(body)
+        return await _run_boosted_backfill(db, parsed)
     # Unreachable â€” job_name is validated above
     raise http_error(500, "internal_error", "unreachable")
 
@@ -240,6 +248,38 @@ async def _run_model_retrain(
             "Model retrain completed. Top-level status is the linear "
             "weighted_tip outcome ('trained' or 'skipped'); the boosted "
             "XGBoost outcome is nested under 'summary.boosted_tip'."
+        ),
+        "summary": summary,
+    }
+
+
+async def _run_boosted_backfill(
+    db: AsyncSession, body: BoostedBackfillTriggerRequest
+) -> dict:
+    """Trigger the boosted-tip walk-forward backfill (BT-1).
+
+    Backfills ``boosted_tip`` tips for completed rounds: each round is
+    tipped by a model trained ONLY on strictly-earlier games (honest
+    walk-forward, below ``MIN_TRAINING_ROWS`` rounds fall back to
+    majority vote).  Idempotent — existing boosted tips are skipped.
+    Seasons default to the current season; pass ``{"seasons": [2024]}``
+    for more, and/or ``{"dry_run": true}`` to preview without writing.
+    Runs on the request-scoped session in one transaction (a current
+    season takes ~1 minute — comfortably inside the ingress window).
+    """
+    seasons = body.seasons or [settings.current_season]
+    summary = await run_boosted_walkforward_backfill(
+        db, seasons, dry_run=body.dry_run
+    )
+    return {
+        "success": True,
+        "status": summary["status"],
+        "message": (
+            "Walk-forward backfill "
+            + ("preview (dry run — nothing written)" if body.dry_run else "committed")
+            + f": {summary['tips_created']} tips created, "
+            f"{summary['tips_skipped_existing']} skipped (already existed), "
+            f"{summary['rounds_processed']} rounds processed."
         ),
         "summary": summary,
     }
