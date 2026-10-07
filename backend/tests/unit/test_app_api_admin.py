@@ -374,6 +374,45 @@ class TestAdminTriggers:
         assert callable(args[0])
         assert mock_job.execute.await_count == 1
 
+    def test_boosted_backfill_trigger_success(self, monkeypatch):
+        """BT-1: ``boosted-backfill`` walk-forward backfill is triggerable;
+        seasons default to the current season, dry_run passes through."""
+        mock_session = AsyncMock(spec=AsyncSession)
+        mock_summary = {
+            "status": "completed",
+            "seasons": [2026],
+            "rounds_processed": 25,
+            "tips_created": 200,
+            "tips_skipped_existing": 0,
+            "per_round": [],
+        }
+
+        app = _build_app_with_admin_router(monkeypatch=monkeypatch)
+        _override_db(app, mock_session)
+
+        with patch(
+            "app.api.admin.run_boosted_walkforward_backfill",
+            new_callable=AsyncMock,
+            return_value=mock_summary,
+        ) as mock_run:
+            client = TestClient(app)
+            resp = client.post(
+                "/api/admin/boosted-backfill/trigger",
+                json={"seasons": [2026], "dry_run": False},
+                headers=ADMIN_HEADERS,
+            )
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["success"] is True
+        assert body["status"] == "completed"
+        assert body["summary"] == mock_summary
+        mock_run.assert_awaited_once()
+        # First positional arg is the (mock) session; seasons passthrough.
+        args, kwargs = mock_run.call_args
+        assert args[1] == [2026]
+        assert kwargs["dry_run"] is False
+
 
 # ---------------------------------------------------------------------------
 # GET /historic-refresh/progress
@@ -563,6 +602,7 @@ class TestAdminMetrics:
             "historic-refresh",
             "league-sync",
             "model-retrain",
+            "boosted-backfill",
         }
         for name, metric in body["metrics"].items():
             assert metric["job_name"] == name
