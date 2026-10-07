@@ -94,9 +94,8 @@ class TestRouterPaths:
         assert "/seasons" in paths
         assert "/current-season" in paths
         assert "/active-model" in paths
-        # BT-1: boosted-tip SHAP routes
+        # BT-1: boosted-tip global SHAP route
         assert "/active-boosted-model" in paths
-        assert "/boosted-shap/{game_id}" in paths
         assert "/run" in paths
 
 
@@ -435,89 +434,6 @@ class TestBacktestActiveBoostedModel:
         # Same error shape the repo-wide 404s use (games/events/admin).
         assert body["code"] == "not_found"
         assert "boosted" in body["message"].lower()
-
-
-# ---------------------------------------------------------------------------
-# GET /boosted-shap/{game_id}  (BT-1)
-# ---------------------------------------------------------------------------
-
-
-class TestBacktestBoostedShap:
-    """``GET /api/backtest/boosted-shap/{game_id}`` per-game SHAP card."""
-
-    def test_boosted_shap_returns_explanation(self):
-        mock_session = AsyncMock(spec=AsyncSession)
-        mock_explanation = {
-            "game_id": 42,
-            "home_team": "Richmond",
-            "away_team": "Carlton",
-            "base_value": 1.8,
-            "prediction": 9.4,
-            "contributions": {"elo_margin_home": 5.2, "elo_conf": 2.4},
-            "winner": "home",
-            "pick": {"winner": "Richmond", "margin": 9, "confidence": 0.641},
-        }
-
-        app = _build_app_with_backtest_router()
-        _override_db(app, mock_session)
-
-        with patch(
-            "app.api.backtest.get_game_shap_explanation",
-            new_callable=AsyncMock,
-            return_value=mock_explanation,
-        ) as mock_get:
-            client = TestClient(app)
-            resp = client.get("/api/backtest/boosted-shap/42")
-
-        assert resp.status_code == 200
-        body = resp.json()
-        assert body == mock_explanation
-        for key in (
-            "game_id",
-            "home_team",
-            "away_team",
-            "base_value",
-            "prediction",
-            "contributions",
-            "winner",
-            "pick",
-        ):
-            assert key in body
-        assert body["winner"] == "home"
-        assert body["pick"]["winner"] == "Richmond"
-        # SHAP additivity sanity on the payload itself: base + Σ == prediction.
-        assert body["base_value"] + sum(body["contributions"].values()) == pytest.approx(
-            body["prediction"]
-        )
-        mock_get.assert_awaited_once_with(mock_session, 42)
-
-    def test_boosted_shap_without_model_or_predictions_returns_404(self):
-        mock_session = AsyncMock(spec=AsyncSession)
-        app = _build_app_with_backtest_router()
-        _override_db(app, mock_session)
-
-        with patch(
-            "app.api.backtest.get_game_shap_explanation",
-            new_callable=AsyncMock,
-            return_value=None,
-        ):
-            client = TestClient(app)
-            resp = client.get("/api/backtest/boosted-shap/999999")
-
-        assert resp.status_code == 404
-        body = resp.json()
-        # Single generic message: the service cannot distinguish "no active
-        # model" from "no predictions for the game" (both are None).
-        assert body["code"] == "not_found"
-        assert body["message"]
-
-    def test_boosted_shap_invalid_game_id_returns_422(self):
-        app = _build_app_with_backtest_router()
-        _override_db(app, AsyncMock(spec=AsyncSession))
-        client = TestClient(app)
-        resp = client.get("/api/backtest/boosted-shap/not-an-int")
-
-        assert resp.status_code == 422
 
 
 # ---------------------------------------------------------------------------

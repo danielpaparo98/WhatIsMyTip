@@ -260,7 +260,6 @@ curl -X POST 'http://localhost:8000/api/tips/generate?season=2025&round=1&heuris
 | `GET` | `/api/backtest/model-compare` | public | Compare individual ML models (query: `season`, optional `models` list) |
 | `GET` | `/api/backtest/active-model` | public | Active weighted-tip model version + its learned coefficients |
 | `GET` | `/api/backtest/active-boosted-model` | public | Active boosted-tip (XGBoost) version + mean \|SHAP\| feature importances |
-| `GET` | `/api/backtest/boosted-shap/{game_id}` | public | Per-game SHAP contributions for the active boosted model (base value → prediction additivity) |
 | `POST` | `/api/backtest/run` | admin | Trigger a backtest. Query: `season` (required), `round` (optional), `heuristic` (optional) |
 
 **Example**:

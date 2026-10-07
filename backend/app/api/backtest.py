@@ -14,8 +14,6 @@ Routes (mounted at ``/api/backtest``):
 * ``GET  /active-model``   — active weighted_tip model + coefficients
 * ``GET  /active-boosted-model`` — active boosted_tip model + SHAP
   importances (BT-1)
-* ``GET  /boosted-shap/{game_id}`` — per-game SHAP explanation for the
-  boosted model (BT-1)
 * ``POST /run``             — admin-only: run model backtest
 """
 
@@ -24,7 +22,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Annotated, Optional
 
-from fastapi import APIRouter, Depends, Path, Query
+from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -46,7 +44,6 @@ from packages.shared.services.backtest import BacktestService
 # ``TestBacktestRouterLazyImports`` and ``tests/unit/test_lazy_sklearn.py``.
 from packages.shared.services.boosted_explanations import (
     get_active_boosted_model,
-    get_game_shap_explanation,
 )
 
 router = APIRouter()
@@ -322,38 +319,6 @@ async def get_boosted_active_model(
             "not_found",
             "No active boosted_tip model version found. "
             "The model will be trained after the first weekly retrain job runs.",
-        )
-    return result
-
-
-# ---------------------------------------------------------------------------
-# GET /boosted-shap/{game_id}  (BT-1)
-# ---------------------------------------------------------------------------
-
-
-@router.get("/boosted-shap/{game_id}")
-async def get_boosted_shap(
-    game_id: Annotated[int, Path(gt=0, description="Game id to explain")],
-    db: Annotated[AsyncSession, Depends(get_db)],
-):
-    """Return the SHAP explanation of the boosted model's prediction for
-    one game: ``base_value``, the raw margin ``prediction``, per-feature
-    signed ``contributions`` (sorted by |value|), the ``winner`` and the
-    derived ``pick`` (BT-1).
-
-    All heavy work (xgboost/shap loading, the explainer cache) happens
-    inside the service behind lazy imports — this handler only reads.
-    Raises 404 ``not_found`` when there is no active boosted model or
-    the game has no stored predictions; the service returns ``None`` for
-    both, so a single generic message is used.
-    """
-    result = await get_game_shap_explanation(db, game_id)
-    if result is None:
-        raise http_error(
-            404,
-            "not_found",
-            "No SHAP explanation available for this game (no active "
-            "boosted model or no model predictions for the game).",
         )
     return result
 
