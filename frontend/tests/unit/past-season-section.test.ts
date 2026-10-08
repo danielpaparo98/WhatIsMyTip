@@ -61,6 +61,19 @@ describe('selectMostRecentPastSeason', () => {
   it('returns null when current_year itself is unusable (defensive)', () => {
     expect(selectMostRecentPastSeason([2024, 2025], Number.NaN)).toBeNull()
   })
+
+  // Review #2: the backend league payload carries current_year as the
+  // season LABEL string — the comparison must be numeric, never
+  // JS-coercion-dependent, and null must select nothing.
+  it('accepts a string label current_year (league payload shape)', () => {
+    expect(selectMostRecentPastSeason(['2024', '2025', '2026'], '2026')).toBe(2025)
+    expect(selectMostRecentPastSeason([2024, 2025], '2026')).toBe(2025)
+  })
+
+  it('accepts a null current_year (competition with no seasons)', () => {
+    expect(selectMostRecentPastSeason(['2024', '2025'], null)).toBeNull()
+    expect(selectMostRecentPastSeason(['2024', '2025'], undefined)).toBeNull()
+  })
 })
 
 // ---------------------------------------------------------------------------

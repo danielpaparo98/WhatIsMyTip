@@ -19,15 +19,16 @@ export type PastSeasonHeuristicRow = { heuristic: string } & LeagueHeuristicSeas
 /**
  * Pick the most recent season that is fully in the past:
  * max(available_years < currentYear), or null when nothing qualifies.
- * Delegates to lib/performanceSeasons (single tested implementation)
- * and adds the unusable-current_year guard: a NaN/undefined payload
- * must not surface a bogus season — hide the section instead.
+ * Delegates to lib/performanceSeasons (single tested implementation);
+ * currentYear accepts the AFL int AND the league label-string/null
+ * payload shape — everything is normalized to a numeric comparison
+ * inside the lib helper, so a string '2026' never relies on JS
+ * coercion.
  */
 export function selectMostRecentPastSeason(
   availableYears: (number | string)[],
-  currentYear: number,
+  currentYear: number | string | null | undefined,
 ): number | null {
-  if (!Number.isFinite(currentYear)) return null
   return mostRecentPastSeasonYear(availableYears, currentYear)
 }
 
