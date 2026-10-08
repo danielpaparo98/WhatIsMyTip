@@ -22,6 +22,7 @@ from ..crud.multisport import EventCRUD, ParticipantResolver
 from ..ingestion import FeedProvider
 from ..logger import get_logger
 from ..sport_context import DEFAULT_CONTEXT
+from .league_heuristics import generate_league_tips
 
 logger = get_logger(__name__)
 
@@ -32,7 +33,9 @@ TeamMetadataFn = Callable[[str], Optional[Dict[str, Any]]]
 
 
 class LocalCompetitionSyncService:
-    """Sync one competition-season of fixtures onto the events tables."""
+    """Sync one competition-season of fixtures onto the events tables,
+    then refresh the competition's league tips (D3: deploy a league →
+    tips happen by construction — no per-league code)."""
 
     def __init__(
         self,
@@ -125,6 +128,14 @@ class LocalCompetitionSyncService:
                     pass
 
         await self.db.commit()
+
+        # D3 generation hook: the events are committed — refresh this
+        # competition's league tips (current + most recent past season,
+        # per the heuristics service).  Best-effort by contract: the
+        # sync is the critical path and tips are regenerable on the
+        # next cycle, so a failure here never fails the sync.
+        await self._refresh_league_tips(competition.id, stats)
+
         self.logger.info(
             "Local-competition sync completed for %s: %d fixtures (%d errors)",
             start_label,
@@ -132,6 +143,36 @@ class LocalCompetitionSyncService:
             len(stats["errors"]),
         )
         return stats
+
+    async def _refresh_league_tips(
+        self, competition_id: int, stats: Dict[str, Any]
+    ) -> None:
+        """Refresh the competition's league tips (D3 generation hook).
+
+        Never fails the sync: any generation error is logged, recorded
+        on the stats, and swallowed — with a rollback to clear the
+        poisoned transaction (mirrors the per-fixture guard above).
+        """
+        try:
+            summary = await generate_league_tips(
+                self.db, competition_id=competition_id
+            )
+        except Exception as e:  # noqa: BLE001 — tips never fail the sync
+            self.logger.error(
+                "league tip generation failed for %s: %s",
+                self.competition_name,
+                e,
+                exc_info=True,
+            )
+            try:
+                await self.db.rollback()
+            except Exception:  # noqa: BLE001
+                pass
+            stats["league_tips"] = {"status": "failed", "error": str(e)}
+            return
+        # Defensive merge: the hook is annotated -> dict, but a
+        # contract-violating None must still never fail the sync.
+        stats["league_tips"] = {"status": "success", **(summary or {})}
 
     # ------------------------------------------------------------------
 

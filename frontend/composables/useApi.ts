@@ -358,6 +358,68 @@ export interface ActiveBoostedModel {
   importances: ShapImportanceEntry[]
 }
 
+// ---------------------------------------------------------------------------
+// PERF-PER-LEAGUE (2026-10): league-aware backtest payloads (D4). The
+// league endpoints reuse the legacy AFL response shapes with ONE twist:
+// state-league season labels are strings ('2026'), not ints, so every
+// season field widens to `number | string` and /seasons labels to
+// `(number | string)[]`. Field-for-field with the backend league backtest
+// router — do not rename: the payload keys come straight from the API.
+// ---------------------------------------------------------------------------
+
+/** Mirrors `GET /api/backtest/seasons` — AFL returns int years, leagues return label strings. */
+export interface LeagueSeasonsResponse {
+  available_years: (number | string)[]
+  /** AFL: calendar-year int. Leagues: the season LABEL string (league
+   *  seasons carry no numeric id), null when the competition has no
+   *  seasons at all. Normalized by lib/performanceSeasons consumers. */
+  current_year: number | string | null
+}
+
+/** Mirrors `CurrentSeasonHeuristicPerformance` (same shape for AFL and leagues). */
+export interface LeagueCurrentSeasonHeuristicPerformance {
+  heuristic: string
+  total_profit: number
+  total_accuracy: number
+  rounds_played: number
+  avg_profit_per_round: number
+  projected_annual_profit: number
+  /** Share of tips settled at real bookmaker odds (0 for state leagues — fallback price applies). */
+  odds_coverage: number
+}
+
+/** Mirrors `CurrentSeasonResponse` with the season label widened to a string. */
+export interface LeagueCurrentSeasonResponse {
+  season: number | string
+  heuristics: LeagueCurrentSeasonHeuristicPerformance[]
+  rounds_completed: number
+  total_rounds: number
+}
+
+/** One per-heuristic entry of the comparison dict (mirrors `compare_heuristics` stats). */
+export interface LeagueHeuristicSeasonStats {
+  total_rounds: number
+  total_tips: number
+  total_correct: number
+  overall_accuracy: number
+  total_profit: number
+  avg_profit_per_round: number
+  best_round_accuracy: number
+  worst_round_accuracy: number
+  odds_coverage: number
+}
+
+/** Mirrors `GET /api/backtest/compare` — season label widened to a string for leagues. */
+export interface LeagueComparisonResponse {
+  season: number | string
+  comparison: Record<string, LeagueHeuristicSeasonStats>
+  best_overall: {
+    heuristic: string | null
+    accuracy: number
+    profit: number
+  }
+}
+
 export const useApi = () => {
   const config = useRuntimeConfig()
   const apiBase = config.public.apiBase as string
@@ -596,6 +658,52 @@ export const useApi = () => {
     return response.json()
   }
 
+  // PERF-PER-LEAGUE (2026-10): league-aware backtest variants (D4/D5).
+  // `league` is OPTIONAL everywhere: omitted AND 'afl' map to the legacy
+  // AFL path with the query param omitted entirely — byte-identical to the
+  // methods above (frozen contract, no empty league param). Pure query
+  // builder, no state — prerender-safe like the rest of the composable.
+  const leagueQueryString = (league?: string): string => {
+    const queryParams = new URLSearchParams()
+    if (league && league !== 'afl') queryParams.append('league', league)
+    return queryParams.toString()
+  }
+
+  const getLeagueSeasons = async (league?: string): Promise<LeagueSeasonsResponse> => {
+    const queryString = leagueQueryString(league)
+    const response = await fetchWithTimeout(
+      queryString ? `/api/backtest/seasons?${queryString}` : '/api/backtest/seasons',
+    )
+    if (!response.ok) throw new Error('Failed to fetch available seasons')
+    return response.json()
+  }
+
+  const getLeagueCurrentSeasonPerformance = async (
+    league?: string,
+  ): Promise<LeagueCurrentSeasonResponse> => {
+    const queryString = leagueQueryString(league)
+    const response = await fetchWithTimeout(
+      queryString ? `/api/backtest/current-season?${queryString}` : '/api/backtest/current-season',
+    )
+    if (!response.ok) throw new Error('Failed to fetch current season performance')
+    return response.json()
+  }
+
+  const getLeagueComparison = async (
+    league?: string,
+    season?: number,
+  ): Promise<LeagueComparisonResponse> => {
+    const queryParams = new URLSearchParams()
+    if (season !== undefined) queryParams.append('season', season.toString())
+    if (league && league !== 'afl') queryParams.append('league', league)
+    const queryString = queryParams.toString()
+    const response = await fetchWithTimeout(
+      queryString ? `/api/backtest/compare?${queryString}` : '/api/backtest/compare',
+    )
+    if (!response.ok) throw new Error('Failed to compare heuristics')
+    return response.json()
+  }
+
   // Multi-league read side (ADR 0001): sport/competition discovery and
   // the event list per competition season. The 404 "unknown competition
   // or season" case THROWS like every other non-OK response — callers
@@ -669,6 +777,9 @@ export const useApi = () => {
     compareModels,
     getActiveModel,
     getActiveBoostedModel,
+    getLeagueSeasons,
+    getLeagueCurrentSeasonPerformance,
+    getLeagueComparison,
     getSports,
     getEvents,
     getEvent,

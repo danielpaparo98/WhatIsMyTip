@@ -99,3 +99,55 @@ describe('useActiveLeague homePath', () => {
     expect(homePath.value).toBe('/')
   })
 })
+
+// PERFORMANCE-ROUTES (2026-10-07): the nav's Performance link stays
+// inside the active league too — AFL owns the root-level /performance
+// page (mirroring '/' = AFL home), every other league its own
+// /{league}/performance page.
+describe('useActiveLeague performancePath', () => {
+  // Same module-scoped singleton caveat as homePath: each case sets its
+  // own starting state explicitly.
+  it('defaults to the AFL root performance page', () => {
+    useActiveLeague().setActiveLeague('afl')
+    const { performancePath, activeLeague } = useActiveLeague()
+    expect(activeLeague.value).toBe('afl')
+    expect(performancePath.value).toBe('/performance')
+  })
+
+  it('points at the league performance page for a non-AFL league', () => {
+    const { setActiveLeague } = useActiveLeague()
+    setActiveLeague('wafl')
+    const { performancePath, activeLeague } = useActiveLeague()
+    expect(activeLeague.value).toBe('wafl')
+    expect(performancePath.value).toBe('/wafl/performance')
+  })
+
+  it('tracks league switches reactively', () => {
+    const { performancePath, setActiveLeague } = useActiveLeague()
+    setActiveLeague('vfl')
+    expect(performancePath.value).toBe('/vfl/performance')
+    setActiveLeague('afl')
+    expect(performancePath.value).toBe('/performance')
+  })
+
+  it('every non-AFL league maps to its own performance path', () => {
+    const { performancePath, setActiveLeague } = useActiveLeague()
+    for (const key of ['wafl', 'waflw', 'vfl', 'vflw', 'sanfl', 'aflw', 'qafl', 'qaflw', 'nwfl', 'sfl']) {
+      setActiveLeague(key)
+      expect(performancePath.value).toBe(`/${key}/performance`)
+    }
+  })
+
+  it('ignores unknown keys (path unchanged)', () => {
+    useActiveLeague().setActiveLeague('afl')
+    const { performancePath, setActiveLeague } = useActiveLeague()
+    setActiveLeague('not-a-league')
+    expect(performancePath.value).toBe('/performance')
+  })
+
+  it('is returned alongside homePath from the composable', () => {
+    const paths = useActiveLeague()
+    expect(paths.homePath).toBeDefined()
+    expect(paths.performancePath).toBeDefined()
+  })
+})

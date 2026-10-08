@@ -4,11 +4,18 @@
 // THAT league's home (/{league}) — not bounce to the AFL root. The
 // league dropdown remains the explicit way back to AFL.
 //
+// PERF-RENAME (2026-10-07): the nav's Backtest link became
+// "Performance" and follows the same active-league rule
+// (AFL → /performance, every other league → /{league}/performance).
+// The prerendered HTML must ship the AFL default (/performance), so
+// the static to="/performance" attribute form is forbidden — only the
+// :to="performancePath" binding is acceptable.
+//
 // SFCs can't be mounted under vitest (no Vue plugin), so the wiring is
 // pinned with the repo's source-grep convention (same as
 // league-selector.test.ts / league-home-page.test.ts), while the
-// homePath derivation itself is covered behaviourally in
-// useSportConfig.test.ts.
+// homePath/performancePath derivations themselves are covered
+// behaviourally in useSportConfig.test.ts.
 import { describe, expect, it } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
@@ -23,7 +30,9 @@ describe('league-aware nav links', () => {
   const GAME = read('pages/game/[slug].vue')
 
   it('header logo links to the shared homePath binding', () => {
-    expect(HEADER).toMatch(/const \{ homePath \} = useActiveLeague\(\)/)
+    expect(HEADER).toMatch(
+      /const \{ homePath, performancePath \} = useActiveLeague\(\)/,
+    )
     // The logo must bind the league-aware path, not the hardcoded root.
     expect(HEADER).toMatch(/<NuxtLink :to="homePath" class="logo"/)
     expect(HEADER).not.toMatch(/<NuxtLink to="\/" class="logo"/)
@@ -40,9 +49,19 @@ describe('league-aware nav links', () => {
     expect(HEADER).toMatch(/aria-label="WhatIsMyTip home"/)
   })
 
-  it('header Backtest and About stay league-agnostic', () => {
-    // Global pages — never hijacked into a league context.
-    expect(HEADER).toMatch(/<li><NuxtLink to="\/backtest">Backtest<\/NuxtLink><\/li>/)
+  it('header Performance link follows the active league', () => {
+    // PERF-RENAME (2026-10-07): the league-aware :to binding only — a
+    // static /backtest or /performance href would leak the AFL default
+    // (or the retired page) into prerendered HTML for non-AFL viewers.
+    expect(HEADER).toMatch(
+      /<li><NuxtLink :to="performancePath">Performance<\/NuxtLink><\/li>/,
+    )
+    expect(HEADER).not.toMatch(/<li><NuxtLink to="\/backtest">/)
+    expect(HEADER).not.toMatch(/<li><NuxtLink to="\/performance">/)
+  })
+
+  it('header About stays league-agnostic', () => {
+    // Global page — never hijacked into a league context.
     expect(HEADER).toMatch(/<li><NuxtLink to="\/about">About<\/NuxtLink><\/li>/)
   })
 

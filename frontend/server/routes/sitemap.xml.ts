@@ -8,10 +8,10 @@
  * fresh sitemap including /game/{slug} entries.
  *
  * LEAGUE-ROUTES (2026-09-30, user request): the first-class league URLs
- * (/{league} + /{league}/match/{slug}) ship alongside the AFL entries
- * via the same Nuxt-free enumerer the prerender hook uses
- * (lib/leagueRoutes.ts) so the sitemap can never disagree with the
- * prerendered route list.
+ * (/{league} + /{league}/performance + /{league}/match/{slug}) ship
+ * alongside the AFL entries via the same Nuxt-free enumerer the
+ * prerender hook uses (lib/leagueRoutes.ts) so the sitemap can never
+ * disagree with the prerendered route list.
  *
  * Graceful degradation: when the API is unreachable at build time the
  * sitemap still renders with the static pages (and the always-present
@@ -57,7 +57,10 @@ export default defineEventHandler(async (event) => {
   const urls: string[] = [
     buildUrlEntry('/'),
     buildUrlEntry('/about'),
-    buildUrlEntry('/backtest'),
+    // PERF-RENAME (2026-10-07): /backtest became /performance and is a
+    // permanent redirect — redirects must never be listed in a sitemap,
+    // only the canonical target ships here.
+    buildUrlEntry('/performance'),
   ]
 
   try {
@@ -81,6 +84,10 @@ export default defineEventHandler(async (event) => {
   // LEAGUE-ROUTES (2026-09-30, user request): league home routes are
   // ALWAYS enumerated (even for unsynced leagues — the pages render a
   // graceful "unavailable" state); match routes only for synced ones.
+  // PERFORMANCE-ROUTES (2026-10-07): /{league}/performance rides along
+  // automatically — buildLeagueRoutes emits it unconditionally next to
+  // each home route, so this single enumerer keeps the sitemap in lock
+  // step with the prerender route list (nothing extra to wire here).
   // enumerateLeagueRoutes never throws — the catch is belt-and-braces
   // so the sitemap can never fail because of leagues.
   try {

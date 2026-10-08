@@ -15,6 +15,16 @@ Routes (mounted at ``/api/backtest``):
 * ``GET  /active-boosted-model`` — active boosted_tip model + SHAP
   importances (BT-1)
 * ``POST /run``             — admin-only: run model backtest
+
+League dispatch (performance-per-league D4): ``/compare``, ``/seasons``
+and ``/current-season`` accept an optional ``league`` query param.  An
+absent, empty or ``afl`` value rides the legacy AFL path unchanged; any
+registered ``STATE_LEAGUES`` key is resolved to its ``competitions.id``
+(by canonical ``competitions.name`` — the frontend
+``LEAGUE_COMPETITION_NAMES`` contract) and served from the multisport
+tables via :class:`LeagueBacktestService`.  An unknown key is a 404; a
+registered-but-never-synced league degrades to the service's graceful
+zero payloads.
 """
 
 from __future__ import annotations
@@ -23,12 +33,17 @@ from datetime import datetime
 from typing import Annotated, Optional
 
 from fastapi import APIRouter, Depends, Query
-from pydantic import BaseModel, Field
+from fastapi.exceptions import RequestValidationError
+from pydantic import BaseModel, Field, TypeAdapter, ValidationError
+from sqlalchemy import select
+from sqlalchemy.exc import MultipleResultsFound
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.db_deps import get_db
 from app.core.exceptions import http_error
 from app.core.security import require_admin_key
+from packages.shared.ingestion.state_leagues import STATE_LEAGUES
+from packages.shared.models import Competition
 from packages.shared.schemas import (
     BacktestListResponse,
     BacktestTableData,
@@ -45,6 +60,7 @@ from packages.shared.services.backtest import BacktestService
 from packages.shared.services.boosted_explanations import (
     get_active_boosted_model,
 )
+from packages.shared.services.league_backtest import LeagueBacktestService
 
 router = APIRouter()
 
@@ -70,6 +86,87 @@ class BacktestRunRequest(BaseModel):
         default=None,
         description="Optional heuristic filter (unused today, kept for parity)",
     )
+
+
+# ---------------------------------------------------------------------------
+# League dispatch helpers (performance-per-league D4)
+# ---------------------------------------------------------------------------
+
+
+#: ``competition_id`` stand-in for a REGISTERED-but-never-synced league:
+#: no autoincrement id can be negative, so every service fetcher returns
+#: zero rows and the service's own empty-state machinery produces the
+#: graceful zero payloads (empty ``available_years`` / zeroed heuristics)
+#: instead of a 500.  The zero shapes are pinned by
+#: ``test_league_backtest_service.py`` and
+#: ``tests/unit/test_backtest_api_league.py``.
+_UNSYNCED_COMPETITION_ID = -1
+
+
+async def _league_competition_id(db: AsyncSession, league: str) -> int:
+    """Resolve a league key to its ``competitions.id``.
+
+    Resolution is by the canonical ``competitions.name`` from the
+    ``STATE_LEAGUES`` registry — the exact names the frontend's
+    ``LEAGUE_COMPETITION_NAMES`` mapping pins (the two must stay in
+    sync; keys are matched case-sensitively).
+
+    Raises:
+        BackendServiceError: 404 ``not_found`` for a key outside the
+            registry (``afl`` never reaches here — the legacy branch
+            handles it before dispatch).
+    """
+    config = STATE_LEAGUES.get(league)
+    if config is None:
+        raise http_error(
+            404,
+            "not_found",
+            f"Unknown league {league!r} — not in the state-league registry",
+        )
+    # Review #5: uniqueness on competitions is (sport_id, name), so a
+    # future second sport registering a clashing name would surface here
+    # as MultipleResultsFound — convert that latent 500 into the
+    # repo-standard 404 instead of silently picking an arbitrary row.
+    try:
+        competition_id = (
+            await db.execute(
+                select(Competition.id).where(Competition.name == config.name)
+            )
+        ).scalar_one_or_none()
+    except MultipleResultsFound:
+        raise http_error(
+            404,
+            "not_found",
+            f"League {league!r} resolved to multiple competitions — "
+            "scope the competition registry before querying this league",
+        ) from None
+    if competition_id is None:
+        # Registered but never synced (no competition row yet) — ride the
+        # service's empty-state machinery, never a 500.
+        return _UNSYNCED_COMPETITION_ID
+    return int(competition_id)
+
+
+# Review #4: the league path consumes the season LABEL verbatim, so
+# ``/compare`` declares ``season`` as a string — but the legacy AFL path
+# must keep its ORIGINAL ``int, ge=2000`` validation semantics with
+# byte-identical 422 bodies (including the ``ctx`` key native pydantic
+# errors carry) and pydantic's strict str→int parse rules. Re-validating
+# through pydantic itself (instead of hand-rolled int()/range checks)
+# reproduces both exactly.
+_SEASON_YEAR_ADAPTER: TypeAdapter[int] = TypeAdapter(
+    Annotated[int, Field(ge=2000)]
+)
+
+
+def _legacy_season_year(season: str) -> int:
+    """Coerce the raw ``season`` query value for the legacy AFL path."""
+    try:
+        return _SEASON_YEAR_ADAPTER.validate_python(season)
+    except ValidationError as exc:
+        raise RequestValidationError(
+            exc.errors(include_url=False, include_context=True)
+        ) from None
 
 
 # ---------------------------------------------------------------------------
@@ -101,18 +198,41 @@ async def get_backtest_results():
 async def compare_heuristics(
     db: Annotated[AsyncSession, Depends(get_db)],
     season: Annotated[
-        int,
-        Query(ge=2000, description="Season year to compare"),
+        str,
+        Query(description="Season year to compare (AFL) or season label (leagues)"),
     ],
+    league: Annotated[
+        Optional[str],
+        Query(
+            description=(
+                "League key (e.g. 'wafl'). Absent, empty, or 'afl' "
+                "selects the legacy AFL backtest."
+            )
+        ),
+    ] = None,
 ):
     """Compare heuristic performance for a season.
 
-    Returns the per-heuristic metrics, plus ``best_overall`` (the
-    heuristic with the highest ``overall_accuracy``).  ``season`` is
-    required — FastAPI returns 422 when missing.
+    AFL (no ``league``/``afl``): per-heuristic metrics plus
+    ``best_overall``; ``season`` is a calendar year — missing or
+    non-numeric values are a 422, exactly as before the league param
+    existed.
+
+    League (``league=<state-league key>``): the same response shape from
+    the multisport tables, with ``season`` taken as the season LABEL
+    string.  An unknown league is a 404; a registered-but-unsynced
+    league returns the zero comparison structure.
     """
+    if league and league != "afl":
+        league_service = LeagueBacktestService()
+        competition_id = await _league_competition_id(db, league)
+        return await league_service.compare_season(
+            db, competition_id=competition_id, season_label=season
+        )
+
+    year = _legacy_season_year(season)
     service = BacktestService()
-    comparison = await service.compare_heuristics(db, season)
+    comparison = await service.compare_heuristics(db, year)
 
     if comparison:
         best_heuristic_name, best_heuristic_stats = max(
@@ -128,7 +248,7 @@ async def compare_heuristics(
         best = {"heuristic": None, "accuracy": 0.0, "profit": 0.0}
 
     return {
-        "season": season,
+        "season": year,
         "comparison": comparison,
         "best_overall": best,
     }
@@ -234,12 +354,33 @@ async def get_table(
 @router.get("/seasons")
 async def get_seasons(
     db: Annotated[AsyncSession, Depends(get_db)],
+    league: Annotated[
+        Optional[str],
+        Query(
+            description=(
+                "League key (e.g. 'wafl'). Absent, empty, or 'afl' "
+                "selects the legacy AFL backtest."
+            )
+        ),
+    ] = None,
 ):
     """List seasons that have completed games with tips.
 
-    Returns ``{available_years, current_year}``.  ``current_year`` is
-    the calendar year on the server, not derived from data.
+    AFL (no ``league``/``afl``): ``{available_years, current_year}``
+    with calendar-year ints — ``current_year`` is the calendar year on
+    the server, not derived from data.
+
+    League: the same shape for that competition, with season LABEL
+    strings (latest first).  Unknown league → 404; unsynced league →
+    empty ``available_years``.
     """
+    if league and league != "afl":
+        league_service = LeagueBacktestService()
+        competition_id = await _league_competition_id(db, league)
+        return await league_service.get_available_seasons(
+            db, competition_id=competition_id
+        )
+
     service = BacktestService()
     available_years = await service.get_available_seasons(db)
     current_year = datetime.now().year
@@ -258,11 +399,33 @@ async def get_seasons(
 @router.get("/current-season")
 async def get_current_season(
     db: Annotated[AsyncSession, Depends(get_db)],
+    league: Annotated[
+        Optional[str],
+        Query(
+            description=(
+                "League key (e.g. 'wafl'). Absent, empty, or 'afl' "
+                "selects the legacy AFL backtest."
+            )
+        ),
+    ] = None,
 ):
     """Return year-to-date performance for the current season.
 
-    Delegates to :meth:`BacktestService.get_current_season_performance`.
+    AFL (no ``league``/``afl``): delegates to
+    :meth:`BacktestService.get_current_season_performance` unchanged.
+
+    League: the same ``CurrentSeasonResponse`` shape from the multisport
+    tables, with the season LABEL stringified (the label is
+    competition-relative, not a calendar year).  Unknown league → 404;
+    unsynced league → zeroed heuristics.
     """
+    if league and league != "afl":
+        league_service = LeagueBacktestService()
+        competition_id = await _league_competition_id(db, league)
+        return await league_service.get_current_season_performance(
+            db, competition_id=competition_id
+        )
+
     service = BacktestService()
     performance = await service.get_current_season_performance(db)
     return performance.model_dump(mode="json")

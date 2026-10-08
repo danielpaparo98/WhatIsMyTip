@@ -393,6 +393,43 @@ class ParticipantMatchStats(Base):
     recorded_at = Column(DateTime(timezone=True), server_default=func.now())
 
 
+class LeagueTip(Base):
+    """A heuristic tip on a multisport event (performance-per-league D3,
+    migration 0014).
+
+    The league-generic counterpart of the legacy ``tips`` table: one row
+    per ``(event_id, heuristic)``.  ``selected_participant_id`` is NULL
+    when the heuristic declines to pick a side (an expected draw).
+    Correctness is graded at query time from ``event_participants``
+    results, so no correctness column is stored.
+    """
+
+    __tablename__ = "league_tips"
+    __table_args__ = (
+        UniqueConstraint(
+            "event_id", "heuristic", name="uq_league_tips_event_heuristic"
+        ),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    event_id = Column(
+        Integer,
+        ForeignKey("events.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    heuristic = Column(String(50), nullable=False)
+    # NULL when the heuristic makes no pick (an expected draw).
+    selected_participant_id = Column(
+        Integer, ForeignKey("event_participants.id"), nullable=True, index=True
+    )
+    competition_id = Column(
+        Integer, ForeignKey("competitions.id"), nullable=False, index=True
+    )
+    season_id = Column(Integer, ForeignKey("seasons.id"), nullable=False, index=True)
+    generated_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
 __all__ = [
     "Sport",
     "Competition",
@@ -408,4 +445,5 @@ __all__ = [
     "ParticipantSourceRef",
     "RatingSnapshot",
     "ParticipantMatchStats",
+    "LeagueTip",
 ]
