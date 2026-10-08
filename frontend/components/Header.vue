@@ -10,7 +10,11 @@
              WAFL/VFL viewer to the AFL root; the league dropdown is the
              explicit way back to AFL. -->
         <li><NuxtLink :to="homePath">Tips</NuxtLink></li>
-        <li><NuxtLink to="/backtest">Backtest</NuxtLink></li>
+        <!-- PERF-RENAME (2026-10-07): Backtest became Performance and
+             follows the same active-league rule (AFL owns the root-level
+             /performance page, mirroring '/' = AFL home; every other
+             league its /{league}/performance page). -->
+        <li><NuxtLink :to="performancePath">Performance</NuxtLink></li>
         <li><NuxtLink to="/about">About</NuxtLink></li>
       </ul>
       <div class="nav-actions">
@@ -29,7 +33,10 @@ const { isDark, toggle } = useColorMode()
 // LEAGUE-NAV (2026-09-30, user request): home/Tips bind the active
 // league's home path (prerendered HTML defaults to '/', flips to the
 // stored league after hydration — same pattern as LeagueSelector).
-const { homePath } = useActiveLeague()
+// PERF-RENAME (2026-10-07): Performance binds performancePath from the
+// same composable — prerendered HTML defaults to '/performance' (the
+// AFL default) with no route-dependent leak into the static output.
+const { homePath, performancePath } = useActiveLeague()
 </script>
 
 <style scoped>

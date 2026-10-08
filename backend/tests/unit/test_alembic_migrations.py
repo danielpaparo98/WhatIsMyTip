@@ -371,13 +371,13 @@ def test_migration_0008_downgrade_drops_table():
     assert "ix_match_reports_game_id" in src
 
 
-def test_migration_head_is_0013():
-    """After adding 0013 (model artifact columns, BT-1), the migration
-    tree must have exactly one head: 0013_add_model_artifact_columns.
+def test_migration_head_is_0014():
+    """After adding 0014 (league_tips, performance-per-league D3), the
+    migration tree must have exactly one head: 0014_create_league_tips.
     """
     revisions = _all_migrations()
     heads = [rev for rev in revisions if rev not in set(revisions.values())]
-    assert "0013_add_model_artifact_columns" in heads
+    assert "0014_create_league_tips" in heads
     assert len(heads) == 1, f"expected a single head, got {heads}"
 
 
@@ -406,6 +406,39 @@ def test_migration_0013_adds_artifact_columns():
     assert 'op.drop_column("model_versions", "artifact")' in down_src
     assert 'op.drop_column("model_versions", "artifact_format")' in down_src
     assert 'op.drop_column("model_versions", "shap_base_value")' in down_src
+
+
+_MIG_0014 = "2026_10_07_1000-0014_create_league_tips"
+
+
+def test_migration_0014_chains_off_0013():
+    """0014 must chain directly off 0013 (the previous head)."""
+    revisions = _all_migrations()
+    assert revisions.get("0014_create_league_tips") == "0013_add_model_artifact_columns"
+
+
+def test_migration_0014_creates_league_tips():
+    """D3 (performance-per-league): the upgrade must create
+    ``league_tips`` with the pick columns, the NULLABLE selected
+    participant (draw-no-pick), the (event, heuristic) uniqueness and
+    the FK/index set; the downgrade must drop the table."""
+    up_src = _read_source(_MIG_0014, "upgrade")
+    assert '"league_tips"' in up_src
+    assert '"heuristic"' in up_src
+    assert '"selected_participant_id"' in up_src
+    assert '"generated_at"' in up_src
+    assert "events.id" in up_src
+    assert "event_participants.id" in up_src
+    assert "competitions.id" in up_src
+    assert "seasons.id" in up_src
+    assert "uq_league_tips_event_heuristic" in up_src
+    assert "ix_league_tips_event_id" in up_src
+    assert "ix_league_tips_selected_participant_id" in up_src
+    assert "ix_league_tips_competition_id" in up_src
+    assert "ix_league_tips_season_id" in up_src
+
+    down_src = _read_source(_MIG_0014, "downgrade")
+    assert 'op.drop_table("league_tips")' in down_src
 
 
 _MIG_0011 = "2026_09_24_2057-0011_team_identity"

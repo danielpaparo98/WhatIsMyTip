@@ -170,6 +170,16 @@ export function useActiveLeague() {
     activeLeagueKey.value === DEFAULT_LEAGUE_KEY ? '/' : `/${activeLeagueKey.value}`,
   )
 
+  // PERFORMANCE-ROUTES (2026-10-07): the nav's Performance link stays
+  // inside the active league too — AFL owns the root-level
+  // /performance page (mirroring '/' = AFL home), every other league
+  // its own /{league}/performance page.
+  const performancePath = computed(() =>
+    activeLeagueKey.value === DEFAULT_LEAGUE_KEY
+      ? '/performance'
+      : `/${activeLeagueKey.value}/performance`,
+  )
+
   function setActiveLeague(key: string): void {
     if (!LEAGUES.some((l) => l.key === key)) return
     activeLeagueKey.value = key
@@ -182,5 +192,5 @@ export function useActiveLeague() {
     }
   }
 
-  return { activeLeague, activeConfig, homePath, setActiveLeague }
+  return { activeLeague, activeConfig, homePath, performancePath, setActiveLeague }
 }
