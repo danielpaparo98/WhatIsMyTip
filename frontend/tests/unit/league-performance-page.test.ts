@@ -229,15 +229,37 @@ describe('performance view data wiring', () => {
   it('isolates the past-season fetch so it can never break the page', () => {
     // The seasons→compare chain is additive: wrapped in try/catch and
     // nulled on failure, hiding only the past-season section.
-    expect(VIEW).toMatch(/catch[\s\S]{0,40}past = null/)
+    expect(VIEW).toMatch(/catch \{\s*\n\s*return null\s*\n\s*\}/)
+  })
+
+  it('fetches independent slots in parallel waves (no serialized waterfall)', () => {
+    // Review #3: current / past / weighted / boosted are independent —
+    // one Promise.all wave; only model-compare waits (it needs
+    // current's season).
+    expect(VIEW).toMatch(/await Promise\.all\(\[\s*\n?\s*fetchCurrent\(\),\s*\n?\s*fetchPast\(\),\s*\n?\s*fetchActiveModel\(\),\s*\n?\s*fetchBoostedModel\(\),/)
+    expect(VIEW).toMatch(/fetchModels\(current\)/)
+  })
+
+  it('degrades slots INDEPENDENTLY (a current failure cannot blank the others)', () => {
+    // Review #1: the empty state only renders when even the past-season
+    // slot is empty, and the current-season section guards its OWN slot.
+    expect(VIEW).toMatch(/v-else-if="!currentSeason && !pastSeason"/)
+    expect(VIEW).toMatch(/<section v-if="currentSeason" class="current-season-section">/)
   })
 
   it('fetches the AFL-only model slots only for AFL, each failure-isolated', () => {
-    expect(VIEW).toMatch(/if \(isAfl\.value && current\)/)
+    expect(VIEW).toMatch(/if \(!isAfl\.value \|\| !current\) return \{ models: null, modelsError: null \}/)
     // Every slot is wrapped so no single failure can break the page.
     expect(VIEW).toMatch(/api\.compareModels\(season\)/)
     expect(VIEW).toMatch(/api\.getActiveModel\(\)/)
     expect(VIEW).toMatch(/api\.getActiveBoostedModel\(\)/)
+  })
+
+  it('renders the weighted-model states as ONE mutually-exclusive chain', () => {
+    // Review #2: error → empty → content; a fetch failure must never
+    // render the error AND the "no trained model" copy together.
+    expect(VIEW).toMatch(/v-if="activeModelError"[\s\S]{0,200}v-else-if="!activeModelData\?\.active"/)
+    expect(VIEW).toMatch(/v-else-if="activeModelData\.model" class="model-content"/)
   })
 
   it('refreshes client-side after hydration (preserves post-hydration freshness)', () => {

@@ -9,6 +9,8 @@
 </template>
 
 <script setup lang="ts">
+import { LEAGUES } from '~/composables/useSportConfig'
+
 // ---------------------------------------------------------------------------
 // Route contract (copied from pages/[league]/index.vue)
 //
@@ -35,8 +37,6 @@ definePageMeta({
     },
   ],
 })
-
-import { LEAGUES } from '~/composables/useSportConfig'
 
 const route = useRoute()
 
@@ -82,6 +82,8 @@ useSeoMeta({
   ogTitle: () => `${leagueName.value} Performance`,
   ogDescription: () =>
     `Historical accuracy and profit of the ${leagueName.value} tipping heuristics.`,
+  ogType: 'website',
+  ogUrl: () => canonicalHref.value,
   twitterTitle: () => `${leagueName.value} Performance`,
   twitterDescription: () =>
     `Historical accuracy and profit of the ${leagueName.value} tipping heuristics.`,

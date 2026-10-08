@@ -24,6 +24,9 @@ const PAGE_FILES = [
   // PERF-RENAME (2026-10-07): pages/backtest.vue became
   // pages/performance.vue (the /backtest route is a redirect now).
   'pages/performance.vue',
+  // PERF-VIEW-UNIFY (2026-10-08): the league performance wrapper is a
+  // first-class SEO page (per-league getters + canonical + JSON-LD).
+  'pages/[league]/performance.vue',
   'pages/game/[slug].vue',
 ]
 

@@ -25,8 +25,12 @@
   </div>
 
   <!-- No payload at all: unsynced league / API unreachable (all degrade
-       here). The approved empty state — the page never breaks. -->
-  <div v-else-if="!currentSeason" class="empty" role="status" aria-live="polite">
+        here). The approved empty state — the page never breaks.
+        Review #1: slots degrade INDEPENDENTLY — the empty state only
+        renders when even the past-season slot is also empty, so a
+        current-season failure can no longer blank sections whose own
+        payloads succeeded. -->
+  <div v-else-if="!currentSeason && !pastSeason" class="empty" role="status" aria-live="polite">
     <p>Performance tracking isn't available for {{ leagueConfig.displayName }} yet.</p>
     <p class="empty-hint">Performance tracking begins once tipping models are live for this league.</p>
   </div>
@@ -88,8 +92,10 @@
     <!-- Current Season Section.
          m-6: the empty branch lives inside the data guard — a payload
          with no graded rounds yet renders the season-not-started state,
-         not "$0.00" cards. -->
-    <section class="current-season-section">
+         not "$0.00" cards. Review #1: this section guards on its OWN
+         slot — a current-season failure hides only this section, never
+         the past-season or model sections. -->
+    <section v-if="currentSeason" class="current-season-section">
       <div class="current-season-header">
         <h2>
           <span class="badge">Current Season {{ currentSeason.season }}</span>
@@ -167,12 +173,15 @@
         </div>
 
         <!-- Current Season: Model Performance (AFL model-compare slot;
-             hidden entirely when the slot is null — leagues today). -->
-        <div v-if="currentSeasonModels" class="current-season-models">
+             hidden entirely when the slot is null — leagues today).
+             Review (🔵): the slot is XOR (grid OR error) — the error
+             note renders when the fetch failed, the grid when it
+             succeeded, never both, so the error lives at wrapper level. -->
+        <div v-if="currentSeasonModels || currentSeasonModelsError" class="current-season-models">
           <div class="models-divider">
             <span>Individual Model Accuracy</span>
           </div>
-          <div class="model-mini-grid">
+          <div v-if="currentSeasonModels" class="model-mini-grid">
             <div
               v-for="model in currentSeasonModels"
               :key="model.model_name"
@@ -216,7 +225,13 @@
       <div v-if="activeModelError" class="error" role="status" aria-live="polite">
         <p>{{ activeModelError }}</p>
       </div>
-      <div v-if="!activeModelData?.active" class="model-empty">
+      <!-- Review #2: ONE mutually-exclusive chain — error → empty →
+           content — so a fetch failure can never render the error AND
+           the "no trained model" copy at the same time. -->
+      <div v-if="activeModelError" class="error" role="status" aria-live="polite">
+        <p>{{ activeModelError }}</p>
+      </div>
+      <div v-else-if="!activeModelData?.active" class="model-empty">
         <p>No trained Weighted Tip model yet. The model will be trained after the first weekly retrain job runs.</p>
         <p class="model-empty-sub">Until then, the Weighted Tip heuristic uses a majority-vote fallback.</p>
       </div>
@@ -281,7 +296,7 @@
          Degradation contract: both boosted endpoints map "no active
          model / no data" to null, and the slot simply never renders —
          a missing model must never break the page. -->
-    <section v-if="isAfl && (boostedModelData)" class="active-model-section">
+    <section v-if="isAfl && boostedModelData" class="active-model-section">
       <div class="active-model-header">
         <h2>Active Boosted Model (XGBoost)</h2>
         <span v-if="boostedModelData" class="version-badge">
@@ -417,12 +432,17 @@ interface PerformancePayload {
   boostedModel: ActiveBoostedModel | null
 }
 
-const fetchPerformance = async (): Promise<PerformancePayload> => {
-  const league = isAfl.value ? undefined : props.league
+// ---------------------------------------------------------------------------
+// Slot fetchers — each slot degrades INDEPENDENTLY (review #1): a
+// current-season failure must not blank the past-season or model
+// sections, exactly as the pre-unification pages behaved. Only the real
+// dependency edge is serial: model-compare needs current's season.
+// ---------------------------------------------------------------------------
 
-  // Current season: same shape both paths; a failure degrades to null
-  // (the unavailable empty state) — a missing league never 500s.
-  const current = await (isAfl.value
+/** Current season: same shape both paths; a failure degrades to null —
+ *  a missing league never 500s (the section just hides). */
+const fetchCurrent = async (): Promise<CurrentSeasonView | null> =>
+  await (isAfl.value
     ? api.getCurrentSeasonPerformance()
     : api.getLeagueCurrentSeasonPerformance(props.league)
   )
@@ -432,62 +452,89 @@ const fetchPerformance = async (): Promise<PerformancePayload> => {
     })
     .catch(() => null)
 
-  // Past season: the shared max(year < current) rule over the seasons
-  // payload, then the compare fetch. Additive — isolated try/catch.
-  let past: PerformancePayload['past'] = null
+/** Past season: the shared max(year < current) rule over the seasons
+ *  payload, then the compare fetch. Self-contained (no dependency on
+ *  the current-season slot) — additive, isolated try/catch. */
+const fetchPast = async (): Promise<PerformancePayload['past']> => {
+  const league = isAfl.value ? undefined : props.league
   try {
     const seasons = await api.getLeagueSeasons(league)
     const prevSeason = mostRecentPastSeasonYear(
       seasons.available_years ?? [],
       seasons.current_year,
     )
-    if (prevSeason !== null) {
-      const comparison: LeagueComparisonResponse = await api.getLeagueComparison(
-        league,
-        prevSeason,
-      )
-      past = { season: comparison.season, rows: summarizePastSeason(comparison) }
-    }
+    if (prevSeason === null) return null
+    const comparison: LeagueComparisonResponse = await api.getLeagueComparison(
+      league,
+      prevSeason,
+    )
+    return { season: comparison.season, rows: summarizePastSeason(comparison) }
   } catch {
-    past = null
+    return null
   }
+}
 
-  // AFL-only model slots, each in its own try/catch so no single
-  // failure can break the page (the boosted contract is "hide, never
-  // error": both boosted endpoints throw on "no active model", the
-  // catch nulls the slot, the section stays hidden).
-  let models: PerformancePayload['models'] = null
-  let modelsError: string | null = null
-  let activeModel: PerformancePayload['activeModel'] = null
-  let activeModelError: string | null = null
-  let boostedModel: ActiveBoostedModel | null = null
-
-  if (isAfl.value && current) {
-    // The compared season comes from the server's current-season
-    // payload (falls back to the client year) — a client clock near
-    // New Year must not query a season with no data.
-    const parsed = typeof current.season === 'number'
-      ? current.season
-      : Number.parseInt(String(current.season), 10)
-    const season = Number.isFinite(parsed) ? parsed : new Date().getFullYear()
-    try {
-      const data = await api.compareModels(season)
-      models = data.comparison
-    } catch {
-      modelsError = 'Could not load model accuracy data'
-    }
-    try {
-      activeModel = await api.getActiveModel()
-    } catch {
-      activeModelError = 'Failed to load active model data'
-    }
-    try {
-      const data = await api.getActiveBoostedModel()
-      boostedModel = data.is_active ? data : null
-    } catch {
-      boostedModel = null
-    }
+/** Active weighted model (AFL slot). Distinct error state preserved
+ *  (the old page's error block); the boosted contract is "hide, never
+ *  error": both model endpoints throw on "no active model", the catch
+ *  nulls the slot, the section stays hidden. */
+const fetchActiveModel = async (): Promise<{
+  activeModel: PerformancePayload['activeModel']
+  activeModelError: string | null
+}> => {
+  if (!isAfl.value) return { activeModel: null, activeModelError: null }
+  try {
+    return { activeModel: await api.getActiveModel(), activeModelError: null }
+  } catch {
+    return { activeModel: null, activeModelError: 'Failed to load active model data' }
   }
+}
+
+/** Boosted (XGBoost) model (AFL slot, BT-1). */
+const fetchBoostedModel = async (): Promise<ActiveBoostedModel | null> => {
+  if (!isAfl.value) return null
+  try {
+    const data = await api.getActiveBoostedModel()
+    return data.is_active ? data : null
+  } catch {
+    return null
+  }
+}
+
+/** Model comparison (AFL slot) — the one slot that DEPENDS on current:
+ *  the compared season comes from the server's current-season payload
+ *  (falls back to the client year — a client clock near New Year must
+ *  not query a season with no data). */
+const fetchModels = async (
+  current: CurrentSeasonView | null,
+): Promise<{ models: PerformancePayload['models']; modelsError: string | null }> => {
+  if (!isAfl.value || !current) return { models: null, modelsError: null }
+  const parsed = typeof current.season === 'number'
+    ? current.season
+    : Number.parseInt(String(current.season), 10)
+  const season = Number.isFinite(parsed) ? parsed : new Date().getFullYear()
+  try {
+    const data = await api.compareModels(season)
+    return { models: data.comparison, modelsError: null }
+  } catch {
+    return { models: null, modelsError: 'Could not load model accuracy data' }
+  }
+}
+
+const fetchPerformance = async (): Promise<PerformancePayload> => {
+  // Wave 1 — every independent slot in parallel (the old AFL page's
+  // Promise.all batches; review #3). A failure in any one slot nulls
+  // only that slot.
+  const [current, past, activeModelSlot, boostedModel] = await Promise.all([
+    fetchCurrent(),
+    fetchPast(),
+    fetchActiveModel(),
+    fetchBoostedModel(),
+  ])
+  const { activeModel, activeModelError } = activeModelSlot
+
+  // Wave 2 — model-compare, which needs current's season.
+  const { models, modelsError } = await fetchModels(current)
 
   return { current, past, models, modelsError, activeModel, activeModelError, boostedModel }
 }
