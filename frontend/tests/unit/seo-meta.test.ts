@@ -21,7 +21,9 @@ const FRONTEND_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..')
 const PAGE_FILES = [
   'pages/index.vue',
   'pages/about.vue',
-  'pages/backtest.vue',
+  // PERF-RENAME (2026-10-07): pages/backtest.vue became
+  // pages/performance.vue (the /backtest route is a redirect now).
+  'pages/performance.vue',
   'pages/game/[slug].vue',
 ]
 

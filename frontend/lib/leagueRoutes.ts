@@ -200,9 +200,13 @@ export function sortRoundEvents(events: SportEvent[]): SportEvent[] {
  * Pure route list builder — the single definition of "which league URLs
  * exist" used by BOTH the prerender hook and the sitemap.
  *
- * - `/{league}` for every non-AFL key, ALWAYS (even unsynced leagues —
- *   the pages degrade to their "unavailable" state; a stale 404 in the
- *   wild is worse than a graceful empty page).
+ * - `/{league}` AND `/{league}/performance` for every non-AFL key,
+ *   ALWAYS (even unsynced leagues — the pages degrade to their
+ *   "unavailable"/empty state; a stale 404 in the wild is worse than a
+ *   graceful empty page). PERFORMANCE-ROUTES (2026-10-07): the
+ *   performance entry is emitted unconditionally next to the home
+ *   route; wiring it into prerender/sitemap lands with the
+ *   performance-page subtasks, keeping intermediate builds green.
  * - `/{league}/match/{slug}` for each event of the league's derived
  *   current round, only when its season payload was fetched.
  * - 'afl' is filtered out defensively even if a caller passes it —
@@ -220,6 +224,10 @@ export function buildLeagueRoutes(
   for (const league of leagueKeys) {
     if (league === 'afl') continue
     routes.push(`/${league}`)
+    // PERFORMANCE-ROUTES (2026-10-07): unconditional, same graceful
+    // contract as the home route — unsynced leagues still ship their
+    // performance page (it renders its empty state).
+    routes.push(`/${league}/performance`)
     const events = eventsByLeague[league]
     if (!events || events.length === 0) continue
     const round = deriveCurrentRound(events, now)
@@ -250,11 +258,14 @@ export type LeagueEnumerationErrorSink = (source: string, err: unknown) => void
  * `buildLeagueRoutes` over whatever succeeded.
  *
  * Degradation contract (NEVER throws):
- * - discovery failure → home routes only, `onError('sports', …)`
+ * - discovery failure → home + performance routes only,
+ *   `onError('sports', …)`
  * - one league's events fetch failing → that league keeps its home
- *   route and loses only its match routes, `onError(league, …)`
- * - unsynced leagues (no competition/season) → home route only, and
- *   that is an EXPECTED state, not an error — nothing is reported.
+ *   and performance routes and loses only its match routes,
+ *   `onError(league, …)`
+ * - unsynced leagues (no competition/season) → home + performance
+ *   routes only, and that is an EXPECTED state, not an error —
+ *   nothing is reported.
  */
 export async function enumerateLeagueRoutes(
   apiBase: string,
@@ -276,7 +287,7 @@ export async function enumerateLeagueRoutes(
       LEAGUE_ROUTE_KEYS.map(async (league) => {
         try {
           const resolved = resolveCompetition(sports?.sports ?? null, league)
-          if (!resolved) return // unsynced → home route only
+          if (!resolved) return // unsynced → home + performance routes only
           const eventsRes = await fetch(
             `${apiBase}/api/events?competition=${resolved.competitionId}` +
             `&season=${encodeURIComponent(resolved.seasonLabel)}` +
@@ -287,15 +298,15 @@ export async function enumerateLeagueRoutes(
           const payload = (await eventsRes.json()) as EventListResponse
           eventsByLeague[league] = payload?.events ?? []
         } catch (err) {
-          // Per-league degradation: the league keeps its home route and
-          // loses only this build's match routes.
+          // Per-league degradation: the league keeps its home and
+          // performance routes and loses only this build's match routes.
           onError?.(league, err)
         }
       }),
     )
   } catch (err) {
-    // Discovery failed entirely — homes only; match routes arrive with
-    // the next successful build.
+    // Discovery failed entirely — homes + performance routes only;
+    // match routes arrive with the next successful build.
     onError?.('sports', err)
   }
   return buildLeagueRoutes(LEAGUE_ROUTE_KEYS, eventsByLeague)

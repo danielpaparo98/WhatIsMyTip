@@ -5,14 +5,16 @@
  *
  * The contract under test (lib/leagueRoutes.ts, deliberately Nuxt-free
  * so nuxt.config.ts can import it in plain Node):
- *  1. `/{league}` is enumerated for EVERY non-AFL league key — even
- *     unsynced ones (the pages degrade to their "unavailable" state).
+ *  1. `/{league}` AND `/{league}/performance` are enumerated for EVERY
+ *     non-AFL league key — even unsynced ones (the pages degrade to
+ *     their "unavailable"/empty state; a stale 404 in the wild is
+ *     worse than a graceful page).
  *  2. `/{league}/match/{slug}` is enumerated for each event of the
  *     DERIVED current round (same semantics as deriveCurrentRound:
  *     first round with live events wins, else latest round with
  *     results), for leagues whose season payload was fetched.
  *  3. 'afl' is never enumerated — AFL lives at '/' with the legacy
- *     /game prerender.
+ *     /game prerender (and, from PERFORMANCE-ROUTES on, /performance).
  *  4. enumerateLeagueRoutes degrades gracefully: an unreachable API or
  *     a single league's failed events fetch costs match routes only —
  *     it must never throw.
@@ -170,8 +172,13 @@ describe('SEASON_EVENT_LIMIT', () => {
 // ---------------------------------------------------------------------------
 
 describe('buildLeagueRoutes', () => {
-  it('enumerates /{league} for every key even when no events were fetched', () => {
-    expect(buildLeagueRoutes(['wafl', 'vfl'], {}, NOW)).toEqual(['/wafl', '/vfl'])
+  it('enumerates /{league} and /{league}/performance for every key even when no events were fetched', () => {
+    expect(buildLeagueRoutes(['wafl', 'vfl'], {}, NOW)).toEqual([
+      '/wafl',
+      '/wafl/performance',
+      '/vfl',
+      '/vfl/performance',
+    ])
   })
 
   it('never enumerates afl — not even when explicitly passed with events', () => {
@@ -180,7 +187,7 @@ describe('buildLeagueRoutes', () => {
       { afl: FINISHED_SEASON, wafl: [] },
       NOW,
     )
-    expect(routes).toEqual(['/wafl'])
+    expect(routes).toEqual(['/wafl', '/wafl/performance'])
     expect(routes.some((r) => r.startsWith('/afl'))).toBe(false)
   })
 
@@ -189,6 +196,7 @@ describe('buildLeagueRoutes', () => {
     // Round 6 is the first round with live events → its two games only.
     expect(routes).toEqual([
       '/wafl',
+      '/wafl/performance',
       '/wafl/match/waf-r6-g1',
       '/wafl/match/waf-r6-g2',
     ])
@@ -196,7 +204,11 @@ describe('buildLeagueRoutes', () => {
 
   it('falls back to the latest completed round once the season is over', () => {
     const routes = buildLeagueRoutes(['wafl'], { wafl: FINISHED_SEASON }, NOW)
-    expect(routes).toEqual(['/wafl', '/wafl/match/fin-r23-gf'])
+    expect(routes).toEqual([
+      '/wafl',
+      '/wafl/performance',
+      '/wafl/match/fin-r23-gf',
+    ])
   })
 
   it('ignores null-round (tournament-style) events when deriving the round', () => {
@@ -209,11 +221,13 @@ describe('buildLeagueRoutes', () => {
     expect(routes).not.toContain('/wafl/match/expo-match')
   })
 
-  it('gives leagues with an empty event payload their home route only', () => {
+  it('gives leagues with an empty event payload their home and performance routes', () => {
     const routes = buildLeagueRoutes(['wafl', 'vfl'], { wafl: [], vfl: WAFL_SEASON }, NOW)
     expect(routes).toEqual([
       '/wafl',
+      '/wafl/performance',
       '/vfl',
+      '/vfl/performance',
       '/vfl/match/waf-r6-g1',
       '/vfl/match/waf-r6-g2',
     ])
@@ -223,7 +237,10 @@ describe('buildLeagueRoutes', () => {
     const events = [
       makeEvent({ id: 3, slug: '', round_id: 6, starts_at: '2026-06-20T13:10:00' }),
     ]
-    expect(buildLeagueRoutes(['wafl'], { wafl: events }, NOW)).toEqual(['/wafl'])
+    expect(buildLeagueRoutes(['wafl'], { wafl: events }, NOW)).toEqual([
+      '/wafl',
+      '/wafl/performance',
+    ])
   })
 
   it('is deterministic and duplicate-free', () => {
@@ -231,6 +248,38 @@ describe('buildLeagueRoutes', () => {
     const second = buildLeagueRoutes(LEAGUE_ROUTE_KEYS, { wafl: WAFL_SEASON }, NOW)
     expect(first).toEqual(second)
     expect(new Set(first).size).toBe(first.length)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// PERFORMANCE-ROUTES (2026-10-07): /{league}/performance for every league
+// ---------------------------------------------------------------------------
+
+describe('buildLeagueRoutes performance routes', () => {
+  it('emits /{league}/performance for ALL non-AFL keys, ALWAYS — even unsynced', () => {
+    // No events fetched at all: the graceful-degradation contract means
+    // performance routes still ship (pages degrade to their empty state).
+    const routes = buildLeagueRoutes(LEAGUE_ROUTE_KEYS, {}, NOW)
+    for (const key of LEAGUE_ROUTE_KEYS) {
+      expect(routes, `missing performance route for ${key}`).toContain(`/${key}/performance`)
+    }
+  })
+
+  it('emits exactly one performance route per league, adjacent to its home route', () => {
+    const routes = buildLeagueRoutes(LEAGUE_ROUTE_KEYS, {}, NOW)
+    expect(routes.filter((r) => r.endsWith('/performance'))).toHaveLength(
+      LEAGUE_ROUTE_KEYS.length,
+    )
+    for (const key of LEAGUE_ROUTE_KEYS) {
+      expect(routes.indexOf(`/${key}/performance`)).toBe(routes.indexOf(`/${key}`) + 1)
+    }
+  })
+
+  it('never emits an AFL performance route', () => {
+    const routes = buildLeagueRoutes(['afl', ...LEAGUE_ROUTE_KEYS], {}, NOW)
+    expect(routes).not.toContain('/afl/performance')
+    // Exact-AFL routes only — '/aflw' legitimately starts with '/afl'.
+    expect(routes.some((r) => r === '/afl' || r.startsWith('/afl/'))).toBe(false)
   })
 })
 
@@ -254,13 +303,16 @@ describe('enumerateLeagueRoutes', () => {
     const routes = await enumerateLeagueRoutes('http://api.test')
 
     expect(routes).toContain('/wafl')
+    expect(routes).toContain('/wafl/performance')
     expect(routes).toContain('/wafl/match/waf-r6-g1')
     expect(routes).toContain('/wafl/match/waf-r6-g2')
     // VFL finished its season → its grand-final round is enumerated.
     expect(routes).toContain('/vfl/match/fin-r23-gf')
-    // Unsynced leagues still get their home routes.
+    // Unsynced leagues still get their home + performance routes.
     expect(routes).toContain('/sanfl')
+    expect(routes).toContain('/sanfl/performance')
     expect(routes).toContain('/aflw')
+    expect(routes).toContain('/aflw/performance')
 
     // Every competition fetch asks for the derived season with the
     // full-season limit. LEAGUE-ROUTES (2026-09-30, code review): each
@@ -276,7 +328,7 @@ describe('enumerateLeagueRoutes', () => {
     )
   })
 
-  it('returns home routes only and never throws when the API is unreachable', async () => {
+  it('returns home + performance routes only and never throws when the API is unreachable', async () => {
     const onError = vi.fn()
     stubFetch(() => {
       throw new Error('connection refused')
@@ -284,7 +336,9 @@ describe('enumerateLeagueRoutes', () => {
 
     const routes = await enumerateLeagueRoutes('http://api.test', onError)
 
-    expect(routes).toEqual(LEAGUE_ROUTE_KEYS.map((key) => `/${key}`))
+    expect(routes).toEqual(
+      LEAGUE_ROUTE_KEYS.flatMap((key) => [`/${key}`, `/${key}/performance`]),
+    )
     // The discovery failure is surfaced so the caller can logger.warn it.
     expect(onError).toHaveBeenCalledWith('sports', expect.any(Error))
   })
@@ -302,8 +356,9 @@ describe('enumerateLeagueRoutes', () => {
 
     const routes = await enumerateLeagueRoutes('http://api.test', onError)
 
-    // WAFL degrades to its home route only…
+    // WAFL degrades to its home + performance routes only…
     expect(routes).toContain('/wafl')
+    expect(routes).toContain('/wafl/performance')
     expect(routes.some((r) => r.startsWith('/wafl/match/'))).toBe(false)
     // …while VFL still gets its match routes.
     expect(routes).toContain('/vfl/match/fin-r23-gf')
@@ -312,7 +367,7 @@ describe('enumerateLeagueRoutes', () => {
     expect(onError).not.toHaveBeenCalledWith('vfl', expect.anything())
   })
 
-  it('treats unsynced leagues as home-only without reporting an error', async () => {
+  it('treats unsynced leagues as home + performance only without reporting an error', async () => {
     const onError = vi.fn()
     stubFetch((url) => {
       if (url.includes('/api/sports')) return jsonResponse(SPORTS_PAYLOAD)
@@ -327,9 +382,11 @@ describe('enumerateLeagueRoutes', () => {
 
     const routes = await enumerateLeagueRoutes('http://api.test', onError)
 
-    // All 10 homes present; match routes only for the two synced leagues.
+    // All 10 homes + 10 performance routes present; match routes only
+    // for the two synced leagues.
     for (const key of LEAGUE_ROUTE_KEYS) {
       expect(routes).toContain(`/${key}`)
+      expect(routes, `missing performance route for ${key}`).toContain(`/${key}/performance`)
     }
     expect(routes.filter((r) => r.includes('/match/')).every((r) =>
       r.startsWith('/wafl/') || r.startsWith('/vfl/'),

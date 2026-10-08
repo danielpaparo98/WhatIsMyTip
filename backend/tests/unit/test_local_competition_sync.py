@@ -11,9 +11,9 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
+from zoneinfo import ZoneInfo
 
 import pytest
-from zoneinfo import ZoneInfo
 
 from packages.shared.ingestion import FixtureDTO
 from packages.shared.ingestion.state_leagues import LeagueConfig
@@ -103,7 +103,9 @@ class TestLocalCompetitionSync:
             crud.ensure_competition = AsyncMock(return_value=competition)
             crud.ensure_season = AsyncMock(return_value=season)
             resolver_cls.return_value.ensure_team = AsyncMock(
-                side_effect=lambda name, **k: SimpleNamespace(id=71 if name.startswith("Peel") else 72)
+                side_effect=lambda name, **k: SimpleNamespace(
+                    id=71 if name.startswith("Peel") else 72
+                )
             )
             event_crud.upsert_fixture = AsyncMock(
                 return_value=SimpleNamespace(id=501)
@@ -343,6 +345,181 @@ class TestLocalCompetitionSync:
 
         for call in resolver_cls.return_value.ensure_team.await_args_list:
             assert call.kwargs["logo_url"] is None
+
+
+class TestSyncLeagueTipGeneration:
+    """D3 hook: league tips refresh after a competition's events land.
+
+    The generation itself is LeagueHeuristicsService's contract (its
+    own test file covers the pick rules + the idempotent upsert round
+    trip); these tests pin the SYNC-side wiring: the hook fires
+    automatically after the events commit, scoped to the synced
+    competition, on every sync — and a generation failure can never
+    fail the sync.
+    """
+
+    @pytest.mark.asyncio
+    async def test_tips_generated_automatically_after_events_commit(self):
+        """Deploy a league → tips happen by construction: the hook is
+        invoked with the sync's session and competition id AFTER the
+        events commit (tips derive from the persisted events)."""
+        db = AsyncMock()
+        db.flush = AsyncMock()
+        calls: list[str] = []
+        db.commit = AsyncMock(side_effect=lambda *a, **k: calls.append("commit"))
+
+        competition = SimpleNamespace(id=3, timezone="Australia/Perth")
+        season = SimpleNamespace(id=11, label="2026")
+        summary = {
+            "competition_id": 3,
+            "seasons": ["2026"],
+            "events_considered": 1,
+            "tips_inserted": 3,
+            "tips_updated": 0,
+        }
+
+        with patch(
+            "packages.shared.services.local_competition_sync.CompetitionCRUD"
+        ) as crud, patch(
+            "packages.shared.services.local_competition_sync.ParticipantResolver"
+        ) as resolver_cls, patch(
+            "packages.shared.services.local_competition_sync.EventCRUD"
+        ) as event_crud, patch(
+            "packages.shared.services.local_competition_sync.generate_league_tips"
+        ) as generate_tips:
+            crud.ensure_competition = AsyncMock(return_value=competition)
+            crud.ensure_season = AsyncMock(return_value=season)
+            resolver_cls.return_value.ensure_team = AsyncMock(
+                return_value=SimpleNamespace(id=71)
+            )
+            event_crud.upsert_fixture = AsyncMock(
+                return_value=SimpleNamespace(id=501)
+            )
+            # side_effect (not return_value) so the call-log ordering
+            # assertion sees "tips"; returns the summary dict the real
+            # hook is annotated to produce.
+            def _generate(*_a, **_k):
+                calls.append("tips")
+                return summary
+
+            generate_tips.side_effect = _generate
+
+            provider = MagicMock()
+            provider.sport_id = "afl"
+            provider.get_fixtures = AsyncMock(return_value=[_fixture()])
+
+            service = LocalCompetitionSyncService(
+                db,
+                provider=provider,
+                competition_name="West Australian Football League",
+                season=2026,
+            )
+            stats = await service.sync()
+
+        generate_tips.assert_awaited_once()
+        assert generate_tips.await_args.args == (db,)
+        assert generate_tips.await_args.kwargs == {"competition_id": 3}
+        # Ordering contract: events commit BEFORE tip generation.
+        assert calls == ["commit", "tips"]
+        # The outcome is observable on the stats for the cron aggregate.
+        assert stats["league_tips"] == {"status": "success", **summary}
+
+    @pytest.mark.asyncio
+    async def test_tip_generation_failure_never_fails_the_sync(self):
+        """Failure contract: the sync is the critical path and tips are
+        regenerable on the next cycle — a hook explosion is logged,
+        recorded on the stats, and swallowed (with a rollback to clear
+        the poisoned transaction, mirroring the per-fixture guard)."""
+        db = AsyncMock()
+        db.flush = AsyncMock()
+        db.commit = AsyncMock()
+
+        competition = SimpleNamespace(id=3, timezone="Australia/Perth")
+        season = SimpleNamespace(id=11, label="2026")
+
+        with patch(
+            "packages.shared.services.local_competition_sync.CompetitionCRUD"
+        ) as crud, patch(
+            "packages.shared.services.local_competition_sync.ParticipantResolver"
+        ) as resolver_cls, patch(
+            "packages.shared.services.local_competition_sync.EventCRUD"
+        ) as event_crud, patch(
+            "packages.shared.services.local_competition_sync.generate_league_tips"
+        ) as generate_tips:
+            crud.ensure_competition = AsyncMock(return_value=competition)
+            crud.ensure_season = AsyncMock(return_value=season)
+            resolver_cls.return_value.ensure_team = AsyncMock(
+                return_value=SimpleNamespace(id=71)
+            )
+            event_crud.upsert_fixture = AsyncMock(
+                return_value=SimpleNamespace(id=501)
+            )
+            generate_tips.side_effect = RuntimeError("tips boom")
+
+            provider = MagicMock()
+            provider.sport_id = "afl"
+            provider.get_fixtures = AsyncMock(return_value=[_fixture()])
+
+            service = LocalCompetitionSyncService(
+                db, provider=provider, competition_name="X", season=2026
+            )
+            stats = await service.sync()  # must NOT raise
+
+        assert stats["fixtures_synced"] == 1, "the sync itself succeeded"
+        assert stats["league_tips"]["status"] == "failed"
+        assert "tips boom" in stats["league_tips"]["error"]
+        db.rollback.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_tip_generation_reruns_on_every_sync(self):
+        """End-to-end idempotency rides on re-invocation: every sync
+        calls the hook again with the same competition, so the
+        generation service's idempotent upsert (league-heuristics
+        round-trip test) converges repeat syncs to identical
+        league_tips rows — and picks up score revisions."""
+        db = AsyncMock()
+        db.flush = AsyncMock()
+        db.commit = AsyncMock()
+
+        competition = SimpleNamespace(id=3, timezone="Australia/Perth")
+        season = SimpleNamespace(id=11, label="2026")
+
+        with patch(
+            "packages.shared.services.local_competition_sync.CompetitionCRUD"
+        ) as crud, patch(
+            "packages.shared.services.local_competition_sync.ParticipantResolver"
+        ) as resolver_cls, patch(
+            "packages.shared.services.local_competition_sync.EventCRUD"
+        ) as event_crud, patch(
+            "packages.shared.services.local_competition_sync.generate_league_tips"
+        ) as generate_tips:
+            crud.ensure_competition = AsyncMock(return_value=competition)
+            crud.ensure_season = AsyncMock(return_value=season)
+            resolver_cls.return_value.ensure_team = AsyncMock(
+                return_value=SimpleNamespace(id=71)
+            )
+            event_crud.upsert_fixture = AsyncMock(
+                return_value=SimpleNamespace(id=501)
+            )
+            generate_tips.return_value = {}
+
+            provider = MagicMock()
+            provider.sport_id = "afl"
+            provider.get_fixtures = AsyncMock(return_value=[_fixture()])
+
+            service = LocalCompetitionSyncService(
+                db, provider=provider, competition_name="X", season=2026
+            )
+            first = await service.sync()
+            second = await service.sync()
+
+        assert generate_tips.await_count == 2
+        assert all(
+            call.args == (db,) and call.kwargs == {"competition_id": 3}
+            for call in generate_tips.await_args_list
+        )
+        assert first["league_tips"]["status"] == "success"
+        assert second["league_tips"]["status"] == "success"
 
 
 def _league_config(
