@@ -32,7 +32,7 @@ import {
 const SEASONS_PAYLOAD: LeagueSeasonsResponse = {
   // State-league season labels are strings (D4) — '2026', not 2026.
   available_years: ['2024', '2025', '2026'],
-  current_year: 2026,
+  current_year: '2026',
 }
 
 const CURRENT_SEASON_PAYLOAD: LeagueCurrentSeasonResponse = {
@@ -95,7 +95,7 @@ describe('getLeagueSeasons (league backtest, PERF-PER-LEAGUE)', () => {
     const payload = await getLeagueSeasons('wafl')
 
     expect(payload.available_years).toEqual(['2024', '2025', '2026'])
-    expect(payload.current_year).toBe(2026)
+    expect(payload.current_year).toBe('2026')
 
     expect(fetchMock).toHaveBeenCalledTimes(1)
     expect(fetchMock.mock.calls[0]?.[0]).toBe('http://api.test/api/backtest/seasons?league=wafl')

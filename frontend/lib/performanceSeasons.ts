@@ -14,24 +14,38 @@
  * AFL page follows (D2).
  *
  * - Season labels are four-digit-year strings for state leagues
- *   ('2025') and ints for the AFL — both are accepted.
- * - Labels that do not parse to a finite year are ignored (never
+ *   ('2025') and ints for the AFL — both are accepted. `current_year`
+ *   follows the same duality (int for AFL, LABEL STRING for leagues,
+ *   null for a competition with no seasons) and is normalized through
+ *   the same parse — the comparison is always numeric, never
+ *   JS-coercion-dependent (review #2).
+ * - Values that do not parse to a finite year are ignored (never
  *   throw — the payload is a boundary).
  * - Seasons at or after `currentYear` are not past seasons; when none
- *   qualifies (first season, empty payload) the caller hides the
- *   past-season section.
+ *   qualifies (first season, empty payload, unusable current_year)
+ *   the caller hides the past-season section.
  *
  * Returns the selected year as a NUMBER (the `/compare?season=` query
  * param contract) or null when no past season exists.
  */
 export function mostRecentPastSeasonYear(
   availableYears: (number | string)[],
-  currentYear: number,
+  currentYear: number | string | null | undefined,
 ): number | null {
+  const normalizedCurrent = normalizeSeasonYear(currentYear)
+  if (normalizedCurrent === null) return null
   const pastYears = availableYears
-    .map((label) =>
-      typeof label === 'number' ? label : Number.parseInt(String(label), 10),
-    )
-    .filter((year) => Number.isFinite(year) && year < currentYear)
+    .map(normalizeSeasonYear)
+    .filter((year): year is number => year !== null && year < normalizedCurrent)
   return pastYears.length > 0 ? Math.max(...pastYears) : null
+}
+
+/** Parse a season year/label to a finite number, or null on garbage. */
+function normalizeSeasonYear(
+  value: number | string | null | undefined,
+): number | null {
+  if (value === null || value === undefined) return null
+  const parsed =
+    typeof value === 'number' ? value : Number.parseInt(String(value), 10)
+  return Number.isFinite(parsed) ? parsed : null
 }

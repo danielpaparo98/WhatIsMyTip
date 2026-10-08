@@ -67,7 +67,7 @@
       </section>
 
       <!-- Current Season Section -->
-      <!-- m-6: the loading/error branches live OUTSIDE the data guard â€”
+      <!-- m-6: the loading/error branches live OUTSIDE the data guard —
            while a request is in flight (or after a failure) the payload
            is null, so a data-guarded section would render nothing. -->
       <section
@@ -137,7 +137,7 @@
                   <div class="stat-row">
                     <span class="stat-label">Accuracy</span>
                     <span class="stat-value">
-                      {{ heuristic.rounds_played > 0 ? (heuristic.total_accuracy * 100).toFixed(1) + '%' : 'â€”' }}
+                      {{ heuristic.rounds_played > 0 ? (heuristic.total_accuracy * 100).toFixed(1) + '%' : '—' }}
                     </span>
                   </div>
                   <div class="stat-row">
@@ -172,7 +172,7 @@
                 >
                   <div class="model-mini-header">
                     <span class="model-mini-name">{{ getModelDisplayName(model.model_name) }}</span>
-                    <span v-if="model.model_name === currentSeasonBestModel" class="best-dot" title="Best performing model this season">â˜…</span>
+                    <span v-if="model.model_name === currentSeasonBestModel" class="best-dot" title="Best performing model this season">★</span>
                   </div>
                   <div class="model-mini-acc">
                     {{ (model.overall_accuracy * 100).toFixed(1) }}%
@@ -223,7 +223,7 @@
               <strong>Intercept:</strong> {{ activeModelData.model.intercept.toFixed(2) }}
             </span>
             <span v-if="activeModelData.model.metrics.r2 != null" class="meta-item">
-              <strong>RÂ²:</strong> {{ activeModelData.model.metrics.r2.toFixed(4) }}
+              <strong>R²:</strong> {{ activeModelData.model.metrics.r2.toFixed(4) }}
             </span>
             <span v-if="activeModelData.model.metrics.mae != null" class="meta-item">
               <strong>MAE:</strong> {{ activeModelData.model.metrics.mae.toFixed(1) }}
@@ -242,9 +242,9 @@
                 <span class="eq-left">predicted_margin =</span>
                 <span class="eq-intercept">{{ activeModelData.model!.intercept.toFixed(2) }}</span>
                 <span v-for="(row, i) in groupedModelCoefficients" :key="row.model" class="eq-term">
-                  <span class="eq-op">{{ row.margin_coef >= 0 ? '+' : 'âˆ’' }}</span>
+                  <span class="eq-op">{{ row.margin_coef >= 0 ? '+' : '−' }}</span>
                   <span class="eq-coeff">{{ Math.abs(row.margin_coef).toFixed(3) }}</span>
-                  <span class="eq-dot">Â·</span>
+                  <span class="eq-dot">·</span>
                   <span class="eq-model">{{ getModelDisplayName(row.model) }}<sub class="eq-sub">m</sub></span>
                 </span>
               </div>
@@ -272,7 +272,7 @@
       <!-- Degradation contract: both boosted endpoints map "no active
            model / no data" to 404, and the api method THROWS on every
            non-OK response.  loadActiveBoostedModelData catches, nulls
-           the payload and the section simply never renders â€” a missing
+           the payload and the section simply never renders — a missing
            model must never break the page. -->
       <section v-if="boostedModelLoading || boostedModelData" class="active-model-section">
         <div class="active-model-header">
@@ -294,7 +294,7 @@
               <strong>Training rows:</strong> {{ boostedModelData.training_rows }}
             </span>
             <span v-if="boostedModelData.metrics.r2 != null" class="meta-item">
-              <strong>RÂ²:</strong> {{ boostedModelData.metrics.r2.toFixed(4) }}
+              <strong>R²:</strong> {{ boostedModelData.metrics.r2.toFixed(4) }}
             </span>
             <span v-if="boostedModelData.metrics.mae != null" class="meta-item">
               <strong>MAE:</strong> {{ boostedModelData.metrics.mae.toFixed(1) }}
@@ -390,7 +390,7 @@ interface CurrentSeasonHeuristic {
   rounds_played: number
   avg_profit_per_round: number
   projected_annual_profit: number
-  /** BT-ODDS: share of tips settled at real bookmaker odds (0â€“1). */
+  /** BT-ODDS: share of tips settled at real bookmaker odds (0–1). */
   odds_coverage: number
 }
 interface CurrentSeasonResponse {
@@ -471,7 +471,7 @@ const currentSeasonBestModel = computed(() => {
 })
 
 /**
- * BT-ODDS UX: false until at least one round has been graded â€” drives
+ * BT-ODDS UX: false until at least one round has been graded — drives
  * the friendly off-season empty state instead of "$0.00" cards.
  */
 const hasSeasonResults = computed(() => {
@@ -516,7 +516,7 @@ const modelExplanationText = computed(() => {
     `linear regression trained on ${m.training_rows} historical games. ` +
     `Each model contributes a margin weight (influence on score margin) and a ` +
     `confidence weight (influence on confidence). ` +
-    `The current model (v${m.version}) has RÂ² = ${r2} ` +
+    `The current model (v${m.version}) has R² = ${r2} ` +
     `with intercept ${m.intercept.toFixed(2)}. ` +
     `Most influential models: ${topNames}. ` +
     `The model is retrained weekly with updated coefficients.`
@@ -548,9 +548,9 @@ const boostedModelExplanationText = computed(() => {
     `The Boosted Tip model is a gradient-boosted tree ensemble (XGBoost) trained on ` +
     `${m.training_rows} historical games to predict the home-team-signed margin from the ` +
     `same 8 model predictions the Weighted Tip model uses. ` +
-    `The current model (v${m.version}) reaches RÂ² = ${r2} with MAE = ${mae} points and is ` +
+    `The current model (v${m.version}) reaches R² = ${r2} with MAE = ${mae} points and is ` +
     `retrained weekly. ` +
-    `Feature importances below are mean |SHAP| values â€” how much each model's margin and ` +
+    `Feature importances below are mean |SHAP| values — how much each model's margin and ` +
     `confidence signal moves the prediction, with ${topNames} the most influential.`
   )
 })
@@ -650,7 +650,7 @@ const loadPastSeasonData = async () => {
 
 onMounted(async () => {
   // The season used for the model comparison comes from the server's
-  // current-season payload (falls back to the client year) â€” a client
+  // current-season payload (falls back to the client year) — a client
   // clock near New Year must not query a season with no data.
   // BT-1: the boosted model load is independent (own try/catch, hidden
   // on failure) so it rides along in the parallel batch.
@@ -1219,7 +1219,7 @@ onMounted(async () => {
   color: var(--color-text);
 }
 
-/* Disclaimer â€” visible on all screen sizes */
+/* Disclaimer — visible on all screen sizes */
 .disclaimer {
   margin-top: 1rem;
   padding: 0.75rem;

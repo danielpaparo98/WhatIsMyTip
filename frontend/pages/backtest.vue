@@ -1,21 +1,20 @@
 ﻿<script setup lang="ts">
 // PERF-RENAME (2026-10-07): /backtest moved permanently to /performance.
 //
-// PRIMARY mechanism: the nitro routeRules 301 in nuxt.config.ts.
-// Under the static preset the prerender request for /backtest resolves
-// through that rule to an h3 sendRedirect response (301 + a zero-delay
-// meta-refresh body), which nitropack's prerenderer treats as a VALID
-// route and writes to backtest/index.html — so static hosting still
-// redirects legacy /backtest links.
+// TWO complementary mechanisms (review-consistent rationale):
 //
-// THIS stub is the fallback: with my sandbox tooling the old page file
-// could not be deleted (no shell), so it was reduced to this redirect
-// instead of leaving a 1200-line duplicate AFL page at /backtest. It
-// also keeps client-side router navigations to /backtest working if
-// the routeRule is ever removed. Orchestrator: `git rm` this file (and
-// drop the routeRule + the '/backtest' prerender entry with it) if a
-// file-less redirect is preferred — the static-host behaviour would
-// then fall back to the host's 404 for legacy links.
+// 1. The nitro routeRules 301 in nuxt.config.ts is the HTTP artifact:
+//    under the static preset the prerender request for /backtest
+//    resolves through that rule to an h3 sendRedirect response (301 +
+//    a zero-delay meta-refresh body), which nitropack's prerenderer
+//    treats as a VALID route and writes to backtest/index.html — so
+//    static hosting still redirects legacy /backtest links.
+//
+// 2. THIS stub is the SPA-navigation fallback: a routeRule only fires
+//    on HTTP requests, NOT on client-side vue-router navigations (an
+//    in-app <NuxtLink to="/backtest"> or router.push from a stale
+//    bundle would otherwise render a 404). This page handles those
+//    navigations with a real 301 redirect.
 await navigateTo('/performance', { redirectCode: 301 })
 </script>
 

@@ -370,7 +370,10 @@ export interface ActiveBoostedModel {
 /** Mirrors `GET /api/backtest/seasons` — AFL returns int years, leagues return label strings. */
 export interface LeagueSeasonsResponse {
   available_years: (number | string)[]
-  current_year: number
+  /** AFL: calendar-year int. Leagues: the season LABEL string (league
+   *  seasons carry no numeric id), null when the competition has no
+   *  seasons at all. Normalized by lib/performanceSeasons consumers. */
+  current_year: number | string | null
 }
 
 /** Mirrors `CurrentSeasonHeuristicPerformance` (same shape for AFL and leagues). */

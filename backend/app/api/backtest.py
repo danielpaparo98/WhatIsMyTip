@@ -34,8 +34,9 @@ from typing import Annotated, Optional
 
 from fastapi import APIRouter, Depends, Query
 from fastapi.exceptions import RequestValidationError
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, TypeAdapter, ValidationError
 from sqlalchemy import select
+from sqlalchemy.exc import MultipleResultsFound
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.db_deps import get_db
@@ -122,11 +123,23 @@ async def _league_competition_id(db: AsyncSession, league: str) -> int:
             "not_found",
             f"Unknown league {league!r} — not in the state-league registry",
         )
-    competition_id = (
-        await db.execute(
-            select(Competition.id).where(Competition.name == config.name)
-        )
-    ).scalar_one_or_none()
+    # Review #5: uniqueness on competitions is (sport_id, name), so a
+    # future second sport registering a clashing name would surface here
+    # as MultipleResultsFound — convert that latent 500 into the
+    # repo-standard 404 instead of silently picking an arbitrary row.
+    try:
+        competition_id = (
+            await db.execute(
+                select(Competition.id).where(Competition.name == config.name)
+            )
+        ).scalar_one_or_none()
+    except MultipleResultsFound:
+        raise http_error(
+            404,
+            "not_found",
+            f"League {league!r} resolved to multiple competitions — "
+            "scope the competition registry before querying this league",
+        ) from None
     if competition_id is None:
         # Registered but never synced (no competition row yet) — ride the
         # service's empty-state machinery, never a 500.
@@ -134,43 +147,26 @@ async def _league_competition_id(db: AsyncSession, league: str) -> int:
     return int(competition_id)
 
 
-def _legacy_season_year(season: str) -> int:
-    """Coerce the raw ``season`` query value for the legacy AFL path.
+# Review #4: the league path consumes the season LABEL verbatim, so
+# ``/compare`` declares ``season`` as a string — but the legacy AFL path
+# must keep its ORIGINAL ``int, ge=2000`` validation semantics with
+# byte-identical 422 bodies (including the ``ctx`` key native pydantic
+# errors carry) and pydantic's strict str→int parse rules. Re-validating
+# through pydantic itself (instead of hand-rolled int()/range checks)
+# reproduces both exactly.
+_SEASON_YEAR_ADAPTER: TypeAdapter[int] = TypeAdapter(
+    Annotated[int, Field(ge=2000)]
+)
 
-    The league path consumes the season LABEL verbatim, so ``/compare``
-    declares ``season`` as a string; the legacy AFL path keeps its
-    original ``int, ge=2000`` validation semantics — numeric strings
-    coerce, anything else re-raises the native FastAPI validation-error
-    shapes (both handlers return the repo-standard 422 body).
-    """
+
+def _legacy_season_year(season: str) -> int:
+    """Coerce the raw ``season`` query value for the legacy AFL path."""
     try:
-        year = int(season)
-    except ValueError:
+        return _SEASON_YEAR_ADAPTER.validate_python(season)
+    except ValidationError as exc:
         raise RequestValidationError(
-            [
-                {
-                    "type": "int_parsing",
-                    "loc": ["query", "season"],
-                    "msg": (
-                        "Input should be a valid integer, unable to parse "
-                        "string as an integer"
-                    ),
-                    "input": season,
-                }
-            ]
+            exc.errors(include_url=False, include_context=True)
         ) from None
-    if year < 2000:
-        raise RequestValidationError(
-            [
-                {
-                    "type": "greater_than_equal",
-                    "loc": ["query", "season"],
-                    "msg": "Input should be greater than or equal to 2000",
-                    "input": season,
-                }
-            ]
-        )
-    return year
 
 
 # ---------------------------------------------------------------------------

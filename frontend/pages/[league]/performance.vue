@@ -25,12 +25,20 @@
   </div>
 
   <!-- No tips yet / league not synced / fetch failed (all degrade here):
-       the approved empty state. The API 404s for an unsynced league, so
-       "isn't available yet" is the truthful message in every one of
-       these cases — the page never breaks. -->
+       the approved empty state. A registered-but-unsynced league gets a
+       zero payload (only unknown keys 404, and validate() blocks those),
+       so "isn't available yet" is truthful when NO payload arrived —
+       while a synced league whose season hasn't started gets its own
+       copy below. The page never breaks. -->
   <div v-else-if="!hasPerformanceData" class="empty" role="status" aria-live="polite">
-    <p>Performance tracking isn't available for {{ leagueConfig.displayName }} yet.</p>
-    <p class="empty-hint">Performance tracking begins once tipping models are live for this league.</p>
+    <template v-if="currentSeason">
+      <p>The {{ currentSeason.season }} season hasn't started yet.</p>
+      <p class="empty-hint">Performance tracking begins once Round 1 tips are graded.</p>
+    </template>
+    <template v-else>
+      <p>Performance tracking isn't available for {{ leagueConfig.displayName }} yet.</p>
+      <p class="empty-hint">Performance tracking begins once tipping models are live for this league.</p>
+    </template>
   </div>
 
   <template v-else>
@@ -218,10 +226,10 @@ const leagueConfig = computed(() => getLeagueConfig(leagueKey.value ?? 'afl'))
 // param change refetches and a superseded in-flight fetch is dropped
 // (the game/match pages' H-5 contract, same as useLeagueEvents).
 //
-// Degradation: an unsynced league 404s on /current-season — caught to
-// null so the page renders its empty state instead of failing; the
-// seasons→compare chain for the past season is additive and its own
-// try/catch hides only that section on failure.
+// Degradation: an unsynced league's zero payload (or an unexpected 404
+// / failure) degrades to null so the page renders its empty state
+// instead of failing; the seasons→compare chain for the past season is
+// additive and its own try/catch hides only that section on failure.
 // ---------------------------------------------------------------------------
 const api = useApi()
 
@@ -277,11 +285,17 @@ if (import.meta.client) {
   })
 }
 
-// View state derived from the payload.
+// View state derived from the payload. The data gate mirrors the AFL
+// page's hasSeasonResults (review #3): the league zero payload always
+// CONTAINS three zeroed heuristics, so heuristics.length alone would
+// render "$0.00 / 0%" cards for a synced-but-unplayed league. Data is
+// present only once a round has actually been graded.
 const currentSeason = computed(() => data.value?.current ?? null)
 const pastSeason = computed(() => data.value?.past ?? null)
 const hasPerformanceData = computed(
-  () => (currentSeason.value?.heuristics.length ?? 0) > 0,
+  () =>
+    (currentSeason.value?.rounds_completed ?? 0) > 0 ||
+    (currentSeason.value?.heuristics.some((h) => h.rounds_played > 0) ?? false),
 )
 
 const currentHeuristics = computed<LeagueCurrentSeasonHeuristicPerformance[]>(() =>
