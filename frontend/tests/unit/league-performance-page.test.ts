@@ -1,34 +1,37 @@
 /**
- * PERF-PER-LEAGUE (2026-10): first-class /{league}/performance pages
- * (D5 of the performance-per-league feature).
+ * PERF-VIEW-UNIFY (2026-10-08): /performance (AFL) and every
+ * /{league}/performance page render THE SAME shared component —
+ * components/PerformanceView.vue — so the presentation can never drift
+ * between them. The pages are thin wrappers owning only route-level
+ * concerns (route contract, active-league sync, per-route SEO).
  *
  * Covers:
- *  1. Route contract — copied from pages/[league]/index.vue EXACTLY:
- *     validate() against the LEAGUES registry (unknown keys 404), the
- *     inline middleware canonicalising 'afl' to /performance (AFL owns
- *     the root-level page — there is NO /afl/performance route), the
- *     client-only setActiveLeague() sync, and the leagueConfig resolved
- *     from the ROUTE param (never the global active league store — the
- *     prerender bakes every league page in one process).
- *  2. Data wiring — the subtask-09 useApi league methods
- *     (getLeagueCurrentSeasonPerformance / getLeagueSeasons /
- *     getLeagueComparison) fetched through an awaited useAsyncData with
- *     a reactive per-league cache key so the payload inlines into the
- *     prerendered HTML (the SEO-C1 contract).
- *  3. Presentation — the same two-season cards as the AFL page
- *     (accuracy / profit / rounds) WITHOUT the AFL-only model/weighted/
- *     boosted sections, plus the APPROVED graceful empty state when a
- *     league has no tips yet (unsynced leagues included).
- *  4. Per-league SEO — title/canonical/JSON-LD derived from
+ *  1. UNIFICATION — both wrappers render <PerformanceView>; the AFL
+ *     wrapper passes league="afl"; neither wrapper contains presentation
+ *     or data-fetch logic of its own.
+ *  2. Component route-side contract (the [league] wrapper): validate()
+ *     against the LEAGUES registry (unknown keys 404), the inline
+ *     middleware canonicalising 'afl' to /performance (AFL owns the
+ *     root-level page — there is NO /afl/performance route), the
+ *     client-only setActiveLeague() sync.
+ *  3. Component data wiring — one awaited useAsyncData per league key
+ *     (reactive cache key + dedupe: 'cancel'), league-keyed API calls
+ *     with AFL omitting the param (byte-identical legacy URLs), the
+ *     past-season selection via lib/performanceSeasons, AFL-only model
+ *     slots gated on isAfl, and per-slot degrade-quietly contracts.
+ *  4. Presentation — ONE hero, the same two-season cards for every
+ *     league (accuracy / profit / rounds), the model sections gated on
+ *     isAfl, and the APPROVED graceful empty states.
+ *  5. Per-league SEO — title/canonical/JSON-LD derived from
  *     getLeagueConfig(leagueKey).displayName and the
  *     ${siteUrl}/{league}/performance canonical URL.
- *  5. Prerender/sitemap trace — both call sites consume
+ *  6. Prerender/sitemap trace — both call sites consume
  *     buildLeagueRoutes, which emits /{league}/performance for ALL
  *     LEAGUE_ROUTE_KEYS unconditionally (verified by source pins, not
  *     re-implemented).
  *
  * Matches the repo's static-analysis test style (SFCs cannot be
- * mounted in vitest — see league-home-page.test.ts): page behaviour is
+ * mounted in vitest — see league-home-page.test.ts): behaviour is
  * pinned by reading the SFC source; the pure season-selection helper
  * is unit-tested behaviourally.
  */
@@ -46,13 +49,20 @@ const PAGE = readFileSync(
   resolve(FRONTEND_ROOT, 'pages/[league]/performance.vue'),
   'utf8',
 )
+const AFL_PAGE = readFileSync(
+  resolve(FRONTEND_ROOT, 'pages/performance.vue'),
+  'utf8',
+)
+const VIEW = readFileSync(
+  resolve(FRONTEND_ROOT, 'components/PerformanceView.vue'),
+  'utf8',
+)
+const VIEW_STYLES = VIEW.match(/<style[^>]*>([\s\S]*?)<\/style>/)?.[1] ?? ''
 const HOME = readFileSync(resolve(FRONTEND_ROOT, 'pages/[league]/index.vue'), 'utf8')
 const SEASON_LIB = readFileSync(resolve(FRONTEND_ROOT, 'lib/performanceSeasons.ts'), 'utf8')
 const ROUTE_LIB = readFileSync(resolve(FRONTEND_ROOT, 'lib/leagueRoutes.ts'), 'utf8')
 const NUXT_CONFIG = readFileSync(resolve(FRONTEND_ROOT, 'nuxt.config.ts'), 'utf8')
 const SITEMAP = readFileSync(resolve(FRONTEND_ROOT, 'server/routes/sitemap.xml.ts'), 'utf8')
-
-const PAGE_STYLES = PAGE.match(/<style[^>]*>([\s\S]*?)<\/style>/)?.[1] ?? ''
 
 // ---------------------------------------------------------------------------
 // Pure helper — most recent PAST season selection (the AFL/D2 rule:
@@ -95,12 +105,55 @@ describe('mostRecentPastSeasonYear (lib/performanceSeasons)', () => {
 })
 
 // ---------------------------------------------------------------------------
-// Route contract — copied from pages/[league]/index.vue
+// UNIFICATION — one shared view, two thin wrappers (the entire point)
+// ---------------------------------------------------------------------------
+
+describe('performance view unification', () => {
+  it('both wrappers render the SAME PerformanceView component', () => {
+    expect(PAGE).toMatch(/<PerformanceView\b/)
+    expect(AFL_PAGE).toMatch(/<PerformanceView\b/)
+  })
+
+  it('the AFL wrapper passes league="afl" (its canonical URL stays /performance)', () => {
+    expect(AFL_PAGE).toMatch(/<PerformanceView\s+league="afl"\s*\/>/)
+  })
+
+  it('the league wrapper passes the ROUTE league key (never global state)', () => {
+    expect(PAGE).toMatch(/:league="leagueKey"/)
+  })
+
+  it('neither wrapper contains presentation or data-fetch logic', () => {
+    for (const [name, src] of [['[league] wrapper', PAGE], ['afl wrapper', AFL_PAGE]] as const) {
+      expect(src, name).not.toMatch(/useAsyncData|getCurrentSeasonPerformance|getLeagueCurrentSeasonPerformance/)
+      expect(src, name).not.toMatch(/ModelCoefficientChart|getActiveModel|getActiveBoostedModel|compareModels/)
+      expect(src, name).not.toMatch(/class="current-season-card"|class="season-card"/)
+    }
+  })
+
+  it('the component owns the shared card + model presentation', () => {
+    expect(VIEW).toMatch(/class="current-season-card"/)
+    expect(VIEW).toMatch(/ModelCoefficientChart/)
+    expect(VIEW).toMatch(/Weighted Tip Model/)
+    expect(VIEW).toMatch(/Active Boosted Model \(XGBoost\)/)
+  })
+
+  it('model sections are gated on isAfl (leagues render them the moment data exists)', () => {
+    // The weighted/boosted sections are AFL-only because the model API
+    // is AFL-only — the gate is the data source, not a different
+    // presentation. When league model endpoints land, dropping the
+    // isAfl fetch gate lights the sections up for every league.
+    expect(VIEW).toMatch(/v-if="isAfl"/)
+    expect(VIEW).toMatch(/const isAfl = computed\(\(\) => props\.league === 'afl'\)/)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Route contract — copied from pages/[league]/index.vue ([league] wrapper)
 // ---------------------------------------------------------------------------
 
 describe('league performance page route contract', () => {
   it('carries the tagged rationale comment', () => {
-    expect(PAGE).toContain('// PERF-PER-LEAGUE (2026-10')
+    expect(PAGE).toContain('PERF-VIEW-UNIFY (2026-10-08')
   })
 
   it('validate() rejects keys that are not in the LEAGUES registry (404 gate)', () => {
@@ -132,116 +185,155 @@ describe('league performance page route contract', () => {
     expect(PAGE).toMatch(/import\.meta\.client/)
     expect(PAGE).toMatch(/watch\(leagueKey/)
   })
-
-  it('resolves leagueConfig from the ROUTE param, never the global active league', () => {
-    // Prerender bakes every league page in one process — a global-store
-    // read would leak one league's labels into every static page.
-    expect(PAGE).toMatch(/getLeagueConfig\(leagueKey\.value \?\? 'afl'\)/)
-    expect(PAGE).not.toMatch(/activeConfig/)
-  })
 })
 
 // ---------------------------------------------------------------------------
-// Data wiring — subtask-09 useApi league methods through awaited useAsyncData
+// Data wiring — one awaited useAsyncData inside the shared component
 // ---------------------------------------------------------------------------
 
-describe('league performance page data wiring', () => {
+describe('performance view data wiring', () => {
   it('fetches through an awaited useAsyncData so prerender inlines the payload', () => {
     // The SEO-C1 contract: generate-time fetch, payload inlined into the
     // static HTML (see [league]/index.vue's LEAGUE-ROUTES review note).
-    expect(PAGE).toMatch(/await useAsyncData/)
+    expect(VIEW).toMatch(/await useAsyncData/)
   })
 
   it('uses a reactive per-league cache key with dedupe cancel (H-5 contract)', () => {
-    expect(PAGE).toMatch(/league-performance-\$\{/)
-    expect(PAGE).toMatch(/dedupe:\s*'cancel'/)
+    expect(VIEW).toMatch(/performance-\$\{props\.league\}/)
+    expect(VIEW).toMatch(/dedupe:\s*'cancel'/)
   })
 
-  it('calls the three league backtest methods with the route league key', () => {
-    expect(PAGE).toMatch(/getLeagueCurrentSeasonPerformance\(league\)/)
-    expect(PAGE).toMatch(/getLeagueSeasons\(league\)/)
-    expect(PAGE).toMatch(/getLeagueComparison\(league,\s*prevSeason\)/)
+  it('routes AFL to the legacy endpoints by omitting the league param', () => {
+    // Byte-identical legacy URLs for AFL: the league arg is undefined,
+    // so useApi builds /api/backtest/* with no query (pinned in
+    // useApi-league-performance.test.ts). The league path passes the key.
+    expect(VIEW).toMatch(/const league = isAfl\.value \? undefined : props\.league/)
+    expect(VIEW).toMatch(/isAfl\.value\s*\n?\s*\?\s*api\.getCurrentSeasonPerformance\(\)/)
+    expect(VIEW).toMatch(/api\.getLeagueCurrentSeasonPerformance\(props\.league\)/)
+    expect(VIEW).toMatch(/api\.getLeagueSeasons\(league\)/)
+    expect(VIEW).toMatch(/api\.getLeagueComparison\(\s*league,\s*prevSeason,?\s*\)/)
   })
 
   it('selects the past season with the shared max(year<current) helper', () => {
-    expect(PAGE).toMatch(/mostRecentPastSeasonYear\(/)
-    expect(PAGE).toMatch(/import \{ mostRecentPastSeasonYear \} from '~\/lib\/performanceSeasons'/)
+    expect(VIEW).toMatch(/mostRecentPastSeasonYear\(/)
+    expect(VIEW).toMatch(/import \{ mostRecentPastSeasonYear \} from '~\/lib\/performanceSeasons'/)
   })
 
   it('degrades a failed current-season fetch to the empty state (404 unsynced included)', () => {
-    // Unsynced league → the backend 404s. The page catches and renders
-    // the approved empty state — a missing league must never 500 the
-    // prerender.
-    expect(PAGE).toMatch(/getLeagueCurrentSeasonPerformance\(league\)[\s\S]{0,80}\.catch\(\(\) => null\)/)
+    // Unsynced league → zero payload (or 404). The view catches and
+    // renders the approved empty state — a missing league must never
+    // 500 the prerender.
+    expect(VIEW).toMatch(/\.catch\(\(\) => null\)/)
   })
 
   it('isolates the past-season fetch so it can never break the page', () => {
     // The seasons→compare chain is additive: wrapped in try/catch and
     // nulled on failure, hiding only the past-season section.
-    expect(PAGE).toMatch(/catch[\s\S]{0,40}past = null/)
+    expect(VIEW).toMatch(/catch \{\s*\n\s*return null\s*\n\s*\}/)
+  })
+
+  it('fetches independent slots in parallel waves (no serialized waterfall)', () => {
+    // Review #3: current / past / weighted / boosted are independent —
+    // one Promise.all wave; only model-compare waits (it needs
+    // current's season).
+    expect(VIEW).toMatch(/await Promise\.all\(\[\s*\n?\s*fetchCurrent\(\),\s*\n?\s*fetchPast\(\),\s*\n?\s*fetchActiveModel\(\),\s*\n?\s*fetchBoostedModel\(\),/)
+    expect(VIEW).toMatch(/fetchModels\(current\)/)
+  })
+
+  it('degrades slots INDEPENDENTLY (a current failure cannot blank the others)', () => {
+    // Review #1: the empty state only renders when even the past-season
+    // slot is empty, and the current-season section guards its OWN slot.
+    expect(VIEW).toMatch(/v-else-if="!currentSeason && !pastSeason"/)
+    expect(VIEW).toMatch(/<section v-if="currentSeason" class="current-season-section">/)
+  })
+
+  it('fetches the AFL-only model slots only for AFL, each failure-isolated', () => {
+    expect(VIEW).toMatch(/if \(!isAfl\.value \|\| !current\) return \{ models: null, modelsError: null \}/)
+    // Every slot is wrapped so no single failure can break the page.
+    expect(VIEW).toMatch(/api\.compareModels\(season\)/)
+    expect(VIEW).toMatch(/api\.getActiveModel\(\)/)
+    expect(VIEW).toMatch(/api\.getActiveBoostedModel\(\)/)
+  })
+
+  it('renders the weighted-model states as ONE mutually-exclusive chain', () => {
+    // Review #2: error → empty → content; a fetch failure must never
+    // render the error AND the "no trained model" copy together.
+    expect(VIEW).toMatch(/v-if="activeModelError"[\s\S]{0,200}v-else-if="!activeModelData\?\.active"/)
+    expect(VIEW).toMatch(/v-else-if="activeModelData\.model" class="model-content"/)
   })
 
   it('refreshes client-side after hydration (preserves post-hydration freshness)', () => {
-    expect(PAGE).toMatch(/import\.meta\.client/)
-    expect(PAGE).toMatch(/onNuxtReady/)
+    expect(VIEW).toMatch(/import\.meta\.client/)
+    expect(VIEW).toMatch(/onNuxtReady/)
   })
 })
 
 // ---------------------------------------------------------------------------
-// Presentation — two-season cards, no AFL-only sections, approved empty state
+// Presentation — the SAME two-season cards for every league
 // ---------------------------------------------------------------------------
 
-describe('league performance page presentation', () => {
+describe('performance view presentation', () => {
   it('renders exactly ONE hero before any conditional state branch', () => {
-    expect(PAGE.match(/class="hero"/g)?.length).toBe(1)
-    const heroIdx = PAGE.indexOf('class="hero"')
-    const firstConditional = PAGE.search(/v-if=/)
+    expect(VIEW.match(/class="hero"/g)?.length).toBe(1)
+    const heroIdx = VIEW.indexOf('class="hero"')
+    const firstConditional = VIEW.search(/v-if=/)
     expect(firstConditional).toBeGreaterThan(-1)
     expect(heroIdx).toBeLessThan(firstConditional)
   })
 
+  it('leads the hero with the league name (identical shape for AFL and leagues)', () => {
+    expect(VIEW).toMatch(/\{\{ leagueConfig\.displayName \}\}<br>Performance</)
+  })
+
   it('renders the current-season heuristic cards with accuracy, profit and rounds', () => {
-    expect(PAGE).toMatch(/class="season-cards"/)
-    expect(PAGE).toMatch(/class="season-card"/)
-    expect(PAGE).toMatch(/Current Season/)
-    expect(PAGE).toContain('Accuracy')
-    expect(PAGE).toContain('Rounds Played')
-    expect(PAGE).toMatch(/formatProfit\(/)
+    expect(VIEW).toMatch(/class="current-season-cards"/)
+    expect(VIEW).toMatch(/class="current-season-card"/)
+    expect(VIEW).toContain('Current Season')
+    expect(VIEW).toContain('Accuracy')
+    expect(VIEW).toContain('Rounds Played')
+    expect(VIEW).toContain('Year-to-Date Profit')
   })
 
   it('renders the Most Recent Past Season section', () => {
-    expect(PAGE).toContain('Most Recent Past Season')
-    expect(PAGE).toMatch(/pastSeasonEntries/)
+    expect(VIEW).toContain('Most Recent Past Season')
+    expect(VIEW).toMatch(/v-for="row in pastSeason\.rows"/)
   })
 
-  it('has NO AFL-only model/weighted/XGBoost sections', () => {
-    // The model comparison, Weighted Tip and boosted (XGBoost) sections
-    // are AFL-only — state leagues run heuristics exclusively.
-    expect(PAGE).not.toMatch(/ModelCoefficientChart/)
-    expect(PAGE).not.toMatch(/Weighted Tip Model/)
-    expect(PAGE).not.toMatch(/XGBoost|boostedModel|getActiveBoostedModel/)
-    expect(PAGE).not.toMatch(/activeModelData|getActiveModel|compareModels|model-mini/)
+  it('gates cards on graded rounds (no "$0.00" cards for an unplayed season)', () => {
+    // Mirrors the AFL hasSeasonResults contract — a payload whose
+    // rounds are all unplayed renders the season-not-started state.
+    expect(VIEW).toMatch(/hasSeasonResults/)
+    expect(VIEW).toMatch(/rounds_completed > 0 \\?\|\|\s*\n?\s*view\.heuristics\.some/)
   })
 
-  it('renders the APPROVED graceful empty state verbatim', () => {
-    expect(PAGE).toContain(
+  it('renders the APPROVED graceful empty states verbatim', () => {
+    expect(VIEW).toContain(
       "Performance tracking isn't available for {{ leagueConfig.displayName }} yet.",
     )
-    expect(PAGE).toContain(
+    expect(VIEW).toContain(
       'Performance tracking begins once tipping models are live for this league.',
     )
-    expect(PAGE).toMatch(/class="empty-hint"/)
+    expect(VIEW).toMatch(/class="empty-hint"/)
+    expect(VIEW).toContain("The {{ currentSeason.season }} season hasn't started yet.")
+  })
+
+  it('orders league heuristics deterministically (review-flagged NaN edge retired)', () => {
+    // League heuristics are unlisted in the AFL heuristicOrder — the
+    // view sorts them with an explicit league order instead of relying
+    // on NaN-comparison stability.
+    expect(VIEW).toMatch(/LEAGUE_HEURISTIC_ORDER = \['home_advantage', 'form', 'ladder'\]/)
+    expect(VIEW).toMatch(/byLeagueHeuristicOrder/)
   })
 
   it('announces loading and empty states (role="status" aria-live)', () => {
-    expect(PAGE.match(/role="status"/g)?.length).toBeGreaterThanOrEqual(2)
-    expect(PAGE.match(/aria-live="polite"/g)?.length).toBeGreaterThanOrEqual(2)
-    expect(PAGE).toMatch(/class="spinner"/)
+    expect(VIEW.match(/role="status"/g)?.length).toBeGreaterThanOrEqual(2)
+    expect(VIEW.match(/aria-live="polite"/g)?.length).toBeGreaterThanOrEqual(2)
+    expect(VIEW).toMatch(/class="spinner"/)
   })
 })
 
 // ---------------------------------------------------------------------------
-// Per-league SEO
+// Per-league SEO ([league] wrapper)
 // ---------------------------------------------------------------------------
 
 describe('league performance page SEO', () => {
@@ -263,6 +355,12 @@ describe('league performance page SEO', () => {
     expect(PAGE).toMatch(/application\/ld\+json/)
     expect(PAGE).toMatch(/'@type': 'WebPage'/)
     expect(PAGE).toMatch(/\/\$\{leagueKey\.value \?\? ''\}\/performance/)
+  })
+
+  it('the AFL wrapper keeps its own /performance canonical + SEO', () => {
+    expect(AFL_PAGE).toMatch(/useSeoMeta\(/)
+    expect(AFL_PAGE).toMatch(/rel: 'canonical'/)
+    expect(AFL_PAGE).toMatch(/\$\{siteUrl\}\/performance/)
   })
 })
 
@@ -313,19 +411,22 @@ describe('league performance prerender + sitemap coverage', () => {
 })
 
 // ---------------------------------------------------------------------------
-// States, a11y & responsive design
+// States, a11y & responsive design (shared component styles)
 // ---------------------------------------------------------------------------
 
-describe('league performance page states & styling', () => {
-  it('stays monochrome (design-system custom properties, no hex accents)', () => {
-    expect(PAGE_STYLES).toMatch(/var\(--color-/)
-    expect(PAGE_STYLES).not.toMatch(/#[0-9a-fA-F]{3,8}\b/)
+describe('performance view states & styling', () => {
+  it('styles the shared view through the design-system custom properties', () => {
+    // PERF-VIEW-UNIFY: one style block for every league — the AFL
+    // accent colours (#15803d/#b91c1c profit accents) are part of the
+    // shared language now, so the league page's old monochrome-only
+    // pin is deliberately retired with the unification.
+    expect(VIEW_STYLES).toMatch(/var\(--color-/)
   })
 
-  it('is responsive at the league-page breakpoints (mobile / tablet / desktop)', () => {
-    expect(PAGE_STYLES).toMatch(/@media \(max-width: 640px\)/)
-    expect(PAGE_STYLES).toMatch(/@media \(min-width: 641px\) and \(max-width: 1024px\)/)
-    expect(PAGE_STYLES).toMatch(/@media \(min-width: 1025px\)/)
+  it('is responsive at the shared breakpoints (mobile / tablet / desktop)', () => {
+    expect(VIEW_STYLES).toMatch(/@media \(max-width: 640px\)/)
+    expect(VIEW_STYLES).toMatch(/@media \(min-width: 641px\) and \(max-width: 1024px\)/)
+    expect(VIEW_STYLES).toMatch(/@media \(min-width: 1025px\)/)
   })
 
   it('renders every registry league name from the same config contract', () => {
