@@ -38,6 +38,51 @@ The 5-season default balances model stability (≥ 3 seasons for Elo / Form / Ho
 
 The scraper is rate-limited: AFL Tables runs at ~1 req/sec (no formal limit but throttled); Open-Meteo uses the Redis sliding-window pattern in [`packages/shared/squiggle/client.py`](../backend/packages/shared/squiggle/client.py:1).
 
+## Feed providers (multi-sport ingestion)
+
+Beyond the AFL CSV pipeline, fixtures for other sports load through the
+[`FeedProvider`](../backend/packages/shared/ingestion/base.py:1) protocol: a provider
+owns its vendor dialect and yields canonical
+[`FixtureDTO`](../backend/packages/shared/ingestion/dto.py:1) objects — nothing
+downstream sees vendor field names.
+
+### Rugby league — `NrlProvider` (FixtureDownload)
+
+[`packages/shared/ingestion/nrl_provider.py`](../backend/packages/shared/ingestion/nrl_provider.py:1)
+covers the three owner-approved competitions (Phase 5.2), sourced from the free
+[FixtureDownload](https://fixturedownload.com/) JSON feed (no auth, no key):
+
+| Competition key | Feed slug | Notes |
+|-----------------|-----------|-------|
+| `nrl` | `nrl-{year}` | Men's premiership, seasons 2017+ verified |
+| `nrlw` | `nrlw-{year}` | Women's premiership |
+| `origin` | `state-of-origin-{year}` | 3-match mid-year series |
+
+Mapping (verified against the live feed schema 2026-10-09): `MatchNumber` →
+`external_id`, `RoundNumber` → `round_id`, `DateUtc` → tz-aware UTC `starts_at`,
+`HomeTeam`/`AwayTeam` → participant names, `Location` → venue. Completion is
+driven by score presence (null scores pre-match); `Winner` is deliberately
+ignored because rugby league has draws. `starts_at` is UTC in the DTO; the
+storage boundary converts to venue-local time.
+
+Politeness: FixtureDownload updates once a day, so the provider keeps an
+in-process TTL cache (default 24 h) **shared by all instances**, giving at most
+one fetch per feed slug per day. Single-fixture lookups never trigger a fetch —
+they scan already-fetched season payloads.
+
+### Venue alias table
+
+Sponsor branding on NRL venues drifts across seasons (PointsBet Stadium → Ocean
+Protect Stadium; Mt Smart Stadium → Go Media/One NZ/Hnry Stadium), which would
+fragment backtest history. [`venue_aliases.py`](../backend/packages/shared/ingestion/venue_aliases.py:1)
+maps every observed sponsor variant to one canonical ground; unknown venues pass
+through verbatim and are logged once as backfill candidates — extend `_ALIASES`
+when new sponsor names appear.
+
+> Note: the national-league sync registry that wires `NrlProvider` into the
+> daily sync (the AFL `state_leagues.py` equivalent) lands with its own
+> subtask; the provider above is the source integration itself.
+
 ## Where the CSVs go
 
 `./data/` at the **project root**, per-season:

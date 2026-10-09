@@ -1,0 +1,50 @@
+[
+  {
+    "MatchNumber": 1,
+    "RoundNumber": 1,
+    "DateUtc": "2022-03-10 08:50:00Z",
+    "Location": "PointsBet Stadium",
+    "HomeTeam": "Sharks",
+    "AwayTeam": "Dragons",
+    "Group": null,
+    "HomeTeamScore": 20,
+    "AwayTeamScore": 14,
+    "Winner": "Sharks"
+  },
+  {
+    "MatchNumber": 2,
+    "RoundNumber": 1,
+    "DateUtc": "2022-03-11 08:00:00Z",
+    "Location": "Mt Smart Stadium",
+    "HomeTeam": "Warriors",
+    "AwayTeam": "Sea Eagles",
+    "Group": null,
+    "HomeTeamScore": 24,
+    "AwayTeamScore": 18,
+    "Winner": "Warriors"
+  },
+  {
+    "MatchNumber": 3,
+    "RoundNumber": 1,
+    "DateUtc": "2022-03-12 08:35:00Z",
+    "Location": "McDonalds Park",
+    "HomeTeam": "Knights",
+    "AwayTeam": "Broncos",
+    "Group": null,
+    "HomeTeamScore": 16,
+    "AwayTeamScore": 10,
+    "Winner": "Knights"
+  },
+  {
+    "MatchNumber": 4,
+    "RoundNumber": 2,
+    "DateUtc": "2022-03-18 08:50:00Z",
+    "Location": "Netstrata Jubilee Stadium",
+    "HomeTeam": "Dragons",
+    "AwayTeam": "Bulldogs",
+    "Group": null,
+    "HomeTeamScore": 18,
+    "AwayTeamScore": 12,
+    "Winner": "Dragons"
+  }
+]

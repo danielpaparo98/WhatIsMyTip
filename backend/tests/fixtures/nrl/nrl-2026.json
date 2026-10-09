@@ -1,0 +1,62 @@
+[
+  {
+    "MatchNumber": 1,
+    "RoundNumber": 1,
+    "DateUtc": "2026-03-01 02:15:00Z",
+    "Location": "Allegiant Stadium",
+    "HomeTeam": "Knights",
+    "AwayTeam": "Cowboys",
+    "Group": null,
+    "HomeTeamScore": 28,
+    "AwayTeamScore": 18,
+    "Winner": "Knights"
+  },
+  {
+    "MatchNumber": 2,
+    "RoundNumber": 1,
+    "DateUtc": "2026-03-01 05:30:00Z",
+    "Location": "Ocean Protect Stadium",
+    "HomeTeam": "Sharks",
+    "AwayTeam": "Panthers",
+    "Group": null,
+    "HomeTeamScore": 14,
+    "AwayTeamScore": 20,
+    "Winner": "Panthers"
+  },
+  {
+    "MatchNumber": 3,
+    "RoundNumber": 2,
+    "DateUtc": "2026-03-08 06:00:00Z",
+    "Location": "Go Media Stadium",
+    "HomeTeam": "Warriors",
+    "AwayTeam": "Dolphins",
+    "Group": null,
+    "HomeTeamScore": null,
+    "AwayTeamScore": null,
+    "Winner": null
+  },
+  {
+    "MatchNumber": 4,
+    "RoundNumber": 2,
+    "DateUtc": "2026-03-14 08:10:00Z",
+    "Location": "Suncorp Stadium",
+    "HomeTeam": "Broncos",
+    "AwayTeam": "Storm",
+    "Group": null,
+    "HomeTeamScore": 20,
+    "AwayTeamScore": 20,
+    "Winner": null
+  },
+  {
+    "MatchNumber": 5,
+    "RoundNumber": 31,
+    "DateUtc": "2026-10-04 08:00:00Z",
+    "Location": "Accor Stadium",
+    "HomeTeam": "Storm",
+    "AwayTeam": "Panthers",
+    "Group": null,
+    "HomeTeamScore": 22,
+    "AwayTeamScore": 18,
+    "Winner": "Storm"
+  }
+]
