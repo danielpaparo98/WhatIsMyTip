@@ -64,6 +64,21 @@ AFL = SportContext(
     off_season_months=frozenset({10, 11, 12, 1, 2}),
 )
 
+#: Rugby League (NRL / NRLW / State of Origin) — first non-AFL sport
+#: (Phase 5.2, ADR 0001). Team-based with draws; Mar–Oct season, so
+#: Nov–Feb is off-season. Cron anchored to the NRL's Brisbane HQ.
+RUGBY_LEAGUE = SportContext(
+    sport_id="rugby-league",
+    display_name="Rugby League",
+    participant_model="team",
+    has_draws=True,
+    has_home_advantage=True,
+    scoring_unit="points",
+    cron_timezone="Australia/Brisbane",
+    cache_namespace="rugby-league",
+    off_season_months=frozenset({11, 12, 1, 2}),
+)
+
 DEFAULT_CONTEXT = AFL
 
-__all__ = ["SportContext", "AFL", "DEFAULT_CONTEXT"]
+__all__ = ["SportContext", "AFL", "RUGBY_LEAGUE", "DEFAULT_CONTEXT"]
