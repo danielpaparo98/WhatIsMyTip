@@ -126,8 +126,8 @@ deprecation window (P3-2 / ADR 0001).
 
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
-| `GET` | `/api/events` | public | List events for a competition season, joined with their participants (query: `competition` id, `season` label e.g. `2026`, optional `round`, `limit` default 100). 404 when the competition/season is unknown. |
-| `GET` | `/api/events/{slug}` | public | Single event with its participants. 404 when absent. |
+| `GET` | `/api/events` | public | List events for a competition season, joined with their participants (query: `competition` id, `season` label e.g. `2026`, optional `league` key, optional `round`, `limit` default 100). 404 when the competition/season is unknown. |
+| `GET` | `/api/events/{slug}` | public | Single event with its participants (the slug is globally unique — no league scoping). 404 when absent. |
 
 Serves the sport-generic 0010 `events`/`event_participants` tables (ADR
 0001) so multi-league data is reachable.  Discover valid
@@ -135,10 +135,25 @@ Serves the sport-generic 0010 `events`/`event_participants` tables (ADR
 `/api/games` routes remain available unchanged during the deprecation
 window.
 
+**`league` param (additive, Phase 5.2)**: a registered league key
+resolves the competition id for you — `?league=nrl&season=2026` needs no
+`competition` id.  Keys come from the league registries and are matched
+case-sensitively: the rugby-league national competitions `nrl`,
+`nrlw`, `origin` plus the ten state leagues (`wafl`, `waflw`, `vfl`,
+`vflw`, `sanfl`, `aflw`, `qafl`, `qaflw`, `nwfl`, `sfl`).  Absent,
+empty, or `afl` keeps the legacy behaviour unchanged: `competition`
+(required integer) + `season`.  An unknown key is a 404 in the standard
+error shape (`{"code": "not_found", ...}`, same contract as the
+backtest API's league dispatch); a registered-but-not-yet-synced league
+returns the same 404 as any unknown competition.  The response shape is
+identical either way — the param only changes how the competition is
+selected.
+
 **Example**:
 
 ```bash
 curl 'http://localhost:8000/api/events?competition=1&season=2026&round=1'
+curl 'http://localhost:8000/api/events?league=nrl&season=2026'
 curl http://localhost:8000/api/events/wafl-abc12345
 ```
 
