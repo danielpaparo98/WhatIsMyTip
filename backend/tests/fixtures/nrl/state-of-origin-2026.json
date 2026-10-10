@@ -1,0 +1,38 @@
+[
+  {
+    "MatchNumber": 1,
+    "RoundNumber": 1,
+    "DateUtc": "2026-05-27 10:05:00Z",
+    "Location": "Suncorp Stadium",
+    "HomeTeam": "Maroons",
+    "AwayTeam": "Blues",
+    "Group": "State of Origin",
+    "HomeTeamScore": 20,
+    "AwayTeamScore": 18,
+    "Winner": "Maroons"
+  },
+  {
+    "MatchNumber": 2,
+    "RoundNumber": 2,
+    "DateUtc": "2026-06-17 10:05:00Z",
+    "Location": "Accor Stadium",
+    "HomeTeam": "Blues",
+    "AwayTeam": "Maroons",
+    "Group": "State of Origin",
+    "HomeTeamScore": 26,
+    "AwayTeamScore": 0,
+    "Winner": "Blues"
+  },
+  {
+    "MatchNumber": 3,
+    "RoundNumber": 3,
+    "DateUtc": "2026-07-15 10:05:00Z",
+    "Location": "Optus Stadium",
+    "HomeTeam": "Maroons",
+    "AwayTeam": "Blues",
+    "Group": "State of Origin",
+    "HomeTeamScore": 14,
+    "AwayTeamScore": 22,
+    "Winner": "Blues"
+  }
+]

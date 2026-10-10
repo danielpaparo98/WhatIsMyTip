@@ -120,7 +120,7 @@ uv run alembic stamp <revision_id>
 
 The project started with a **consolidated baseline** rather than individual historical migrations: the old SQLite-era incremental migrations were replaced by a single comprehensive PostgreSQL baseline (`0001`).
 
-The current `head` is **`0012_game_odds`** — there are **12 migrations** on disk (verified October 2026; run `uv run alembic current` / `uv run alembic history` to re-verify).
+The current `head` is **`0014_create_league_tips`** — there are **14 migrations** on disk (verified October 2026; run `uv run alembic current` / `uv run alembic history` to re-verify).
 
 ### Current Migrations
 
@@ -138,6 +138,8 @@ The current `head` is **`0012_game_odds`** — there are **12 migrations** on di
 | 10 | `0010` | [`0010_consolidated_multisport.py`](../backend/alembic/versions/2026_09_22_1930-0010_consolidated_multisport.py) | Sport-generic domain model (ADR 0001) |
 | 11 | `0011` | [`0011_team_identity.py`](../backend/alembic/versions/2026_09_24_2057-0011_team_identity.py) | Team logo/colour identity columns at ingestion |
 | 12 | `0012` | [`0012_game_odds.py`](../backend/alembic/versions/2026_10_01_0900-0012_game_odds.py) | `game_odds` table — bookmaker head-to-head odds snapshots for odds-based backtest settlement (BT-ODDS) |
+| 13 | `0013` | [`0013_add_model_artifact_columns.py`](../backend/alembic/versions/2026_10_04_1200-0013_add_model_artifact_columns.py) | `model_versions` artifact columns (`artifact` BYTEA, `artifact_format`, `shap_base_value`) for the boosted-tip XGBoost model blob + SHAP base (BT-1) |
+| 14 | `0014` | [`0014_create_league_tips.py`](../backend/alembic/versions/2026_10_07_1000-0014_create_league_tips.py) | `league_tips` table — league-generic heuristic tips keyed by `(event_id, heuristic)` off the multisport events tables (performance-per-league D3) |
 
 ### Migration 0001: Consolidated PostgreSQL Schema
 

@@ -150,7 +150,24 @@ describe('LEAGUE_ROUTE_KEYS', () => {
       expect(LEAGUE_COMPETITION_NAMES[key], `missing competition name for ${key}`).toBeTruthy()
     }
     expect(LEAGUE_ROUTE_KEYS).not.toContain('afl')
-    expect(LEAGUE_ROUTE_KEYS).toHaveLength(10)
+    // NRL-EXPANSION (nrl-expansion-07): the three rugby-league
+    // competitions join the ten state leagues.
+    expect(LEAGUE_ROUTE_KEYS).toHaveLength(13)
+  })
+
+  it('includes the three rugby-league competitions (nrl-expansion-07)', () => {
+    for (const key of ['nrl', 'nrlw', 'origin']) {
+      expect(LEAGUE_ROUTE_KEYS, `missing rugby-league key: ${key}`).toContain(key)
+    }
+  })
+
+  it('binds the rugby-league competition names to the backend NATIONAL_LEAGUES registry', () => {
+    // The mapping is a contract with packages/shared/ingestion/
+    // national_leagues.py — the names must match config.name exactly so
+    // resolveCompetition can match the synced /api/sports payload.
+    expect(LEAGUE_COMPETITION_NAMES['nrl']).toBe('National Rugby League')
+    expect(LEAGUE_COMPETITION_NAMES['nrlw']).toBe("NRL Women's Premiership")
+    expect(LEAGUE_COMPETITION_NAMES['origin']).toBe('State of Origin')
   })
 })
 
@@ -178,6 +195,26 @@ describe('buildLeagueRoutes', () => {
       '/wafl/performance',
       '/vfl',
       '/vfl/performance',
+    ])
+  })
+
+  it('enumerates the rugby-league routes (nrl-expansion-07)', () => {
+    expect(buildLeagueRoutes(['nrl', 'nrlw', 'origin'], {}, NOW)).toEqual([
+      '/nrl',
+      '/nrl/performance',
+      '/nrlw',
+      '/nrlw/performance',
+      '/origin',
+      '/origin/performance',
+    ])
+  })
+
+  it('enumerates rugby-league match routes from a derived round like any other league', () => {
+    expect(buildLeagueRoutes(['nrl'], { nrl: WAFL_SEASON }, NOW)).toEqual([
+      '/nrl',
+      '/nrl/performance',
+      '/nrl/match/waf-r6-g1',
+      '/nrl/match/waf-r6-g2',
     ])
   })
 

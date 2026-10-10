@@ -23,6 +23,31 @@ ONE presentation for both paths:
 * seasons = the D4 ``{available_years, current_year}`` payload with
   string labels, latest first.
 
+Per-sport model sets (Phase 5.2): the grading methods take an optional
+``models`` sequence — the caller's per-sport set from
+:func:`league_heuristics.league_model_set_for_sport`.  Rugby-league
+passes the reduced DB-only set (``elo``, ``form``, ``home_advantage``,
+``matchup`` — no ``ladder`` entry is fetched or rendered); the default
+``None`` keeps the D3 trio, so every pre-existing state-league payload
+is byte-identical.  The API layer derives the set from the league key's
+registry (national keys are rugby-league, even before their first
+sync), so a never-synced ``nrl`` still renders the sport's real model
+list in its zero payloads.
+
+Rugby-league history specifics: the synced/backfilled events carry
+CANONICAL venue names (the ``venue_aliases`` normalization applied at
+the provider boundary — see ``nrl_historic_load``), so round/venue
+grouping downstream of this service is venue-stable across sponsor
+drift; grading itself is venue-agnostic (results + rounds only).
+Rugby-league has draws (``has_draws=True``) and no odds source, so
+grading honours both: a drawn event has no winner (every tip on it is
+incorrect) while settlement PUSHES ($0 — the stake is refunded, never
+a loss), and every tip settles at the representative $1.90 fallback
+with ``odds_coverage`` honestly reporting 0.0.
+
+Payload shapes mirror the AFL response payloads so the frontend renders
+ONE presentation for both paths:
+
 BT-ROUND semantics are mirrored from
 ``BacktestService.get_current_season_performance``: ``total_rounds``
 derives from the season fixture's distinct ``round_id`` values, and
@@ -289,6 +314,19 @@ def build_seasons_payload(
 
 
 # ---------------------------------------------------------------------------
+# Per-sport model-set resolution (Phase 5.2).
+# ---------------------------------------------------------------------------
+
+
+def _resolve_models(models: Sequence[str] | None) -> tuple[str, ...]:
+    """The heuristics a payload covers: the caller's per-sport set (the
+    API passes ``league_model_set_for_sport`` output for its national
+    keys) or the D3 default — byte-identical legacy state-league
+    payloads."""
+    return tuple(models) if models is not None else LEAGUE_HEURISTICS
+
+
+# ---------------------------------------------------------------------------
 # Payload builders — pure mappers onto the AFL shapes.
 # ---------------------------------------------------------------------------
 def _no_best_overall() -> BestOverall:
@@ -297,9 +335,9 @@ def _no_best_overall() -> BestOverall:
     return {"heuristic": None, "accuracy": 0.0, "profit": 0.0}
 
 
-def _zero_comparison() -> dict[str, SeasonStats]:
-    """Every D3 heuristic at zero — the stable rendering contract."""
-    return {heuristic: _zero_stats() for heuristic in LEAGUE_HEURISTICS}
+def _zero_comparison(models: Sequence[str]) -> dict[str, SeasonStats]:
+    """Every model of ``models`` at zero — the stable rendering contract."""
+    return {heuristic: _zero_stats() for heuristic in models}
 
 
 def _best_overall(comparison: dict[str, SeasonStats]) -> BestOverall:
@@ -366,6 +404,11 @@ class LeagueBacktestService:
     * :meth:`get_current_season_performance` — the current-season shape
       (label = ``is_current`` season, else the latest label).
 
+    The grading methods accept ``models`` — the caller's per-sport
+    league-model set (rugby-league: the reduced DB-only quartet via
+    :func:`league_heuristics.league_model_set_for_sport`); the default
+    keeps the D3 trio for every pre-existing state-league caller.
+
     Empty states are well-defined zero structures the API layer can pass
     through untouched for the frontend's graceful rendering.
     """
@@ -379,26 +422,33 @@ class LeagueBacktestService:
         return build_seasons_payload(seasons, tipped_labels)
 
     async def compare_season(
-        self, db: AsyncSession, *, competition_id: int, season_label: str
+        self,
+        db: AsyncSession,
+        *,
+        competition_id: int,
+        season_label: str,
+        models: Sequence[str] | None = None,
     ) -> SeasonComparison:
         """Per-heuristic comparison for an explicitly-named season.
 
-        An unknown label degrades to the zero structure (label passed
-        through) so a stale frontend link renders the empty state
-        instead of erroring.
+        ``models`` selects the per-sport set (rugby-league: the reduced
+        DB-only quartet); the default keeps the D3 trio.  An unknown
+        label degrades to the zero structure (label passed through) so a
+        stale frontend link renders the empty state instead of erroring.
         """
+        model_set = _resolve_models(models)
         season_id = await self._fetch_season_id(db, competition_id, season_label)
         if season_id is None:
             return {
                 "season": season_label,
-                "comparison": _zero_comparison(),
+                "comparison": _zero_comparison(model_set),
                 "best_overall": _no_best_overall(),
             }
         comparison = {
             heuristic: compute_season_metrics(
                 await self._fetch_graded_tips(db, season_id, heuristic)
             )
-            for heuristic in LEAGUE_HEURISTICS
+            for heuristic in model_set
         }
         return {
             "season": season_label,
@@ -407,14 +457,21 @@ class LeagueBacktestService:
         }
 
     async def get_current_season_performance(
-        self, db: AsyncSession, *, competition_id: int
+        self,
+        db: AsyncSession,
+        *,
+        competition_id: int,
+        models: Sequence[str] | None = None,
     ) -> CurrentSeasonPerformance:
         """YTD performance for the current season, AFL shape.
 
-        Rounds mirror the AFL BT-ROUND semantics: ``total_rounds`` from
-        the fixture's distinct ``round_id`` values; ``rounds_completed``
-        counts rounds where EVERY event is completed.
+        ``models`` selects the per-sport set (rugby-league: the reduced
+        DB-only quartet); the default keeps the D3 trio.  Rounds mirror
+        the AFL BT-ROUND semantics: ``total_rounds`` from the fixture's
+        distinct ``round_id`` values; ``rounds_completed`` counts rounds
+        where EVERY event is completed.
         """
+        model_set = _resolve_models(models)
         seasons = await self._fetch_seasons(db, competition_id)
         label = resolve_current_label(seasons)
         season_id = (
@@ -426,8 +483,7 @@ class LeagueBacktestService:
             return {
                 "season": label,
                 "heuristics": [
-                    _zero_heuristic_entry(heuristic)
-                    for heuristic in LEAGUE_HEURISTICS
+                    _zero_heuristic_entry(heuristic) for heuristic in model_set
                 ],
                 "rounds_completed": 0,
                 "total_rounds": 0,
@@ -443,7 +499,7 @@ class LeagueBacktestService:
                 ),
                 total_rounds,
             )
-            for heuristic in LEAGUE_HEURISTICS
+            for heuristic in model_set
         ]
         return {
             "season": label,

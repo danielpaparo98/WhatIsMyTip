@@ -6,7 +6,7 @@ import dataclasses
 
 import pytest
 
-from packages.shared.sport_context import AFL, DEFAULT_CONTEXT, SportContext
+from packages.shared.sport_context import AFL, DEFAULT_CONTEXT, RUGBY_LEAGUE, SportContext
 
 
 class TestSportContext:
@@ -54,6 +54,51 @@ class TestSportContext:
         assert tennis.cache_key("elo_ratings") != AFL.cache_key("elo_ratings")
         assert tennis.has_draws is False
         assert tennis.has_home_advantage is False
+
+
+class TestRugbyLeagueContext:
+    """NRL expansion: rugby-league declared additively — AFL and
+    DEFAULT_CONTEXT remain untouched (ADR 0001: declare, don't branch)."""
+
+    def test_rugby_league_context_fields(self):
+        assert RUGBY_LEAGUE.sport_id == "rugby-league"
+        assert RUGBY_LEAGUE.display_name == "Rugby League"
+        assert RUGBY_LEAGUE.participant_model == "team"
+        assert RUGBY_LEAGUE.has_draws is True
+        assert RUGBY_LEAGUE.has_home_advantage is True
+        assert RUGBY_LEAGUE.scoring_unit == "points"
+        assert RUGBY_LEAGUE.cron_timezone == "Australia/Brisbane"
+        assert RUGBY_LEAGUE.cache_namespace == "rugby-league"
+        assert RUGBY_LEAGUE.off_season_months == frozenset({11, 12, 1, 2})
+
+    def test_rugby_league_off_season_months(self):
+        """NRL runs Mar–Oct (finals incl.); off-season is Nov–Feb."""
+        for month in (11, 12, 1, 2):
+            assert RUGBY_LEAGUE.is_off_season_month(month)
+        for month in (3, 4, 5, 6, 7, 8, 9, 10):
+            assert not RUGBY_LEAGUE.is_off_season_month(month)
+
+    def test_rugby_league_cache_key_namespacing(self):
+        assert RUGBY_LEAGUE.cache_key("elo_ratings") == (
+            "wimt:rugby-league:elo_ratings"
+        )
+
+    def test_rugby_league_never_collides_with_afl(self):
+        assert RUGBY_LEAGUE.cache_key("elo_ratings") != AFL.cache_key(
+            "elo_ratings"
+        )
+        assert RUGBY_LEAGUE is not AFL
+        assert RUGBY_LEAGUE.sport_id != AFL.sport_id
+
+    def test_rugby_league_exported_in_all(self):
+        from packages.shared import sport_context
+
+        assert "RUGBY_LEAGUE" in sport_context.__all__
+
+    def test_default_context_unchanged(self):
+        assert DEFAULT_CONTEXT is AFL
+        assert AFL.sport_id == "afl"
+        assert AFL.off_season_months == frozenset({10, 11, 12, 1, 2})
 
 
 class TestOrchestratorContext:

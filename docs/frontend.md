@@ -2,7 +2,7 @@
 
 ## Overview
 
-The WhatIsMyTip frontend is a Nuxt 4 application with a monochrome bold typographic design. It provides a clean, modern interface for viewing AFL tips, game information, and backtest results.
+The WhatIsMyTip frontend is a Nuxt 4 application with a monochrome bold typographic design. It provides a clean, modern interface for viewing AFL and rugby-league tips (NRL, NRLW, State of Origin), state-league pages, game/match information, and backtest results.
 
 ## Project Structure
 
@@ -16,22 +16,37 @@ frontend/
 │   └── css/
 │       └── main.css           # Global styles and design system
 ├── components/                # Vue components
-│   ├── Header.vue             # Site header with navigation
-│   ├── Footer.vue             # Site footer
-│   ├── GameCard.vue           # Game display component
-│   ├── TipCard.vue            # Tip display component
-│   ├── MatchAnalysisCard.vue  # Pre-game analysis breakdown
-│   ├── WeatherCard.vue        # Match-day weather widget
-│   ├── AccuracyChart.vue      # Heuristic accuracy over time
-│   ├── ProfitChart.vue        # Per-bet profit curve
-│   └── CumulativeProfitChart.vue  # Bankroll growth curve
+│   ├── ConfettiEffect.vue       # End-of-season celebration effect
+│   ├── Footer.vue               # Site footer
+│   ├── GrandFinalReport.vue     # Grand-final pre-match report
+│   ├── Header.vue               # Site header with navigation
+│   ├── LeagueSelector.vue       # League dropdown (persists the selection)
+│   ├── MatchAnalysisCard.vue    # Pre-game analysis breakdown
+│   ├── ModelCoefficientChart.vue  # Learned model coefficients chart
+│   ├── OffSeasonBanner.vue      # Off-season banner
+│   ├── OffSeasonCelebration.vue # Premier celebration for settled seasons
+│   ├── PerformanceView.vue      # League performance view
+│   ├── RugbyLeagueTipsView.vue  # Shared rugby-league tips view (nrl/nrlw/origin)
+│   ├── TipCard.vue              # Tip display component
+│   └── WeatherCard.vue          # Match-day weather widget
 ├── composables/               # Vue composables
 │   ├── useApi.ts              # API communication composable
+│   ├── useBoostedShap.ts      # Boosted-tip SHAP importance data
 │   ├── useChartTheme.ts       # Shared chart.js theme/options
+│   ├── useColorMode.ts        # Colour-mode preference
 │   ├── useFormatters.ts       # Currency / percentage / date helpers
+│   ├── useGameSlug.ts         # Game slug helpers
+│   ├── useLatestRound.ts      # Latest-round derivation for league pages
+│   ├── useLeagueColors.ts     # Per-club brand palettes (state leagues + rugby-league)
+│   ├── useLeagueEvents.ts     # League event fetching + current-round helpers
 │   ├── useLeagueMatchRoute.ts # Pure /{league}/match/{slug} route validation rules
 │   ├── useLeagueRedirect.ts   # Pure remembered-league redirect decision
+│   ├── usePastSeason.ts       # Past-season selection for performance pages
+│   ├── useRugbyLeagueTips.ts  # Pure rugby-league tips-page helpers (model strip, round strip)
 │   ├── useSeasonState.ts      # Pure season-state + premier derivation for league pages
+│   ├── useSportConfig.ts      # SportConfig per league (LEAGUES, labels, nouns, timezone)
+│   ├── useTeamColors.ts       # AFL club colour arrays
+│   ├── useTeamIdentity.ts     # Crest-or-initials badge resolution per club
 │   └── useTeamLogos.ts        # Resolve team logo paths
 ├── layouts/
 │   └── default.vue            # Default page layout
@@ -43,13 +58,24 @@ frontend/
 │   ├── index.vue              # Home page with tips (AFL)
 │   ├── about.vue              # About page
 │   ├── backtest.vue           # Backtesting results page
+│   ├── performance.vue        # AFL performance page
 │   ├── game/
 │   │   └── [slug].vue         # Per-game detail page (AFL)
+│   ├── nrl/
+│   │   └── index.vue          # Rugby-league tips page (/nrl)
+│   ├── nrlw/
+│   │   └── index.vue          # Rugby-league tips page (/nrlw)
+│   ├── origin/
+│   │   └── index.vue          # Rugby-league tips page (/origin)
 │   └── [league]/
 │       ├── index.vue          # League home page (/{league})
+│       ├── performance.vue    # League performance page (/{league}/performance)
 │       └── match/
 │           └── [slug].vue     # League match detail page (/{league}/match/{slug})
 ├── public/                    # Static assets (team logos, robots.txt, sitemap.xml)
+├── server/
+│   └── routes/
+│       └── sitemap.xml.ts     # Prerendered sitemap (all league routes)
 └── tests/
     ├── unit/                  # Vitest unit tests (incl. league-routes, league-redirect,
     │                          #   season-state, team-identity-badge, league-match-page)
@@ -185,13 +211,16 @@ Site footer with:
 - Links to pages
 - Social media links
 
-### GameCard ([`components/GameCard.vue`](frontend/components/GameCard.vue:1))
+### RugbyLeagueTipsView ([`components/RugbyLeagueTipsView.vue`](frontend/components/RugbyLeagueTipsView.vue:1))
 
-Displays a single game with:
-- Home team and away team
-- Venue information
-- Date and time
-- Visual game card layout
+The shared view behind the three rugby-league pages (`/nrl`, `/nrlw`, `/origin`):
+- Round strip (`Round {n} • {season}`, `GF • {season}` once finals are reached)
+- The reduced 4-model tip strip — **Elo Rating**, **Form**, **Home Advantage**, **Matchup** — labelled from the league's `SportConfig` (`RUGBY_LEAGUE_CONFIG`)
+- Club identity via generated initials badges coloured from the hand-curated `useLeagueColors` palettes — no NRL logo assets exist, so the identity path is color-only by design
+
+Other components: `LeagueSelector` (league dropdown), `OffSeasonBanner`,
+`OffSeasonCelebration` + `ConfettiEffect` (end-of-season premier celebration),
+`PerformanceView`, `GrandFinalReport`, `ModelCoefficientChart`.
 
 ### TipCard ([`components/TipCard.vue`](frontend/components/TipCard.vue:1))
 
@@ -230,14 +259,18 @@ Backtesting results page with:
 
 > LEAGUE-ROUTES (2026-09-30, user request)
 
-The ten non-AFL leagues are first-class URLs of the site, while AFL keeps the root path. **Why:** every league deserves a shareable, SEO-indexable home (and match) URL of its own, while the AFL's search presence stays consolidated on `/`.
+The thirteen non-AFL leagues are first-class URLs of the site, while AFL keeps the root path. **Why:** every league deserves a shareable, SEO-indexable home (and match) URL of its own, while the AFL's search presence stays consolidated on `/`.
 
 #### Routes
 
 - **AFL** lives at `/` (home) and `/game/{slug}` (match detail) — unchanged.
-- **Every other league** has its own home page at `/{league}`: `/wafl`, `/waflw`, `/vfl`, `/vflw`, `/sanfl`, `/aflw`, `/qafl`, `/qaflw`, `/nwfl`, `/sfl`.
+- **Every other league** has its own home page at `/{league}`: the ten state leagues (`/wafl`, `/waflw`, `/vfl`, `/vflw`, `/sanfl`, `/aflw`, `/qafl`, `/qaflw`, `/nwfl`, `/sfl`) and the three rugby-league competitions (`/nrl`, `/nrlw`, `/origin`).
 - **Match pages** live at `/{league}/match/{slug}` and render `GET /api/events/{slug}` data. Unknown league keys, malformed slugs, and another league's slug all 404; `/afl/match/{slug}` redirects to `/` since AFL matches live on the legacy surfaces.
-- All of these are prerendered and listed in `sitemap.xml` via the shared enumeration in [`lib/leagueRoutes.ts`](frontend/lib/leagueRoutes.ts:1): `/{league}` for all ten keys (even when a competition is not synced yet — the page degrades gracefully), plus `/{league}/match/{slug}` for each event of the league's derived current round.
+- All of these are prerendered and listed in `sitemap.xml` via the shared enumeration in [`lib/leagueRoutes.ts`](frontend/lib/leagueRoutes.ts:1): `/{league}` for all thirteen keys (even when a competition is not synced yet — the page degrades gracefully), plus `/{league}/match/{slug}` for each event of the league's derived current round.
+
+#### Rugby-league pages (`/nrl`, `/nrlw`, `/origin`)
+
+Each rugby-league competition gets a dedicated thin page (`pages/nrl/index.vue`, etc.) rendering only `<RugbyLeagueTipsView league="…"/>` — static segments outrank the `pages/[league]` dynamic param, so the shared state-league page stays untouched. All labels, the contest noun (`Match`) and the display timezone (`Australia/Brisbane`) flow from `RUGBY_LEAGUE_CONFIG` in [`useSportConfig.ts`](frontend/composables/useSportConfig.ts:1); the sport's reduced model set (`elo`, `form`, `home_advantage`, `matchup`) is the whole strip — no AFL-only heuristics or unsourced models leak in.
 
 #### Remember-redirect rule ([`middleware/league-redirect.global.ts`](frontend/middleware/league-redirect.global.ts:1))
 
@@ -263,6 +296,23 @@ API communication composable with:
 - `getGames()` - Fetch games from API
 - `runBacktest()` - Run backtest
 - `compareHeuristics()` - Compare heuristics
+- League-scoped variants (`league` param) for the league backtest endpoints, plus the multi-sport read side (`/api/sports`, `/api/events`)
+
+### useSportConfig ([`composables/useSportConfig.ts`](frontend/composables/useSportConfig.ts:1))
+
+Single source of truth for sport-specific presentation (ADR 0001):
+- `LEAGUES` — 14 static entries: AFL first, then the ten state leagues, then the rugby-league competitions `nrl`, `nrlw`, `origin` (appended, never reordered)
+- `RUGBY_LEAGUE_CONFIG` — the rugby-league `SportConfig`: contest noun `Match`, stage noun `Round`, display timezone `Australia/Brisbane`, reduced model set (`elo`, `form`, `home_advantage`, `matchup`)
+- `getLeagueConfig(key)` — resolves a league key to its config (rugby-league keys share `sportId: 'rugby-league'`; AFL keys fall back to `AFL_CONFIG`)
+- The persisted active-league store (`localStorage['wimt-league']`) powering the nav's league-aware home/performance paths
+
+### useRugbyLeagueTips ([`composables/useRugbyLeagueTips.ts`](frontend/composables/useRugbyLeagueTips.ts:1))
+
+Pure presentation helpers for the rugby-league tips pages: the model strip (display order + labels, sourced only from the league's `SportConfig` — a registry/label drift degrades visibly) and the round-strip wording (`Round {n} • {season}` / `GF • {season}`). Dependency-free so the vitest suite can pin the wording contracts without mounting the SFC.
+
+### useLeagueColors ([`composables/useLeagueColors.ts`](frontend/composables/useLeagueColors.ts:1))
+
+Hand-curated per-club brand palettes (`{primary, secondary}`) for the state leagues and the rugby-league competitions, keyed by the raw feed club names (`Broncos`, `Wests Tigers`, `Blues`, `Maroons`, …) and matched case/whitespace-insensitively. Since no NRL logo assets exist, `useTeamIdentity` resolves these palettes into generated initials badges — every club renders a branded crest without a PNG on disk.
 
 ## API Integration
 
@@ -272,7 +322,7 @@ The frontend communicates with the backend API using the `useApi` composable.
 
 Default: `http://localhost:8000` (development) or `https://whatismytip.com/api` (production)
 
-Configured via the `API_BASE_URL` environment variable. In production, this points to the DO Functions gateway URL.
+Configured via the `API_BASE_URL` environment variable. In production this is the public domain + `/api` (same-hostname routing on App Platform).
 
 ### API Calls
 
@@ -411,8 +461,8 @@ Deploy the `.output/public` directory to:
 
 ## Next Steps
 
-- [ ] Add unit tests
-- [ ] Add E2E tests with Playwright
+- [x] Add unit tests (Vitest — `tests/unit/`)
+- [x] Add E2E tests with Playwright (`tests/game-detail-flow.spec.ts`)
 - [ ] Implement dark mode
 - [ ] Add loading states and skeletons
 - [ ] Implement error boundaries

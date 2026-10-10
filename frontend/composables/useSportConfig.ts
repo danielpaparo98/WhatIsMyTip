@@ -60,6 +60,40 @@ export const AFL_CONFIG: SportConfig = {
   },
 }
 
+/**
+ * The rugby-league config (nrl-expansion-07, Phase 5.2) — reduced
+ * DB-only model set first: elo, form, home_advantage, matchup.  The
+ * AFL-only heuristics (boosted_tip/weighted_tip/best_bet/yolo) and the
+ * unsourced models (weather_impact, injury_impact, player_form, value)
+ * are deliberately ABSENT — there is no NRL source for them yet, and a
+ * spread of AFL_CONFIG here would leak them into every rugby-league
+ * page.  Nouns per the session bundle: contests are 'Match'es, stages
+ * are 'Round's (Origin's RoundNumber = series game number, still a
+ * "Round" for display).  Display timezone is the rugby-league
+ * SportContext cron anchor (Australia/Brisbane).
+ */
+export const RUGBY_LEAGUE_CONFIG: SportConfig = {
+  sportId: 'rugby-league',
+  displayName: 'Rugby League',
+  shortLabel: 'NRL',
+  contestNoun: 'Match',
+  stageNoun: 'Round',
+  displayTimezone: 'Australia/Brisbane',
+  heuristicOrder: ['elo', 'form', 'home_advantage', 'matchup'],
+  heuristicLabels: {
+    elo: 'Elo Rating',
+    form: 'Form',
+    home_advantage: 'Home Advantage',
+    matchup: 'Matchup',
+  },
+  modelDisplayNames: {
+    elo: 'Elo Rating',
+    form: 'Form',
+    home_advantage: 'Home Advantage',
+    matchup: 'Matchup',
+  },
+}
+
 export interface LeagueMeta {
   key: string
   displayName: string
@@ -68,7 +102,9 @@ export interface LeagueMeta {
 
 // NOTE: the league list is STATIC for now — dynamic discovery via
 // /api/sports arrives with the read-side cutover (P4-1 follow-up).
-// AFL first (current product), then the state leagues.
+// AFL first (current product), then the state leagues, then the
+// rugby-league competitions (nrl-expansion-07 — appended, never
+// reordered, so the selector keeps its stable order).
 export const LEAGUES: LeagueMeta[] = [
   { key: 'afl', displayName: 'AFL', shortLabel: 'AFL' },
   { key: 'wafl', displayName: 'WAFL', shortLabel: 'WAFL' },
@@ -81,7 +117,18 @@ export const LEAGUES: LeagueMeta[] = [
   { key: 'qaflw', displayName: 'QAFLW', shortLabel: 'QAFLW' },
   { key: 'nwfl', displayName: 'NWFL', shortLabel: 'NWFL' },
   { key: 'sfl', displayName: 'SFL', shortLabel: 'SFL' },
+  { key: 'nrl', displayName: 'NRL', shortLabel: 'NRL' },
+  { key: 'nrlw', displayName: 'NRLW', shortLabel: 'NRLW' },
+  { key: 'origin', displayName: 'State of Origin', shortLabel: 'Origin' },
 ]
+
+/**
+ * The rugby-league competition keys (nrl-expansion-07) — the LEAGUES
+ * entries that resolve through RUGBY_LEAGUE_CONFIG instead of the AFL
+ * bootstrap config.  Kept as a plain set (no Nuxt/server deps — this
+ * module stays pure).
+ */
+const RUGBY_LEAGUE_LEAGUE_KEYS = new Set<string>(['nrl', 'nrlw', 'origin'])
 
 /** Config cache so every league resolves to a stable object identity. */
 const LEAGUE_CONFIGS = new Map<string, SportConfig>([['afl', AFL_CONFIG]])
@@ -94,9 +141,18 @@ export function getLeagueConfig(key: string): SportConfig {
   if (!meta) return AFL_CONFIG
   // State-league configs reuse the AFL styling defaults for now —
   // per-league labels/nouns are refined with the read-side cutover.
+  // Rugby-league keys (nrl-expansion-07) resolve through
+  // RUGBY_LEAGUE_CONFIG instead, keeping sportId = 'rugby-league' (the
+  // real backend sport id) while displayName/shortLabel follow the
+  // league meta — so sport-scoped consumers (e.g. /api/teams?sport=)
+  // can trust config.sportId for the rugby-league competitions.
   const config: SportConfig = {
-    ...AFL_CONFIG,
-    sportId: meta.key,
+    ...(RUGBY_LEAGUE_LEAGUE_KEYS.has(meta.key)
+      ? RUGBY_LEAGUE_CONFIG
+      : AFL_CONFIG),
+    sportId: RUGBY_LEAGUE_LEAGUE_KEYS.has(meta.key)
+      ? RUGBY_LEAGUE_CONFIG.sportId
+      : meta.key,
     displayName: meta.displayName,
     shortLabel: meta.shortLabel,
   }

@@ -14,7 +14,6 @@ import pytest
 
 from packages.shared.services.daily_sync import run_daily_sync
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -84,6 +83,7 @@ class TestRunDailySync:
         with patch("packages.shared.services.daily_sync.settings") as mock_settings:
             mock_settings.current_season = 2025
             mock_settings.cron_timezone = "Australia/Perth"
+            mock_settings.rugby_league_sync_enabled = False
             result = await run_daily_sync(session, now=datetime(2025, 6, 15, 10, 0))
 
         assert result["status"] == "success"
@@ -105,6 +105,7 @@ class TestRunDailySync:
         with patch("packages.shared.services.daily_sync.settings") as mock_settings:
             mock_settings.current_season = 2025
             mock_settings.cron_timezone = "Australia/Perth"
+            mock_settings.rugby_league_sync_enabled = False
             # November at 10 AM AWST
             result = await run_daily_sync(
                 session, now=datetime(2025, 11, 15, 10, 0)
@@ -133,6 +134,7 @@ class TestRunDailySync:
         with patch("packages.shared.services.daily_sync.settings") as mock_settings:
             mock_settings.current_season = 2025
             mock_settings.cron_timezone = "Australia/Perth"
+            mock_settings.rugby_league_sync_enabled = False
             # November at 3 AM AWST
             result = await run_daily_sync(
                 session, now=datetime(2025, 11, 15, 3, 0)
@@ -158,6 +160,7 @@ class TestRunDailySync:
         with patch("packages.shared.services.daily_sync.settings") as mock_settings:
             mock_settings.current_season = 2025
             mock_settings.cron_timezone = "Australia/Perth"
+            mock_settings.rugby_league_sync_enabled = False
             # June at 3 PM AWST (in-season)
             result = await run_daily_sync(
                 session, now=datetime(2025, 6, 15, 15, 0)
@@ -183,6 +186,7 @@ class TestRunDailySync:
         with patch("packages.shared.services.daily_sync.settings") as mock_settings:
             mock_settings.current_season = 2025
             mock_settings.cron_timezone = "Australia/Perth"
+            mock_settings.rugby_league_sync_enabled = False
             result = await run_daily_sync(session, now=datetime(2025, 6, 15, 10, 0))
 
         assert result["status"] == "success"
@@ -214,6 +218,7 @@ class TestRunDailySync:
         with patch("packages.shared.services.daily_sync.settings") as mock_settings:
             mock_settings.current_season = 2025
             mock_settings.cron_timezone = "Australia/Perth"
+            mock_settings.rugby_league_sync_enabled = False
             result = await run_daily_sync(session, now=datetime(2025, 6, 15, 10, 0))
 
         # Elo recompute MUST be skipped
@@ -248,6 +253,7 @@ class TestRunDailySync:
         with patch("packages.shared.services.daily_sync.settings") as mock_settings:
             mock_settings.current_season = 2025
             mock_settings.cron_timezone = "Australia/Perth"
+            mock_settings.rugby_league_sync_enabled = False
             result = await run_daily_sync(session, now=datetime(2025, 6, 15, 10, 0))
 
         elo_model.update_cache.assert_awaited_once()

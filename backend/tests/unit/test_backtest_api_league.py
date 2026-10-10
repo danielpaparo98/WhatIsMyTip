@@ -6,9 +6,15 @@ Dispatch contract under test:
   byte-identical (int seasons, calendar-year ``current_year``, native
   ``int, ge=2000`` validation) — the multisport tables are never touched;
 * registered state-league key      → ``LeagueBacktestService`` with the
-  competition resolved by canonical ``competitions.name`` (the
-  ``STATE_LEAGUES`` registry ↔ frontend ``LEAGUE_COMPETITION_NAMES``
-  contract), season passed as a LABEL string on ``/compare``;
+  competition resolved by canonical ``competitions.name`` (the league
+  registries ↔ frontend ``LEAGUE_COMPETITION_NAMES`` contract), season
+  passed as a LABEL string on ``/compare``;
+* national rugby-league key (``nrl``/``nrlw``/``origin``) → the same
+  league path through the cross-registry ``get_league`` facade, with the
+  reduced per-sport model set (GUARDRAIL FLIP, Phase 5.2: these keys
+  used to 404 as state-registry unknowns — flipped in the same change
+  that made them valid; detailed coverage in
+  ``test_league_backtest_rugby_league.py``);
 * unknown key                      → 404 repo-standard error shape;
 * registered but never synced      → the service's own graceful zero
   payloads (empty ``available_years`` / zeroed heuristics) — never a 500.
@@ -24,11 +30,15 @@ from __future__ import annotations
 from datetime import datetime
 from unittest.mock import AsyncMock, patch
 
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from packages.shared.services.league_heuristics import LEAGUE_HEURISTICS
+from packages.shared.services.league_heuristics import (
+    LEAGUE_HEURISTICS,
+    RUGBY_LEAGUE_MODELS,
+)
 
 # ---------------------------------------------------------------------------
 # Helpers (same app-builder convention as test_app_api_backtest.py)
@@ -334,12 +344,12 @@ class TestLeagueSeasons:
 
         with patch("app.api.backtest.LeagueBacktestService") as league_cls:
             client = TestClient(app)
-            resp = client.get("/api/backtest/seasons?league=nrl")
+            resp = client.get("/api/backtest/seasons?league=not-a-league")
 
         assert resp.status_code == 404
         body = resp.json()
         assert body["code"] == "not_found"
-        assert "nrl" in body["message"].lower()
+        assert "not-a-league" in body["message"].lower()
         league_cls.return_value.get_available_seasons.assert_not_called()
         mock_session.execute.assert_not_called()
 
@@ -401,7 +411,7 @@ class TestLeagueCurrentSeason:
         assert body["rounds_completed"] == 2
         assert body["total_rounds"] == 20
         league_cls.return_value.get_current_season_performance.assert_awaited_once_with(
-            session, competition_id=7
+            session, competition_id=7, models=None
         )
 
     def test_current_season_unsynced_league_zero_payload(self):
@@ -434,7 +444,7 @@ class TestLeagueCurrentSeason:
 
         with patch("app.api.backtest.LeagueBacktestService") as league_cls:
             client = TestClient(app)
-            resp = client.get("/api/backtest/current-season?league=nrl")
+            resp = client.get("/api/backtest/current-season?league=not-a-league")
 
         assert resp.status_code == 404
         assert resp.json()["code"] == "not_found"
@@ -488,7 +498,7 @@ class TestLeagueCompare:
         assert body["season"] == "2025"
         assert body["best_overall"]["heuristic"] == "home_advantage"
         league_cls.return_value.compare_season.assert_awaited_once_with(
-            session, competition_id=42, season_label="2025"
+            session, competition_id=42, season_label="2025", models=None
         )
 
     def test_compare_non_numeric_label_passes_through(self):
@@ -513,7 +523,7 @@ class TestLeagueCompare:
         assert resp.status_code == 200
         assert resp.json()["season"] == "2025-26"
         league_cls.return_value.compare_season.assert_awaited_once_with(
-            session, competition_id=42, season_label="2025-26"
+            session, competition_id=42, season_label="2025-26", models=None
         )
 
     def test_compare_unsynced_league_zero_comparison(self):
@@ -554,7 +564,9 @@ class TestLeagueCompare:
             "app.api.backtest.BacktestService"
         ) as legacy_cls:
             client = TestClient(app)
-            resp = client.get("/api/backtest/compare?league=nrl&season=2025")
+            resp = client.get(
+                "/api/backtest/compare?league=not-a-league&season=2025"
+            )
 
         assert resp.status_code == 404
         assert resp.json()["code"] == "not_found"
@@ -564,17 +576,67 @@ class TestLeagueCompare:
 
 
 # ---------------------------------------------------------------------------
-# Registry-contract sanity: the API resolves via STATE_LEAGUES names
+# GUARDRAIL FLIP (Phase 5.2): the national rugby-league keys are VALID.
+# ---------------------------------------------------------------------------
+
+
+class TestNationalLeagueGuardrailFlip:
+    """``league=nrl|nrlw|origin`` resolves through the cross-registry
+    ``get_league`` facade and dispatches to the league service with the
+    reduced per-sport model set.  These keys 404'd before the Phase 5.2
+    backtest change; this flip lands in the SAME change that makes them
+    valid.  Full behavioural coverage (unsynced zero payloads, season
+    labels, e2e over the normalized history) lives in
+    ``test_league_backtest_rugby_league.py``."""
+
+    @pytest.mark.parametrize("league", ["nrl", "nrlw", "origin"])
+    def test_national_league_keys_are_valid(self, league):
+        session = _session_returning(_ScalarResult(42))
+        app = _build_app_with_backtest_router()
+        _override_db(app, session)
+
+        with patch("app.api.backtest.LeagueBacktestService") as league_cls:
+            league_cls.return_value.get_current_season_performance = AsyncMock(
+                return_value={"season": "2026", "heuristics": []}
+            )
+            client = TestClient(app)
+            resp = client.get(f"/api/backtest/current-season?league={league}")
+
+        assert resp.status_code == 200
+        # ...and grades the REDUCED rugby-league model set, not the D3 trio.
+        league_cls.return_value.get_current_season_performance.assert_awaited_once_with(
+            session, competition_id=42, models=RUGBY_LEAGUE_MODELS
+        )
+
+
+# ---------------------------------------------------------------------------
+# Registry-contract sanity: the API resolves via the league registries
 # ---------------------------------------------------------------------------
 
 
 class TestRegistryContract:
-    """The resolution source is the STATE_LEAGUES registry itself."""
+    """The resolution source is the league registries via the facade."""
 
     def test_every_registered_key_resolves_to_a_distinct_name(self):
+        from packages.shared.ingestion.national_leagues import NATIONAL_LEAGUES
         from packages.shared.ingestion.state_leagues import STATE_LEAGUES
 
         names = [config.name for config in STATE_LEAGUES.values()]
         assert len(names) == len(set(names))
+        # The API resolves by canonical competitions.name WITHOUT sport
+        # scoping, so a cross-registry name clash would collide the two
+        # competitions (surfacing as the 404 multiple-results guard).
+        names += [config.name for config in NATIONAL_LEAGUES.values()]
+        assert len(names) == len(set(names))
         # And the frontend-facing mapping is the same contract.
         assert STATE_LEAGUES["wafl"].name == "West Australian Football League"
+
+    def test_national_keys_resolve_through_the_facade(self):
+        from packages.shared.ingestion.national_leagues import get_league
+
+        for key in ("nrl", "nrlw", "origin"):
+            assert get_league(key).name == {
+                "nrl": "National Rugby League",
+                "nrlw": "NRL Women's Premiership",
+                "origin": "State of Origin",
+            }[key]
