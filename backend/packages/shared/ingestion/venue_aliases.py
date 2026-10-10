@@ -133,4 +133,20 @@ def resolve_venue(name: Optional[str]) -> Optional[str]:
     return name
 
 
-__all__ = ["CANONICAL_VENUES", "VENUE_ALIASES", "resolve_venue"]
+def reset_backfill_log() -> None:
+    """Clear the log-once set for unknown venues.
+
+    Production code never needs this — the set exists so a season sync
+    (~200 fixtures) warns once per unknown venue instead of per match.
+    Tests call it between cases: the process-global set would otherwise
+    leak across the suite and suppress a case's expected warning.
+    """
+    _BACKFILL_LOGGED.clear()
+
+
+__all__ = [
+    "CANONICAL_VENUES",
+    "VENUE_ALIASES",
+    "reset_backfill_log",
+    "resolve_venue",
+]

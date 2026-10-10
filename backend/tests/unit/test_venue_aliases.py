@@ -17,10 +17,21 @@ import pytest
 from packages.shared.ingestion.venue_aliases import (
     CANONICAL_VENUES,
     VENUE_ALIASES,
+    reset_backfill_log,
     resolve_venue,
 )
 
 _logger_name = "packages.shared.ingestion.venue_aliases"
+
+
+@pytest.fixture(autouse=True)
+def _fresh_backfill_log():
+    """Isolate the module-global log-once set — a warm set from an
+    earlier test (here or in test_nrl_provider.py) would suppress the
+    warning these tests assert on, suite-order dependently."""
+    reset_backfill_log()
+    yield
+    reset_backfill_log()
 
 
 @pytest.mark.parametrize(

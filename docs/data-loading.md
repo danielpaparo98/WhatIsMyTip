@@ -62,13 +62,73 @@ Mapping (verified against the live feed schema 2026-10-09): `MatchNumber` →
 `external_id`, `RoundNumber` → `round_id`, `DateUtc` → tz-aware UTC `starts_at`,
 `HomeTeam`/`AwayTeam` → participant names, `Location` → venue. Completion is
 driven by score presence (null scores pre-match); `Winner` is deliberately
-ignored because rugby league has draws. `starts_at` is UTC in the DTO; the
-storage boundary converts to venue-local time.
+ignored because rugby league has draws.
 
 Politeness: FixtureDownload updates once a day, so the provider keeps an
 in-process TTL cache (default 24 h) **shared by all instances**, giving at most
 one fetch per feed slug per day. Single-fixture lookups never trigger a fetch —
 they scan already-fetched season payloads.
+
+### Timezone boundary decision (ADR 0001)
+
+`FixtureDTO.starts_at` is **tz-aware UTC** at the provider boundary (a naive
+feed value is assumed UTC). The **storage boundary** converts it to the
+`events.starts_at` convention — venue-local **naive** — and the conversion
+target is chosen per fixture:
+
+1. the **venue's own IANA zone**, from
+   [`league_seeding.VENUE_TIMEZONES`](../backend/packages/shared/ingestion/league_seeding.py:1)
+   (keyed on the canonical ground), when the venue is listed — Mount Smart
+   Stadium is `Pacific/Auckland` (the Warriors) and Perth's Optus Stadium is
+   `Australia/Perth` (Origin host), which no single per-competition timezone
+   can express;
+2. otherwise the **competition timezone** (`Australia/Brisbane` for all three
+   rugby-league competitions) — the fallback for unlisted grounds (e.g. the
+   Las Vegas round-1 opener) and for every AFL/state competition, whose
+   conversion behaviour is unchanged.
+
+Display and backtest windows must therefore interpret a stored
+`events.starts_at` through the **same venue zone table**
+(`league_seeding.venue_timezone(venue)`), falling back to
+`competitions.timezone` for unlisted venues. A per-competition timezone alone
+is insufficient: roughly half the Warriors' fixtures would sit an hour off
+during New Zealand daylight time.
+
+### State of Origin — 3-match series semantics
+
+The Origin feed is a 3-match mid-year series, mapped as follows:
+
+| Feed field | Meaning for origin | Storage |
+|------------|--------------------|---------|
+| `RoundNumber` | the series **game number** (1–3) | `events.round_id` unchanged — "Game N of the series" is queryable through the same round-scoped surfaces a rounds competition uses |
+| `Group` | the constant series label (`"State of Origin"`) | deliberately **not mapped** — it carries no per-match information beyond the competition identity the rows already carry, and the events schema has no group column |
+| `competitions.format` | a series, not a round-robin | `'tournament'` (the schema CHECK admits only `'rounds'`/`'tournament'`; `national_leagues` and `league_seeding` agree so a real sync cannot violate the constraint) |
+
+For `nrl`/`nrlw`, `RoundNumber` maps through unchanged as usual — the
+recorded 2026 payload shows the grand final as round 31.
+
+### The national sync registry
+
+[`packages/shared/ingestion/national_leagues.py`](../backend/packages/shared/ingestion/national_leagues.py:1)
+is the AFL `state_leagues.py` equivalent for the three rugby-league
+competitions. `run_league_sync(session, league, season)` is the one entry
+point for `league=nrl|nrlw|origin` and is **self-sufficient**: it registers
+the `rugby-league` sport row and the 19 canonical team participants
+(get-or-create, so feed nicknames always resolve at the exact-name step and
+the transitional AFL canonical-team fallback can never hijack a club), then
+drives the shared sync service — competition/season registration, participant
+resolution, the timezone boundary above, and idempotent event upserts
+(re-runs update in place; no duplicate events; results backfill flips
+`completed` from score presence).
+
+Failure contract: an unknown league key raises `BackendServiceError`
+(400 `unknown_league`); a failed pass (feed unreachable, DB fault) raises
+`BackendServiceError` (502 `league_sync_failed`) with the repo-standard
+`status_code`/`code`/`message`/`details` shape. Per-fixture failures never
+abort a pass — they are logged and returned on `stats["errors"]`. The
+end-to-end path is proven against recorded feed payloads + in-memory SQLite
+in `backend/tests/unit/test_national_league_sync.py` — no live HTTP, no
+Postgres.
 
 ### Venue alias table
 
@@ -77,11 +137,10 @@ Protect Stadium; Mt Smart Stadium → Go Media/One NZ/Hnry Stadium), which would
 fragment backtest history. [`venue_aliases.py`](../backend/packages/shared/ingestion/venue_aliases.py:1)
 maps every observed sponsor variant to one canonical ground; unknown venues pass
 through verbatim and are logged once as backfill candidates — extend `_ALIASES`
-when new sponsor names appear.
-
-> Note: the national-league sync registry that wires `NrlProvider` into the
-> daily sync (the AFL `state_leagues.py` equivalent) lands with its own
-> subtask; the provider above is the source integration itself.
+when new sponsor names appear. The canonical grounds each carry an IANA timezone
+in `league_seeding.VENUE_TIMEZONES` (kept in lockstep with the alias table and
+validated at import) — that pairing is what the timezone boundary above and the
+display/backtest windows read.
 
 ## Where the CSVs go
 
