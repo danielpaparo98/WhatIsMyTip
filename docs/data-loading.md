@@ -142,6 +142,53 @@ in `league_seeding.VENUE_TIMEZONES` (kept in lockstep with the alias table and
 validated at import) — that pairing is what the timezone boundary above and the
 display/backtest windows read.
 
+### Historical backfill (rugby-league, 2017+)
+
+[`packages/shared/services/nrl_historic_load.py`](../backend/packages/shared/services/nrl_historic_load.py:1)
+backfills full history for the three rugby-league competitions. One entry point:
+
+```python
+from packages.shared.services.nrl_historic_load import run_nrl_historic_load
+
+# nrl + nrlw + origin, seasons 2017 … current season:
+stats = await run_nrl_historic_load(session)
+
+# Or narrower: one competition, explicit seasons
+stats = await run_nrl_historic_load(
+    session, competitions=["nrl"], seasons=[2017, 2022]
+)
+```
+
+| Behaviour | Contract |
+|-----------|----------|
+| Scope | seasons **2017+** (`league_seeding.MIN_SEASON`, the first FixtureDownload serves) for `nrl`, `nrlw`, `origin` |
+| Path | the **same path as live sync** — `run_league_sync` → `NrlProvider` → canonical `FixtureDTO` → the generic multisport tables. No parallel schema and **no CSV parser**: the JSON feed serves history, so backtest rows and live rows are one shape |
+| Venue normalization | applied **AT LOAD** — the provider resolves every sponsor-branded `Location` through `venue_aliases` before storage, so the Sharks' Cronulla ground lands as `Shark Park` whether the source season says Southern Cross Group Stadium (2017), PointsBet Stadium (2022) or Ocean Protect Stadium (2026). Backtest grouping is venue-stable across sponsor drift |
+| Idempotency | re-running upserts in place (`EventCRUD.upsert_fixture` source-ref fast path) — no duplicate events, sides or source refs |
+| Current-season flag | backfilled seasons are **never** marked current (`mark_current=False` default) — only the live sync marks the live season |
+| Failure tolerance | one failed (competition, season) pass never aborts the sweep — it is rolled back, logged, and returned on `stats["errors"]` with `status="partial"` (`"failed"` when nothing syncs, `"success"` when all passes land) |
+
+Loud refusals (all raise `ValueError` **before** the first pass runs, so an
+out-of-scope request never touches the database):
+
+* **Unknown source** — anything but `source="fixturedownload"` (the only
+  sanctioned feed). Kaggle datasets (1990+) are explicitly out of scope.
+* **Pre-2017 seasons** — `seasons=[1990]` or `through_year=2016`; the loader
+  will not import deep history.
+* **Unknown competition / empty request** — anything outside `nrl|nrlw|origin`,
+  or an empty competitions/seasons list.
+
+> **Not built (deliberately):** the nrl.com fallback (undocumented endpoints,
+> Akamai bot-protected) is recorded in the source notes as a NOT-BUILT
+> contingency only (see `.tmp/external-context/nrl-feed/`); this loader is
+> FixtureDownload-only.
+
+Tests: `backend/tests/unit/test_nrl_historic_load.py` drives the full backfill
+against recorded season payloads — 2017 + 2022 + 2026 per competition,
+in-memory SQLite, no live HTTP, no Postgres — including the cross-era venue
+normalization proof (three sponsor names, one canonical ground) and the
+idempotent re-load check.
+
 ## Where the CSVs go
 
 `./data/` at the **project root**, per-season:

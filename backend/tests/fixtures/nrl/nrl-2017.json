@@ -1,0 +1,26 @@
+[
+  {
+    "MatchNumber": 1,
+    "RoundNumber": 1,
+    "DateUtc": "2017-03-04 08:05:00Z",
+    "Location": "Southern Cross Group Stadium",
+    "HomeTeam": "Sharks",
+    "AwayTeam": "Broncos",
+    "Group": null,
+    "HomeTeamScore": 32,
+    "AwayTeamScore": 18,
+    "Winner": "Sharks"
+  },
+  {
+    "MatchNumber": 2,
+    "RoundNumber": 1,
+    "DateUtc": "2017-03-05 07:00:00Z",
+    "Location": "1300SMILES Stadium",
+    "HomeTeam": "Cowboys",
+    "AwayTeam": "Knights",
+    "Group": null,
+    "HomeTeamScore": 26,
+    "AwayTeamScore": 12,
+    "Winner": "Cowboys"
+  }
+]
