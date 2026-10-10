@@ -46,7 +46,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import pytest
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.core.exceptions import BackendServiceError
@@ -742,6 +742,60 @@ class TestParticipantResolution:
         ).scalar_one_or_none()
         assert bulldogs is not None
         assert bulldogs.name == "Bulldogs"
+
+    async def test_tigers_feed_name_resolves_not_creates(self, db, recorded_feed):
+        """The feed named the merged club 'Tigers' in 2017-2018 and
+        'Wests Tigers' from 2019.  The identity ensure registers the
+        alias, so a 'Tigers' fixture side MUST resolve onto the one
+        Wests Tigers participant — never get-or-create a second one
+        (that split the club's Elo/form/H2H history across eras)."""
+        payload = copy.deepcopy(_payload("nrl-2022.json"))
+        for entry in payload:
+            if entry["HomeTeam"] == "Sharks":
+                entry["HomeTeam"] = "Tigers"
+            if entry["AwayTeam"] == "Sharks":
+                entry["AwayTeam"] = "Tigers"
+        recorded_feed("nrl", {"nrl-2022": payload})
+
+        await run_league_sync(db, "nrl", 2022)
+
+        teams = {
+            name
+            for (name,) in (
+                await db.execute(
+                    select(Participant.name).where(
+                        Participant.sport_id == SPORT_ID,
+                        Participant.kind == "team",
+                    )
+                )
+            ).all()
+        }
+        assert "Tigers" not in teams, "spurious second participant created"
+        assert "Wests Tigers" in teams
+        # The alias is registered and BOTH spellings resolve to one row.
+        tigers_alias = (
+            await db.execute(
+                select(Participant.name)
+                .join(TeamAlias, TeamAlias.team_participant_id == Participant.id)
+                .where(
+                    Participant.sport_id == SPORT_ID,
+                    TeamAlias.alias == "Tigers",
+                )
+            )
+        ).scalars().all()
+        assert tigers_alias == ["Wests Tigers"]
+        sides = (
+            await db.execute(
+                text(
+                    "SELECT COUNT(DISTINCT ep.participant_id) "
+                    "FROM event_participants ep "
+                    "JOIN participants p ON p.id = ep.participant_id "
+                    "WHERE p.sport_id = :sid AND p.name IN ('Tigers', 'Wests Tigers')"
+                ),
+                {"sid": SPORT_ID},
+            )
+        ).scalar()
+        assert sides == 1, "event sides split across two participants"
 
     async def test_venue_canonicalization_survives_storage(self, db, recorded_feed):
         """Sponsor-branded Location strings collapse onto canonical

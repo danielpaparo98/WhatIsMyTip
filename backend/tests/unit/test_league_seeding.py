@@ -186,6 +186,16 @@ class TestNicknameResolution:
         assert resolve_nickname("  broncos ") == "Broncos"
         assert resolve_nickname("SOUTH SYDNEY RABBITOHS") == "Rabbitohs"
 
+    def test_tigers_is_an_alias_of_wests_tigers(self):
+        """The feed named the merged club 'Tigers' in 2017-2018 and
+        'Wests Tigers' from 2019 — one club, ONE participant: without
+        this alias the sync get-or-create'd a second identity and
+        split the club's Elo/form/H2H history across eras."""
+        assert resolve_nickname("Tigers") == "Wests Tigers"
+        assert resolve_nickname("  tigers ") == "Wests Tigers"
+        wests = next(t for t in TEAMS if t.name == "Wests Tigers")
+        assert "Tigers" in wests.aliases
+
     def test_bulldogs_never_resolves_to_the_afl_club(self):
         """teams.py's AFL alias map owns 'Bulldogs' → 'Western
         Bulldogs'; rugby-league resolution is scoped to its own table
@@ -199,7 +209,8 @@ class TestNicknameResolution:
         [
             "Carlton",  # AFL — must not bleed across sports
             "Fremantle",  # AFL
-            "Tigers",  # ambiguous short form — no silent match
+            "Tiger",  # near-miss of the 'Tigers' feed alias — the alias
+            # covers exactly 'Tigers'; near-misses must still fail loudly
             "Unknown FC",
             "",
             "   ",
