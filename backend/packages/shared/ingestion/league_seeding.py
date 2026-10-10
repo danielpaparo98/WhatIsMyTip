@@ -145,7 +145,10 @@ CLUBS: Tuple[TeamIdentity, ...] = (
     TeamIdentity("Warriors", ("New Zealand Warriors", "NZ Warriors")),
     # The merged club's official name IS "Wests Tigers"; the Wests/
     # Balmain predecessors are distinct historical entities, not aliases.
-    TeamIdentity("Wests Tigers"),
+    # "Tigers" is the FEED's 2017-2018 short name for the same club —
+    # without it the sync get-or-create'd a second participant and
+    # split the club's Elo/form/H2H history across eras.
+    TeamIdentity("Wests Tigers", ("Tigers",)),
 )
 
 #: State of Origin representative teams (fresh squads each series —
