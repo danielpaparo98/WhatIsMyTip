@@ -14,7 +14,7 @@ Landing page for the [`docs/`](../README.md) directory. Start here.
 | [`deployment.md`](deployment.md) | Production deploy to DigitalOcean App Platform + Managed PG/Redis (⚠️ `.do/app.yaml` is stale — see TODO) |
 | [`development.md`](development.md) | Local dev setup (Docker stack + manual), TDD workflow, common-tasks cheat sheet |
 | [`data-loading.md`](data-loading.md) | CSV data loading + scraper (`make-data.sh`, `migrate_and_seed.py --from-csv`) |
-| [`migrations.md`](migrations.md) | Alembic workflow + current migration history (2 revisions on disk) |
+| [`migrations.md`](migrations.md) | Alembic workflow + current migration history (14 revisions on disk, head `0014`) |
 
 ## Historical (read-only, kept for context)
 

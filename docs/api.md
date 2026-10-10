@@ -252,6 +252,7 @@ no home/away sides (races, field events) are skipped.
 | `GET` | `/api/tips` | public | List tips (filter: `heuristic`, `season`, `round`, `limit`) |
 | `GET` | `/api/tips/games-with-tips` | public | Games with their best-bet tips for a round (filter: `season`, `round`, `heuristic` default `best_bet`) |
 | `GET` | `/api/tips/{heuristic}` | public | Tips for one heuristic (`best_bet` \| `yolo` \| `weighted_tip` \| `boosted_tip`); filter: `limit` |
+| `GET` | `/api/tips/league` | public | Rugby-league model tips for one event, AI-explained (query: `league` = `nrl` \| `nrlw` \| `origin`, `slug`) |
 | `POST` | `/api/tips/generate` | admin (rate-limited) | Generate tips for a round. Body: `season`, `round_id`, `heuristics` (optional, comma-separated), `regenerate` (default `false`). See [`app/api/tips.py`](../backend/app/api/tips.py:261). |
 | `POST` | `/api/tips/explanations/generate` | public | Generate AI explanations for a round |
 
@@ -261,6 +262,19 @@ no home/away sides (races, field events) are skipped.
 # Generate for a round
 curl -X POST 'http://localhost:8000/api/tips/generate?season=2025&round=1'
 curl -X POST 'http://localhost:8000/api/tips/generate?season=2025&round=1&heuristics=best_bet,yolo&regenerate=true'
+```
+
+**`GET /api/tips/league` (additive, Phase 5.2)**: returns the reduced
+rugby-league model set — `elo`, `form`, `home_advantage`, `matchup` — for a
+single event. Each tip names its model, the picked side (`null` = predicted
+draw), and its AI explanation; explanations are generated through the shared
+OpenRouter pipeline, cached under the rugby-league cache namespace, and
+degrade to `null` (never an error) when the AI layer fails. Errors in the
+standard shape: `404 not_found` for an unknown league key, an unknown slug,
+or a slug belonging to another competition.
+
+```bash
+curl 'http://localhost:8000/api/tips/league?league=nrl&slug=<event-slug>'
 ```
 
 ### Backtesting
@@ -412,6 +426,7 @@ const tips = await fetch('http://localhost:8000/api/tips?heuristic=best_bet&limi
 | Source | Use | Config |
 |--------|-----|--------|
 | [Squiggle API](https://api.squiggle.com.au/) | AFL fixtures, results, team info | `SQUIGGLE_API_BASE`, `SQUIGGLE_CONTACT_EMAIL` |
+| [FixtureDownload](https://fixturedownload.com/) | Rugby-league fixtures + results (NRL, NRLW, State of Origin; daily refresh, shared 24h provider cache) | n/a — open feed, no key |
 | [OpenRouter](https://openrouter.ai/) | AI-powered tip explanations | `OPENROUTER_API_KEY`, `OPENROUTER_MODEL` |
 | AFLTables / FootyWire | Historical player stats, injuries (via scraper) | n/a — internal |
 | Open-Meteo | Match-day weather (via scraper) | n/a — internal |
