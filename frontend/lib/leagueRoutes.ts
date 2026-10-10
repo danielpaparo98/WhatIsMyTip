@@ -26,9 +26,12 @@ import type {
 
 // ---------------------------------------------------------------------------
 // League key → competition name (the `competitions.name` value the
-// backend sync writes, per packages/shared/ingestion/state_leagues.py).
+// backend sync writes — per packages/shared/ingestion/state_leagues.py
+// for the state leagues and national_leagues.py (nrl-expansion-07) for
+// the rugby-league competitions).
 // Kept explicit rather than guessed from partial names: the mapping is
-// a contract with the STATE_LEAGUES registry on the backend.
+// a contract with the STATE_LEAGUES + NATIONAL_LEAGUES registries on
+// the backend.
 // ---------------------------------------------------------------------------
 
 export const LEAGUE_COMPETITION_NAMES: Record<string, string> = {
@@ -42,6 +45,11 @@ export const LEAGUE_COMPETITION_NAMES: Record<string, string> = {
   qaflw: "Queensland Australian Football League Women's",
   nwfl: 'North West Football League',
   sfl: 'Southern Football League',
+  // NRL-EXPANSION (nrl-expansion-07): must match NATIONAL_LEAGUES'
+  // LeagueConfig.name values exactly (pinned by league-routes.test.ts).
+  nrl: 'National Rugby League',
+  nrlw: "NRL Women's Premiership",
+  origin: 'State of Origin',
 }
 
 /**
@@ -64,6 +72,11 @@ export const LEAGUE_ROUTE_KEYS: string[] = [
   'qaflw',
   'nwfl',
   'sfl',
+  // NRL-EXPANSION (nrl-expansion-07): the rugby-league competitions —
+  // appended, never reordered.
+  'nrl',
+  'nrlw',
+  'origin',
 ]
 
 /**

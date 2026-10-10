@@ -381,8 +381,10 @@ describe('league performance prerender + sitemap coverage', () => {
     expect(eventsIdx).toBeGreaterThan(pushIdx)
   })
 
-  it('covers exactly the 10 non-AFL registry keys, all validatable', () => {
-    expect(LEAGUE_ROUTE_KEYS).toHaveLength(10)
+  it('covers exactly the 13 non-AFL registry keys, all validatable', () => {
+    // NRL-EXPANSION (nrl-expansion-07): ten state leagues + three
+    // rugby-league competitions (nrl, nrlw, origin).
+    expect(LEAGUE_ROUTE_KEYS).toHaveLength(13)
     expect(LEAGUE_ROUTE_KEYS).not.toContain('afl')
     // Every emitted route key passes the page's validate() gate, so a
     // prerendered /{league}/performance can never 404.

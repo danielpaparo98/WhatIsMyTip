@@ -82,6 +82,29 @@ const QAFL_CLUBS = [
   'Wilston Grange Gorillas',
 ]
 
+// NRL-EXPANSION (nrl-expansion-07): the 17 NRL clubs by feed nickname
+// (backend league_seeding.CLUBS canonical form). NRLW reuses the same
+// club identities; Origin teams are separate.
+const NRL_CLUBS = [
+  'Broncos',
+  'Bulldogs',
+  'Cowboys',
+  'Dolphins',
+  'Dragons',
+  'Eels',
+  'Knights',
+  'Panthers',
+  'Rabbitohs',
+  'Raiders',
+  'Roosters',
+  'Sea Eagles',
+  'Sharks',
+  'Storm',
+  'Titans',
+  'Warriors',
+  'Wests Tigers',
+]
+
 function expectClubPalette(club: ClubColors | undefined): void {
   expect(club).toBeDefined()
   expect(club!.primary).toMatch(HEX_RE)
@@ -89,10 +112,14 @@ function expectClubPalette(club: ClubColors | undefined): void {
 }
 
 describe('LEAGUE_COLORS coverage', () => {
-  it('covers every non-AFL state-league key', () => {
+  it('covers every non-AFL state-league key plus the rugby-league competitions', () => {
     expect(Object.keys(LEAGUE_COLORS).sort()).toEqual(
       [
         'aflw',
+        // NRL-EXPANSION (nrl-expansion-07): rugby-league joins the map.
+        'nrl',
+        'nrlw',
+        'origin',
         'nwfl',
         'qafl',
         'qaflw',
@@ -165,6 +192,37 @@ describe('LEAGUE_COLORS coverage', () => {
   })
 })
 
+// ---------------------------------------------------------------------------
+// NRL-EXPANSION (nrl-expansion-07): rugby-league palettes. Keys are the
+// feed nicknames the backend seeds canonically (league_seeding.CLUBS /
+// ORIGIN_TEAMS) — the initials-badge color fallback (useTeamIdentity
+// → leagueColorFor) covers every club with no logo asset on file.
+// ---------------------------------------------------------------------------
+
+describe('LEAGUE_COLORS rugby-league coverage', () => {
+  // Non-null assertions: the registry is pinned to contain these keys by
+  // the coverage test above — this satisfies noUncheckedIndexedAccess.
+  const NRL = LEAGUE_COLORS.nrl!
+  const ORIGIN = LEAGUE_COLORS.origin!
+
+  it('covers the 17 NRL clubs by feed nickname', () => {
+    expect(Object.keys(NRL)).toHaveLength(17)
+    for (const club of NRL_CLUBS) {
+      expectClubPalette(NRL[club])
+    }
+  })
+
+  it('nrlw shares the NRL club map (same club identities, no women-suffixed duplicates)', () => {
+    expect(LEAGUE_COLORS.nrlw).toBe(LEAGUE_COLORS.nrl)
+  })
+
+  it('covers the State of Origin sides', () => {
+    expectClubPalette(ORIGIN['Blues'])
+    expectClubPalette(ORIGIN['Maroons'])
+    expect(Object.keys(ORIGIN)).toHaveLength(2)
+  })
+})
+
 describe('leagueColorFor', () => {
   it('resolves an exact club name', () => {
     expect(leagueColorFor('wafl', 'Peel Thunder')).toEqual(
@@ -183,5 +241,15 @@ describe('leagueColorFor', () => {
     expect(leagueColorFor('afl', 'Richmond')).toBeNull()
     expect(leagueColorFor('wafl', 'Richmond')).toBeNull()
     expect(leagueColorFor('wafl', null)).toBeNull()
+  })
+
+  it('resolves rugby-league clubs case-insensitively and rejects AFL clubs (nrl-expansion-07)', () => {
+    // Non-null assertion: the registry is pinned to contain 'nrl'.
+    const nrl = LEAGUE_COLORS.nrl!
+    expect(leagueColorFor('nrl', '  broncos ')).toEqual(nrl['Broncos'])
+    expect(leagueColorFor('origin', 'Blues')).toEqual(LEAGUE_COLORS.origin!['Blues'])
+    // An AFL club name must never resolve against the NRL palette.
+    expect(leagueColorFor('nrl', 'Richmond')).toBeNull()
+    expect(leagueColorFor('origin', 'Broncos')).toBeNull()
   })
 })
