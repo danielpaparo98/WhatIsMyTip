@@ -520,9 +520,28 @@ Two rules apply across the prediction pipeline:
 | **Player Form** | `tog_pct` normalized to a 0–1 scale so its contribution is comparable to the other composite terms |
 | **Heuristic zero-information defaults** | When no model voted: Best Bet → (alphabetically-first team, 0.50, 5), YOLO → (alphabetically-first team, 0.50, 10); Weighted Tip → (alphabetically-first team, 0.55, 6) on vote ties and empty input (0.55 is the long-standing fixed fallback confidence). Vote ties in Best Bet resolve to the alphabetically-first team too. Deterministic and home/away-neutral — Best Bet and YOLO never inflate confidence on a no-information default. |
 | **Weighted Tip training** | Feature vectors and coefficients are aligned via `feature_names_for` — a length mismatch raises `ValueError` instead of silently mis-weighting. Retrain guard: `MIN_TRAINING_ROWS = 100` (16-feature OLS needs rows ≫ features); below 100 rows the previously-active version keeps serving. |
-| **Boosted Tip training (BT-1)** | Same feature contract and `MIN_TRAINING_ROWS = 100` skip gate as Weighted Tip, trained in the same Monday 05:00 AWST cron (gated by `BOOSTED_RETRAIN_ENABLED`). The serialized XGBoost ensemble is persisted as a BYTEA artifact (`save_raw` JSON); mean \|SHAP\| per feature is stored in the coefficient rows and the TreeExplainer base value in `shap_base_value`. An additivity check (`base + Σ SHAP = prediction`, tol 1e-4) raises - deliberately not an `assert`, so it survives `python -O` - rather than persisting a mismatched artifact. |
+### Per-sport model registry (league tips, P2-3)
+
+The multisport league-tips pipeline ([`league_heuristics.py`](../backend/packages/shared/services/league_heuristics.py:1)) computes tips purely from synced results (no ML artifacts, no scrapers) and registers a model SET per sport. AFL — and any unregistered sport — keeps the D3 trio (`home_advantage`, `form`, `ladder`), byte-identical to the pre-expansion behaviour; adding a sport is an entry in `SPORT_MODEL_SETS`, not a code branch. The competition's `sport_id` (resolved by `LeagueHeuristicsService` from the `competitions` row) selects the set, so the three rugby-league competitions (`nrl`, `nrlw`, `origin`) are keyed through their shared `rugby-league` sport.
+
+| Sport | Model set (registry order = persistence order) |
+|-------|------------------------------------------------|
+| **AFL** (default) | `home_advantage`, `form`, `ladder` |
+| **rugby-league** | `elo`, `form`, `home_advantage`, `matchup` |
+
+Rugby-league's reduced set is DB-only:
+
+| Model | Rule (all tie → home) |
+|-------|------------------------|
+| `elo` | Higher result-derived Elo (start 1500, K=20, logistic 400-point scale; a decided result moves K/2 net, a draw between even sides moves nothing) |
+| `form` | More wins in the last 5 completed events (shared with D3) |
+| `home_advantage` | Always the home side (shared with D3) |
+| `matchup` | More head-to-head wins, venue-blind; draws never count as wins |
+
+**Excluded for rugby-league**: `weather_impact`, `injury_impact`, `player_form`, `value` — they require AFL-scraped sources with no NRL equivalent. Requesting one for a rugby-league competition (`require_league_model`) raises the repo-standard error: `BackendServiceError` 400, code `model_unavailable_for_sport`, with `details` carrying `model`, `sport_id` and the `available` set.
 
 ---
+
 
 ## Alerting
 

@@ -113,7 +113,7 @@ class TestVerifiedSchemaMapping:
     async def test_verified_round_1_record_maps_to_canonical_dto(self):
         provider, _ = _make_provider()
         fixtures = await provider.get_fixtures(2026)
-        match = next(f for f in fixtures if f.external_id == 1)
+        match = next(f for f in fixtures if f.external_id == 2026001)
 
         assert match.source == "fixturedownload-nrl"
         assert match.season == 2026
@@ -130,7 +130,7 @@ class TestVerifiedSchemaMapping:
         provider, _ = _make_provider()
         fixtures = await provider.get_fixtures(2026)
 
-        match = next(f for f in fixtures if f.external_id == 1)
+        match = next(f for f in fixtures if f.external_id == 2026001)
         assert match.starts_at == datetime(2026, 3, 1, 2, 15, tzinfo=timezone.utc)
         assert match.starts_at is not None
         assert match.starts_at.utcoffset() == timedelta(0)
@@ -139,7 +139,7 @@ class TestVerifiedSchemaMapping:
         provider, _ = _make_provider()
         fixtures = await provider.get_fixtures(2026)
 
-        upcoming = next(f for f in fixtures if f.external_id == 3)
+        upcoming = next(f for f in fixtures if f.external_id == 2026003)
         assert upcoming.home_score is None
         assert upcoming.away_score is None
         assert upcoming.completed is False
@@ -153,7 +153,7 @@ class TestVerifiedSchemaMapping:
         provider, _ = _make_provider()
         fixtures = await provider.get_fixtures(2026)
 
-        draw = next(f for f in fixtures if f.external_id == 4)
+        draw = next(f for f in fixtures if f.external_id == 2026004)
         assert draw.home_score == 20
         assert draw.away_score == 20
         assert draw.completed is True
@@ -175,7 +175,7 @@ class TestPureMapper:
             season=2026,
             source="fixturedownload-nrl",
         )
-        assert fixture.external_id == 9
+        assert fixture.external_id == 2026009
         assert fixture.starts_at is None
         assert fixture.venue is None
         assert fixture.home_participant is None
@@ -197,10 +197,10 @@ class TestVenueCanonicalization:
         fixtures = await provider.get_fixtures(2022)
 
         by_id = {f.external_id: f for f in fixtures}
-        assert by_id[1].venue == "Shark Park"  # PointsBet Stadium
-        assert by_id[2].venue == "Mount Smart Stadium"  # Mt Smart Stadium
-        assert by_id[3].venue == "Newcastle Stadium"  # McDonalds Park
-        assert by_id[4].venue == "Jubilee Stadium"  # Netstrata Jubilee
+        assert by_id[2022001].venue == "Shark Park"  # PointsBet Stadium
+        assert by_id[2022002].venue == "Mount Smart Stadium"  # Mt Smart Stadium
+        assert by_id[2022003].venue == "Newcastle Stadium"  # McDonalds Park
+        assert by_id[2022004].venue == "Jubilee Stadium"  # Netstrata Jubilee
 
     async def test_same_ground_canonicalizes_across_seasons(self):
         """PointsBet (2022) and Ocean Protect (2026) are one ground."""
@@ -221,29 +221,29 @@ class TestSeasonFilters:
     async def test_round_filter_keeps_only_that_round(self):
         provider, _ = _make_provider()
         fixtures = await provider.get_fixtures(2026, round=2)
-        assert {f.external_id for f in fixtures} == {3, 4}
+        assert {f.external_id for f in fixtures} == {2026003, 2026004}
 
     async def test_complete_filter_true_keeps_played_matches(self):
         provider, _ = _make_provider()
         fixtures = await provider.get_fixtures(2026, complete=True)
-        assert {f.external_id for f in fixtures} == {1, 2, 4, 5}
+        assert {f.external_id for f in fixtures} == {2026001, 2026002, 2026004, 2026005}
 
     async def test_complete_filter_false_keeps_unplayed_matches(self):
         provider, _ = _make_provider()
         fixtures = await provider.get_fixtures(2026, complete=False)
-        assert [f.external_id for f in fixtures] == [3]
+        assert [f.external_id for f in fixtures] == [2026003]
 
     async def test_date_window_is_inclusive_on_both_ends(self):
         provider, _ = _make_provider()
         fixtures = await provider.get_fixtures(
             2026, start_date="2026-03-08", end_date="2026-03-14"
         )
-        assert {f.external_id for f in fixtures} == {3, 4}
+        assert {f.external_id for f in fixtures} == {2026003, 2026004}
 
     async def test_filters_combine(self):
         provider, _ = _make_provider()
         fixtures = await provider.get_fixtures(2026, complete=True, round=1)
-        assert {f.external_id for f in fixtures} == {1, 2}
+        assert {f.external_id for f in fixtures} == {2026001, 2026002}
 
 
 class TestPolitenessCaching:
@@ -300,7 +300,7 @@ class TestSingleFixtureLookup:
         provider, _ = _make_provider()
         await provider.get_fixtures(2026)
 
-        draw = await provider.get_fixture(4)
+        draw = await provider.get_fixture(2026004)
         assert draw is not None
         assert draw.home_score == 20
         assert draw.away_score == 20
@@ -308,11 +308,11 @@ class TestSingleFixtureLookup:
     async def test_lookup_miss_returns_none(self):
         provider, _ = _make_provider()
         await provider.get_fixtures(2026)
-        assert await provider.get_fixture(999) is None
+        assert await provider.get_fixture(2026999) is None
 
     async def test_lookup_with_cold_cache_returns_none_without_http(self):
         provider, calls = _make_provider()
-        assert await provider.get_fixture(1) is None
+        assert await provider.get_fixture(2026001) is None
         assert calls == []
 
 

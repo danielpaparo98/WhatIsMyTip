@@ -222,10 +222,10 @@ class TestNrlEndToEnd:
         await run_league_sync(db, "nrl", 2026)
 
         events = await _events_with_refs(db, "fixturedownload-nrl")
-        assert set(events) == {1, 2, 3, 4, 5}
+        assert set(events) == {2026001, 2026002, 2026003, 2026004, 2026005}
 
         # Result rows on event_participants — match 1 (Las Vegas opener).
-        sides = await _sides(db, events[1].id)
+        sides = await _sides(db, events[2026001].id)
         assert sides["home"].score == 28
         assert sides["away"].score == 18
         assert sides["home"].is_winner is True
@@ -239,7 +239,7 @@ class TestNrlEndToEnd:
         events = await _events_with_refs(db, "fixturedownload-nrl")
 
         # Pre-match (null scores): scheduled, not completed, no scores.
-        upcoming = events[3]
+        upcoming = events[2026003]
         assert upcoming.completed is False
         assert upcoming.status == "scheduled"
         sides = await _sides(db, upcoming.id)
@@ -248,7 +248,7 @@ class TestNrlEndToEnd:
 
         # Draw (level scores, null Winner): completed, NO winner side —
         # rugby league has draws.
-        draw = events[4]
+        draw = events[2026004]
         assert draw.completed is True
         assert draw.status == "completed"
         sides = await _sides(db, draw.id)
@@ -258,7 +258,7 @@ class TestNrlEndToEnd:
         assert sides["away"].is_winner is None
 
         # Decided games carry the winner on the right side.
-        sides = await _sides(db, events[2].id)  # Sharks 14 - Panthers 20
+        sides = await _sides(db, events[2026002].id)  # Sharks 14 - Panthers 20
         assert sides["home"].is_winner is False
         assert sides["away"].is_winner is True
 
@@ -268,9 +268,9 @@ class TestNrlEndToEnd:
         await run_league_sync(db, "nrl", 2026)
 
         events = await _events_with_refs(db, "fixturedownload-nrl")
-        assert events[1].round_id == 1
-        assert events[3].round_id == 2
-        assert events[5].round_id == 31  # the grand final round
+        assert events[2026001].round_id == 1
+        assert events[2026003].round_id == 2
+        assert events[2026005].round_id == 31  # the grand final round
 
     async def test_league_tips_generated_for_completed_events(self, db, recorded_feed):
         recorded_feed("nrl", {"nrl-2026": _payload("nrl-2026.json")})
@@ -279,9 +279,9 @@ class TestNrlEndToEnd:
 
         assert stats["league_tips"]["status"] == "success"
         tip_count = await _scalar(db, select(func.count(LeagueTip.id)))
-        # 4 completed events (draw included — draw-no-pick tips) × 3
-        # heuristics (home_advantage, form, ladder).
-        assert tip_count == 12
+        # 4 completed events (draw included — draw-no-pick tips) × 4
+        # rugby-league models (elo, form, home_advantage, matchup).
+        assert tip_count == 16
 
 
 # ---------------------------------------------------------------------------
@@ -339,9 +339,9 @@ class TestOriginSeriesSemantics:
         await run_league_sync(db, "origin", 2026)
 
         events = await _events_with_refs(db, "fixturedownload-origin")
-        game1_sides = await _sides(db, events[1].id)  # Maroons 20 - Blues 18
+        game1_sides = await _sides(db, events[2026001].id)  # Maroons 20 - Blues 18
         assert game1_sides["home"].is_winner is True
-        game3_sides = await _sides(db, events[3].id)  # Maroons 14 - Blues 22
+        game3_sides = await _sides(db, events[2026003].id)  # Maroons 14 - Blues 22
         assert game3_sides["away"].is_winner is True
 
         # All three games completed: the series was played out.
@@ -384,9 +384,9 @@ class TestNrlwEndToEnd:
         assert competition.format == "rounds"
 
         events = await _events_with_refs(db, "fixturedownload-nrlw")
-        assert set(events) == {1, 2}
-        assert events[1].completed is True
-        assert events[2].completed is False
+        assert set(events) == {2026001, 2026002}
+        assert events[2026001].completed is True
+        assert events[2026002].completed is False
 
     async def test_nrlw_shares_club_identity_with_nrl(self, db, recorded_feed):
         """NRLW reuses the club identities — one ``Broncos`` participant
@@ -412,8 +412,8 @@ class TestNrlwEndToEnd:
         assert len(nrl_events) == 5
         assert len(nrlw_events) == 2
 
-        nrl_season_id = nrl_events[1].season_id
-        nrlw_season_id = nrlw_events[1].season_id
+        nrl_season_id = nrl_events[2026001].season_id
+        nrlw_season_id = nrlw_events[2026001].season_id
         assert nrl_season_id != nrlw_season_id
 
 
@@ -436,7 +436,7 @@ class TestTimezoneBoundary:
         await run_league_sync(db, "nrl", 2026)
 
         events = await _events_with_refs(db, "fixturedownload-nrl")
-        warriors = events[3]
+        warriors = events[2026003]
         assert warriors.venue == "Mount Smart Stadium"
         assert warriors.starts_at == datetime(2026, 3, 8, 19, 0)
         assert warriors.starts_at.tzinfo is None
@@ -451,7 +451,7 @@ class TestTimezoneBoundary:
         await run_league_sync(db, "origin", 2026)
 
         events = await _events_with_refs(db, "fixturedownload-origin")
-        perth_game = events[3]
+        perth_game = events[2026003]
         assert perth_game.venue == "Perth Stadium"  # Optus Stadium, canonical
         assert perth_game.starts_at == datetime(2026, 7, 15, 18, 5)
 
@@ -466,7 +466,7 @@ class TestTimezoneBoundary:
         await run_league_sync(db, "nrl", 2026)
 
         events = await _events_with_refs(db, "fixturedownload-nrl")
-        vegas = events[1]
+        vegas = events[2026001]
         assert vegas.venue == "Allegiant Stadium"  # unknown → verbatim
         assert vegas.starts_at == datetime(2026, 3, 1, 12, 15)
 
@@ -480,7 +480,7 @@ class TestTimezoneBoundary:
         await run_league_sync(db, "nrl", 2026)
 
         events = await _events_with_refs(db, "fixturedownload-nrl")
-        gf = events[5]
+        gf = events[2026005]
         assert gf.venue == "Stadium Australia"  # Accor Stadium, canonical
         expected = (
             datetime(2026, 10, 4, 8, 0, tzinfo=timezone.utc)
@@ -528,7 +528,13 @@ class TestIdempotentRerun:
         assert second["fixtures_synced"] == 5
 
         events = await _events_with_refs(db, "fixturedownload-nrl")
-        assert set(events) == {1, 2, 3, 4, 5}, "no duplicate events"
+        assert set(events) == {
+            2026001,
+            2026002,
+            2026003,
+            2026004,
+            2026005,
+        }, "no duplicate events"
 
         event_count = await _scalar(db, select(func.count(Event.id)))
         assert event_count == 5
@@ -546,11 +552,11 @@ class TestIdempotentRerun:
         first = await run_league_sync(db, "nrl", 2026)
         second = await run_league_sync(db, "nrl", 2026)
 
-        assert first["league_tips"]["tips_inserted"] == 12
+        assert first["league_tips"]["tips_inserted"] == 16
         assert second["league_tips"]["tips_inserted"] == 0
         assert second["league_tips"]["tips_updated"] == 0
         tip_count = await _scalar(db, select(func.count(LeagueTip.id)))
-        assert tip_count == 12
+        assert tip_count == 16
 
 
 class TestResultsBackfill:
@@ -569,7 +575,7 @@ class TestResultsBackfill:
 
         first = await run_league_sync(db, "origin", 2026)
         events = await _events_with_refs(db, "fixturedownload-origin")
-        assert events[3].completed is False
+        assert events[2026003].completed is False
         ids_before = {event.id for event in events.values()}
 
         # The feed refreshes with the result.
@@ -582,7 +588,7 @@ class TestResultsBackfill:
         events = await _events_with_refs(db, "fixturedownload-origin")
         assert {event.id for event in events.values()} == ids_before
 
-        backfilled = events[3]
+        backfilled = events[2026003]
         assert backfilled.completed is True
         assert backfilled.status == "completed"
         sides = await _sides(db, backfilled.id)
@@ -590,8 +596,8 @@ class TestResultsBackfill:
         assert sides["away"].score == 22
         assert sides["away"].is_winner is True  # Blues take the series
 
-        assert first["league_tips"]["tips_inserted"] == 6  # two completed × 3
-        assert second["league_tips"]["tips_inserted"] == 3
+        assert first["league_tips"]["tips_inserted"] == 8  # two completed × 4
+        assert second["league_tips"]["tips_inserted"] == 4
 
     async def test_tip_for_backfilled_result_appears(self, db, recorded_feed):
         payloads = {"state-of-origin-2026": copy.deepcopy(
@@ -605,17 +611,17 @@ class TestResultsBackfill:
         await run_league_sync(db, "origin", 2026)
         assert (
             await _scalar(db, select(func.count(LeagueTip.id)))
-        ) == 6  # two completed games × 3
+        ) == 8  # two completed games × 4
 
         payloads["state-of-origin-2026"][2] = _payload(
             "state-of-origin-2026.json"
         )[2]
         stats = await run_league_sync(db, "origin", 2026)
 
-        assert stats["league_tips"]["tips_inserted"] == 3
+        assert stats["league_tips"]["tips_inserted"] == 4
         assert (
             await _scalar(db, select(func.count(LeagueTip.id)))
-        ) == 9  # all three games now tipped
+        ) == 12  # all three games now tipped (3 × 4 models)
 
 
 # ---------------------------------------------------------------------------
@@ -640,7 +646,7 @@ class TestPartialFailureLogging:
         real_upsert = EventCRUD.upsert_fixture
 
         async def flaky_upsert(db_session, **kwargs):
-            if kwargs["fixture"].external_id == 5:  # the last fixture
+            if kwargs["fixture"].external_id == 2026005:  # the last fixture
                 raise RuntimeError("simulated upsert failure")
             return await real_upsert(db_session, **kwargs)
 
@@ -651,7 +657,7 @@ class TestPartialFailureLogging:
         assert stats["status"] == "success"
         assert stats["fixtures_synced"] == 4
         assert len(stats["errors"]) == 1
-        assert "fixture 5" in stats["errors"][0]
+        assert "fixture 2026005" in stats["errors"][0]
         assert "simulated upsert failure" in stats["errors"][0]
 
 
@@ -747,7 +753,7 @@ class TestParticipantResolution:
         await run_league_sync(db, "nrl", 2022)
 
         events = await _events_with_refs(db, "fixturedownload-nrl")
-        assert events[1].venue == resolve_venue("PointsBet Stadium")
-        assert events[1].venue == "Shark Park"
-        assert events[2].venue == "Mount Smart Stadium"
-        assert events[4].venue == "Jubilee Stadium"
+        assert events[2022001].venue == resolve_venue("PointsBet Stadium")
+        assert events[2022001].venue == "Shark Park"
+        assert events[2022002].venue == "Mount Smart Stadium"
+        assert events[2022004].venue == "Jubilee Stadium"

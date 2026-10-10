@@ -74,19 +74,37 @@ def _parse_utc(raw: Any) -> Optional[datetime]:
     return parsed
 
 
+#: FixtureDownload's ``MatchNumber`` is SEASON-SCOPED — every season's
+#: feed restarts at 1 — while the events layer keys source refs on
+#: ``(source, external_id)`` globally (ADR 0001 UQ).  The provider
+#: therefore owns a deterministic season-composite external id:
+#: ``season * 1000 + MatchNumber`` (2026 match 1 → 2026001), reversible
+#: in :meth:`NrlProvider.get_fixture`.
+SEASON_FACTOR = 1000
+
+
+def make_external_id(season: int, match_number: Optional[int]) -> Optional[int]:
+    """Composite ``(season, MatchNumber)`` → globally-unique id."""
+    if match_number is None:
+        return None
+    return season * SEASON_FACTOR + match_number
+
+
 def fixture_from_fixturedownload(
     entry: Mapping[str, Any], *, season: int, source: str
 ) -> FixtureDTO:
     """Map one verified feed record to the canonical fixture DTO.
 
     The one function that knows the FixtureDownload dialect — schema
-    drift upstream is a fix here, and nowhere else.
+    drift upstream is a fix here, and nowhere else.  ``external_id``
+    is the season-composite id (see ``SEASON_FACTOR``): MatchNumber
+    alone would collide across seasons in the global source-ref UQ.
     """
     home_score = entry.get("HomeTeamScore")
     away_score = entry.get("AwayTeamScore")
     return FixtureDTO(
         source=source,
-        external_id=entry.get("MatchNumber"),
+        external_id=make_external_id(season, entry.get("MatchNumber")),
         season=season,
         round_id=entry.get("RoundNumber"),
         home_participant=entry.get("HomeTeam") or None,
@@ -220,14 +238,23 @@ class NrlProvider:
         """Resolve a fixture from already-fetched season payloads (most
         recently fetched season first); ``None`` when nothing cached
         matches.  Lookups NEVER trigger a fetch — the daily cache is
-        the politeness contract.  Callers needing a specific fixture
-        should ensure its season was fetched (or use ``get_fixtures``)."""
-        for slug, season in reversed(self._fetched_slugs):
+        the politeness contract.  ``external_id`` is the season
+        composite (``season * 1000 + MatchNumber``): the season picks
+        the cached slug, the remainder picks the match.  Callers
+        needing a specific fixture should ensure its season was
+        fetched (or use ``get_fixtures``)."""
+        season, match_number = (
+            external_id // SEASON_FACTOR,
+            external_id % SEASON_FACTOR,
+        )
+        for slug, cached_season in reversed(self._fetched_slugs):
+            if cached_season != season:
+                continue
             cached = self._cache.get(slug)
             if not cached:
                 continue
             for entry in cached[1]:
-                if entry.get("MatchNumber") == external_id:
+                if entry.get("MatchNumber") == match_number:
                     return fixture_from_fixturedownload(
                         entry, season=season, source=self.source
                     )
@@ -257,4 +284,10 @@ class NrlProvider:
         return payload
 
 
-__all__ = ["DEFAULT_TTL_SECONDS", "NrlProvider", "fixture_from_fixturedownload"]
+__all__ = [
+    "DEFAULT_TTL_SECONDS",
+    "SEASON_FACTOR",
+    "NrlProvider",
+    "fixture_from_fixturedownload",
+    "make_external_id",
+]
