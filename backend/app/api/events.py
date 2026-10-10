@@ -51,9 +51,9 @@ router = APIRouter()
 
 
 # ---------------------------------------------------------------------------
-# League dispatch helpers (Phase 5.2 — mirrors app.api.backtest's resolver,
-# extended to the cross-registry facade; that module keeps its own
-# STATE_LEAGUES-only copy until subtask 11 flips its guardrail)
+# League dispatch helpers (Phase 5.2 — mirrors app.api.backtest's
+# resolver; both resolve through the same cross-registry facade since
+# the backtest guardrail flip)
 # ---------------------------------------------------------------------------
 
 #: ``competition_id`` stand-in for a REGISTERED-but-never-synced league:

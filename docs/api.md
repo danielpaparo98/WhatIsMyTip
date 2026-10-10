@@ -268,20 +268,52 @@ curl -X POST 'http://localhost:8000/api/tips/generate?season=2025&round=1&heuris
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
 | `GET` | `/api/backtest` | public | List backtest results (filter: `heuristic`, `season`, `limit`) |
-| `GET` | `/api/backtest/seasons` | public | List seasons with backtest data |
-| `GET` | `/api/backtest/current-season` | public | Current-season performance across all heuristics |
+| `GET` | `/api/backtest/seasons` | public | List seasons with backtest data (optional `league` key) |
+| `GET` | `/api/backtest/current-season` | public | Current-season performance across all heuristics (optional `league` key) |
 | `GET` | `/api/backtest/table` | public | Per-round table data (query: `season`) |
-| `GET` | `/api/backtest/compare` | public | Compare all heuristics for a season (query: `season`) |
+| `GET` | `/api/backtest/compare` | public | Compare all heuristics for a season (query: `season`, optional `league` key) |
 | `GET` | `/api/backtest/model-compare` | public | Compare individual ML models (query: `season`, optional `models` list) |
 | `GET` | `/api/backtest/active-model` | public | Active weighted-tip model version + its learned coefficients |
 | `GET` | `/api/backtest/active-boosted-model` | public | Active boosted-tip (XGBoost) version + mean \|SHAP\| feature importances |
 | `POST` | `/api/backtest/run` | admin | Trigger a backtest. Query: `season` (required), `round` (optional), `heuristic` (optional) |
+
+**`league` param (additive, Phase 5.2)**: `/seasons`, `/current-season`
+and `/compare` accept an optional `league` key, matched case-sensitively:
+the rugby-league national competitions `nrl`, `nrlw`, `origin` plus the
+ten state leagues (`wafl`, `waflw`, `vfl`, `vflw`, `sanfl`, `aflw`,
+`qafl`, `qaflw`, `nwfl`, `sfl`).  Absent, empty, or `afl` keeps the
+legacy AFL behaviour byte-identical (`season` stays a calendar year on
+`/compare`).  An unknown key is a 404 in the standard error shape
+(`{"code": "not_found", ...}`); a registered-but-not-yet-synced league
+degrades to graceful zero payloads (empty `available_years` / zeroed
+heuristics) rather than an error.  On `/compare` the league path takes
+`season` as the season LABEL string (e.g. `2024`).
+
+**Rugby-league backtests** (`league=nrl|nrlw|origin`) grade the
+**reduced model set only** — `elo`, `form`, `home_advantage`, `matchup`
+— over the venue-alias-normalized 2017+ history: the historic backfill
+resolves every sponsor-branded venue to its canonical ground at load
+(the Sharks' Cronulla ground is `Shark Park` across all sponsor eras),
+so the results the backtest reads are venue-stable across sponsor
+drift.  The `ladder` model never appears in a rugby-league payload.
+
+**Rugby-league grading semantics (draws + no odds)**: rugby league has
+draws and no odds source, and the grading honours both.  A drawn match
+has no winner — every tip on it grades **incorrect** (it stays in the
+accuracy denominator) while settlement is a **push** ($0, stake
+refunded — never a loss).  With no bookmaker prices, every tip settles
+at the representative $1.90 fallback and `odds_coverage` reports `0.0`;
+the profit columns keep the AFL payload shape (the API surface is
+additive-only), but read them alongside `odds_coverage` — they are
+representative-price simulations, not real market P&L.
 
 **Example**:
 
 ```bash
 curl -X POST -H "X-API-Key: $ADMIN_API_KEY" 'http://localhost:8000/api/backtest/run?season=2024'
 curl -X POST -H "X-API-Key: $ADMIN_API_KEY" 'http://localhost:8000/api/backtest/run?season=2024&round=5'
+curl 'http://localhost:8000/api/backtest/current-season?league=nrl'
+curl 'http://localhost:8000/api/backtest/compare?league=nrl&season=2024'
 ```
 
 ### Admin

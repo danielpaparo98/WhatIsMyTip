@@ -274,13 +274,22 @@ The FastAPI app exposes **4 HTTP routers**, each mounted at `/api/...`.  The 5th
 | Method | Path | Description |
 |--------|------|-------------|
 | `GET` | `/` | List backtest results |
-| `GET` | `/seasons` | List seasons with backtest data |
-| `GET` | `/current-season` | Current-season performance |
+| `GET` | `/seasons` | List seasons with backtest data (optional `league` key — see below) |
+| `GET` | `/current-season` | Current-season performance (optional `league` key) |
 | `GET` | `/table` | Per-round table data |
 | `GET` | `/{heuristic}/performance` | Heuristic performance metrics |
-| `GET` | `/compare` | Compare all heuristics for a season |
+| `GET` | `/compare` | Compare all heuristics for a season (optional `league` key; `season` is a season LABEL on the league path) |
 | `GET` | `/model-compare` | Compare individual ML models for a season |
 | `POST` | `/run` | Trigger a backtest (requires `X-API-Key`) |
+
+**League dispatch** (D4 + Phase 5.2): `?league=` accepts every key of
+the cross-registry `get_league` facade — the ten state leagues AND the
+rugby-league national competitions (`nrl`, `nrlw`, `origin`).  Absent,
+empty or `afl` is the legacy AFL path, byte-identical.  Unknown keys →
+404; registered-but-unsynced leagues → graceful zero payloads.  See
+[Per-sport model registry](#per-sport-model-registry-league-tips-p2-3)
+and [League backtest](#league-backtest-grading-consumes-the-same-registry)
+for the rugby-league grading semantics.
 
 ### Admin Router
 
@@ -539,6 +548,16 @@ Rugby-league's reduced set is DB-only:
 | `matchup` | More head-to-head wins, venue-blind; draws never count as wins |
 
 **Excluded for rugby-league**: `weather_impact`, `injury_impact`, `player_form`, `value` — they require AFL-scraped sources with no NRL equivalent. Requesting one for a rugby-league competition (`require_league_model`) raises the repo-standard error: `BackendServiceError` 400, code `model_unavailable_for_sport`, with `details` carrying `model`, `sport_id` and the `available` set.
+
+### League backtest (grading consumes the same registry)
+
+The league backtest ([`league_backtest.py`](../backend/packages/shared/services/league_backtest.py:1) + the `/api/backtest` `league` dispatch) grades at QUERY time from `Event`/`EventParticipant` results and consumes the same per-sport registry: the API resolves a national key (`nrl`/`nrlw`/`origin`) through the cross-registry `get_league` facade and passes `league_model_set_for_sport('rugby-league')` to `LeagueBacktestService`, so rugby-league payloads cover exactly the reduced quartet — `ladder` is never fetched or rendered, and a never-synced league's zero payloads already render the sport's real model list. State-league keys keep the D3 trio payloads byte-identical (`models=None` → the service default).
+
+Rugby-league specifics, all pinned by `tests/unit/test_league_backtest_rugby_league.py`:
+
+- **Venue normalization** — the history the backtest reads carries canonical venue names (`venue_aliases` applied at the provider/storage boundary by sync and `nrl_historic_load`), so grouping is stable across sponsor drift; grading itself is venue-agnostic (results + rounds only).
+- **Draws** (has_draws=True) — a drawn event has no winner: every tip on it grades incorrect (it stays in the accuracy denominator) while settlement pushes ($0, stake refunded — never a loss), per the shared `settlement.py` kernel.
+- **No odds source** — every rugby-league tip settles at the representative $1.90 fallback and `odds_coverage` reports 0.0; profit columns keep the AFL payload shape (frozen, additive-only surface) but are representative-price simulations, not real market P&L.
 
 ---
 

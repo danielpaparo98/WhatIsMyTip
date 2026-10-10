@@ -19,10 +19,10 @@ Dispatch contract under test (ADDITIVE — the frozen FaaS surface):
 * ``GET /api/sports`` stays pure DB-driven discovery: rugby-league
   rows render through it unchanged once seeded (no sport filtering).
 
-NOTE: ``app/api/backtest.py`` deliberately keeps its
-``STATE_LEAGUES.get``-only resolution for now (``league=nrl`` there
-still 404s, pinned by ``test_backtest_api_league.py``) — flipping that
-guardrail is subtask 11's same-commit responsibility.
+NOTE: since subtask 11's guardrail flip, ``app/api/backtest.py``
+resolves through the same cross-registry facade (``league=nrl|nrlw|
+origin`` are valid there too, grading the reduced per-sport model set —
+see ``test_league_backtest_rugby_league.py``).
 
 No database or network access; the CRUD layer and the competition
 lookup are mocked (same conventions as ``test_app_api_events.py`` /

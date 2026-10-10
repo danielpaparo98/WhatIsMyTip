@@ -16,21 +16,24 @@ Routes (mounted at ``/api/backtest``):
   importances (BT-1)
 * ``POST /run``             — admin-only: run model backtest
 
-League dispatch (performance-per-league D4): ``/compare``, ``/seasons``
-and ``/current-season`` accept an optional ``league`` query param.  An
-absent, empty or ``afl`` value rides the legacy AFL path unchanged; any
-registered ``STATE_LEAGUES`` key is resolved to its ``competitions.id``
-(by canonical ``competitions.name`` — the frontend
-``LEAGUE_COMPETITION_NAMES`` contract) and served from the multisport
-tables via :class:`LeagueBacktestService`.  An unknown key is a 404; a
-registered-but-never-synced league degrades to the service's graceful
-zero payloads.
+League dispatch (performance-per-league D4, extended Phase 5.2):
+``/compare``, ``/seasons`` and ``/current-season`` accept an optional
+``league`` query param.  An absent, empty or ``afl`` value rides the
+legacy AFL path unchanged; any key resolved by the cross-registry
+``get_league`` facade (the state rollout AND the national rugby-league
+registries) is looked up by canonical ``competitions.name`` — the
+frontend ``LEAGUE_COMPETITION_NAMES`` contract — and served from the
+multisport tables via :class:`LeagueBacktestService`, with the
+per-sport model set from ``league_model_set_for_sport`` (national keys
+grade the reduced rugby-league quartet even before their first sync).
+An unknown key is a 404; a registered-but-never-synced league degrades
+to the service's graceful zero payloads.
 """
 
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Annotated, Optional
+from typing import Annotated, Optional, Sequence
 
 from fastapi import APIRouter, Depends, Query
 from fastapi.exceptions import RequestValidationError
@@ -42,7 +45,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.db_deps import get_db
 from app.core.exceptions import http_error
 from app.core.security import require_admin_key
-from packages.shared.ingestion.state_leagues import STATE_LEAGUES
+from packages.shared.ingestion.league_seeding import (
+    SPORT_ID as RUGBY_LEAGUE_SPORT_ID,
+)
+from packages.shared.ingestion.national_leagues import (
+    NATIONAL_LEAGUES,
+    get_league,
+)
 from packages.shared.models import Competition
 from packages.shared.schemas import (
     BacktestListResponse,
@@ -61,6 +70,7 @@ from packages.shared.services.boosted_explanations import (
     get_active_boosted_model,
 )
 from packages.shared.services.league_backtest import LeagueBacktestService
+from packages.shared.services.league_heuristics import league_model_set_for_sport
 
 router = APIRouter()
 
@@ -106,23 +116,24 @@ _UNSYNCED_COMPETITION_ID = -1
 async def _league_competition_id(db: AsyncSession, league: str) -> int:
     """Resolve a league key to its ``competitions.id``.
 
-    Resolution is by the canonical ``competitions.name`` from the
-    ``STATE_LEAGUES`` registry — the exact names the frontend's
-    ``LEAGUE_COMPETITION_NAMES`` mapping pins (the two must stay in
-    sync; keys are matched case-sensitively).
+    Resolution is by the canonical ``competitions.name`` of the config
+    the cross-registry ``get_league`` facade returns — the exact names
+    the frontend's ``LEAGUE_COMPETITION_NAMES`` mapping pins (the two
+    must stay in sync; keys are matched case-sensitively).
 
     Raises:
-        BackendServiceError: 404 ``not_found`` for a key outside the
-            registry (``afl`` never reaches here — the legacy branch
+        BackendServiceError: 404 ``not_found`` for a key outside both
+            registries (``afl`` never reaches here — the legacy branch
             handles it before dispatch).
     """
-    config = STATE_LEAGUES.get(league)
-    if config is None:
+    try:
+        config = get_league(league)
+    except ValueError:
         raise http_error(
             404,
             "not_found",
-            f"Unknown league {league!r} — not in the state-league registry",
-        )
+            f"Unknown league {league!r} — not in any league registry",
+        ) from None
     # Review #5: uniqueness on competitions is (sport_id, name), so a
     # future second sport registering a clashing name would surface here
     # as MultipleResultsFound — convert that latent 500 into the
@@ -145,6 +156,22 @@ async def _league_competition_id(db: AsyncSession, league: str) -> int:
         # service's empty-state machinery, never a 500.
         return _UNSYNCED_COMPETITION_ID
     return int(competition_id)
+
+
+def _league_model_set(league: str) -> Sequence[str] | None:
+    """The per-sport backtest model set for a league key.
+
+    National (rugby-league) keys grade the reduced DB-only set —
+    ``league_model_set_for_sport('rugby-league')`` = (``elo``, ``form``,
+    ``home_advantage``, ``matchup``) — resolved from the registry so it
+    applies even BEFORE the competition's first sync (a never-synced
+    ``nrl`` zero payload still renders the sport's real model list).
+    State-league keys return ``None``: the service keeps the D3 default
+    set, so their payloads stay byte-identical.
+    """
+    if league in NATIONAL_LEAGUES:
+        return league_model_set_for_sport(RUGBY_LEAGUE_SPORT_ID)
+    return None
 
 
 # Review #4: the league path consumes the season LABEL verbatim, so
@@ -218,16 +245,20 @@ async def compare_heuristics(
     non-numeric values are a 422, exactly as before the league param
     existed.
 
-    League (``league=<state-league key>``): the same response shape from
+    League (``league=<league key>``): the same response shape from
     the multisport tables, with ``season`` taken as the season LABEL
-    string.  An unknown league is a 404; a registered-but-unsynced
-    league returns the zero comparison structure.
+    string.  Rugby-league keys grade the reduced per-sport model set.
+    An unknown league is a 404; a registered-but-unsynced league
+    returns the zero comparison structure.
     """
     if league and league != "afl":
         league_service = LeagueBacktestService()
         competition_id = await _league_competition_id(db, league)
         return await league_service.compare_season(
-            db, competition_id=competition_id, season_label=season
+            db,
+            competition_id=competition_id,
+            season_label=season,
+            models=_league_model_set(league),
         )
 
     year = _legacy_season_year(season)
@@ -377,6 +408,7 @@ async def get_seasons(
     if league and league != "afl":
         league_service = LeagueBacktestService()
         competition_id = await _league_competition_id(db, league)
+        # No models kwarg: the seasons payload is heuristic-free.
         return await league_service.get_available_seasons(
             db, competition_id=competition_id
         )
@@ -416,14 +448,17 @@ async def get_current_season(
 
     League: the same ``CurrentSeasonResponse`` shape from the multisport
     tables, with the season LABEL stringified (the label is
-    competition-relative, not a calendar year).  Unknown league → 404;
-    unsynced league → zeroed heuristics.
+    competition-relative, not a calendar year).  Rugby-league keys grade
+    the reduced per-sport model set.  Unknown league → 404; unsynced
+    league → zeroed heuristics.
     """
     if league and league != "afl":
         league_service = LeagueBacktestService()
         competition_id = await _league_competition_id(db, league)
         return await league_service.get_current_season_performance(
-            db, competition_id=competition_id
+            db,
+            competition_id=competition_id,
+            models=_league_model_set(league),
         )
 
     service = BacktestService()
