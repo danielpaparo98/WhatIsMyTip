@@ -1,19 +1,33 @@
 """League heuristics — result-derived tips on the multisport model (D3).
 
-The league-generic counterpart of the AFL heuristic engine: three
-heuristics computable PURELY from ``Event``/``EventParticipant``
-history — no per-league code, no external features (weather, injuries,
-odds), so any newly synced competition is backtestable immediately:
+The league-generic counterpart of the AFL heuristic engine: models
+computable PURELY from ``Event``/``EventParticipant`` history — no
+per-league code, no external features (weather, injuries, odds), so
+any newly synced competition is backtestable immediately:
 
 * ``home_advantage`` — always the home-side participant.
 * ``form``           — the side with more wins in its last 5 completed
   events (chronological); tie → home.
 * ``ladder``         — the side higher in the season-to-date standings
   (wins, then percentage); early-season tie → home.
+* ``elo``            — the higher result-derived Elo rating (start
+  1500, K=20, draws half); tie → home.
+* ``matchup``        — the side with more head-to-head wins (any
+  venue); tie → home.
+
+Per-sport model registry (P2-3): a sport's model set is a
+*registration* (:data:`SPORT_MODEL_SETS`), not a code branch.  AFL and
+any unregistered sport keep the D3 trio (:data:`LEAGUE_HEURISTICS`);
+rugby-league registers the reduced DB-only set (:data:`RUGBY_LEAGUE_MODELS`
+— elo, form, home_advantage, matchup).  The AFL-scrape-sourced models
+(weather_impact, injury_impact, player_form, value) are EXCLUDED for
+rugby-league — they have no NRL source — and :func:`require_league_model`
+rejects them with the repo-standard ``BackendServiceError``.
 
 Structure (code-quality standard): the pick rules are pure functions
 over frozen dataclasses — same input, same output, no DB — while
-:class:`LeagueHeuristicsService` is a thin shell that loads events,
+:class:`LeagueHeuristicsService` is a thin shell that loads the
+competition's sport (which selects the model set), loads events,
 delegates to the pure pipeline, and upserts onto ``league_tips``
 idempotently against the UNIQUE ``(event_id, heuristic)`` constraint.
 Correctness is never stored; grading happens at query time (subtask 04).
@@ -23,20 +37,23 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Optional, Sequence
+from typing import Any, Callable, Optional, Sequence
 
 from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
 from ..logger import get_logger
-from ..models import Event, EventParticipant, LeagueTip, Season
+from ..models import Competition, Event, EventParticipant, LeagueTip, Season
+from ..sport_context import RUGBY_LEAGUE
 
 logger = get_logger(__name__)
 
 HEURISTIC_HOME_ADVANTAGE = "home_advantage"
 HEURISTIC_FORM = "form"
 HEURISTIC_LADDER = "ladder"
+HEURISTIC_ELO = "elo"
+HEURISTIC_MATCHUP = "matchup"
 
 #: The D3 heuristic set, in canonical (persistence/grading) order.
 LEAGUE_HEURISTICS: tuple[str, ...] = (
@@ -45,8 +62,51 @@ LEAGUE_HEURISTICS: tuple[str, ...] = (
     HEURISTIC_LADDER,
 )
 
+#: The reduced rugby-league model set (Phase 5.2, P2-3): exactly the
+#: models computable from synced results alone — no AFL-calibrated ML
+#: artifacts, no new training pipeline.  Registered for the three
+#: national competitions (nrl / nrlw / origin, sport ``rugby-league``).
+RUGBY_LEAGUE_MODELS: tuple[str, ...] = (
+    HEURISTIC_ELO,
+    HEURISTIC_FORM,
+    HEURISTIC_HOME_ADVANTAGE,
+    HEURISTIC_MATCHUP,
+)
+
+#: Per-sport league-model registry (P2-3), keyed on ``sport_id``.
+#: ABSENT sports — AFL included — resolve to :data:`DEFAULT_MODEL_SET`,
+#: so this map only ever carries *additional* sports.  Adding a sport
+#: is a registration here, not an edit to the pipeline.
+SPORT_MODEL_SETS: dict[str, tuple[str, ...]] = {
+    RUGBY_LEAGUE.sport_id: RUGBY_LEAGUE_MODELS,
+}
+
+#: The default (bootstrap AFL / D3) set for any sport without an
+#: explicit registration — the historical behaviour, byte-identical.
+DEFAULT_MODEL_SET: tuple[str, ...] = LEAGUE_HEURISTICS
+
+#: AFL-scrape-sourced models with NO rugby-league equivalent (Phase 5.2
+#: scope decision, 2026-10-09): weather needs an NRL weather history,
+#: injuries/player stats need NRL scrapers, value needs odds.  None has
+#: a source yet, so requesting one for rugby-league is rejected cleanly
+#: instead of silently producing garbage.
+RUGBY_LEAGUE_EXCLUDED_MODELS: frozenset[str] = frozenset(
+    {
+        "weather_impact",
+        "injury_impact",
+        "player_form",
+        "value",
+    }
+)
+
 #: Form looks at each side's most recent completed events.
 FORM_WINDOW = 5
+
+#: Elo (result-derived, league pipeline): everyone starts level and a
+#: decided result moves K/2 points net between the sides; a draw moves
+#: nothing between even sides.
+ELO_START_RATING = 1500.0
+ELO_K_FACTOR = 20.0
 
 _MIN_TIME = datetime.min
 
@@ -261,46 +321,266 @@ def pick_ladder(
     return event.home_side_id
 
 
+def compute_elo_ratings(results: Sequence[CompletedEvent]) -> dict[int, float]:
+    """Pure result-derived Elo ratings per participant.
+
+    Everyone starts at :data:`ELO_START_RATING`; the walk applies the
+    logistic update (400-point scale) in chronological order — a
+    decided result shifts ``K/2`` points net between the sides, a draw
+    between even sides shifts nothing.  Undecided rows (missing scores
+    or sides) are skipped.  Sorting happens here so the output depends
+    only on the SET of results, never on the caller's row order.
+    """
+    ratings: dict[int, float] = {}
+    for event in sort_chronologically(results):
+        home, away = event.home_participant_id, event.away_participant_id
+        if home is None or away is None:
+            continue
+        home_score, away_score = event.home_score, event.away_score
+        if home_score is None or away_score is None:
+            continue
+        r_home = ratings.get(home, ELO_START_RATING)
+        r_away = ratings.get(away, ELO_START_RATING)
+        expected_home = 1.0 / (1.0 + 10.0 ** ((r_away - r_home) / 400.0))
+        if home_score > away_score:
+            actual_home = 1.0
+        elif home_score < away_score:
+            actual_home = 0.0
+        else:
+            actual_home = 0.5
+        ratings[home] = r_home + ELO_K_FACTOR * (actual_home - expected_home)
+        ratings[away] = r_away + ELO_K_FACTOR * (
+            (1.0 - actual_home) - (1.0 - expected_home)
+        )
+    return ratings
+
+
+def pick_elo(
+    event: CompletedEvent,
+    prior_results: Sequence[CompletedEvent],
+) -> Optional[int]:
+    """Side with the higher result-derived Elo rating; tie → home.
+
+    ``prior_results`` must contain only events BEFORE this one (the
+    no-look-ahead guarantee lives in the caller's chronological slice).
+    """
+    home, away = event.home_participant_id, event.away_participant_id
+    if home is None or away is None:
+        return None
+    ratings = compute_elo_ratings(prior_results)
+    if ratings.get(away, ELO_START_RATING) > ratings.get(home, ELO_START_RATING):
+        return event.away_side_id
+    return event.home_side_id
+
+
+def head_to_head_wins(
+    participant_a: int,
+    participant_b: int,
+    history: Sequence[CompletedEvent],
+) -> tuple[int, int]:
+    """Decided wins for ``(a, b)`` across meetings between the two.
+
+    Venue-blind (home/away ignored) and draw-blind — only decided
+    meetings between exactly these two participants count.
+    """
+    wins_a = 0
+    wins_b = 0
+    for event in history:
+        home, away = event.home_participant_id, event.away_participant_id
+        if home is None or away is None:
+            continue
+        if {home, away} != {participant_a, participant_b}:
+            continue
+        winner = _winner_participant_id(event)
+        if winner == participant_a:
+            wins_a += 1
+        elif winner == participant_b:
+            wins_b += 1
+    return wins_a, wins_b
+
+
+def pick_matchup(
+    event: CompletedEvent,
+    prior_results: Sequence[CompletedEvent],
+) -> Optional[int]:
+    """Side with more head-to-head wins (any venue); tie → home.
+
+    ``prior_results`` must contain only events BEFORE this one.  Draws
+    between the pair never count as wins, so a pair that has only ever
+    drawn resolves to the home-side default.
+    """
+    home, away = event.home_participant_id, event.away_participant_id
+    if home is None or away is None:
+        return None
+    wins_home, wins_away = head_to_head_wins(home, away, prior_results)
+    if wins_away > wins_home:
+        return event.away_side_id
+    return event.home_side_id
+
+
+# ---------------------------------------------------------------------------
+# Per-sport model registry (P2-3) — name → pure pick function.
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class LeagueModelSpec:
+    """One result-derived league model in the registry.
+
+    ``pick`` receives the target event plus ONE history slice — the
+    full chronological prefix when ``spans_seasons`` (form/elo/matchup:
+    a team's recent results may reach into last season) or the
+    same-season prefix otherwise (ladder: standings never cross
+    seasons).
+    """
+
+    name: str
+    pick: Callable[[CompletedEvent, Sequence[CompletedEvent]], Optional[int]]
+    spans_seasons: bool
+
+
+LEAGUE_MODELS: dict[str, LeagueModelSpec] = {
+    spec.name: spec
+    for spec in (
+        LeagueModelSpec(
+            HEURISTIC_HOME_ADVANTAGE,
+            lambda event, _history: pick_home_advantage(event),
+            spans_seasons=False,
+        ),
+        LeagueModelSpec(HEURISTIC_FORM, pick_form, spans_seasons=True),
+        LeagueModelSpec(HEURISTIC_LADDER, pick_ladder, spans_seasons=False),
+        LeagueModelSpec(HEURISTIC_ELO, pick_elo, spans_seasons=True),
+        LeagueModelSpec(HEURISTIC_MATCHUP, pick_matchup, spans_seasons=True),
+    )
+}
+
+
+def _validate_registry() -> None:
+    """Fail fast on a registration referencing an unregistered pick."""
+    for sport_id, names in SPORT_MODEL_SETS.items():
+        unknown = [name for name in names if name not in LEAGUE_MODELS]
+        if unknown:
+            raise ValueError(
+                f"Sport {sport_id!r} registers unknown league models: {unknown}"
+            )
+
+
+_validate_registry()
+
+
+def league_model_set_for_sport(sport_id: Optional[str]) -> tuple[str, ...]:
+    """The league-model set for ``sport_id``.
+
+    Registered sports get their subset; AFL and every unregistered
+    sport get :data:`DEFAULT_MODEL_SET` — the historical D3 behaviour,
+    byte-identical for every existing competition.
+    """
+    if sport_id is None:
+        return DEFAULT_MODEL_SET
+    return SPORT_MODEL_SETS.get(sport_id, DEFAULT_MODEL_SET)
+
+
+def _raise_model_unavailable(model: str, sport_id: Optional[str]) -> None:
+    """Raise ``BackendServiceError`` with the repo-standard shape.
+
+    The app-layer import is deferred: ``packages.shared`` stays free of
+    ``app.*`` imports at module load time (the app imports shared,
+    never the reverse) — the same pattern as ``national_leagues``.
+    """
+    from app.core.exceptions import BackendServiceError
+
+    available = list(league_model_set_for_sport(sport_id))
+    raise BackendServiceError(
+        status_code=400,
+        code="model_unavailable_for_sport",
+        message=(
+            f"Model '{model}' is not available for "
+            f"{sport_id or 'this sport'} — it requires AFL data sources "
+            f"with no NRL equivalent. Available models: "
+            f"{', '.join(available)}"
+        ),
+        details={
+            "model": model,
+            "sport_id": sport_id,
+            "available": available,
+        },
+    )
+
+
+def require_league_model(model: str, *, sport_id: Optional[str]) -> tuple[str, ...]:
+    """Resolve ``model`` against ``sport_id``'s league-model set.
+
+    Returns the sport's set when the model is offered.  Raises
+    ``ValueError`` for names unknown to the result-derived registry
+    entirely, and the repo-standard ``BackendServiceError`` (400
+    ``model_unavailable_for_sport``) for known-but-excluded models —
+    pinned for the four AFL-scrape models under rugby-league.
+    """
+    if sport_id == RUGBY_LEAGUE.sport_id and model in RUGBY_LEAGUE_EXCLUDED_MODELS:
+        _raise_model_unavailable(model, sport_id)
+    if model not in LEAGUE_MODELS:
+        raise ValueError(
+            f"Unknown league model {model!r} — result-derived registry: "
+            f"{sorted(LEAGUE_MODELS)}"
+        )
+    models = league_model_set_for_sport(sport_id)
+    if model not in models:
+        _raise_model_unavailable(model, sport_id)
+    return models
+
+
 def compute_event_picks(
     event: CompletedEvent,
-    form_history: Sequence[CompletedEvent],
-    ladder_history: Sequence[CompletedEvent],
+    prior_history: Sequence[CompletedEvent],
+    season_history: Sequence[CompletedEvent],
+    *,
+    models: Sequence[str] = LEAGUE_HEURISTICS,
 ) -> list[TipPick]:
-    """The three heuristic tips for one completed event.
+    """The registered models' tips for one completed event.
 
-    A drawn event persists draw-no-pick tips (NULL selection) for every
-    heuristic; an event without both sides yields no tips at all, and
-    a heuristic that cannot resolve a side yields no tip of its own.
+    ``models`` selects the per-sport set (P2-3) — the D3 default keeps
+    the historical behaviour byte-identical.  ``prior_history`` is the
+    cross-season chronological prefix (spanning models: form, elo,
+    matchup); ``season_history`` the same-season prefix (ladder).  A
+    drawn event persists draw-no-pick tips (NULL selection) for every
+    model in the set; an event without both sides yields no tips at
+    all, and a model that cannot resolve a side yields no tip of its
+    own.
     """
     if event.home_side_id is None or event.away_side_id is None:
         return []
     if is_drawn(event):
-        return [TipPick(event.event_id, name, None) for name in LEAGUE_HEURISTICS]
-    candidates: tuple[tuple[str, Optional[int]], ...] = (
-        (HEURISTIC_HOME_ADVANTAGE, pick_home_advantage(event)),
-        (HEURISTIC_FORM, pick_form(event, form_history)),
-        (HEURISTIC_LADDER, pick_ladder(event, ladder_history)),
-    )
-    return [
-        TipPick(event.event_id, name, side) for name, side in candidates if side is not None
-    ]
+        return [TipPick(event.event_id, name, None) for name in models]
+    picks: list[TipPick] = []
+    for name in models:
+        spec = LEAGUE_MODELS[name]
+        history = prior_history if spec.spans_seasons else season_history
+        side = spec.pick(event, history)
+        if side is not None:
+            picks.append(TipPick(event.event_id, name, side))
+    return picks
 
 
-def compute_all_picks(events: Sequence[CompletedEvent]) -> list[TipPick]:
+def compute_all_picks(
+    events: Sequence[CompletedEvent],
+    *,
+    models: Sequence[str] = LEAGUE_HEURISTICS,
+) -> list[TipPick]:
     """Tips for every completed event across the seasons being tipped.
 
     ``events`` spans the full completed-event history of the selected
-    seasons.  Each event's evidence is strictly PRIOR: form reads the
-    chronological prefix across seasons (a team's last 5 may reach
-    back into last season); ladder reads the prefix scoped to the
-    event's own season — no look-ahead, no cross-season standings.
+    seasons.  Each event's evidence is strictly PRIOR: spanning models
+    (form, elo, matchup) read the chronological prefix across seasons;
+    season-scoped models (ladder) read the prefix scoped to the event's
+    own season — no look-ahead, no cross-season standings.  ``models``
+    selects the per-sport set; the default is the D3 trio.
     """
     history = sort_chronologically(events)
     picks: list[TipPick] = []
     for index, event in enumerate(history):
         prior = history[:index]
         same_season = [e for e in prior if e.season_id == event.season_id]
-        picks.extend(compute_event_picks(event, prior, same_season))
+        picks.extend(compute_event_picks(event, prior, same_season, models=models))
     return picks
 
 
@@ -358,7 +638,15 @@ class LeagueHeuristicsService:
     async def generate_for_competition(
         self, db: AsyncSession, *, competition_id: int
     ) -> dict[str, Any]:
-        """Compute and persist the competition's tips; returns a summary."""
+        """Compute and persist the competition's tips; returns a summary.
+
+        The competition's ``sport_id`` selects the per-sport model set
+        (P2-3): rugby-league competitions (nrl / nrlw / origin) get the
+        reduced DB-only set; AFL and unresolvable competitions keep the
+        D3 trio — the historical behaviour, byte-identical.
+        """
+        sport_id = await self._fetch_sport_id(db, competition_id)
+        models = league_model_set_for_sport(sport_id)
         seasons = await self._fetch_seasons(db, competition_id)
         selected = select_tip_seasons(seasons)
         if not selected:
@@ -369,7 +657,7 @@ class LeagueHeuristicsService:
             return _summary(competition_id, [], 0, 0, 0)
 
         events = await self._fetch_completed_events(db, [s.id for s in selected])
-        picks = compute_all_picks(events)
+        picks = compute_all_picks(events, models=models)
         inserted, updated = await self._upsert_tips(
             db,
             picks,
@@ -386,6 +674,25 @@ class LeagueHeuristicsService:
         return summary
 
     # -- fetchers (patched out in unit tests) ---------------------------
+
+    @staticmethod
+    async def _fetch_sport_id(
+        db: AsyncSession, competition_id: int
+    ) -> Optional[str]:
+        """The competition's sport id (``None`` when there is no row).
+
+        The registry lookup defaults unknown/missing sports to the D3
+        set, so an unresolvable competition keeps the historical
+        behaviour rather than failing the pass.
+        """
+        sport = (
+            await db.execute(
+                select(Competition.sport_id).where(
+                    Competition.id == competition_id
+                )
+            )
+        ).scalar_one_or_none()
+        return None if sport is None else str(sport)
 
     @staticmethod
     async def _fetch_seasons(

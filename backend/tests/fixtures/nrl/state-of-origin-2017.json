@@ -1,0 +1,26 @@
+[
+  {
+    "MatchNumber": 1,
+    "RoundNumber": 1,
+    "DateUtc": "2017-05-31 10:00:00Z",
+    "Location": "Suncorp Stadium",
+    "HomeTeam": "Maroons",
+    "AwayTeam": "Blues",
+    "Group": "State of Origin",
+    "HomeTeamScore": 28,
+    "AwayTeamScore": 4,
+    "Winner": "Maroons"
+  },
+  {
+    "MatchNumber": 2,
+    "RoundNumber": 2,
+    "DateUtc": "2017-06-21 10:00:00Z",
+    "Location": "ANZ Stadium",
+    "HomeTeam": "Blues",
+    "AwayTeam": "Maroons",
+    "Group": "State of Origin",
+    "HomeTeamScore": 18,
+    "AwayTeamScore": 14,
+    "Winner": "Blues"
+  }
+]

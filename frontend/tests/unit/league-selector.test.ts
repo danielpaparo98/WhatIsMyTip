@@ -44,7 +44,7 @@ afterEach(() => {
 })
 
 describe('LEAGUES registry', () => {
-  it('starts with AFL followed by the state leagues', () => {
+  it('starts with AFL, then the state leagues, then the rugby-league competitions', () => {
     expect(LEAGUES.map((l) => l.key)).toEqual([
       'afl',
       'wafl',
@@ -57,6 +57,10 @@ describe('LEAGUES registry', () => {
       'qaflw',
       'nwfl',
       'sfl',
+      // NRL-EXPANSION (nrl-expansion-07): appended, never reordered.
+      'nrl',
+      'nrlw',
+      'origin',
     ])
   })
 

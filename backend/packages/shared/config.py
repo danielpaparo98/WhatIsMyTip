@@ -149,7 +149,8 @@ class Settings(BaseSettings):
         default_factory=lambda: f"{datetime.now().year - 16}-{datetime.now().year - 1}",
     )
     historic_refresh_regenerate_tips: bool = False
-    historical_refresh_timeout_seconds: int = 900  # 15 minutes (safety cap for in-process scheduler)
+    # 15 minutes (safety cap for the in-process scheduler).
+    historical_refresh_timeout_seconds: int = 900
 
     # Model Retrain (weekly ``weighted_tip`` scikit-learn refit)
     # The cron expression is interpreted in the app's local timezone
@@ -184,6 +185,19 @@ class Settings(BaseSettings):
     # fresh for the day's predictions.
     league_sync_enabled: bool = True
     league_sync_cron: str = "30 4 * * *"  # daily 04:30 app-tz
+
+    # Rugby-League Sync (Phase 5.2 expansion): the daily-sync job also
+    # sweeps every "live" league in ``NATIONAL_LEAGUES`` (NRL, NRLW and
+    # State of Origin — see
+    # packages/shared/ingestion/national_leagues.py).  There is no
+    # separate cron entry: the pass rides the existing daily-sync
+    # schedule, and the FixtureDownload provider's shared 24h TTL cache
+    # keeps it to at most one fetch per slug per day.  The in-season
+    # gate (month + hour) is evaluated in the rugby-league
+    # SportContext's own cron timezone (Australia/Brisbane) with its
+    # own off-season months (Nov-Feb); the reduced-window hours are
+    # the shared daily_sync_off_season_* settings below.
+    rugby_league_sync_enabled: bool = True
 
     # Retry Configuration
     job_timeout_seconds: int = 3600
@@ -230,7 +244,7 @@ class Settings(BaseSettings):
         Returns an empty list for empty/invalid inputs.
         """
         import json
-        
+
         if isinstance(v, str):
             # Handle empty string or whitespace
             if not v.strip():
@@ -245,11 +259,11 @@ class Settings(BaseSettings):
             except json.JSONDecodeError:
                 # Fall back to CSV parsing like cors_origins
                 return [email.strip() for email in v.split(",") if email.strip()]
-        
+
         # If it's already a list, ensure all elements are strings
         if isinstance(v, list):
             return [str(item) for item in v]
-        
+
         return []
 
     # Monitoring Configuration
@@ -301,7 +315,7 @@ class Settings(BaseSettings):
         if self.environment != "production":
             return self
 
-        _LOCALHOST_DEFAULTS = (
+        localhost_defaults = (
             "postgresql+asyncpg://localhost/whatismytip",
             "postgresql://localhost/whatismytip",
         )
@@ -309,16 +323,21 @@ class Settings(BaseSettings):
         errors: list[str] = []
 
         # DATABASE_URL — the single most common deployment blocker.
-        if not self.database_url or self.database_url in _LOCALHOST_DEFAULTS:
+        if not self.database_url or self.database_url in localhost_defaults:
             errors.append(
                 "DATABASE_URL is unset or still pointing at localhost in "
                 "production. Set DATABASE_URL to the managed Postgres DSN "
                 "(e.g. postgresql+asyncpg://user:pass@host:25060/dbname)."
             )
         elif "+asyncpg" not in self.database_url:
+            got_driver = (
+                self.database_url.split("+")[0]
+                if "+" in self.database_url
+                else self.database_url
+            )
             errors.append(
                 "DATABASE_URL must use the +asyncpg driver "
-                f"(got: {self.database_url.split('+')[0] if '+' in self.database_url else self.database_url})."
+                f"(got: {got_driver})."
             )
 
         # ADMIN_API_KEY — must be high-entropy in production.

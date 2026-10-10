@@ -1,9 +1,12 @@
-// Per-club brand colours for the non-AFL leagues (state-league rollout).
+// Per-club brand colours for the non-AFL leagues (state-league rollout
+// + the rugby-league competitions from nrl-expansion-07).
 //
 // LEAGUE_COLORS maps a backend league key (packages/shared/ingestion/
-// state_leagues.py STATE_LEAGUES) → club name → {primary, secondary}.
+// state_leagues.py STATE_LEAGUES + national_leagues.py
+// NATIONAL_LEAGUES) → club name → {primary, secondary}.
 // Keys are the raw feed club names (Sportix "Peel Thunder", AFL
-// platform "Box Hill Hawks", …); leagueColorFor matches
+// platform "Box Hill Hawks", the FixtureDownload NRL nicknames
+// "Broncos"/"Wests Tigers", …); leagueColorFor matches
 // case/whitespace-insensitively so feed drift stays harmless.
 //
 // These are HAND-CURATED from the clubs' official branding — logos are
@@ -14,6 +17,16 @@
 //
 // AFL-affiliated entries reuse the palette from useTeamColors.ts so
 // the reserves/VFL sides match their parent clubs exactly.
+//
+// RUGBY-LEAGUE (nrl-expansion-07): no club logo assets exist yet — the
+// identity path is COLOR-ONLY by design.  The league pages pass the
+// league key to useTeamIdentity.logoFor/colorFor, which resolves these
+// palettes into generated initials badges (club colours + initials),
+// so every NRL club and Origin side renders a branded crest without a
+// PNG on disk.  Keys are the backend-canonical feed nicknames
+// (league_seeding.CLUBS / ORIGIN_TEAMS) — 'Bulldogs' here is the NRL
+// club, NOT the AFL 'Western Bulldogs' (different sport, disjoint
+// league keys, so the maps never collide).
 
 import { getTeamColors } from './useTeamColors'
 import { useTeamLogos } from './useTeamLogos'
@@ -181,6 +194,59 @@ const TAS_SOUTH_CLUBS: LeaguePalette = {
   'New Norfolk': { primary: '#2B4C97', secondary: '#FFFFFF' },
 }
 
+// ---------------------------------------------------------------------------
+// Rugby league (nrl-expansion-07) — hand-curated from the clubs'
+// official branding / Wikipedia infoboxes (best effort; TODO(colors)
+// marks shades that resisted sourcing).  Keys are the FixtureDownload
+// feed nicknames the backend seeds canonically (league_seeding.CLUBS).
+// ---------------------------------------------------------------------------
+
+const NRL_CLUBS: LeaguePalette = {
+  // Broncos maroon/gold — Wikipedia infobox values.
+  Broncos: { primary: '#671E1F', secondary: '#FBB800' },
+  // Canterbury-Bankstown "blue and white".
+  Bulldogs: { primary: '#00539F', secondary: '#FFFFFF' },
+  // Cowboys navy/gold — Wikipedia infobox values.
+  Cowboys: { primary: '#14264B', secondary: '#FFD100' },
+  // TODO(colors): The Dolphins red/white — 2022 club, shade unverified.
+  Dolphins: { primary: '#C8102E', secondary: '#FFFFFF' },
+  // St George Illawarra "Dragons red" over white.
+  Dragons: { primary: '#D71920', secondary: '#FFFFFF' },
+  // Parramatta blue/gold — Wikipedia infobox values.
+  Eels: { primary: '#0072BC', secondary: '#FFB81C' },
+  // Knights blue/red — Wikipedia infobox values.
+  Knights: { primary: '#122F67', secondary: '#EE3124' },
+  // Penrith black/teal (gold trim) — Wikipedia "black, teal, gold".
+  Panthers: { primary: '#000000', secondary: '#00A19B' },
+  // South Sydney cardinal/myrtle — Wikipedia infobox values.
+  Rabbitohs: { primary: '#C8102E', secondary: '#00594C' },
+  // Canberra "green machine" over white.
+  Raiders: { primary: '#007A33', secondary: '#FFFFFF' },
+  // Sydney Roosters navy/red/white tri-colour.
+  Roosters: { primary: '#0C2340', secondary: '#D71920' },
+  // TODO(colors): Manly maroon shade unverified (maroon/white documented).
+  'Sea Eagles': { primary: '#76232F', secondary: '#FFFFFF' },
+  // Cronulla black/white with sky-blue trim.
+  Sharks: { primary: '#000000', secondary: '#00AEEF' },
+  // Melbourne Storm purple — commonly published brand value.
+  Storm: { primary: '#262161', secondary: '#FFFFFF' },
+  // TODO(colors): Gold Coast sky-blue shade unverified (blue/gold documented).
+  Titans: { primary: '#47C1E8', secondary: '#FFD100' },
+  // TODO(colors): Warriors black/stone-grey shade unverified.
+  Warriors: { primary: '#000000', secondary: '#7C878E' },
+  // Wests Tigers black/orange — the merged club's colours.
+  'Wests Tigers': { primary: '#000000', secondary: '#F47920' },
+}
+
+// State of Origin representative sides (fresh squads each series — not
+// club identities).  TODO(colors): representative-brand shades, best effort.
+const ORIGIN_CLUBS: LeaguePalette = {
+  // NSW Blues sky blue.
+  Blues: { primary: '#00A3E0', secondary: '#0C2F6B' },
+  // QLD Maroons maroon.
+  Maroons: { primary: '#741534', secondary: '#FFFFFF' },
+}
+
 export const LEAGUE_COLORS: Record<string, LeaguePalette> = {
   wafl: WAFL_CLUBS,
   waflw: WAFL_CLUBS,
@@ -207,6 +273,12 @@ export const LEAGUE_COLORS: Record<string, LeaguePalette> = {
   },
   nwfl: TAS_MAN_CLUBS,
   sfl: TAS_SOUTH_CLUBS,
+  // NRL-EXPANSION (nrl-expansion-07): rugby-league competitions —
+  // NRLW reuses the same club identities (no women-suffixed
+  // duplicates), exactly as the backend seeds them.
+  nrl: NRL_CLUBS,
+  nrlw: NRL_CLUBS,
+  origin: ORIGIN_CLUBS,
 }
 
 /**

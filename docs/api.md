@@ -126,8 +126,8 @@ deprecation window (P3-2 / ADR 0001).
 
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
-| `GET` | `/api/events` | public | List events for a competition season, joined with their participants (query: `competition` id, `season` label e.g. `2026`, optional `round`, `limit` default 100). 404 when the competition/season is unknown. |
-| `GET` | `/api/events/{slug}` | public | Single event with its participants. 404 when absent. |
+| `GET` | `/api/events` | public | List events for a competition season, joined with their participants (query: `competition` id, `season` label e.g. `2026`, optional `league` key, optional `round`, `limit` default 100). 404 when the competition/season is unknown. |
+| `GET` | `/api/events/{slug}` | public | Single event with its participants (the slug is globally unique — no league scoping). 404 when absent. |
 
 Serves the sport-generic 0010 `events`/`event_participants` tables (ADR
 0001) so multi-league data is reachable.  Discover valid
@@ -135,10 +135,25 @@ Serves the sport-generic 0010 `events`/`event_participants` tables (ADR
 `/api/games` routes remain available unchanged during the deprecation
 window.
 
+**`league` param (additive, Phase 5.2)**: a registered league key
+resolves the competition id for you — `?league=nrl&season=2026` needs no
+`competition` id.  Keys come from the league registries and are matched
+case-sensitively: the rugby-league national competitions `nrl`,
+`nrlw`, `origin` plus the ten state leagues (`wafl`, `waflw`, `vfl`,
+`vflw`, `sanfl`, `aflw`, `qafl`, `qaflw`, `nwfl`, `sfl`).  Absent,
+empty, or `afl` keeps the legacy behaviour unchanged: `competition`
+(required integer) + `season`.  An unknown key is a 404 in the standard
+error shape (`{"code": "not_found", ...}`, same contract as the
+backtest API's league dispatch); a registered-but-not-yet-synced league
+returns the same 404 as any unknown competition.  The response shape is
+identical either way — the param only changes how the competition is
+selected.
+
 **Example**:
 
 ```bash
 curl 'http://localhost:8000/api/events?competition=1&season=2026&round=1'
+curl 'http://localhost:8000/api/events?league=nrl&season=2026'
 curl http://localhost:8000/api/events/wafl-abc12345
 ```
 
@@ -237,6 +252,7 @@ no home/away sides (races, field events) are skipped.
 | `GET` | `/api/tips` | public | List tips (filter: `heuristic`, `season`, `round`, `limit`) |
 | `GET` | `/api/tips/games-with-tips` | public | Games with their best-bet tips for a round (filter: `season`, `round`, `heuristic` default `best_bet`) |
 | `GET` | `/api/tips/{heuristic}` | public | Tips for one heuristic (`best_bet` \| `yolo` \| `weighted_tip` \| `boosted_tip`); filter: `limit` |
+| `GET` | `/api/tips/league` | public | Rugby-league model tips for one event, AI-explained (query: `league` = `nrl` \| `nrlw` \| `origin`, `slug`) |
 | `POST` | `/api/tips/generate` | admin (rate-limited) | Generate tips for a round. Body: `season`, `round_id`, `heuristics` (optional, comma-separated), `regenerate` (default `false`). See [`app/api/tips.py`](../backend/app/api/tips.py:261). |
 | `POST` | `/api/tips/explanations/generate` | public | Generate AI explanations for a round |
 
@@ -248,25 +264,70 @@ curl -X POST 'http://localhost:8000/api/tips/generate?season=2025&round=1'
 curl -X POST 'http://localhost:8000/api/tips/generate?season=2025&round=1&heuristics=best_bet,yolo&regenerate=true'
 ```
 
+**`GET /api/tips/league` (additive, Phase 5.2)**: returns the reduced
+rugby-league model set — `elo`, `form`, `home_advantage`, `matchup` — for a
+single event. Each tip names its model, the picked side (`null` = predicted
+draw), and its AI explanation; explanations are generated through the shared
+OpenRouter pipeline, cached under the rugby-league cache namespace, and
+degrade to `null` (never an error) when the AI layer fails. Errors in the
+standard shape: `404 not_found` for an unknown league key, an unknown slug,
+or a slug belonging to another competition.
+
+```bash
+curl 'http://localhost:8000/api/tips/league?league=nrl&slug=<event-slug>'
+```
+
 ### Backtesting
 
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
 | `GET` | `/api/backtest` | public | List backtest results (filter: `heuristic`, `season`, `limit`) |
-| `GET` | `/api/backtest/seasons` | public | List seasons with backtest data |
-| `GET` | `/api/backtest/current-season` | public | Current-season performance across all heuristics |
+| `GET` | `/api/backtest/seasons` | public | List seasons with backtest data (optional `league` key) |
+| `GET` | `/api/backtest/current-season` | public | Current-season performance across all heuristics (optional `league` key) |
 | `GET` | `/api/backtest/table` | public | Per-round table data (query: `season`) |
-| `GET` | `/api/backtest/compare` | public | Compare all heuristics for a season (query: `season`) |
+| `GET` | `/api/backtest/compare` | public | Compare all heuristics for a season (query: `season`, optional `league` key) |
 | `GET` | `/api/backtest/model-compare` | public | Compare individual ML models (query: `season`, optional `models` list) |
 | `GET` | `/api/backtest/active-model` | public | Active weighted-tip model version + its learned coefficients |
 | `GET` | `/api/backtest/active-boosted-model` | public | Active boosted-tip (XGBoost) version + mean \|SHAP\| feature importances |
 | `POST` | `/api/backtest/run` | admin | Trigger a backtest. Query: `season` (required), `round` (optional), `heuristic` (optional) |
+
+**`league` param (additive, Phase 5.2)**: `/seasons`, `/current-season`
+and `/compare` accept an optional `league` key, matched case-sensitively:
+the rugby-league national competitions `nrl`, `nrlw`, `origin` plus the
+ten state leagues (`wafl`, `waflw`, `vfl`, `vflw`, `sanfl`, `aflw`,
+`qafl`, `qaflw`, `nwfl`, `sfl`).  Absent, empty, or `afl` keeps the
+legacy AFL behaviour byte-identical (`season` stays a calendar year on
+`/compare`).  An unknown key is a 404 in the standard error shape
+(`{"code": "not_found", ...}`); a registered-but-not-yet-synced league
+degrades to graceful zero payloads (empty `available_years` / zeroed
+heuristics) rather than an error.  On `/compare` the league path takes
+`season` as the season LABEL string (e.g. `2024`).
+
+**Rugby-league backtests** (`league=nrl|nrlw|origin`) grade the
+**reduced model set only** — `elo`, `form`, `home_advantage`, `matchup`
+— over the venue-alias-normalized 2017+ history: the historic backfill
+resolves every sponsor-branded venue to its canonical ground at load
+(the Sharks' Cronulla ground is `Shark Park` across all sponsor eras),
+so the results the backtest reads are venue-stable across sponsor
+drift.  The `ladder` model never appears in a rugby-league payload.
+
+**Rugby-league grading semantics (draws + no odds)**: rugby league has
+draws and no odds source, and the grading honours both.  A drawn match
+has no winner — every tip on it grades **incorrect** (it stays in the
+accuracy denominator) while settlement is a **push** ($0, stake
+refunded — never a loss).  With no bookmaker prices, every tip settles
+at the representative $1.90 fallback and `odds_coverage` reports `0.0`;
+the profit columns keep the AFL payload shape (the API surface is
+additive-only), but read them alongside `odds_coverage` — they are
+representative-price simulations, not real market P&L.
 
 **Example**:
 
 ```bash
 curl -X POST -H "X-API-Key: $ADMIN_API_KEY" 'http://localhost:8000/api/backtest/run?season=2024'
 curl -X POST -H "X-API-Key: $ADMIN_API_KEY" 'http://localhost:8000/api/backtest/run?season=2024&round=5'
+curl 'http://localhost:8000/api/backtest/current-season?league=nrl'
+curl 'http://localhost:8000/api/backtest/compare?league=nrl&season=2024'
 ```
 
 ### Admin
@@ -365,6 +426,7 @@ const tips = await fetch('http://localhost:8000/api/tips?heuristic=best_bet&limi
 | Source | Use | Config |
 |--------|-----|--------|
 | [Squiggle API](https://api.squiggle.com.au/) | AFL fixtures, results, team info | `SQUIGGLE_API_BASE`, `SQUIGGLE_CONTACT_EMAIL` |
+| [FixtureDownload](https://fixturedownload.com/) | Rugby-league fixtures + results (NRL, NRLW, State of Origin; daily refresh, shared 24h provider cache) | n/a — open feed, no key |
 | [OpenRouter](https://openrouter.ai/) | AI-powered tip explanations | `OPENROUTER_API_KEY`, `OPENROUTER_MODEL` |
 | AFLTables / FootyWire | Historical player stats, injuries (via scraper) | n/a — internal |
 | Open-Meteo | Match-day weather (via scraper) | n/a — internal |

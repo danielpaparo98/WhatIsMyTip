@@ -1,6 +1,6 @@
 # WhatIsMyTip.com
 
-AI-powered AFL tipping with smart heuristics and data-driven predictions.
+AI-powered AFL and rugby-league tipping with smart heuristics and data-driven predictions.
 
 ![License](https://img.shields.io/badge/license-MIT-blue.svg)
 ![Python](https://img.shields.io/badge/python-3.12+-green.svg)
@@ -11,24 +11,27 @@ AI-powered AFL tipping with smart heuristics and data-driven predictions.
 
 ## Overview
 
-WhatIsMyTip is a comprehensive AFL tipping application that combines machine learning models, heuristic strategies, and AI-powered explanations to provide accurate footy predictions. Built with modern technologies, it offers a single FastAPI container backend on DigitalOcean App Platform (with an in-process APScheduler for cron jobs) and a sleek frontend with Nuxt 4.
+WhatIsMyTip is a multi-league tipping application — the AFL plus rugby-league (**NRL**, **NRLW**, and **State of Origin**) — that combines machine learning models, heuristic strategies, and AI-powered explanations to provide accurate match predictions. Built with modern technologies, it offers a single FastAPI container backend on DigitalOcean App Platform (with an in-process APScheduler for cron jobs) and a sleek frontend with Nuxt 4.
 
 ## Features
 
 ### Core Features
 
 - **Multiple Picking Heuristics**: Choose from different prediction strategies
-  - **Best Bet**: Conservative picks with high confidence
-  - **YOLO**: High-risk, high-reward selections
+  - **Boosted Tip**: XGBoost model tip with SHAP-backed explanations — the flagship pick
   - **Weighted Tip**: Data-driven tip combining model predictions with learned weights, retrained weekly
+  - **YOLO**: High-risk, high-reward selections
+  - *Best Bet* is retired from tip generation; historical tips remain queryable
 
 - **Margin Calculations**: Predicted winning margins for each game
 
 - **AI-Powered Explanations**: Get insights on why certain picks were made using OpenRouter (model configurable via `OPENROUTER_MODEL`)
 
-- **Backtesting**: Analyze historical performance of different heuristics
+- **Multi-League Support**: AFL plus the three rugby-league competitions — NRL, NRLW, and State of Origin — each with its own page (`/nrl`, `/nrlw`, `/origin`) and league-scoped APIs (`league=nrl|nrlw|origin`)
 
-- **Real-time Data**: Powered by the Squiggle API
+- **Backtesting**: Analyze historical performance of different heuristics, per league
+
+- **League Data Sync**: AFL via the Squiggle API; rugby-league fixtures and results via FixtureDownload (daily refresh — no live in-play scores)
 
 ### ML Models
 
@@ -41,6 +44,10 @@ WhatIsMyTip is a comprehensive AFL tipping application that combines machine lea
 - **Matchup Model**: Leverage head-to-head historical performance between teams
 - **Player Form Model**: Incorporate individual player form metrics
 
+The rugby-league competitions run a reduced DB-only model set — **Elo**, **Form**,
+**Home Advantage**, **Matchup** — since the AFL-only sources behind the other
+models (weather, injuries, player stats, odds) have no NRL equivalent.
+
 ### Technical Features
 
 - **Monochrome Bold Typographic Design**: Clean, modern UI with high contrast
@@ -48,7 +55,7 @@ WhatIsMyTip is a comprehensive AFL tipping application that combines machine lea
 - **Async Database Operations**: PostgreSQL with SQLAlchemy (asyncpg driver)
 - **Redis Caching**: 3-tier TTL cache (60s / 300s / 3600s) shared across all routes
 - **Container-based**: Single FastAPI process per container, deployed to DigitalOcean App Platform
-- **In-process APScheduler**: 5 scheduled jobs (daily-sync, match-completion, tip-generation, historic-refresh, model-retrain) running inside the API process
+- **In-process APScheduler**: 8 scheduled jobs (daily-sync, match-completion, tip-generation, historic-refresh, model-retrain, supplementary-sync, league-sync, odds-sync) running inside the API process. Since Phase 5.2 the `daily-sync` job carries a rugby-league section (NRL/NRLW/Origin) gated to the Brisbane timezone with a Nov–Feb off-season and per-league failure isolation.
 - **Rate Limiting**: 60 requests per minute per IP
 - **CORS Support**: Configurable cross-origin requests
 - **No GPU Required**: Cost-efficient AI explanations using CPU
@@ -76,6 +83,7 @@ WhatIsMyTip is a comprehensive AFL tipping application that combines machine lea
 ### AI & Data
 - **OpenRouter**: AI-powered explanation generation
 - **Squiggle API**: AFL data source
+- **FixtureDownload**: Rugby-league data source (NRL, NRLW, State of Origin JSON feeds)
 - **AFLTables / FootyWire**: Historical AFL data (injury, player, matchup data)
 - **Open-Meteo**: Match-day weather data
 
@@ -225,6 +233,9 @@ REDIS_URL=redis://localhost:6379/0
 SQUIGGLE_API_BASE=https://api.squiggle.com.au
 SQUIGGLE_CONTACT_EMAIL=contact@whatismytip.com
 
+# Rugby-league daily sync (rides the daily-sync schedule; AFL section unaffected)
+RUGBY_LEAGUE_SYNC_ENABLED=true
+
 # OpenRouter (for explanation generation)
 OPENROUTER_API_KEY=your_openrouter_api_key_here
 OPENROUTER_MODEL=deepseek/deepseek-v4-flash
@@ -275,7 +286,7 @@ whatismytip/
 │   ├── docker-compose.yml # Local dev (PostgreSQL + Redis)
 │   ├── pyproject.toml     # Python project configuration and dependencies
 │   ├── app/               # FastAPI app (routers, middleware, scheduler)
-│   │   ├── api/           # HTTP routers (games, tips, backtest, admin, health)
+│   │   ├── api/           # HTTP routers (games, tips, backtest, events, sports, teams, admin, health)
 │   │   ├── core/          # Lifespan, middleware, scheduler, security, rate limit
 │   │   └── cron/          # Job classes bound to the in-process APScheduler
 │   ├── packages/
@@ -337,7 +348,7 @@ bun run build
 
 ## Data Source
 
-This project uses the [Squiggle API](https://api.squiggle.com.au/) for AFL data including fixtures, results, and team information. Special thanks to the Squiggle team for providing this valuable resource.
+This project uses the [Squiggle API](https://api.squiggle.com.au/) for AFL data including fixtures, results, and team information. Rugby-league fixtures and results (NRL, NRLW, State of Origin) come from the open [FixtureDownload](https://fixturedownload.com/) JSON feeds. Special thanks to both providers for making these resources available.
 
 ## AI Explanations
 
@@ -370,6 +381,7 @@ Contributions are welcome! Please read [CONTRIBUTING.md](CONTRIBUTING.md) for de
 - [ ] Real-time notifications
 - [ ] Advanced analytics dashboard
 - [x] OpenAPI spec generation — `/openapi.json` and Swagger UI at `/docs`
+- [x] Multi-league expansion — rugby-league (NRL, NRLW, State of Origin) via FixtureDownload, with league-scoped APIs and pages
 
 ## Support
 
@@ -380,6 +392,7 @@ Contributions are welcome! Please read [CONTRIBUTING.md](CONTRIBUTING.md) for de
 ## Acknowledgments
 
 - [Squiggle API](https://api.squiggle.com.au/) for AFL data
+- [FixtureDownload](https://fixturedownload.com/) for rugby-league data
 - [OpenRouter](https://openrouter.ai/) for AI model access
 - [Nuxt](https://nuxt.com/) for the frontend framework
 - [FastAPI](https://fastapi.tiangolo.com/) for the backend web framework

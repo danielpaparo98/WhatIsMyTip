@@ -36,7 +36,6 @@ on 2026-09-24 (``POST /WMCTok`` → ``x-media-mis-token``) still 403s on
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import Any, Callable, Dict, Optional
 
 from sqlalchemy import update
@@ -45,21 +44,9 @@ from ..logger import get_logger
 from ..models import Season
 from ..services.local_competition_sync import LocalCompetitionSyncService
 from . import FeedProvider
+from .league_config import LeagueConfig
 
 logger = get_logger(__name__)
-
-
-@dataclass(frozen=True)
-class LeagueConfig:
-    name: str
-    timezone: str
-    provider_factory: Optional[Callable[[], FeedProvider]]
-    #: "live" = provider ready; "live-same-tenant" = another config on
-    #: a live platform; "pending-source" = source identified but not yet
-    #: reverse-engineered; "source-unknown" = nothing probed yet (see
-    #: module docstring).
-    status: str
-    source_note: str
 
 
 STATE_LEAGUES: Dict[str, LeagueConfig] = {

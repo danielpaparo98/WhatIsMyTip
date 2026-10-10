@@ -1,6 +1,6 @@
 # WhatIsMyTip Backend
 
-FastAPI backend for the WhatIsMyTip AFL tipping application, backed by managed PostgreSQL, Redis, and an in-process APScheduler for cron jobs. Deployed as a container on DigitalOcean App Platform (Phase 4).
+FastAPI backend for the WhatIsMyTip tipping application (AFL + rugby-league: NRL, NRLW, State of Origin), backed by managed PostgreSQL, Redis, and an in-process APScheduler for cron jobs. Deployed as a container on DigitalOcean App Platform (Phase 4).
 
 ## Architecture
 

@@ -1,12 +1,19 @@
 // Tests for the sport presentation config (P4-2) — the single source
 // of truth for sport-specific copy and labels.
+import { readFileSync } from 'node:fs'
+import { resolve, dirname } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import {
   AFL_CONFIG,
+  LEAGUES,
   SPORT_CONFIG,
+  getLeagueConfig,
   useActiveLeague,
   useSportConfig,
 } from '../../composables/useSportConfig'
+
+const MODULE_DIR = resolve(dirname(fileURLToPath(import.meta.url)), '../../composables')
 
 describe('SPORT_CONFIG', () => {
   it('defaults to the AFL bootstrap config', () => {
@@ -56,6 +63,107 @@ describe('SPORT_CONFIG', () => {
   })
 })
 
+// ---------------------------------------------------------------------------
+// NRL-EXPANSION (nrl-expansion-07): the rugby-league SportConfig —
+// nrl / nrlw / origin resolve to a per-competition rugby-league config
+// with the reduced model set (NO AFL heuristics, NO unsourced models).
+// ---------------------------------------------------------------------------
+
+describe('rugby-league SportConfig', () => {
+  const RUGBY_LEAGUE_KEYS = ['nrl', 'nrlw', 'origin']
+
+  it('lists the three rugby-league competitions in the LEAGUES registry', () => {
+    const expected: Record<string, { displayName: string; shortLabel: string }> = {
+      nrl: { displayName: 'NRL', shortLabel: 'NRL' },
+      nrlw: { displayName: 'NRLW', shortLabel: 'NRLW' },
+      origin: { displayName: 'State of Origin', shortLabel: 'Origin' },
+    }
+    for (const [key, meta] of Object.entries(expected)) {
+      const league = LEAGUES.find((l) => l.key === key)
+      expect(league, `missing LEAGUES entry: ${key}`).toBeDefined()
+      expect(league!.displayName, key).toBe(meta.displayName)
+      expect(league!.shortLabel, key).toBe(meta.shortLabel)
+    }
+  })
+
+  it('resolves a per-competition rugby-league config for each key', () => {
+    const expected: Record<string, { displayName: string; shortLabel: string }> = {
+      nrl: { displayName: 'NRL', shortLabel: 'NRL' },
+      nrlw: { displayName: 'NRLW', shortLabel: 'NRLW' },
+      origin: { displayName: 'State of Origin', shortLabel: 'Origin' },
+    }
+    for (const [key, meta] of Object.entries(expected)) {
+      const config = getLeagueConfig(key)
+      expect(config.sportId, key).toBe('rugby-league')
+      expect(config.displayName, key).toBe(meta.displayName)
+      expect(config.shortLabel, key).toBe(meta.shortLabel)
+    }
+  })
+
+  it('uses rugby-league nouns (Match/Round) and the Brisbane display timezone', () => {
+    for (const key of RUGBY_LEAGUE_KEYS) {
+      const config = getLeagueConfig(key)
+      expect(config.contestNoun, key).toBe('Match')
+      expect(config.stageNoun, key).toBe('Round')
+      expect(config.displayTimezone, key).toBe('Australia/Brisbane')
+    }
+  })
+
+  it('orders the reduced heuristic set — elo, form, home_advantage, matchup', () => {
+    for (const key of RUGBY_LEAGUE_KEYS) {
+      const config = getLeagueConfig(key)
+      expect(config.heuristicOrder, key).toEqual([
+        'elo',
+        'form',
+        'home_advantage',
+        'matchup',
+      ])
+      for (const h of config.heuristicOrder) {
+        expect(config.heuristicLabels, `Missing label for heuristic: ${h}`).toHaveProperty(h)
+        expect(config.heuristicLabels[h], key).not.toBe(h)
+      }
+    }
+  })
+
+  it('labels ONLY the reduced model set — no AFL-only or unsourced models leak in', () => {
+    const models = ['elo', 'form', 'home_advantage', 'matchup']
+    // Excluded per the session bundle: no NRL source for these yet, and
+    // the AFL heuristics must not leak through a config spread.
+    const excluded = [
+      'weather_impact',
+      'injury_impact',
+      'player_form',
+      'value',
+      'boosted_tip',
+      'weighted_tip',
+      'best_bet',
+      'yolo',
+    ]
+    for (const key of RUGBY_LEAGUE_KEYS) {
+      const config = getLeagueConfig(key)
+      for (const m of models) {
+        expect(config.modelDisplayNames, `${key} missing label for model: ${m}`).toHaveProperty(m)
+        expect(config.modelDisplayNames[m], key).not.toBe(m)
+      }
+      for (const bad of excluded) {
+        expect(config.modelDisplayNames, `${key} must not list ${bad}`).not.toHaveProperty(bad)
+        expect(config.heuristicOrder, `${key} must not order ${bad}`).not.toContain(bad)
+      }
+    }
+  })
+
+  it('caches the rugby-league configs to a stable identity', () => {
+    for (const key of RUGBY_LEAGUE_KEYS) {
+      expect(getLeagueConfig(key)).toBe(getLeagueConfig(key))
+    }
+  })
+
+  it('stays a pure module — no Nuxt/server imports', () => {
+    const source = readFileSync(resolve(MODULE_DIR, 'useSportConfig.ts'), 'utf8')
+    expect(source).not.toMatch(/#imports|#app|useNuxtApp|useRuntimeConfig|\/server\//)
+  })
+})
+
 // LEAGUE-NAV (2026-09-30, user request): the nav's home/Tips links stay
 // inside the active league — homePath derives the league home URL.
 describe('useActiveLeague homePath', () => {
@@ -86,7 +194,7 @@ describe('useActiveLeague homePath', () => {
 
   it('every non-AFL league maps to its own home path', () => {
     const { homePath, setActiveLeague } = useActiveLeague()
-    for (const key of ['wafl', 'waflw', 'vfl', 'vflw', 'sanfl', 'aflw', 'qafl', 'qaflw', 'nwfl', 'sfl']) {
+    for (const key of ['wafl', 'waflw', 'vfl', 'vflw', 'sanfl', 'aflw', 'qafl', 'qaflw', 'nwfl', 'sfl', 'nrl', 'nrlw', 'origin']) {
       setActiveLeague(key)
       expect(homePath.value).toBe(`/${key}`)
     }
@@ -132,7 +240,7 @@ describe('useActiveLeague performancePath', () => {
 
   it('every non-AFL league maps to its own performance path', () => {
     const { performancePath, setActiveLeague } = useActiveLeague()
-    for (const key of ['wafl', 'waflw', 'vfl', 'vflw', 'sanfl', 'aflw', 'qafl', 'qaflw', 'nwfl', 'sfl']) {
+    for (const key of ['wafl', 'waflw', 'vfl', 'vflw', 'sanfl', 'aflw', 'qafl', 'qaflw', 'nwfl', 'sfl', 'nrl', 'nrlw', 'origin']) {
       setActiveLeague(key)
       expect(performancePath.value).toBe(`/${key}/performance`)
     }

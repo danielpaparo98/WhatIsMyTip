@@ -274,13 +274,22 @@ The FastAPI app exposes **4 HTTP routers**, each mounted at `/api/...`.  The 5th
 | Method | Path | Description |
 |--------|------|-------------|
 | `GET` | `/` | List backtest results |
-| `GET` | `/seasons` | List seasons with backtest data |
-| `GET` | `/current-season` | Current-season performance |
+| `GET` | `/seasons` | List seasons with backtest data (optional `league` key — see below) |
+| `GET` | `/current-season` | Current-season performance (optional `league` key) |
 | `GET` | `/table` | Per-round table data |
 | `GET` | `/{heuristic}/performance` | Heuristic performance metrics |
-| `GET` | `/compare` | Compare all heuristics for a season |
+| `GET` | `/compare` | Compare all heuristics for a season (optional `league` key; `season` is a season LABEL on the league path) |
 | `GET` | `/model-compare` | Compare individual ML models for a season |
 | `POST` | `/run` | Trigger a backtest (requires `X-API-Key`) |
+
+**League dispatch** (D4 + Phase 5.2): `?league=` accepts every key of
+the cross-registry `get_league` facade — the ten state leagues AND the
+rugby-league national competitions (`nrl`, `nrlw`, `origin`).  Absent,
+empty or `afl` is the legacy AFL path, byte-identical.  Unknown keys →
+404; registered-but-unsynced leagues → graceful zero payloads.  See
+[Per-sport model registry](#per-sport-model-registry-league-tips-p2-3)
+and [League backtest](#league-backtest-grading-consumes-the-same-registry)
+for the rugby-league grading semantics.
 
 ### Admin Router
 
@@ -520,9 +529,38 @@ Two rules apply across the prediction pipeline:
 | **Player Form** | `tog_pct` normalized to a 0–1 scale so its contribution is comparable to the other composite terms |
 | **Heuristic zero-information defaults** | When no model voted: Best Bet → (alphabetically-first team, 0.50, 5), YOLO → (alphabetically-first team, 0.50, 10); Weighted Tip → (alphabetically-first team, 0.55, 6) on vote ties and empty input (0.55 is the long-standing fixed fallback confidence). Vote ties in Best Bet resolve to the alphabetically-first team too. Deterministic and home/away-neutral — Best Bet and YOLO never inflate confidence on a no-information default. |
 | **Weighted Tip training** | Feature vectors and coefficients are aligned via `feature_names_for` — a length mismatch raises `ValueError` instead of silently mis-weighting. Retrain guard: `MIN_TRAINING_ROWS = 100` (16-feature OLS needs rows ≫ features); below 100 rows the previously-active version keeps serving. |
-| **Boosted Tip training (BT-1)** | Same feature contract and `MIN_TRAINING_ROWS = 100` skip gate as Weighted Tip, trained in the same Monday 05:00 AWST cron (gated by `BOOSTED_RETRAIN_ENABLED`). The serialized XGBoost ensemble is persisted as a BYTEA artifact (`save_raw` JSON); mean \|SHAP\| per feature is stored in the coefficient rows and the TreeExplainer base value in `shap_base_value`. An additivity check (`base + Σ SHAP = prediction`, tol 1e-4) raises - deliberately not an `assert`, so it survives `python -O` - rather than persisting a mismatched artifact. |
+### Per-sport model registry (league tips, P2-3)
+
+The multisport league-tips pipeline ([`league_heuristics.py`](../backend/packages/shared/services/league_heuristics.py:1)) computes tips purely from synced results (no ML artifacts, no scrapers) and registers a model SET per sport. AFL — and any unregistered sport — keeps the D3 trio (`home_advantage`, `form`, `ladder`), byte-identical to the pre-expansion behaviour; adding a sport is an entry in `SPORT_MODEL_SETS`, not a code branch. The competition's `sport_id` (resolved by `LeagueHeuristicsService` from the `competitions` row) selects the set, so the three rugby-league competitions (`nrl`, `nrlw`, `origin`) are keyed through their shared `rugby-league` sport.
+
+| Sport | Model set (registry order = persistence order) |
+|-------|------------------------------------------------|
+| **AFL** (default) | `home_advantage`, `form`, `ladder` |
+| **rugby-league** | `elo`, `form`, `home_advantage`, `matchup` |
+
+Rugby-league's reduced set is DB-only:
+
+| Model | Rule (all tie → home) |
+|-------|------------------------|
+| `elo` | Higher result-derived Elo (start 1500, K=20, logistic 400-point scale; a decided result moves K/2 net, a draw between even sides moves nothing) |
+| `form` | More wins in the last 5 completed events (shared with D3) |
+| `home_advantage` | Always the home side (shared with D3) |
+| `matchup` | More head-to-head wins, venue-blind; draws never count as wins |
+
+**Excluded for rugby-league**: `weather_impact`, `injury_impact`, `player_form`, `value` — they require AFL-scraped sources with no NRL equivalent. Requesting one for a rugby-league competition (`require_league_model`) raises the repo-standard error: `BackendServiceError` 400, code `model_unavailable_for_sport`, with `details` carrying `model`, `sport_id` and the `available` set.
+
+### League backtest (grading consumes the same registry)
+
+The league backtest ([`league_backtest.py`](../backend/packages/shared/services/league_backtest.py:1) + the `/api/backtest` `league` dispatch) grades at QUERY time from `Event`/`EventParticipant` results and consumes the same per-sport registry: the API resolves a national key (`nrl`/`nrlw`/`origin`) through the cross-registry `get_league` facade and passes `league_model_set_for_sport('rugby-league')` to `LeagueBacktestService`, so rugby-league payloads cover exactly the reduced quartet — `ladder` is never fetched or rendered, and a never-synced league's zero payloads already render the sport's real model list. State-league keys keep the D3 trio payloads byte-identical (`models=None` → the service default).
+
+Rugby-league specifics, all pinned by `tests/unit/test_league_backtest_rugby_league.py`:
+
+- **Venue normalization** — the history the backtest reads carries canonical venue names (`venue_aliases` applied at the provider/storage boundary by sync and `nrl_historic_load`), so grouping is stable across sponsor drift; grading itself is venue-agnostic (results + rounds only).
+- **Draws** (has_draws=True) — a drawn event has no winner: every tip on it grades incorrect (it stays in the accuracy denominator) while settlement pushes ($0, stake refunded — never a loss), per the shared `settlement.py` kernel.
+- **No odds source** — every rugby-league tip settles at the representative $1.90 fallback and `odds_coverage` reports 0.0; profit columns keep the AFL payload shape (frozen, additive-only surface) but are representative-price simulations, not real market P&L.
 
 ---
+
 
 ## Alerting
 

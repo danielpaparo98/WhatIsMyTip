@@ -31,6 +31,15 @@ logger = get_logger(__name__)
 #: return / missing name ⇒ identity stays NULL (frontend falls back).
 TeamMetadataFn = Callable[[str], Optional[Dict[str, Any]]]
 
+#: Optional per-venue IANA-timezone resolver (rugby-league:
+#: ``league_seeding.venue_timezone``).  When supplied AND the venue
+#: resolves, the storage boundary converts kick-offs to the VENUE's
+#: local zone (the Warriors' Mount Smart Stadium is Pacific/Auckland —
+#: no single competition timezone can express that); venues the hook
+#: cannot resolve keep the competition-timezone conversion.  ``None``
+#: (the default) preserves the historical AFL/state behaviour exactly.
+VenueTimezoneFn = Callable[[Optional[str]], Optional[str]]
+
 
 class LocalCompetitionSyncService:
     """Sync one competition-season of fixtures onto the events tables,
@@ -48,6 +57,7 @@ class LocalCompetitionSyncService:
         competition_format: str = "rounds",
         competition_timezone: Optional[str] = None,
         team_metadata: Optional[TeamMetadataFn] = None,
+        venue_timezone: Optional[VenueTimezoneFn] = None,
     ):
         self.db = db
         self.provider = provider
@@ -61,6 +71,9 @@ class LocalCompetitionSyncService:
         # Team identity lookup (see TeamMetadataFn); built by the
         # caller from an optional provider ``get_team_metadata``.
         self.team_metadata = team_metadata
+        # Per-GROUND timezone hook (see VenueTimezoneFn) — rugby-league
+        # only; unset for every AFL/state competition.
+        self.venue_timezone = venue_timezone
         self.logger = logger
 
     async def sync(self) -> Dict[str, Any]:
@@ -194,18 +207,41 @@ class LocalCompetitionSyncService:
         except (ZoneInfoNotFoundError, ValueError):
             return ZoneInfo(DEFAULT_CONTEXT.cron_timezone)
 
-    @staticmethod
-    def _to_local(fixture, tz: ZoneInfo):
+    def _to_local(self, fixture, tz: ZoneInfo):
         """Convert the provider's UTC datetime to venue-local naive —
-        the ``events.starts_at`` convention (see models.multisport)."""
+        the ``events.starts_at`` convention (see models.multisport).
+
+        The venue's OWN zone (the ``venue_timezone`` hook) wins when it
+        resolves one — a per-competition timezone alone cannot express
+        the Warriors' Auckland grounds — and the competition timezone
+        remains the fallback for unlisted venues (and the ONLY rule
+        when no hook is set: every AFL/state competition)."""
         if fixture.starts_at is None:
             return fixture
         if fixture.starts_at.tzinfo is None:
             return fixture  # already venue-local (PlayHQ emits naive local)
-        local = fixture.starts_at.astimezone(tz).replace(tzinfo=None)
+        local = fixture.starts_at.astimezone(
+            self._target_zone(fixture.venue, tz)
+        ).replace(tzinfo=None)
         from dataclasses import replace
 
         return replace(fixture, starts_at=local)
+
+    def _target_zone(
+        self, venue: Optional[str], default_tz: ZoneInfo
+    ) -> ZoneInfo:
+        """The zone a fixture's kick-off converts to: the venue's own
+        IANA zone when the hook resolves one, else the competition
+        default.  An unresolvable or unknown venue degrades to the
+        default — tz conversion never fails a sync."""
+        if self.venue_timezone is not None and venue:
+            zone_name = self.venue_timezone(venue)
+            if zone_name:
+                try:
+                    return ZoneInfo(zone_name)
+                except (ZoneInfoNotFoundError, ValueError):
+                    pass
+        return default_tz
 
 
 async def run_wafl_sync(

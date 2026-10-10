@@ -2,20 +2,28 @@
 
 from __future__ import annotations
 
-import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
 
 from packages.shared.ingestion.state_leagues import (
     STATE_LEAGUES,
-    get_league,
     run_league_sync,
 )
 
 
 class TestRegistry:
     def test_all_state_leagues_registered(self):
-        assert {"wafl", "waflw", "sanfl", "vfl", "vflw", "aflw", "qafl", "tsl"} <= set(STATE_LEAGUES)
+        assert {
+            "wafl",
+            "waflw",
+            "sanfl",
+            "vfl",
+            "vflw",
+            "aflw",
+            "qafl",
+            "tsl",
+        } <= set(STATE_LEAGUES)
 
     def test_timezones_differ_by_state(self):
         assert STATE_LEAGUES["wafl"].timezone == "Australia/Perth"
@@ -29,9 +37,29 @@ class TestRegistry:
         # Every pending league documents WHERE its data lives.
         assert config.source_note
 
+    def test_nrl_resolves_through_get_league_facade(self):
+        # GUARDRAIL FLIP (Phase 5.2): get_league('nrl') raised at the
+        # state registry — the national expansion flips it to returning
+        # a config, in the same change as the registry it guards.  The
+        # resolving surface is the national module's facade, which
+        # resolves across BOTH registries.
+        from packages.shared.ingestion.national_leagues import (
+            get_league as resolve_league,
+        )
+
+        config = resolve_league("nrl")
+        assert config.name == "National Rugby League"
+        assert config.tier == "national"
+
     def test_unknown_league_rejected(self):
+        # 'nrl' resolves nationally since Phase 5.2; keys unknown to
+        # BOTH registries still raise the repo-standard error.
+        from packages.shared.ingestion.national_leagues import (
+            get_league as resolve_league,
+        )
+
         with pytest.raises(ValueError, match="available"):
-            get_league("nrl")
+            resolve_league("not-a-league")
 
     @pytest.mark.asyncio
     async def test_unknown_source_league_sync_raises_with_guidance(self):

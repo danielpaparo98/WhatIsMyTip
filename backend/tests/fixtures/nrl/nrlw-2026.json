@@ -1,0 +1,26 @@
+[
+  {
+    "MatchNumber": 1,
+    "RoundNumber": 1,
+    "DateUtc": "2026-07-05 06:05:00Z",
+    "Location": "Suncorp Stadium",
+    "HomeTeam": "Broncos",
+    "AwayTeam": "Roosters",
+    "Group": null,
+    "HomeTeamScore": 26,
+    "AwayTeamScore": 12,
+    "Winner": "Broncos"
+  },
+  {
+    "MatchNumber": 2,
+    "RoundNumber": 1,
+    "DateUtc": "2026-07-06 08:00:00Z",
+    "Location": "CommBank Stadium",
+    "HomeTeam": "Eels",
+    "AwayTeam": "Knights",
+    "Group": null,
+    "HomeTeamScore": null,
+    "AwayTeamScore": null,
+    "Winner": null
+  }
+]
