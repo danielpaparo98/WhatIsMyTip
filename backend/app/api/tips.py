@@ -7,6 +7,10 @@ Routes (mounted at ``/api/tips``):
 
 * ``GET  /``                    — list tips (filters: season, round, heuristic, limit)
 * ``GET  /games-with-tips``     — games-with-tips for a round (requires season, round)
+* ``GET  /league``              — rugby-league tips for one event, AI-explained
+                                   (``league`` + ``slug``; Phase 5.2, additive —
+                                   serves the reduced model set under the
+                                   rugby-league cache namespace)
 * ``GET  /{heuristic}``         — tips for one heuristic (``best_bet`` /
                                    ``weighted_tip`` / ``yolo`` / ``boosted_tip``)
 * ``POST /generate``            — generate tips for a round
@@ -32,6 +36,8 @@ from app.core.db_deps import get_db
 from app.core.exceptions import http_error
 from app.core.security import require_admin_key
 from packages.shared.crud import GameCRUD, ModelPredictionCRUD, TipCRUD
+from packages.shared.crud.events import EventsCRUD
+from packages.shared.ingestion.national_leagues import get_league
 from packages.shared.models import Game, Tip
 from packages.shared.schemas import (
     ModelPrediction as ModelPredictionSchema,
@@ -41,6 +47,11 @@ from packages.shared.schemas import (
     TipResponse,
 )
 from packages.shared.schemas.admin import TipGenerateRequest
+from packages.shared.schemas.tips import (
+    LeagueTipExplanationResponse,
+    LeagueTipsResponse,
+)
+from packages.shared.services.explanation import LeagueTipExplanationService
 from packages.shared.services.tip_generation import TipGenerationService
 
 router = APIRouter()
@@ -271,6 +282,71 @@ async def games_with_tips(
         games_with_tips_payload.append(game_dict)
 
     return {"games": games_with_tips_payload, "count": len(games_with_tips_payload)}
+
+
+# ---------------------------------------------------------------------------
+# GET /league  — rugby-league tips for one event (Phase 5.2, additive)
+# ---------------------------------------------------------------------------
+
+
+# Declared BEFORE ``/{heuristic}`` so the literal path always wins (the
+# heuristic pattern wouldn't match "league" anyway — belt and braces).
+# Additive per the frozen FaaS contract: a NEW route + league param; the
+# legacy AFL routes above keep their URLs, params and shapes untouched.
+@router.get("/league", response_model=LeagueTipsResponse)
+async def league_event_tips(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    league: Annotated[
+        str,
+        Query(min_length=1, description="League key, e.g. 'nrl', 'nrlw', 'origin'"),
+    ],
+    slug: Annotated[
+        str,
+        Query(min_length=1, max_length=16, description="Event slug"),
+    ],
+) -> LeagueTipsResponse:
+    """Return the rugby-league model tips for one event, AI-explained.
+
+    Each tip names its model (the sport's reduced set: elo, form,
+    home_advantage, matchup), the picked side (``null`` = predicted
+    draw) and its AI explanation.  Explanations are generated through
+    the shared OpenRouter pipeline, cached under the rugby-league cache
+    namespace, and degrade to ``null`` — never an error — when the AI
+    layer fails, so tips are never blocked by explanations.
+
+    Errors (repo-standard shape): 404 ``not_found`` for an unknown
+    league key, an unknown slug, or a slug belonging to another
+    competition.
+    """
+    try:
+        config = get_league(league)
+    except ValueError:
+        raise http_error(
+            404,
+            "not_found",
+            f"Unknown league {league!r} — not in the league registries",
+        ) from None
+
+    event = await EventsCRUD.get_by_slug_with_participants(db, slug)
+    if not event:
+        raise http_error(404, "not_found", f"No event found for slug {slug!r}")
+    if event["competition"] != config.name:
+        raise http_error(
+            404,
+            "not_found",
+            f"Event {slug!r} is not a {league} fixture",
+        )
+
+    service = LeagueTipExplanationService()
+    rows = await service.explanations_for_event(db, event_id=int(event["id"]))
+    tips = [LeagueTipExplanationResponse.model_validate(row) for row in rows]
+    return LeagueTipsResponse(
+        league=league,
+        event=slug,
+        competition=config.name,
+        tips=tips,
+        count=len(tips),
+    )
 
 
 # ---------------------------------------------------------------------------
