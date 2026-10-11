@@ -33,6 +33,7 @@ leaves ``Winner`` null on a completed game.
 
 from __future__ import annotations
 
+import dataclasses
 import time
 from datetime import date, datetime, timezone
 from typing import (
@@ -82,6 +83,11 @@ def _parse_utc(raw: Any) -> Optional[datetime]:
 #: in :meth:`NrlProvider.get_fixture`.
 SEASON_FACTOR = 1000
 
+#: Stride between occurrences of a repeated MatchNumber within one
+#: season feed (see ``_disambiguate_external_ids``) — far above the
+#: per-season match count, far below any realistic season number.
+INSTANCE_STRIDE = 1_000_000
+
 
 def make_external_id(season: int, match_number: Optional[int]) -> Optional[int]:
     """Composite ``(season, MatchNumber)`` → globally-unique id."""
@@ -116,6 +122,57 @@ def fixture_from_fixturedownload(
         # Draws (level scores, null Winner) are complete — see docstring.
         completed=home_score is not None and away_score is not None,
     )
+
+
+def _disambiguate_external_ids(
+    payload: List[Mapping[str, Any]], season: int
+) -> List[Tuple[Mapping[str, Any], Optional[int]]]:
+    """Pair each payload entry with its (possibly disambiguated)
+    external id.
+
+    Some seasons REUSE a MatchNumber across genuinely distinct matches
+    (nrl-2020: the COVID round was re-played twice — MatchNumbers 1-16
+    each appear 3× with different dates/venues/teams).  Instances are
+    ordered by ``(DateUtc, HomeTeam, AwayTeam)``; the first keeps the
+    canonical ``season*1000 + MatchNumber`` id, every later occurrence
+    adds ``1_000_000 * occurrence`` — deterministic across re-syncs,
+    and single-instance seasons are byte-identical to the plain
+    composite.
+    """
+    positions_by_match: Dict[int, List[int]] = {}
+    for position, entry in enumerate(payload):
+        match_number = entry.get("MatchNumber")
+        if match_number is not None:
+            positions_by_match.setdefault(int(match_number), []).append(position)
+
+    def instance_sort_key(position: int) -> Tuple[Any, ...]:
+        entry = payload[position]
+        starts_at = _parse_utc(entry.get("DateUtc"))
+        return (
+            starts_at if starts_at is not None
+            else datetime.max.replace(tzinfo=timezone.utc),
+            str(entry.get("HomeTeam") or ""),
+            str(entry.get("AwayTeam") or ""),
+        )
+
+    occurrence_by_position: Dict[int, int] = {}
+    for positions in positions_by_match.values():
+        for occurrence, position in enumerate(
+            sorted(positions, key=instance_sort_key)
+        ):
+            occurrence_by_position[position] = occurrence
+
+    pairs: List[Tuple[Mapping[str, Any], Optional[int]]] = []
+    for position, entry in enumerate(payload):
+        match_number = entry.get("MatchNumber")
+        if match_number is None:
+            pairs.append((entry, None))
+            continue
+        base = make_external_id(season, match_number) or 0
+        pairs.append(
+            (entry, base + INSTANCE_STRIDE * occurrence_by_position[position])
+        )
+    return pairs
 
 
 def _wanted(
@@ -219,8 +276,13 @@ class NrlProvider:
         """Fixtures for one competition-season (optionally narrowed)."""
         payload = await self._season_payload(season)
         fixtures = [
-            fixture_from_fixturedownload(entry, season=season, source=self.source)
-            for entry in payload
+            dataclasses.replace(
+                fixture_from_fixturedownload(
+                    entry, season=season, source=self.source
+                ),
+                external_id=external_id,
+            )
+            for entry, external_id in _disambiguate_external_ids(payload, season)
         ]
         return [
             f
@@ -239,24 +301,24 @@ class NrlProvider:
         recently fetched season first); ``None`` when nothing cached
         matches.  Lookups NEVER trigger a fetch — the daily cache is
         the politeness contract.  ``external_id`` is the season
-        composite (``season * 1000 + MatchNumber``): the season picks
-        the cached slug, the remainder picks the match.  Callers
-        needing a specific fixture should ensure its season was
-        fetched (or use ``get_fixtures``)."""
-        season, match_number = (
-            external_id // SEASON_FACTOR,
-            external_id % SEASON_FACTOR,
-        )
-        for slug, cached_season in reversed(self._fetched_slugs):
-            if cached_season != season:
-                continue
+        composite (``season * 1000 + MatchNumber``, plus
+        ``INSTANCE_STRIDE`` per repeated-MatchNumber occurrence — see
+        ``_disambiguate_external_ids``).  Callers needing a specific
+        fixture should ensure its season was fetched (or use
+        ``get_fixtures``)."""
+        # Season is NOT derived arithmetically here: an instance-offset
+        # id (3020001) lives outside season*1000 space.  The fetched
+        # slug list is tiny — compare full disambiguated ids across it.
+        for slug, _cached_season in reversed(self._fetched_slugs):
             cached = self._cache.get(slug)
             if not cached:
                 continue
-            for entry in cached[1]:
-                if entry.get("MatchNumber") == match_number:
+            for entry, entry_external_id in _disambiguate_external_ids(
+                cached[1], _cached_season
+            ):
+                if entry_external_id == external_id:
                     return fixture_from_fixturedownload(
-                        entry, season=season, source=self.source
+                        entry, season=_cached_season, source=self.source
                     )
         return None
 

@@ -419,8 +419,11 @@ class TestSyncLeagueTipGeneration:
         generate_tips.assert_awaited_once()
         assert generate_tips.await_args.args == (db,)
         assert generate_tips.await_args.kwargs == {"competition_id": 3}
-        # Ordering contract: events commit BEFORE tip generation.
-        assert calls == ["commit", "tips"]
+        # Ordering contract: events commit BEFORE tip generation.  The
+        # FIRST commit is the pre-pass identity/season commit (lands
+        # before the fixture loop so a mid-pass rollback can't cascade);
+        # the SECOND is the events commit the tips hook depends on.
+        assert calls == ["commit", "commit", "tips"]
         # The outcome is observable on the stats for the cron aggregate.
         assert stats["league_tips"] == {"status": "success", **summary}
 

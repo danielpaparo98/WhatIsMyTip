@@ -104,12 +104,29 @@ class LocalCompetitionSyncService:
         stats["competition_id"] = competition.id
         stats["season_id"] = season.id
 
+        # Commit the identity + competition/season rows BEFORE the
+        # fixture loop: a per-fixture rollback (a colliding fixture's
+        # UQ, say) must not discard the season and cascade-fail every
+        # later fixture in the pass (live nrl-2020 failure pattern).
+        # Ensures are idempotent, so this commit is always safe.  The
+        # commit expires ORM instances (expire_on_commit=True callers),
+        # so the ids are captured as plain ints first — attribute access
+        # on an expired instance would lazy-load outside the greenlet.
+        competition_id = int(competition.id)
+        season_id = int(season.id)
+        await self.db.commit()
+
         tz = self._competition_timezone(self.competition_timezone)
         resolver = ParticipantResolver(self.db, sport_id=self.provider.sport_id)
         fixtures = await self.provider.get_fixtures(self.season)
         self.logger.info("Fetched %d fixtures for %s", len(fixtures), start_label)
 
         for fixture in fixtures:
+            # SAVEPOINT per fixture: a failing fixture rolls back ONLY
+            # its own work — previously the whole open transaction went,
+            # discarding every earlier fixture in the pass alongside the
+            # failure (live nrl-2020 backfill pattern).
+            nested = await self.db.begin_nested()
             try:
                 home = await resolver.ensure_team(
                     fixture.home_participant or "",
@@ -125,20 +142,18 @@ class LocalCompetitionSyncService:
                 local_fixture = self._to_local(fixture, tz)
                 await EventCRUD.upsert_fixture(
                     self.db,
-                    season_id=season.id,
+                    season_id=season_id,
                     fixture=local_fixture,
                     home_participant_id=home.id if home else None,
                     away_participant_id=away.id if away else None,
                 )
+                await nested.commit()
                 stats["fixtures_synced"] += 1
             except Exception as e:  # noqa: BLE001 — one bad fixture never aborts the pass
+                await nested.rollback()  # discard ONLY this fixture
                 error = f"fixture {fixture.external_id}: {e}"
                 self.logger.error(error, exc_info=True)
                 stats["errors"].append(error)
-                try:
-                    await self.db.rollback()  # clear the poisoned transaction
-                except Exception:  # noqa: BLE001
-                    pass
 
         await self.db.commit()
 
@@ -147,7 +162,7 @@ class LocalCompetitionSyncService:
         # per the heuristics service).  Best-effort by contract: the
         # sync is the critical path and tips are regenerable on the
         # next cycle, so a failure here never fails the sync.
-        await self._refresh_league_tips(competition.id, stats)
+        await self._refresh_league_tips(competition_id, stats)
 
         self.logger.info(
             "Local-competition sync completed for %s: %d fixtures (%d errors)",

@@ -316,6 +316,64 @@ class TestSingleFixtureLookup:
         assert calls == []
 
 
+class TestRepeatedMatchNumbers:
+    """The nrl-2020 feed reuses MatchNumbers 1-16 THREE times (the COVID
+    round was re-played twice) — three real, distinct fixtures per
+    number.  The composite id must disambiguate instances or the events
+    layer collapses them (source-ref collision → participant UQ)."""
+
+    @staticmethod
+    def _payload_2020_style():
+        return [
+            {"MatchNumber": 1, "RoundNumber": 1, "DateUtc": "2020-03-12 09:05:00Z",
+             "Location": "Bankwest Stadium", "HomeTeam": "Eels",
+             "AwayTeam": "Bulldogs", "HomeTeamScore": 8, "AwayTeamScore": 2},
+            {"MatchNumber": 1, "RoundNumber": 2, "DateUtc": "2020-05-28 09:50:00Z",
+             "Location": "Suncorp Stadium", "HomeTeam": "Broncos",
+             "AwayTeam": "Eels", "HomeTeamScore": 6, "AwayTeamScore": 34},
+            {"MatchNumber": 1, "RoundNumber": 3, "DateUtc": "2020-06-11 09:50:00Z",
+             "Location": "Central Coast Stadium", "HomeTeam": "Sea Eagles",
+             "AwayTeam": "Broncos", "HomeTeamScore": 20, "AwayTeamScore": 18},
+            {"MatchNumber": 2, "RoundNumber": 2, "DateUtc": "2020-05-29 09:50:00Z",
+             "Location": "GIO Stadium", "HomeTeam": "Raiders",
+             "AwayTeam": "Titans", "HomeTeamScore": 24, "AwayTeamScore": 6},
+        ]
+
+    async def test_instances_get_distinct_external_ids(self):
+        provider, _ = _make_provider(
+            payloads={"nrl-2020": self._payload_2020_style()}
+        )
+        fixtures = await provider.get_fixtures(2020)
+
+        ids = sorted(f.external_id for f in fixtures)
+        # Earliest instance keeps the canonical id; later occurrences
+        # add 1_000_000 per occurrence index (deterministic: date order).
+        assert ids == [2020001, 2020002, 3020001, 4020001]
+
+    async def test_first_instance_is_independent_of_feed_position(self):
+        payload = list(reversed(self._payload_2020_style()))
+        provider, _ = _make_provider(payloads={"nrl-2020": payload})
+        fixtures = await provider.get_fixtures(2020)
+
+        by_id = {f.external_id: f for f in fixtures}
+        assert by_id[2020001].starts_at == datetime(
+            2020, 3, 12, 9, 5, tzinfo=timezone.utc
+        )
+        assert by_id[2020001].home_participant == "Eels"
+
+    async def test_get_fixture_round_trips_every_instance(self):
+        provider, _ = _make_provider(
+            payloads={"nrl-2020": self._payload_2020_style()}
+        )
+        await provider.get_fixtures(2020)
+
+        expected_home = {2020001: "Eels", 3020001: "Broncos", 4020001: "Sea Eagles"}
+        for external_id, home in expected_home.items():
+            fixture = await provider.get_fixture(external_id)
+            assert fixture is not None, external_id
+            assert fixture.home_participant == home
+
+
 class TestRobustness:
     async def test_fetch_failure_propagates(self):
         async def broken_fetch(url: str):
