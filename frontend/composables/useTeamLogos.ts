@@ -94,6 +94,38 @@ const TEAM_DISPLAY: Record<string, string> = {
   Bulldogs: 'Western Bulldogs',
 }
 
+// RUGBY-LEAGUE CRESTS (2026-10-11): official club crests downloaded by
+// scripts/download_nrl_logos.py (Wikipedia infobox images, non-free
+// fair-use hosted by en.wikipedia) into /public/logos/nrl.  Keys are
+// the backend feed nicknames (league_seeding.TEAMS — 'Broncos',
+// 'Wests Tigers', 'Blues', …) so the static map, the DB
+// teams.logo_url seed, and the API responses all agree.  Kept in ONE
+// module with the AFL map so logo resolution has a single seam.
+export const NRL_TEAM_LOGOS: Record<string, string> = {
+  Broncos: 'nrl/broncos.svg',
+  Bulldogs: 'nrl/bulldogs.svg',
+  Cowboys: 'nrl/cowboys.svg',
+  Dolphins: 'nrl/dolphins.png',
+  Dragons: 'nrl/dragons.svg',
+  Eels: 'nrl/eels.svg',
+  Knights: 'nrl/knights.svg',
+  Panthers: 'nrl/panthers.svg',
+  Rabbitohs: 'nrl/rabbitohs.svg',
+  Raiders: 'nrl/raiders.svg',
+  Roosters: 'nrl/roosters.svg',
+  'Sea Eagles': 'nrl/sea_eagles.svg',
+  Sharks: 'nrl/sharks.svg',
+  Storm: 'nrl/storm.svg',
+  Titans: 'nrl/titans.svg',
+  Warriors: 'nrl/warriors.svg',
+  'Wests Tigers': 'nrl/wests_tigers.svg',
+  Blues: 'nrl/blues.svg',
+  Maroons: 'nrl/maroons.svg',
+}
+
+/** League keys served by the NRL crest map (sport: rugby-league). */
+const NRL_LEAGUE_KEYS = new Set(['nrl', 'nrlw', 'origin'])
+
 export function useTeamLogos() {
   /**
    * Human-friendly display name for a canonical team name.
@@ -109,14 +141,30 @@ export function useTeamLogos() {
    * Accepts `null`/`undefined`; unknown or placeholder teams ('TBD')
    * return an inline placeholder SVG (never an empty string — see M-1).
    * Non-canonical aliases are normalised first so every known AFL team
-   * renders its logo.
+   * renders its logo.  When `leagueKey` is a rugby-league league
+   * (nrl/nrlw/origin) the NRL crest map is consulted FIRST — AFL names
+   * never collide with NRL nicknames, so the maps stay disjoint.
    */
-  const getLogoUrl = (teamName: string | null | undefined): string => {
+  const getLogoUrl = (
+    teamName: string | null | undefined,
+    leagueKey?: string | null,
+  ): string => {
     if (!teamName) return PLACEHOLDER_LOGO
+    if (leagueKey && NRL_LEAGUE_KEYS.has(leagueKey)) {
+      const crest = NRL_TEAM_LOGOS[teamName.trim()]
+      if (crest) return `/logos/${crest}`
+    }
     const canonical = normalizeTeam(teamName)
     const filename = TEAM_LOGOS[canonical] || ''
     return filename ? `/logos/${filename}` : PLACEHOLDER_LOGO
   }
 
-  return { getLogoUrl, getTeamDisplayName, TEAM_LOGOS, normalizeTeam, PLACEHOLDER_LOGO }
+  return {
+    getLogoUrl,
+    getTeamDisplayName,
+    TEAM_LOGOS,
+    NRL_TEAM_LOGOS,
+    normalizeTeam,
+    PLACEHOLDER_LOGO,
+  }
 }

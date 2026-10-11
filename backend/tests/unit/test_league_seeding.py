@@ -16,7 +16,9 @@ sequence and duplicates nothing.
 
 from __future__ import annotations
 
+import re
 from contextlib import ExitStack
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 from zoneinfo import ZoneInfo
@@ -77,6 +79,57 @@ class TestSportIdentity:
     def test_sport_id_and_display_name(self):
         assert SPORT_ID == "rugby-league"
         assert SPORT_DISPLAY_NAME == "Rugby League"
+
+
+class TestCrestDeclarations:
+    """Every rugby-league identity declares its official crest (downloaded
+    by scripts/download_nrl_logos.py into frontend/public/logos/nrl) so
+    identity-ensure writes teams.logo_url and the frontend renders the
+    real brand image instead of the initials fallback."""
+
+    def test_every_team_declares_a_crest(self):
+        for team in (*TEAMS, *ORIGIN_TEAMS):
+            assert team.logo, f"{team.name} declares no crest"
+            assert team.logo.startswith("/logos/nrl/"), team.name
+
+    def test_every_declared_crest_file_exists(self):
+        repo_root = Path(__file__).resolve().parents[3]
+        missing = []
+        for team in (*TEAMS, *ORIGIN_TEAMS):
+            if not (repo_root / "frontend" / "public" / team.logo.lstrip("/")).is_file():
+                missing.append(f"{team.name} -> {team.logo}")
+        assert missing == [], f"Missing crest files: {missing}"
+
+    def test_crest_keys_match_the_frontend_static_map(self):
+        """The frontend static map (useTeamLogos NRL_TEAM_LOGOS) is keyed
+        on the same feed nicknames — a new identity without a map entry
+        would render the initials fallback on prerendered pages."""
+        frontend_map = self._frontend_nrl_map()
+        for team in (*TEAMS, *ORIGIN_TEAMS):
+            assert team.name in frontend_map, (
+                f"{team.name} missing from NRL_TEAM_LOGOS"
+            )
+
+    @staticmethod
+    def _frontend_nrl_map() -> dict:
+        source = (
+            Path(__file__).resolve().parents[3]
+            / "frontend"
+            / "composables"
+            / "useTeamLogos.ts"
+        ).read_text(encoding="utf-8")
+        block = re.search(
+            r"export const NRL_TEAM_LOGOS: Record<string, string> = \{(.*?)\n\}",
+            source,
+            re.S,
+        )
+        assert block, "NRL_TEAM_LOGOS not found in useTeamLogos.ts"
+        mapping: dict = {}
+        for quoted, plain, value in re.findall(
+            r"(?:'([^']+)'|([A-Za-z][\w ]*?))\s*:\s*'([^']+)'", block.group(1)
+        ):
+            mapping[quoted or plain] = value
+        return mapping
 
     def test_sport_id_matches_the_declared_sport_context(self):
         from packages.shared.sport_context import RUGBY_LEAGUE
@@ -439,20 +492,21 @@ class TestSeedLeagueIdentity:
         ]
 
         # Participants: the 19 team identities, in declaration order,
-        # with their full-name aliases and NO invented identity data
-        # (logo/colours stay NULL until a source supplies them).
+        # with their full-name aliases and the official crest path
+        # (no invented colours — only the downloaded crest is on file).
         assert [name for name, _ in mocks.team_calls] == [t.name for t in TEAMS]
         assert len(mocks.team_calls) == 19
-        for name, kwargs in mocks.team_calls:
-            assert set(kwargs) == {"aliases"}
+        logos_by_name = {name: kwargs["logo_url"] for name, kwargs in mocks.team_calls}
+        for team in TEAMS:
+            assert logos_by_name[team.name] == team.logo
         aliases_by_name = {name: kwargs["aliases"] for name, kwargs in mocks.team_calls}
-        assert aliases_by_name["Broncos"] == ("Brisbane Broncos",)
-        assert aliases_by_name["Warriors"] == ("New Zealand Warriors", "NZ Warriors")
-        assert aliases_by_name["Blues"] == (
+        assert set(aliases_by_name["Broncos"]) == {"Brisbane Broncos"}
+        assert set(aliases_by_name["Warriors"]) == {"New Zealand Warriors", "NZ Warriors"}
+        assert set(aliases_by_name["Blues"]) == {
             "NSW Blues",
             "New South Wales Blues",
             "New South Wales",
-        )
+        }
 
         # The pass is committed and reported.
         db.commit.assert_awaited_once()
