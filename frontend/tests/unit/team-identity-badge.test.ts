@@ -181,14 +181,20 @@ describe('logoFor league-aware initials-badge fallback', () => {
     expect(logoFor('Western Bulldogs')).toBe('/logos/Bulldogs.png')
   })
 
-  it('resolves a state-league club to an initials badge when the league key is passed', () => {
+  it('resolves a state-league club to its generated crest when the league key is passed', () => {
     const { logoFor } = useTeamIdentity()
-    const badge = logoFor('Peel Thunder', 'wafl')
+    // Peel Thunder has a real crest in the generated wafl map.
+    expect(logoFor('Peel Thunder', 'wafl')).toBe('/logos/wafl/peel-thunder.png')
+  })
+
+  it('clubs without a generated crest keep the initials-badge fallback', () => {
+    const { logoFor } = useTeamIdentity()
+    // Wynyard (NWFL) has a palette entry but no crest source — initials badge.
+    const badge = logoFor('Wynyard', 'nwfl')
     expect(badge).not.toBeNull()
     expect(badge).toMatch(/^data:image\/svg\+xml/)
-    expect(decodeSvg(badge!)).toContain('>PT<')
     expect(decodeSvg(badge!)).toContain(
-      `fill="${LEAGUE_COLORS.wafl['Peel Thunder'].primary}"`,
+      `fill="${LEAGUE_COLORS.nwfl['Wynyard'].primary}"`,
     )
   })
 
@@ -197,12 +203,14 @@ describe('logoFor league-aware initials-badge fallback', () => {
     expect(logoFor('Peel Thunder', 'wafl')).toBe(logoFor('Peel Thunder', 'wafl'))
   })
 
-  it('a real AFL logo file still wins over a generated badge', () => {
+  it('a real AFL logo file still wins in an AFL context', () => {
     const { logoFor } = useTeamIdentity()
-    // Collingwood is in the VFL palette AND has a real logo file.
-    expect(logoFor('Collingwood', 'vfl')).toBe('/logos/Collingwood.png')
-    // West Coast reserves appear in WAFL — alias normalisation still resolves the file.
-    expect(logoFor('West Coast', 'wafl')).toBe('/logos/WestCoast.png')
+    // No league key → AFL map (the pre-state-crests behaviour).
+    expect(logoFor('Collingwood')).toBe('/logos/Collingwood.png')
+    // In a VFL context Collingwood is the VFL side → generated crest.
+    expect(logoFor('Collingwood', 'vfl')).toBe('/logos/vfl/collingwood.svg')
+    // West Coast reserves appear in WAFL — the generated WAFL crest.
+    expect(logoFor('West Coast', 'wafl')).toBe('/logos/wafl/west-coast.svg')
   })
 
   it('a club missing from the league palette keeps its AFL file, or the placeholder when nothing exists', () => {
