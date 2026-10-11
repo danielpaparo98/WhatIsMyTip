@@ -252,7 +252,7 @@ export function useTeamIdentity() {
   ): string | null => {
     const entry = identityFor(teamName)
     if (entry?.logoUrl) return entry.logoUrl
-    const fallback = getLogoUrl(teamName)
+    const fallback = getLogoUrl(teamName, leagueKey)
     if (teamName && leagueKey && fallback === PLACEHOLDER_LOGO) {
       const badge = initialsBadge(teamName, leagueColorFor(leagueKey, teamName))
       if (badge) return badge

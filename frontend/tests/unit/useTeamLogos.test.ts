@@ -23,14 +23,18 @@ const SOURCE = readFileSync(
 // (e.g. `'Brisbane': 'Brisbane.png'`) and unquoted ones
 // (e.g. `Brisbane: 'Brisbane.png'`) so the test is robust to either
 // style.  This is deliberately minimal — we only care about the
-// literal entries in the dict, not its runtime use.
+// literal entries in the dict, not its runtime use.  The match is
+// ANCHORED to the `const TEAM_LOGOS` declaration so sibling maps
+// (NRL_TEAM_LOGOS — rugby-league crests, .svg/.png) are not swept in.
 const TEAM_LOGOS: Record<string, string> = (() => {
   const out: Record<string, string> = {}
-  const re = /(?:'([^']+)'|([A-Za-z][\w]*))\s*:\s*'([^']+\.png)'/g
+  const decl = SOURCE.match(/const TEAM_LOGOS: Record<string, string> = \{([\s\S]*?)\n\}/)
+  const body = decl?.[1] ?? ''
+  const re = /(?:'([^']+)'|([A-Za-z][\w]*))\s*:\s*'([^']+)'/g
   let m: RegExpExecArray | null
-  while ((m = re.exec(SOURCE)) !== null) {
+  while ((m = re.exec(body)) !== null) {
     const key = m[1] ?? m[2]
-    out[key] = m[3]
+    if (key && m[3]) out[key] = m[3]
   }
   return out
 })()
@@ -44,6 +48,51 @@ describe('TEAM_LOGOS mapping', () => {
   it('contains exactly 18 AFL teams', () => {
     // AFL has 18 clubs.  The mapping must not silently drop or duplicate.
     expect(Object.keys(TEAM_LOGOS).length).toBe(18)
+  })
+
+  describe('NRL_TEAM_LOGOS mapping (rugby-league crests)', () => {
+    // Same source-parse approach, anchored to the NRL declaration.
+    const NRL_TEAM_LOGOS: Record<string, string> = (() => {
+      const out: Record<string, string> = {}
+      const decl = SOURCE.match(
+        /export const NRL_TEAM_LOGOS: Record<string, string> = \{([\s\S]*?)\n\}/,
+      )
+      const body = decl?.[1] ?? ''
+      const re = /(?:'([^']+)'|([A-Za-z][\w ]*))\s*:\s*'([^']+)'/g
+      let m: RegExpExecArray | null
+      while ((m = re.exec(body)) !== null) {
+        const key = m[1] ?? m[2]
+        if (key && m[3]) out[key] = m[3]
+      }
+      return out
+    })()
+
+    it('contains exactly 19 rugby-league identities (17 clubs + Blues + Maroons)', () => {
+      expect(Object.keys(NRL_TEAM_LOGOS).length).toBe(19)
+    })
+
+    it('every key maps to a crest file that actually exists in /public/logos/nrl', () => {
+      const missing: string[] = []
+      for (const [team, filename] of Object.entries(NRL_TEAM_LOGOS)) {
+        if (!existsSync(resolve(LOGOS_DIR, filename))) {
+          missing.push(`${team} -> ${filename}`)
+        }
+      }
+      expect(missing, `Missing crest files: ${missing.join(', ')}`).toEqual([])
+    })
+
+    it('getLogoUrl resolves rugby-league names under a rugby-league key', () => {
+      const { getLogoUrl } = useTeamLogos()
+      expect(getLogoUrl('Broncos', 'nrl')).toBe('/logos/nrl/broncos.svg')
+      expect(getLogoUrl('Wests Tigers', 'nrlw')).toBe('/logos/nrl/wests_tigers.svg')
+      expect(getLogoUrl('Blues', 'origin')).toBe('/logos/nrl/blues.svg')
+    })
+
+    it('stays on the AFL map without a rugby-league league key', () => {
+      const { getLogoUrl } = useTeamLogos()
+      expect(getLogoUrl('Broncos')).not.toContain('/nrl/')
+      expect(getLogoUrl('Brisbane', 'nrl')).toBe('/logos/Brisbane.png')
+    })
   })
 
   it('every key maps to a file that actually exists in /public/logos', () => {

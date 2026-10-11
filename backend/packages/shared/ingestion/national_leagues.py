@@ -141,7 +141,9 @@ async def _ensure_rugby_league_identity(session) -> None:
     await ensure_sport(session)
     resolver = ParticipantResolver(session, sport_id=SPORT_ID)
     for team in TEAMS:
-        await resolver.ensure_team(team.name, aliases=team.aliases)
+        await resolver.ensure_team(
+            team.name, aliases=team.aliases, logo_url=team.logo
+        )
 
 
 def _raise_sync_error(

@@ -381,14 +381,16 @@ class TestNationalRunnerWiring:
             call.args[0]: call.kwargs for call in ensure_team.await_args_list
         }
         assert by_name["Bulldogs"] == {
-            "aliases": ("Canterbury-Bankstown Bulldogs", "Canterbury Bulldogs")
+            "aliases": ("Canterbury-Bankstown Bulldogs", "Canterbury Bulldogs"),
+            "logo_url": "/logos/nrl/bulldogs.svg",
         }
         assert by_name["Blues"] == {
             "aliases": (
                 "NSW Blues",
                 "New South Wales Blues",
                 "New South Wales",
-            )
+            ),
+            "logo_url": "/logos/nrl/blues.svg",
         }
 
     @pytest.mark.asyncio

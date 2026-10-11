@@ -88,10 +88,13 @@ class CompetitionIdentity:
 @dataclass(frozen=True)
 class TeamIdentity:
     """Declarative team participant: canonical name == feed nickname,
-    plus the full/alternate club names registered as ``TeamAlias`` rows."""
+    plus the full/alternate club names registered as ``TeamAlias`` rows
+    and the official crest (served from ``/logos/nrl/``) written to
+    ``teams.logo_url`` at identity-ensure time."""
 
     name: str
     aliases: Tuple[str, ...] = ()
+    logo: Optional[str] = None
 
 
 #: Competition identity per the session-bundle decisions.  Timezone is
@@ -126,36 +129,59 @@ COMPETITIONS: Dict[str, CompetitionIdentity] = {
 #: The 17 NRL clubs (feed nicknames live-verified 2026-10-09).  NRLW
 #: reuses these club identities — there are no women's-suffixed
 #: duplicates; Origin teams are separate (ORIGIN_TEAMS below).
+#: ``logo`` is the official club crest served from
+#: ``frontend/public/logos/nrl/`` (downloaded by
+#: ``scripts/download_nrl_logos.py``) — identity-ensure writes it to
+#: ``teams.logo_url`` so ``GET /api/teams`` carries the real brand
+#: image to the frontend.
 CLUBS: Tuple[TeamIdentity, ...] = (
-    TeamIdentity("Broncos", ("Brisbane Broncos",)),
-    TeamIdentity("Bulldogs", ("Canterbury-Bankstown Bulldogs", "Canterbury Bulldogs")),
-    TeamIdentity("Cowboys", ("North Queensland Cowboys",)),
-    TeamIdentity("Dolphins", ("The Dolphins", "Redcliffe Dolphins")),
-    TeamIdentity("Dragons", ("St George Illawarra Dragons",)),
-    TeamIdentity("Eels", ("Parramatta Eels",)),
-    TeamIdentity("Knights", ("Newcastle Knights",)),
-    TeamIdentity("Panthers", ("Penrith Panthers",)),
-    TeamIdentity("Rabbitohs", ("South Sydney Rabbitohs",)),
-    TeamIdentity("Raiders", ("Canberra Raiders",)),
-    TeamIdentity("Roosters", ("Sydney Roosters",)),
-    TeamIdentity("Sea Eagles", ("Manly Warringah Sea Eagles", "Manly Sea Eagles")),
-    TeamIdentity("Sharks", ("Cronulla-Sutherland Sharks", "Cronulla Sharks")),
-    TeamIdentity("Storm", ("Melbourne Storm",)),
-    TeamIdentity("Titans", ("Gold Coast Titans",)),
-    TeamIdentity("Warriors", ("New Zealand Warriors", "NZ Warriors")),
+    TeamIdentity("Broncos", ("Brisbane Broncos",), "/logos/nrl/broncos.svg"),
+    TeamIdentity(
+        "Bulldogs",
+        ("Canterbury-Bankstown Bulldogs", "Canterbury Bulldogs"),
+        "/logos/nrl/bulldogs.svg",
+    ),
+    TeamIdentity("Cowboys", ("North Queensland Cowboys",), "/logos/nrl/cowboys.svg"),
+    TeamIdentity("Dolphins", ("The Dolphins", "Redcliffe Dolphins"), "/logos/nrl/dolphins.png"),
+    TeamIdentity("Dragons", ("St George Illawarra Dragons",), "/logos/nrl/dragons.svg"),
+    TeamIdentity("Eels", ("Parramatta Eels",), "/logos/nrl/eels.svg"),
+    TeamIdentity("Knights", ("Newcastle Knights",), "/logos/nrl/knights.svg"),
+    TeamIdentity("Panthers", ("Penrith Panthers",), "/logos/nrl/panthers.svg"),
+    TeamIdentity("Rabbitohs", ("South Sydney Rabbitohs",), "/logos/nrl/rabbitohs.svg"),
+    TeamIdentity("Raiders", ("Canberra Raiders",), "/logos/nrl/raiders.svg"),
+    TeamIdentity("Roosters", ("Sydney Roosters",), "/logos/nrl/roosters.svg"),
+    TeamIdentity(
+        "Sea Eagles",
+        ("Manly Warringah Sea Eagles", "Manly Sea Eagles"),
+        "/logos/nrl/sea_eagles.svg",
+    ),
+    TeamIdentity(
+        "Sharks", ("Cronulla-Sutherland Sharks", "Cronulla Sharks"), "/logos/nrl/sharks.svg"
+    ),
+    TeamIdentity("Storm", ("Melbourne Storm",), "/logos/nrl/storm.svg"),
+    TeamIdentity("Titans", ("Gold Coast Titans",), "/logos/nrl/titans.svg"),
+    TeamIdentity("Warriors", ("New Zealand Warriors", "NZ Warriors"), "/logos/nrl/warriors.svg"),
     # The merged club's official name IS "Wests Tigers"; the Wests/
     # Balmain predecessors are distinct historical entities, not aliases.
     # "Tigers" is the FEED's 2017-2018 short name for the same club —
     # without it the sync get-or-create'd a second participant and
     # split the club's Elo/form/H2H history across eras.
-    TeamIdentity("Wests Tigers", ("Tigers",)),
+    TeamIdentity("Wests Tigers", ("Tigers",), "/logos/nrl/wests_tigers.svg"),
 )
 
 #: State of Origin representative teams (fresh squads each series —
 #: not club identities).
 ORIGIN_TEAMS: Tuple[TeamIdentity, ...] = (
-    TeamIdentity("Blues", ("NSW Blues", "New South Wales Blues", "New South Wales")),
-    TeamIdentity("Maroons", ("QLD Maroons", "Queensland Maroons", "Queensland")),
+    TeamIdentity(
+        "Blues",
+        ("NSW Blues", "New South Wales Blues", "New South Wales"),
+        "/logos/nrl/blues.svg",
+    ),
+    TeamIdentity(
+        "Maroons",
+        ("QLD Maroons", "Queensland Maroons", "Queensland"),
+        "/logos/nrl/maroons.svg",
+    ),
 )
 
 #: Every seeded rugby-league team participant (17 clubs + 2 Origin).
@@ -357,10 +383,13 @@ async def seed_league_identity(
 
     resolver = ParticipantResolver(db, SPORT_ID)
     for team in TEAMS:
-        # Identity columns (logo/colours) stay NULL: no verified NRL
-        # source supplies them yet, and inventing data is worse than
-        # the frontend's colour fallback.
-        await resolver.ensure_team(team.name, aliases=team.aliases)
+        # The official crest paths come from the declarative identity
+        # (scripts/download_nrl_logos.py downloads the files);
+        # ensure_team only backfills NULL identity fields, so re-running
+        # never clobbers a value already on file.
+        await resolver.ensure_team(
+            team.name, aliases=team.aliases, logo_url=team.logo
+        )
 
     await db.commit()
     logger.info(
