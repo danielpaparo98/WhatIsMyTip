@@ -660,6 +660,57 @@ class TestPartialFailureLogging:
         assert "fixture 2026005" in stats["errors"][0]
         assert "simulated upsert failure" in stats["errors"][0]
 
+    async def test_mid_pass_failure_does_not_cascade_to_later_fixtures(
+        self, db, recorded_feed, monkeypatch
+    ):
+        """A colliding fixture (double-header: same round/starts_at/
+        venue → natural-key collapse → participant UQ) must not kill
+        its season mid-pass: the identity + competition/season rows are
+        committed BEFORE the fixture loop, so LATER fixtures in the
+        same pass still land instead of FK-failing on a rolled-back
+        season (the live nrl-2020 backfill failure pattern)."""
+        base = {
+            "RoundNumber": 1,
+            "DateUtc": "2026-03-12 09:05:00Z",
+            "Location": "Suncorp Stadium",
+            "HomeTeamScore": 10,
+            "AwayTeamScore": 8,
+        }
+        payload = [
+            {
+                "MatchNumber": 1,
+                "HomeTeam": "Broncos",
+                "AwayTeam": "Cowboys",
+                **base,
+            },
+            {   # natural-key collapse onto fixture 1 → UQ on insert
+                "MatchNumber": 2,
+                "HomeTeam": "Eels",
+                "AwayTeam": "Sharks",
+                **base,
+            },
+            {   # MUST survive despite the mid-pass failure above
+                "MatchNumber": 3,
+                "RoundNumber": 2,
+                "DateUtc": "2026-03-19 09:05:00Z",
+                "Location": "Lang Park",
+                "HomeTeam": "Broncos",
+                "AwayTeam": "Eels",
+                "HomeTeamScore": 20,
+                "AwayTeamScore": 18,
+            },
+        ]
+        recorded_feed("nrl", {"nrl-2026": payload})
+
+        stats = await run_league_sync(db, "nrl", 2026)
+
+        assert stats["status"] == "success"
+        assert stats["fixtures_synced"] == 2, stats["errors"]
+        assert len(stats["errors"]) == 1
+        assert "fixture 2026002" in stats["errors"][0]
+        events = await _events_with_refs(db, "fixturedownload-nrl")
+        assert set(events) == {2026001, 2026003}
+
 
 class TestSyncFailureRaisesBackendServiceError:
     async def test_feed_failure_raises_repo_standard_error(self, db, recorded_feed):
