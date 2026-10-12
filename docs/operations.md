@@ -90,7 +90,11 @@ code.  Diagnose from the sync error body: CloudFront/WAF blocks return
 an HTML challenge page; an app-tier rejection returns JSON.  The
 2026-10-12 follow-up confirmed the header rework alone does NOT clear
 prod (CloudFront denies DO ranges outright) — the worker proxy is the
-operational fix.
+operational fix, and it went live the same day: prod's
+`PLAYHQ_GRAPHQL_BASE`/`PLAYHQ_PROXY_TOKEN` point at
+`https://playhq-proxy.whatismytip.workers.dev/graphql` and the
+triggered sync came back clean (128 fixtures, 0 errors, both
+leagues).  The nightly 04:30 AWST cron flows through the proxy.
 
 > **Known gap (Phase 5.2 follow-up):** the admin `daily-sync` trigger does not exercise the rugby-league section yet (it predates the shared `run_daily_sync` service).  Wiring it through the shared service is a candidate follow-up — it touches `app/api/admin.py`, which was out of scope for the expansion's ops subtask.
 
