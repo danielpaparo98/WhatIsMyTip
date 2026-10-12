@@ -101,3 +101,6 @@ frontend/typecheck.txt
 # Policy (test_no_hardcoded_secrets): never commit. Keep it OUTSIDE the repo;
 # .do/app.yaml.example is the sanitized IaC reference.
 .do/app.yaml
+
+# Cloudflare wrangler local state (OAuth cache, build artifacts)
+.wrangler/
