@@ -67,6 +67,26 @@ Since Phase 5.2 the `daily-sync` job carries two independent sections:
   Substitute the season as needed (feeds exist 2017+).  A re-run is an idempotent upsert, and the provider cache keeps it to one fetch per slug per day.  Restrict the loop to a single league for targeted retries of a `leagues_failed` entry.
 - **State leagues** keep their own admin trigger: `POST /api/admin/league-sync/trigger`.
 
+#### PlayHQ (NWFL/SFL) edge WAF blocks
+
+PlayHQ fronts `api.playhq.com` with a WAF that 403s datacenter egress it
+does not consider browser-like.  The 2026-10-12 incident: prod
+(DigitalOcean Sydney) got 403 on every NWFL/SFL sync, while the identical
+request from a residential connection returned 200 — the old
+`User-Agent: WhatIsMyTip (...)` made the block a guaranteed match.  The
+provider now presents a full Chrome identity (UA + client hints +
+`Sec-Fetch-*`), retries transient 403/429/5xx with backoff, and surfaces
+the WAF's response body in the raised error so the block reason lands in
+prod logs.
+
+If blocks return despite the browser headers, the remaining lever is
+egress: set `PLAYHQ_GRAPHQL_BASE` (prod env var) to a same-shape reverse
+proxy that forwards to `https://api.playhq.com/graphql` (a small
+Cloudflare Worker suffices — the sync makes ~8 requests/day).  That is an
+env-only change on App Platform; no redeploy.  Diagnose from the sync
+error body: CloudFront/WAF blocks return an HTML challenge page; an app
+tier rejection returns JSON.
+
 > **Known gap (Phase 5.2 follow-up):** the admin `daily-sync` trigger does not exercise the rugby-league section yet (it predates the shared `run_daily_sync` service).  Wiring it through the shared service is a candidate follow-up — it touches `app/api/admin.py`, which was out of scope for the expansion's ops subtask.
 
 ## Current cross-links
