@@ -39,6 +39,7 @@ from __future__ import annotations
 from typing import Any, Callable, Dict, Optional
 
 from sqlalchemy import update
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..logger import get_logger
 from ..models import Season
@@ -151,6 +152,7 @@ def _isports(league_id: int) -> FeedProvider:
 
 
 def _playhq(league: str) -> FeedProvider:
+    from ..config import settings
     from .playhq_provider import (
         NWFL_GRADE_IDS,
         NWFL_ROUTING_CODE,
@@ -164,7 +166,9 @@ def _playhq(league: str) -> FeedProvider:
         "sfl": (SFL_ROUTING_CODE, SFL_GRADE_IDS),
     }[league]
     return PlayHQProvider(
-        organisation_routing_code=routing_code, grade_ids=grade_ids
+        organisation_routing_code=routing_code,
+        grade_ids=grade_ids,
+        api_url=settings.playhq_graphql_base,
     )
 
 
@@ -207,7 +211,7 @@ async def build_team_metadata_lookup(
 
 
 async def run_league_sync(
-    session, league_key: str, season: int, *, mark_current: bool = True
+    session: AsyncSession, league_key: str, season: int, *, mark_current: bool = True
 ) -> Dict[str, Any]:
     """Sync one league-season via the registry. Raises for leagues
     whose provider is not yet implemented."""

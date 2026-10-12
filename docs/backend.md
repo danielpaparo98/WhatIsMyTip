@@ -225,6 +225,7 @@ All configuration is managed through [`packages/shared/config.py`](../backend/pa
 | `ODDS_API_BASE` | The Odds API base URL (`https://api.the-odds-api.com/v4`) |
 | `ODDS_API_SPORT_KEY` | Sport key for AFL odds (`aussie_rules_afl`) |
 | `ODDS_API_REGIONS` | Bookmaker regions (`au`) |
+| `PLAYHQ_GRAPHQL_BASE` | PlayHQ GraphQL endpoint for the NWFL/SFL sync (`https://api.playhq.com/graphql`). Override only if PlayHQ's edge WAF blocks the server's egress again — point it at a same-shape reverse proxy (env-only change, no redeploy) |
 
 ### Admin & Security
 

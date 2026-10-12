@@ -18,9 +18,11 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 from datetime import datetime
 from typing import Any, Dict
 
+import httpx
 import pytest
 
 from packages.shared.ingestion.playhq_provider import PlayHQProvider
@@ -133,6 +135,24 @@ def _stat(side: Dict[str, Any] | None, value: str) -> int | None:
         if entry.get("type", {}).get("value") == value:
             return entry.get("count")
     return None
+
+
+def _patch_http_transport(monkeypatch, handler) -> Dict[str, int]:
+    """Route ``_default_query``'s own ``httpx.AsyncClient`` through a
+    MockTransport handler; returns the call-count dict."""
+    calls = {"count": 0}
+
+    def counting_handler(request: httpx.Request) -> httpx.Response:
+        calls["count"] += 1
+        return handler(request)
+
+    class _PatchedClient(httpx.AsyncClient):
+        def __init__(self, *args, **kwargs):
+            kwargs["transport"] = httpx.MockTransport(counting_handler)
+            super().__init__(*args, **kwargs)
+
+    monkeypatch.setattr(httpx, "AsyncClient", _PatchedClient)
+    return calls
 
 
 class TestPlayHQNWFL2026:
@@ -575,6 +595,45 @@ class TestPlayHQPlumbing:
         assert headers["Content-Type"] == "application/json"
         assert "Authorization" not in headers
 
+    def test_default_headers_present_a_browser_identity(self):
+        """PlayHQ's edge WAF 403s non-browser clients on datacenter
+        egress (2026-10 prod incident).  The client must look like the
+        www.playhq.com SPA's browser: a real Chrome UA (the old
+        'WhatIsMyTip (...)' self-identification got the server blocked)
+        plus the fetch-metadata/client-hint headers Chrome sends.
+        """
+        provider = PlayHQProvider(
+            organisation_routing_code="abb4e230",
+            grade_ids={"NWFL Premier League Senior Men": "c2721398"},
+        )
+        headers = provider._headers()
+        ua = headers["User-Agent"]
+        assert ua.startswith("Mozilla/5.0"), ua
+        assert "Chrome/" in ua, ua
+        assert "WhatIsMyTip" not in ua
+        assert "Chrome" in headers["sec-ch-ua"]
+        assert headers["sec-ch-ua-mobile"] == "?0"
+        assert headers["sec-ch-ua-platform"] == '"Windows"'
+        assert headers["Sec-Fetch-Dest"] == "empty"
+        assert headers["Sec-Fetch-Mode"] == "cors"
+        # www.playhq.com -> api.playhq.com shares the eTLD+1.
+        assert headers["Sec-Fetch-Site"] == "same-site"
+        assert headers["Accept"] == "*/*"
+        assert headers["Accept-Language"].startswith("en-AU")
+
+    def test_ua_matches_sec_ch_ua_major_version(self):
+        """The UA's Chrome major version and the sec-ch-ua brand list
+        must agree — a mismatch is itself a bot tell for modern WAFs."""
+        provider = PlayHQProvider(
+            organisation_routing_code="abb4e230",
+            grade_ids={"NWFL Premier League Senior Men": "c2721398"},
+        )
+        headers = provider._headers()
+        ua_major = re.search(r"Chrome/(\d+)", headers["User-Agent"])
+        brand = re.search(r'"Chromium";v="(\d+)"', headers["sec-ch-ua"])
+        assert ua_major and brand
+        assert ua_major.group(1) == brand.group(1)
+
     def test_graphql_errors_surface_as_runtime_error(self):
         async def failing_query(query: str, variables: dict | None = None):
             return {"errors": [{"message": "grade not found"}]}
@@ -590,6 +649,79 @@ class TestPlayHQPlumbing:
     def test_constructor_requires_a_grade_selection(self):
         with pytest.raises(ValueError, match="grade"):
             PlayHQProvider(organisation_routing_code="abb4e230")
+
+
+class TestPlayHQHttpBehavior:
+    """``_default_query`` against a mocked HTTP transport: the 2026-10
+    WAF incident contract — browser-like requests, transient blocks
+    retried, persistent blocks surfaced with the block page in the
+    error, and genuine client errors NOT retried."""
+
+    @pytest.fixture(autouse=True)
+    def _no_retry_wait(self, monkeypatch):
+        from packages.shared.ingestion import playhq_provider as pp
+
+        monkeypatch.setattr(pp, "_RETRY_DELAYS", (0.0, 0.0))
+
+    def _provider(self) -> PlayHQProvider:
+        return PlayHQProvider(
+            organisation_routing_code="abb4e230",
+            grade_ids={"NWFL Premier League Senior Men": "c2721398"},
+        )
+
+    @pytest.mark.asyncio
+    async def test_recovers_from_a_transient_403(self, monkeypatch):
+        def handler(request: httpx.Request) -> httpx.Response:
+            if calls["count"] == 1:
+                return httpx.Response(403, text="blocked")
+            return httpx.Response(
+                200,
+                json={"data": {"discoverOrganisation": {"id": "abb4e230"}}},
+            )
+
+        calls = _patch_http_transport(monkeypatch, handler)
+        payload = await self._provider()._default_query("query { x }", {})
+        assert payload == {"data": {"discoverOrganisation": {"id": "abb4e230"}}}
+        assert calls["count"] == 2
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("status", [403, 429, 502, 503])
+    async def test_persistent_block_raises_after_retrying(
+        self, monkeypatch, status: int
+    ):
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(status, text="waf challenge page")
+
+        calls = _patch_http_transport(monkeypatch, handler)
+        with pytest.raises(RuntimeError, match=str(status)) as excinfo:
+            await self._provider()._default_query("query { x }", {})
+        assert calls["count"] == 3
+        assert "waf challenge page" in str(excinfo.value)
+
+    @pytest.mark.asyncio
+    async def test_client_errors_are_not_retried(self, monkeypatch):
+        """A 400 (bad GraphQL) must fail fast — retrying cannot fix it."""
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(400, text="validation error")
+
+        calls = _patch_http_transport(monkeypatch, handler)
+        with pytest.raises(httpx.HTTPStatusError):
+            await self._provider()._default_query("query { x }", {})
+        assert calls["count"] == 1
+
+    @pytest.mark.asyncio
+    async def test_requests_carry_the_browser_headers(self, monkeypatch):
+        seen: list[httpx.Request] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen.append(request)
+            return httpx.Response(200, json={"data": {}})
+
+        _patch_http_transport(monkeypatch, handler)
+        await self._provider()._default_query("query { x }", {})
+        assert seen[0].headers["User-Agent"].startswith("Mozilla/5.0")
+        assert seen[0].headers["tenant"] == "afl"
 
 
 class TestPlayHQRegistryWiring:
@@ -623,3 +755,24 @@ class TestPlayHQRegistryWiring:
         assert STATE_LEAGUES["sfl"].name == "Southern Football League"
         assert STATE_LEAGUES["nwfl"].timezone == "Australia/Hobart"
         assert STATE_LEAGUES["sfl"].timezone == "Australia/Hobart"
+
+    def test_graphql_base_url_is_env_overridable(self, monkeypatch):
+        """If PlayHQ's WAF blocks the server's egress again, ops can
+        point PLAYHQ_GRAPHQL_BASE at a same-shape reverse proxy (env
+        change only — no redeploy) while keeping the default pinned to
+        the live API."""
+        from packages.shared.config import settings
+        from packages.shared.ingestion.state_leagues import STATE_LEAGUES
+
+        provider = STATE_LEAGUES["nwfl"].provider_factory()
+        assert provider._api_url == "https://api.playhq.com/graphql"
+
+        monkeypatch.setattr(
+            settings,
+            "playhq_graphql_base",
+            "https://playhq-proxy.example.workers.dev/graphql",
+        )
+        provider = STATE_LEAGUES["sfl"].provider_factory()
+        assert provider._api_url == (
+            "https://playhq-proxy.example.workers.dev/graphql"
+        )

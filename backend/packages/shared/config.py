@@ -185,6 +185,12 @@ class Settings(BaseSettings):
     # fresh for the day's predictions.
     league_sync_enabled: bool = True
     league_sync_cron: str = "30 4 * * *"  # daily 04:30 app-tz
+    # PlayHQ GraphQL endpoint (NWFL/SFL).  PlayHQ's edge WAF started
+    # 403-ing our datacenter egress in 2026-10; the provider now speaks
+    # browser headers.  If a block returns, point this at a same-shape
+    # reverse proxy (e.g. a Cloudflare Worker forwarding to
+    # api.playhq.com/graphql) — an env-only change, no redeploy.
+    playhq_graphql_base: str = "https://api.playhq.com/graphql"
 
     # Rugby-League Sync (Phase 5.2 expansion): the daily-sync job also
     # sweeps every "live" league in ``NATIONAL_LEAGUES`` (NRL, NRLW and
