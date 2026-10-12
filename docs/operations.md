@@ -80,12 +80,17 @@ the WAF's response body in the raised error so the block reason lands in
 prod logs.
 
 If blocks return despite the browser headers, the remaining lever is
-egress: set `PLAYHQ_GRAPHQL_BASE` (prod env var) to a same-shape reverse
-proxy that forwards to `https://api.playhq.com/graphql` (a small
-Cloudflare Worker suffices — the sync makes ~8 requests/day).  That is an
-env-only change on App Platform; no redeploy.  Diagnose from the sync
-error body: CloudFront/WAF blocks return an HTML challenge page; an app
-tier rejection returns JSON.
+egress: deploy the reference reverse proxy at
+[`infra/playhq-proxy/`](../infra/playhq-proxy/README.md) (a token-gated
+Cloudflare Worker forwarding to `api.playhq.com/graphql`, ~5 min setup)
+and point prod at it via two env vars — `PLAYHQ_GRAPHQL_BASE` (the
+worker URL) + `PLAYHQ_PROXY_TOKEN` (shared secret, sent as
+`X-Proxy-Token`).  Env-only change on App Platform; no redeploy of
+code.  Diagnose from the sync error body: CloudFront/WAF blocks return
+an HTML challenge page; an app-tier rejection returns JSON.  The
+2026-10-12 follow-up confirmed the header rework alone does NOT clear
+prod (CloudFront denies DO ranges outright) — the worker proxy is the
+operational fix.
 
 > **Known gap (Phase 5.2 follow-up):** the admin `daily-sync` trigger does not exercise the rugby-league section yet (it predates the shared `run_daily_sync` service).  Wiring it through the shared service is a candidate follow-up — it touches `app/api/admin.py`, which was out of scope for the expansion's ops subtask.
 

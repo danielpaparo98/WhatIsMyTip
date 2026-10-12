@@ -723,6 +723,44 @@ class TestPlayHQHttpBehavior:
         assert seen[0].headers["User-Agent"].startswith("Mozilla/5.0")
         assert seen[0].headers["tenant"] == "afl"
 
+    def test_proxy_token_header_when_configured(self):
+        """Egress escape hatch: when PLAYHQ_GRAPHQL_BASE points at the
+        reverse proxy, PLAYHQ_PROXY_TOKEN rides along as X-Proxy-Token
+        so the proxy can refuse the open internet.  Absent by default."""
+        provider = PlayHQProvider(
+            organisation_routing_code="abb4e230",
+            grade_ids={"NWFL Premier League Senior Men": "c2721398"},
+            proxy_token="secret-token",
+        )
+        assert provider._headers()["X-Proxy-Token"] == "secret-token"
+
+        plain = PlayHQProvider(
+            organisation_routing_code="abb4e230",
+            grade_ids={"NWFL Premier League Senior Men": "c2721398"},
+        )
+        assert "X-Proxy-Token" not in plain._headers()
+
+    def test_registry_threads_the_proxy_token(self, monkeypatch):
+        from packages.shared.config import settings
+        from packages.shared.ingestion.state_leagues import STATE_LEAGUES
+
+        monkeypatch.setattr(settings, "playhq_proxy_token", "tok-123")
+        provider = STATE_LEAGUES["nwfl"].provider_factory()
+        assert provider._headers()["X-Proxy-Token"] == "tok-123"
+
+    def test_block_diagnosis_carries_the_waf_reason(self, monkeypatch):
+        """CloudFront's denial reason ('Message: ...') sits ~300 chars
+        into the body — the snippet must reach it (2026-10 incident:
+        the 200-char snippet cut off before the reason line)."""
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            body = "x" * 300 + 'Message: "THE REASON".'
+            return httpx.Response(403, text=body)
+
+        _patch_http_transport(monkeypatch, handler)
+        with pytest.raises(RuntimeError, match="THE REASON"):
+            asyncio.run(self._provider()._default_query("query { x }", {}))
+
 
 class TestPlayHQRegistryWiring:
     """The two Tasmanian PlayHQ leagues wired live (mirrors
