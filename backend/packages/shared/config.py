@@ -188,9 +188,11 @@ class Settings(BaseSettings):
     # PlayHQ GraphQL endpoint (NWFL/SFL).  PlayHQ's edge WAF started
     # 403-ing our datacenter egress in 2026-10; the provider now speaks
     # browser headers.  If a block returns, point this at a same-shape
-    # reverse proxy (e.g. a Cloudflare Worker forwarding to
-    # api.playhq.com/graphql) — an env-only change, no redeploy.
+    # reverse proxy (see infra/playhq-proxy/) — an env-only change, no
+    # redeploy.  PLAYHQ_PROXY_TOKEN authenticates us to that proxy
+    # (sent as X-Proxy-Token); empty when talking to PlayHQ directly.
     playhq_graphql_base: str = "https://api.playhq.com/graphql"
+    playhq_proxy_token: str = ""
 
     # Rugby-League Sync (Phase 5.2 expansion): the daily-sync job also
     # sweeps every "live" league in ``NATIONAL_LEAGUES`` (NRL, NRLW and

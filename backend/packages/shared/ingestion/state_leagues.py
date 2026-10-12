@@ -169,6 +169,7 @@ def _playhq(league: str) -> FeedProvider:
         organisation_routing_code=routing_code,
         grade_ids=grade_ids,
         api_url=settings.playhq_graphql_base,
+        proxy_token=settings.playhq_proxy_token or None,
     )
 
 

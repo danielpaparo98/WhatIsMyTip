@@ -152,6 +152,7 @@ class PlayHQProvider:
         grade_ids: Optional[Dict[str, str]] = None,
         grade_name: Optional[str] = None,
         api_url: str = "https://api.playhq.com/graphql",
+        proxy_token: Optional[str] = None,
         query: Optional[Callable[[str, Dict[str, Any]], Awaitable[Any]]] = None,
     ):
         if not grade_ids and not grade_name:
@@ -163,12 +164,13 @@ class PlayHQProvider:
         self.grade_ids = dict(grade_ids or {})
         self._grade_name = grade_name
         self._api_url = api_url
+        self._proxy_token = proxy_token
         self._query = query or self._default_query
 
     # ------------------------------------------------------------------
 
     def _headers(self) -> Dict[str, str]:
-        return {
+        headers = {
             # The discover API requires the SPA's preflight header set —
             # no auth.  The full browser identity below is what gets the
             # request past PlayHQ's edge WAF (2026-10); a non-browser UA
@@ -189,6 +191,9 @@ class PlayHQProvider:
             "Sec-Fetch-Site": "same-site",
             "Priority": "u=1, i",
         }
+        if self._proxy_token:
+            headers["X-Proxy-Token"] = self._proxy_token
+        return headers
 
     async def _default_query(self, document: str, variables: Dict[str, Any]) -> Any:
         import asyncio
@@ -226,8 +231,10 @@ class PlayHQProvider:
     @staticmethod
     def _block_diagnosis(response: "httpx.Response") -> str:
         """Error text for a retry-exhausted block/5xx, carrying the
-        response body so the WAF's reason lands in prod logs."""
-        snippet = " ".join(response.text[:200].split())
+        response body so the WAF's reason lands in prod logs.  The
+        snippet must reach ~400 chars: CloudFront's denial page puts
+        its 'Message: ...' line about 300 chars in."""
+        snippet = " ".join(response.text[:400].split())
         return (
             f"PlayHQ returned HTTP {response.status_code} after retries "
             f"({response.request.method} {response.request.url}) — "

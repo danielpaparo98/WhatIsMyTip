@@ -1,0 +1,8 @@
+name = "playhq-proxy"
+main = "src/worker.js"
+compatibility_date = "2026-10-01"
+
+# Workers.dev subdomain is enabled by default; no routes/zones needed —
+# the backend talks to https://playhq-proxy.<account>.workers.dev/graphql
+# directly.  PROXY_TOKEN is set out-of-band:
+#   npx wrangler secret put PROXY_TOKEN
