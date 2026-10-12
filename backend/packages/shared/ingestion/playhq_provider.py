@@ -14,9 +14,15 @@ Recipe (verified against the live API 2026-09-24; every query HTTP
 bundle ``assets/index.107a513e.js`` — not guessed):
 
 * ``POST /graphql`` with ``Content-Type: application/json`` and the
-  preflight headers the SPA sends: ``Origin``,
-  ``Referer``, ``Apollo-Require-Preflight: true`` and ``tenant: afl``.
-  No auth.
+  preflight headers the SPA sends: ``Origin``, ``Referer``,
+  ``Apollo-Require-Preflight: true`` and ``tenant: afl``.  No auth.
+  The request must also carry a browser identity (real Chrome UA +
+  client hints + ``Sec-Fetch-*``): since 2026-10 PlayHQ's edge WAF
+  403s non-browser clients arriving from datacenter egress (the
+  DigitalOcean prod server was blocked; the identifying
+  ``WhatIsMyTip (...)`` UA made that a guaranteed match).  Transient
+  403/429/5xx responses are retried with backoff; a persistent block
+  raises with the WAF's body so prod logs show the reason.
 * ``discoverOrganisation(code:)`` — the ROUTING code is not the
   organisation id: the SFL resolves code ``cc453fd4`` → id
   ``c81f5b0c``, so the id must always be resolved through this query.
@@ -52,10 +58,13 @@ from __future__ import annotations
 
 import re
 from datetime import datetime
-from typing import Any, Awaitable, Callable, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, List, Optional
 
 from ..logger import get_logger
 from .dto import FixtureDTO
+
+if TYPE_CHECKING:
+    import httpx
 
 logger = get_logger(__name__)
 
@@ -81,6 +90,24 @@ NWFL_ROUTING_CODE = "abb4e230"
 SFL_ROUTING_CODE = "cc453fd4"
 NWFL_GRADE_IDS = {"NWFL Premier League Senior Men": "c2721398"}
 SFL_GRADE_IDS = {"SFL Premier League Senior Men": "879a3be0"}
+
+# Chrome/Windows identity as the www.playhq.com SPA's users present it.
+# The major version must stay consistent between the UA and sec-ch-ua
+# (asserted by tests) — a mismatch is itself a bot tell.
+_USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+)
+_SEC_CH_UA = (
+    '"Google Chrome";v="131", "Chromium";v="131", "Not_A Brand";v="24"'
+)
+
+# Backoff between attempts of ``_default_query`` (attempt count is 3,
+# so two sleeps).  WAF blocks clear more slowly than timeouts — seconds
+# scale, not the old 1.5s linear bump.
+_RETRY_DELAYS = (2.0, 5.0)
+# Plus every >= 500.
+_RETRYABLE_STATUSES = frozenset({403, 429})
 
 
 def _normalize_round_name(name: Optional[str]) -> Optional[str]:
@@ -142,15 +169,25 @@ class PlayHQProvider:
 
     def _headers(self) -> Dict[str, str]:
         return {
-            # The discover API requires the SPA's preflight header set
-            # (verified live 2026-09-24) — no auth.
+            # The discover API requires the SPA's preflight header set —
+            # no auth.  The full browser identity below is what gets the
+            # request past PlayHQ's edge WAF (2026-10); a non-browser UA
+            # 403s from datacenter egress.
             "Content-Type": "application/json",
+            "Accept": "*/*",
+            "Accept-Language": "en-AU,en;q=0.9",
             "Origin": "https://www.playhq.com",
             "Referer": "https://www.playhq.com/",
             "Apollo-Require-Preflight": "true",
             "tenant": "afl",
-            # Identify our bot politely.
-            "User-Agent": "WhatIsMyTip (contact@whatismytip.com)",
+            "User-Agent": _USER_AGENT,
+            "sec-ch-ua": _SEC_CH_UA,
+            "sec-ch-ua-mobile": "?0",
+            "sec-ch-ua-platform": '"Windows"',
+            "Sec-Fetch-Dest": "empty",
+            "Sec-Fetch-Mode": "cors",
+            "Sec-Fetch-Site": "same-site",
+            "Priority": "u=1, i",
         }
 
     async def _default_query(self, document: str, variables: Dict[str, Any]) -> Any:
@@ -168,12 +205,34 @@ class PlayHQProvider:
                         self._api_url,
                         json={"query": document, "variables": variables},
                     )
+                    if (
+                        response.status_code in _RETRYABLE_STATUSES
+                        or response.status_code >= 500
+                    ):
+                        last_error = RuntimeError(
+                            self._block_diagnosis(response)
+                        )
+                        if attempt < len(_RETRY_DELAYS):
+                            await asyncio.sleep(_RETRY_DELAYS[attempt])
+                        continue
                     response.raise_for_status()
                     return response.json()
             except (httpx.TimeoutException, httpx.TransportError) as e:
                 last_error = e
-                await asyncio.sleep(1.5 * (attempt + 1))
+                if attempt < len(_RETRY_DELAYS):
+                    await asyncio.sleep(_RETRY_DELAYS[attempt])
         raise last_error  # type: ignore[misc]
+
+    @staticmethod
+    def _block_diagnosis(response: "httpx.Response") -> str:
+        """Error text for a retry-exhausted block/5xx, carrying the
+        response body so the WAF's reason lands in prod logs."""
+        snippet = " ".join(response.text[:200].split())
+        return (
+            f"PlayHQ returned HTTP {response.status_code} after retries "
+            f"({response.request.method} {response.request.url}) — "
+            f"body: {snippet!r}"
+        )
 
     async def _run(self, document: str, variables: Dict[str, Any]) -> Dict[str, Any]:
         payload = await self._query(document, variables)
@@ -329,7 +388,7 @@ class PlayHQProvider:
         raise ValueError("No grade configured — set grade_ids or grade_name")
 
     @staticmethod
-    def _grade_tokens(name: Any) -> set:
+    def _grade_tokens(name: Any) -> set[str]:
         """Significant lowercase words of a grade name (years dropped)."""
         return {
             token
