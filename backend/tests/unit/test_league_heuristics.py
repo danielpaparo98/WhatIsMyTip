@@ -27,12 +27,14 @@ Four layers, mirroring established repo patterns:
 from __future__ import annotations
 
 import os
+import contextlib
 import shutil
 import socket
 import subprocess
 import sys
 import time
 import uuid
+from contextlib import contextmanager
 from datetime import datetime
 from types import SimpleNamespace
 from typing import Any, AsyncIterator, Iterator
@@ -98,8 +100,10 @@ def _event(
     away_pid: int | None = 12,
     home_score: int | None = None,
     away_score: int | None = None,
+    completed: bool = True,
 ) -> CompletedEvent:
-    """A completed-event snapshot; decided once both scores are given."""
+    """A completed-event snapshot; decided once both scores are given.
+    ``completed=False`` marks a FCL-12 scheduled snapshot (forward tips)."""
     return CompletedEvent(
         event_id=event_id,
         season_id=season_id,
@@ -110,6 +114,7 @@ def _event(
         away_participant_id=away_pid,
         home_score=home_score,
         away_score=away_score,
+        completed=completed,
     )
 
 
@@ -472,13 +477,15 @@ def _patched_fetches(
     events: list[CompletedEvent],
     existing: dict[tuple[int, str], int | None],
     *,
+    scheduled_events: list[CompletedEvent] | None = None,
     linear_weights: tuple[float, dict[str, float]] | None = None,
     boosted_model: Any | None = None,
 ) -> tuple[Any, ...]:
     """Instance-level fetch/loader patches — the class's real staticmethods
     are never touched (each test builds its own service instance).  The
     learned-model loaders default to ``None`` — the majority-vote
-    fallback (FCL-3d), i.e. no scoped trained model."""
+    fallback (FCL-3d), i.e. no scoped trained model.  ``scheduled_events``
+    defaults to ``()`` — no upcoming fixtures (FCL-12 forward tips)."""
     return (
         patch.object(service, "_fetch_seasons", AsyncMock(return_value=seasons)),
         patch.object(
@@ -497,7 +504,21 @@ def _patched_fetches(
             "_load_boosted_artifact",
             AsyncMock(return_value=boosted_model),
         ),
+        patch.object(
+            service,
+            "_fetch_scheduled_events",
+            AsyncMock(return_value=scheduled_events or []),
+        ),
     )
+
+
+@contextmanager
+def _applied(patches: tuple[Any, ...]) -> Iterator[None]:
+    """Apply every patch from :func:`_patched_fetches` (any tuple length)."""
+    with contextlib.ExitStack() as stack:
+        for p in patches:
+            stack.enter_context(p)
+        yield
 
 
 class TestGenerateForCompetition:
@@ -518,7 +539,7 @@ class TestGenerateForCompetition:
         db = _fake_session()
         service = LeagueHeuristicsService()
         patches = _patched_fetches(service, seasons, events, {})
-        with patches[0], patches[1], patches[2], patches[3], patches[4]:
+        with _applied(patches):
             summary = await service.generate_for_competition(db, competition_id=42)
 
         rows = [call.args[0] for call in db.add.call_args_list]
@@ -559,12 +580,10 @@ class TestGenerateForCompetition:
         existing = {(p.event_id, p.heuristic): p.selected_side_id for p in picks}
         first_patches = _patched_fetches(service, seasons, events, {})
         second_patches = _patched_fetches(service, seasons, events, existing)
-        with first_patches[0], first_patches[1], first_patches[2], \
-                first_patches[3], first_patches[4]:
+        with _applied(first_patches):
             first = await service.generate_for_competition(db, competition_id=42)
         db.add = MagicMock()  # fresh spy for the re-run
-        with second_patches[0], second_patches[1], second_patches[2], \
-                second_patches[3], second_patches[4]:
+        with _applied(second_patches):
             second = await service.generate_for_competition(db, competition_id=42)
 
         assert first["tips_inserted"] == 6  # 3 base + 3 derived
@@ -591,7 +610,7 @@ class TestGenerateForCompetition:
         )
         service = LeagueHeuristicsService()
         patches = _patched_fetches(service, seasons, events, existing)
-        with patches[0], patches[1], patches[2], patches[3], patches[4]:
+        with _applied(patches):
             summary = await service.generate_for_competition(db, competition_id=42)
 
         assert summary["tips_inserted"] == 0
@@ -896,7 +915,7 @@ class TestGenerateForCompetitionDerived:
         db = _fake_session()
         service = LeagueHeuristicsService()
         patches = _patched_fetches(service, seasons, events, {})
-        with patches[0], patches[1], patches[2], patches[3], patches[4]:
+        with _applied(patches):
             summary = await service.generate_for_competition(db, competition_id=42)
 
         rows = [call.args[0] for call in db.add.call_args_list]
@@ -921,7 +940,7 @@ class TestGenerateForCompetitionDerived:
         db = _fake_session()
         service = LeagueHeuristicsService()
         patches = _patched_fetches(service, seasons, events, {})
-        with patches[0], patches[1], patches[2], patches[3], patches[4]:
+        with _applied(patches):
             summary = await service.generate_for_competition(db, competition_id=42)
 
         rows = [call.args[0] for call in db.add.call_args_list]
@@ -966,7 +985,7 @@ class TestGenerateForCompetitionDerived:
         db = _fake_session()
         service = LeagueHeuristicsService()
         patches = _patched_fetches(service, seasons, events, {})
-        with patches[0], patches[1], patches[2], patches[3], patches[4]:
+        with _applied(patches):
             await service.generate_for_competition(db, competition_id=42)
 
         rows = [call.args[0] for call in db.add.call_args_list]
@@ -1006,7 +1025,7 @@ class TestGenerateForCompetitionDerived:
             linear_weights=linear,
             boosted_model=boosted,
         )
-        with patches[0], patches[1], patches[2], patches[3], patches[4]:
+        with _applied(patches):
             await service.generate_for_competition(db, competition_id=42)
 
         rows = [call.args[0] for call in db.add.call_args_list]
@@ -1044,6 +1063,9 @@ class TestGenerateForCompetitionDerived:
             patch.object(
                 service, "_fetch_existing_tips", AsyncMock(return_value={})
             ),
+            patch.object(
+                service, "_fetch_scheduled_events", AsyncMock(return_value=[])
+            ),
             patch(
                 "packages.shared.crud.model_versions.get_active_coefficients",
                 new=AsyncMock(side_effect=RuntimeError("db down")),
@@ -1053,7 +1075,7 @@ class TestGenerateForCompetitionDerived:
                 new=AsyncMock(side_effect=RuntimeError("db down")),
             ),
         )
-        with patches[0], patches[1], patches[2], patches[3], patches[4]:
+        with _applied(patches):
             summary = await service.generate_for_competition(db, competition_id=42)
 
         rows = [call.args[0] for call in db.add.call_args_list]
@@ -1089,7 +1111,7 @@ class TestGenerateForCompetitionDerived:
             linear_weights=("not-a-number", {}),
             boosted_model=_ExplodingPredictor(),
         )
-        with patches[0], patches[1], patches[2], patches[3], patches[4]:
+        with _applied(patches):
             summary = await service.generate_for_competition(db, competition_id=42)
 
         rows = [call.args[0] for call in db.add.call_args_list]
@@ -1119,15 +1141,18 @@ class TestGenerateForCompetitionDerived:
         db = _fake_session()
         service = LeagueHeuristicsService()
         patches = _patched_fetches(service, seasons, events, {})
-        with patches[0], patches[1], patches[2], patches[3], patches[4], \
+        with _applied(
+            (
+                *patches,
                 patch.object(
                     service, "_fetch_sport_id", AsyncMock(return_value="afl")
-                ), \
-                patch.object(
-                    service,
-                    "_fetch_competition_name",
-                    AsyncMock(return_value="Named Test League"),
-                ):
+                ),
+            )
+        ), patch.object(
+            service,
+            "_fetch_competition_name",
+            AsyncMock(return_value="Named Test League"),
+        ):
             summary = await service.generate_for_competition(db, competition_id=42)
 
         rows = [call.args[0] for call in db.add.call_args_list]
@@ -1148,17 +1173,20 @@ class TestGenerateForCompetitionDerived:
         db = _fake_session()
         service = LeagueHeuristicsService()
         patches = _patched_fetches(service, seasons, events, {})
-        with patches[0], patches[1], patches[2], patches[3], patches[4], \
+        with _applied(
+            (
+                *patches,
                 patch.object(
                     service,
                     "_fetch_sport_id",
                     AsyncMock(return_value="rugby-league"),
-                ), \
-                patch.object(
-                    service,
-                    "_fetch_competition_name",
-                    AsyncMock(return_value="Mystery League"),
-                ):
+                ),
+            )
+        ), patch.object(
+            service,
+            "_fetch_competition_name",
+            AsyncMock(return_value="Mystery League"),
+        ):
             summary = await service.generate_for_competition(db, competition_id=42)
 
         rows = [call.args[0] for call in db.add.call_args_list]
@@ -1166,6 +1194,220 @@ class TestGenerateForCompetitionDerived:
             set(RUGBY_LEAGUE_MODELS) | set(DERIVED_LEAGUE_HEURISTICS)
         )
         assert summary["tips_inserted"] == 7
+
+
+class TestScheduledEventTips:
+    """FCL-12: forward tips — scheduled fixtures get the same six names.
+
+    A tip is a tip: the league pages show upcoming fixtures, and every
+    model in a league's set is causal (prior completed evidence only),
+    so generation now also covers SCHEDULED events with both sides.
+    Grading is untouched — league_backtest grades ``completed`` events
+    only, so a forward pick cannot pollute accuracy until played."""
+
+    @pytest.mark.asyncio
+    async def test_scheduled_event_persists_base_and_derived_tips(self) -> None:
+        """One completed event + one scheduled: the scheduled fixture gets
+        all six names with picks from PRIOR evidence only (no NULLs — a
+        fixture without scores is not a draw)."""
+        seasons = [SeasonRef(id=7, label="2026", is_current=True)]
+        completed = [_event(1, season_id=7, home_score=90, away_score=70)]
+        scheduled = [
+            _event(
+                2,
+                season_id=7,
+                starts_at=datetime(2026, 4, 8),
+                home_score=None,
+                away_score=None,
+                completed=False,
+            )
+        ]
+        db = _fake_session()
+        service = LeagueHeuristicsService()
+        patches = _patched_fetches(
+            service, seasons, completed, {}, scheduled_events=scheduled
+        )
+        with _applied(patches):
+            summary = await service.generate_for_competition(db, competition_id=42)
+
+        rows = [call.args[0] for call in db.add.call_args_list]
+        scheduled_rows = [row for row in rows if row.event_id == 2]
+        assert {row.heuristic for row in scheduled_rows} == (
+            set(LEAGUE_HEURISTICS) | set(DERIVED_LEAGUE_HEURISTICS)
+        )
+        # A fixture without scores is NOT a draw — every pick points at a side.
+        assert all(
+            row.selected_participant_id in (101, 102) for row in scheduled_rows
+        )
+        assert summary["tips_inserted"] == 12  # 2 events × 6 names
+        assert summary["scheduled_considered"] == 1
+        assert summary["events_considered"] == 1  # completed only, unchanged
+
+    @pytest.mark.asyncio
+    async def test_scheduled_picks_follow_prior_evidence(self) -> None:
+        """The scheduled pick is causal: home side wins the prior round
+        convincingly, so home_advantage, form (1 win vs 0) and ladder
+        (1-0 vs 0-0) all vote home — best_bet and the fallback combiners
+        echo the unanimous vote."""
+        seasons = [SeasonRef(id=7, label="2026", is_current=True)]
+        completed = [_event(1, season_id=7, home_score=90, away_score=70)]
+        scheduled = [
+            _event(
+                2,
+                season_id=7,
+                starts_at=datetime(2026, 4, 8),
+                home_score=None,
+                away_score=None,
+                completed=False,
+            )
+        ]
+        db = _fake_session()
+        service = LeagueHeuristicsService()
+        patches = _patched_fetches(
+            service, seasons, completed, {}, scheduled_events=scheduled
+        )
+        with _applied(patches):
+            await service.generate_for_competition(db, competition_id=42)
+
+        rows = [call.args[0] for call in db.add.call_args_list]
+        scheduled_rows = [row for row in rows if row.event_id == 2]
+        assert {row.heuristic: row.selected_participant_id
+                for row in scheduled_rows} == {
+            HEURISTIC_HOME_ADVANTAGE: 101,
+            HEURISTIC_FORM: 101,
+            HEURISTIC_LADDER: 101,
+            HEURISTIC_BEST_BET: 101,
+            HEURISTIC_WEIGHTED_TIP: 101,
+            HEURISTIC_BOOSTED_TIP: 101,
+        }
+
+    @pytest.mark.asyncio
+    async def test_scheduled_event_without_sides_gets_no_tips(self) -> None:
+        """A scheduled fixture missing a side row can never carry a tip
+        (the pick FK targets the side row) — same discipline as D3."""
+        seasons = [SeasonRef(id=7, label="2026", is_current=True)]
+        completed = [_event(1, season_id=7, home_score=90, away_score=70)]
+        scheduled = [
+            _event(
+                2,
+                season_id=7,
+                starts_at=datetime(2026, 4, 8),
+                home_side=None,
+                away_side=None,
+                home_pid=None,
+                away_pid=None,
+                home_score=None,
+                away_score=None,
+                completed=False,
+            )
+        ]
+        db = _fake_session()
+        service = LeagueHeuristicsService()
+        patches = _patched_fetches(
+            service, seasons, completed, {}, scheduled_events=scheduled
+        )
+        with _applied(patches):
+            summary = await service.generate_for_competition(db, competition_id=42)
+
+        rows = [call.args[0] for call in db.add.call_args_list]
+        assert [row for row in rows if row.event_id == 2] == []
+        assert summary["tips_inserted"] == 6
+        assert summary["scheduled_considered"] == 1
+
+    @pytest.mark.asyncio
+    async def test_scheduled_zero_zero_placeholders_get_real_picks(self) -> None:
+        """FCL-12 live bug (AFLW round 10): feeds ship pre-match 0-0
+        score placeholders on scheduled fixtures.  Without the completion
+        guard in :func:`is_drawn` every forward tip degenerated to
+        draw-no-pick NULLs; now the fixture gets REAL side picks."""
+        seasons = [SeasonRef(id=7, label="2026", is_current=True)]
+        completed = [_event(1, season_id=7, home_score=90, away_score=70)]
+        scheduled = [
+            _event(
+                2,
+                season_id=7,
+                starts_at=datetime(2026, 4, 8),
+                home_score=0,
+                away_score=0,  # the feed's pre-match placeholder pair
+                completed=False,
+            )
+        ]
+        db = _fake_session()
+        service = LeagueHeuristicsService()
+        patches = _patched_fetches(
+            service, seasons, completed, {}, scheduled_events=scheduled
+        )
+        with _applied(patches):
+            summary = await service.generate_for_competition(db, competition_id=42)
+
+        rows = [call.args[0] for call in db.add.call_args_list]
+        scheduled_rows = [row for row in rows if row.event_id == 2]
+        assert len(scheduled_rows) == 6
+        assert all(
+            row.selected_participant_id == 101  # the unanimous home vote
+            for row in scheduled_rows
+        )
+        assert summary["tips_inserted"] == 12
+
+    @pytest.mark.asyncio
+    async def test_scheduled_picks_exclude_later_completed_evidence(self) -> None:
+        """No look-ahead for forward tips: a scheduled fixture's evidence
+        slice contains only completed events that start no later than
+        the fixture — a LATER-started completed event (e.g. a round that
+        concluded while this fixture awaited its result) is invisible."""
+        seasons = [SeasonRef(id=7, label="2026", is_current=True)]
+        completed = [
+            _event(
+                1,
+                season_id=7,
+                starts_at=datetime(2026, 4, 1),
+                home_score=90,
+                away_score=70,
+            ),
+            # Starts AFTER the scheduled fixture yet is already completed.
+            _event(
+                3,
+                season_id=7,
+                starts_at=datetime(2026, 4, 15),
+                home_pid=12,
+                away_pid=11,
+                home_score=10,
+                away_score=120,  # participant 11 (the home side of E2) smashed
+            ),
+        ]
+        scheduled = [
+            _event(
+                2,
+                season_id=7,
+                starts_at=datetime(2026, 4, 8),
+                home_score=None,
+                away_score=None,
+                completed=False,
+            )
+        ]
+        db = _fake_session()
+        service = LeagueHeuristicsService()
+        patches = _patched_fetches(
+            service, seasons, completed, {}, scheduled_events=scheduled
+        )
+        with _applied(patches):
+            await service.generate_for_competition(db, competition_id=42)
+
+        rows = [call.args[0] for call in db.add.call_args_list]
+        scheduled_rows = {r.heuristic: r.selected_participant_id
+                          for r in rows if r.event_id == 2}
+        # Evidence = E1 only (E3 starts after the fixture): form sees one
+        # 90-70 home win, ladder puts the home side 1-0 — home across the
+        # board.  Had E3 leaked in, ladder/form would flip to the away
+        # side (participant 11's 120-point rout as the away side).
+        assert scheduled_rows == {
+            HEURISTIC_HOME_ADVANTAGE: 101,
+            HEURISTIC_FORM: 101,
+            HEURISTIC_LADDER: 101,
+            HEURISTIC_BEST_BET: 101,
+            HEURISTIC_WEIGHTED_TIP: 101,
+            HEURISTIC_BOOSTED_TIP: 101,
+        }
 
 
 # ---------------------------------------------------------------------------

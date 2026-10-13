@@ -74,6 +74,7 @@ from packages.shared.services.league_heuristics import (
     HEURISTIC_BOOSTED_TIP,
     HEURISTIC_ELO,
     HEURISTIC_WEIGHTED_TIP,
+    LEAGUE_HEURISTICS,
     LEAGUE_MODEL_SETS,
     compute_all_picks,
     compute_all_picks_and_derived,
@@ -349,7 +350,25 @@ async def _seed_synced_league(
                     {"sid": sid, "starts_at": starts_at,
                      "slug": f"fcl08{cid:04d}s{sched:03d}"},
                 )
-                events[f"scheduled{sched}"] = {"event_id": int(eid)}
+                # A real fixture always carries BOTH side rows — FCL-12
+                # forward tips target them exactly like completed picks.
+                home_ep = await one(
+                    conn,
+                    "INSERT INTO event_participants (event_id, participant_id, "
+                    "side) VALUES (:eid, :pid, 'home') RETURNING id",
+                    {"eid": eid, "pid": teams[f"{competition_name} United"]},
+                )
+                away_ep = await one(
+                    conn,
+                    "INSERT INTO event_participants (event_id, participant_id, "
+                    "side) VALUES (:eid, :pid, 'away') RETURNING id",
+                    {"eid": eid, "pid": teams[f"{competition_name} Rovers"]},
+                )
+                events[f"scheduled{sched}"] = {
+                    "event_id": int(eid),
+                    "home_side_id": int(home_ep),
+                    "away_side_id": int(away_ep),
+                }
         return {
             "competition_id": int(cid),
             "season_id": int(sid),
@@ -496,6 +515,110 @@ async def test_registered_league_sync_persists_base_and_fallback_derived_tips(
         assert picks[HEURISTIC_WEIGHTED_TIP] == picks[HEURISTIC_ELO], key
         assert picks[HEURISTIC_BOOSTED_TIP] == picks[HEURISTIC_ELO], key
         assert picks[HEURISTIC_BEST_BET] == picks[HEURISTIC_ELO], key
+
+
+# ---------------------------------------------------------------------------
+# E2E 1b — forward tips for SCHEDULED fixtures (FCL-12).
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.postgres
+@pytest.mark.asyncio
+async def test_scheduled_fixture_gets_forward_tips_grading_stays_clean(
+    _db_at_head,
+) -> None:
+    """FCL-12: a scheduled fixture with both sides persists the same six
+    names as a completed event (picks from prior completed evidence
+    only), and the league backtest grades COMPLETED events only — the
+    forward tips cannot pollute accuracy before the fixture is played."""
+    _sync_dsn, async_dsn = _db_at_head
+    ids = await _seed_synced_league(
+        async_dsn,
+        competition_name="FCL E2E Forward League",
+        rounds=2,
+        scheduled_events=1,
+    )
+    cid = ids["competition_id"]
+    scheduled_id = ids["events"]["scheduled0"]["event_id"]
+
+    engine = create_async_engine(async_dsn, poolclass=NullPool)
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+    try:
+        async with factory() as session:
+            summary = await generate_league_tips(session, competition_id=cid)
+    finally:
+        await engine.dispose()
+
+    # 4 completed + 1 scheduled, × 6 names (unregistered → D3 trio + derived).
+    assert summary["tips_inserted"] == 30
+    assert summary["scheduled_considered"] == 1
+
+    stored = await _stored_tips(async_dsn, cid)
+    scheduled_names = {h for (eid, h) in stored if eid == scheduled_id}
+    assert scheduled_names == set(LEAGUE_HEURISTICS) | set(
+        DERIVED_LEAGUE_HEURISTICS
+    )
+    # The scheduled fixture's picks point at real sides (not draw-NULL).
+    assert all(
+        stored[(scheduled_id, h)] is not None
+        for h in scheduled_names
+    )
+
+    # Grading cleanliness: the season comparison counts only completed
+    # rounds' tips — 4 completed × 6 names, the scheduled fixture's six
+    # rows are invisible to accuracy until the fixture completes.
+    from packages.shared.services.league_backtest import LeagueBacktestService
+
+    engine = create_async_engine(async_dsn, poolclass=NullPool)
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+    try:
+        async with factory() as session:
+            payload = await LeagueBacktestService().compare_season(
+                session,
+                competition_id=cid,
+                season_label="2026",
+                models=LEAGUE_HEURISTICS + DERIVED_LEAGUE_HEURISTICS,
+            )
+    finally:
+        await engine.dispose()
+    for name, stats in payload["comparison"].items():
+        assert stats["total_tips"] == 4, name
+
+    # FCL-12 round lookup: the bulk round endpoint resolves picks to TEAM
+    # NAMES via the side row (selected_participant_id targets
+    # event_participants.id, NOT participants.id — pinned after this
+    # exact join bug shipped NULL picks on the AFLW round payload).
+    from packages.shared.services.league_heuristics import league_round_tips
+
+    engine = create_async_engine(async_dsn, poolclass=NullPool)
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+    try:
+        async with factory() as session:
+            round_payload = await league_round_tips(
+                session, competition_id=cid, round_id=99
+            )
+            sides = (
+                await session.execute(
+                    text(
+                        "SELECT p.name FROM event_participants ep "
+                        "JOIN participants p ON p.id = ep.participant_id "
+                        "WHERE ep.event_id = :eid"
+                    ),
+                    {"eid": round_payload["fixtures"][0]["event_id"]},
+                )
+            ).all()
+    finally:
+        await engine.dispose()
+    team_names = {str(r[0]) for r in sides}
+    assert round_payload["season"] == "2026"
+    assert len(round_payload["fixtures"]) == 1
+    fixture = round_payload["fixtures"][0]
+    assert fixture["slug"].startswith("fcl08")
+    named = [v for v in fixture["picks"].values() if v is not None]
+    assert len(named) == len(LEAGUE_HEURISTICS) + len(
+        DERIVED_LEAGUE_HEURISTICS
+    ), fixture["picks"]
+    assert set(named) <= team_names, (named, team_names)
 
 
 # ---------------------------------------------------------------------------
@@ -677,15 +800,15 @@ async def test_unregistered_state_league_keeps_pre_fcl_base_set_and_gains_derive
     base_names = {h for _, h in stored} - set(DERIVED_LEAGUE_HEURISTICS)
     assert base_names == set(DEFAULT_MODEL_SET)
     assert set(DERIVED_LEAGUE_HEURISTICS) <= {h for _, h in stored}
-    # 6 completed events × (3 base + 3 derived); the scheduled fixture
-    # was never tipped.
-    assert summary["tips_inserted"] == 36
-    assert len(stored) == 36
+    # 6 completed events + 1 scheduled fixture (FCL-12 forward tip) ×
+    # (3 base + 3 derived) = 42.
+    assert summary["tips_inserted"] == 42
+    assert len(stored) == 42
     assert await _scalar(
         async_dsn,
         "SELECT count(*) FROM league_tips WHERE event_id = :eid",
         {"eid": scheduled_id},
-    ) == 0
+    ) == 6
 
     # THE byte-identical pin: every base pick equals the pre-FCL
     # pipeline's pick for the same event, exactly.

@@ -75,7 +75,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
 from ..logger import get_logger
-from ..models import Competition, Event, EventParticipant, LeagueTip, Season
+from ..models import Competition, Event, EventParticipant, LeagueTip, Participant, Season
 from ..sport_context import RUGBY_LEAGUE
 
 logger = get_logger(__name__)
@@ -183,6 +183,13 @@ class CompletedEvent:
     are ``participants.id`` values — the identity that links a side to
     its history across events.  Scores are venue-local result scores;
     ``None`` scores mean an undecided row (treated as no result).
+
+    FCL-12: the snapshot also carries SCHEDULED fixtures (forward
+    tips).  ``completed=False`` marks one: its scores are unset — or,
+    for feeds that ship pre-match 0-0 placeholders, deliberately
+    meaningless — and :func:`is_drawn` refuses to call it a draw.
+    Defaults to ``True`` so every completed-event construction site
+    (and every existing test factory) is unchanged.
     """
 
     event_id: int
@@ -194,6 +201,7 @@ class CompletedEvent:
     away_participant_id: Optional[int]
     home_score: Optional[int]
     away_score: Optional[int]
+    completed: bool = True
 
 
 @dataclass(frozen=True)
@@ -257,9 +265,16 @@ def _winner_participant_id(event: CompletedEvent) -> Optional[int]:
 
 
 def is_drawn(event: CompletedEvent) -> bool:
-    """A completed event that ended level (both scores present, equal)."""
+    """A COMPLETED event that ended level (both scores present, equal).
+
+    FCL-12: an un-completed snapshot is NEVER a draw — feeds ship
+    pre-match 0-0 score placeholders on scheduled fixtures, and without
+    the completion guard every forward tip would degenerate to
+    draw-no-pick NULLs (found live on AFLW round 10).
+    """
     return (
-        event.home_score is not None
+        event.completed
+        and event.home_score is not None
         and event.away_score is not None
         and event.home_score == event.away_score
     )
@@ -825,14 +840,19 @@ def compute_all_picks_and_derived(
     models: Sequence[str] = LEAGUE_HEURISTICS,
     linear_weights: Optional[tuple[float, Mapping[str, float]]] = None,
     boosted_model: Optional[Any] = None,
+    scheduled: Sequence[CompletedEvent] | None = None,
 ) -> list[TipPick]:
-    """Base + derived tips for every completed event in ONE walk (FCL-6).
+    """Base + derived tips for every event in ONE walk (FCL-6, FCL-12).
 
-    The derived heuristics are computed per event from the SAME
-    chronological prefix slices the base picks read — consensus over
-    the event's own base picks, features built from the same prior
-    evidence — so no derived pick ever sees its own event's result
-    (no look-ahead) and history is never walked twice.
+    The completed events walk exactly as before (positional
+    chronological slices).  ``scheduled`` — FCL-12 forward tips — walks
+    the upcoming fixtures afterwards, each reading an evidence slice of
+    ONLY the completed events that start no later than the fixture (no
+    look-ahead, and the fixture's own pre-match score placeholders
+    never enter standings/Elo), then no-look-ahead for the derived
+    heuristics from the same slices.  A scheduled snapshot is never a
+    draw (:func:`is_drawn` requires completion), so its picks are real
+    side selections.
     ``linear_weights``/``boosted_model`` are the competition's scoped
     learned combiners (``None`` → majority-vote fallback, FCL-3d);
     ``models`` selects the per-sport/league BASE set exactly as for
@@ -842,6 +862,32 @@ def compute_all_picks_and_derived(
     picks: list[TipPick] = []
     for index, event in enumerate(history):
         prior = history[:index]
+        same_season = [e for e in prior if e.season_id == event.season_id]
+        base = compute_event_picks(event, prior, same_season, models=models)
+        picks.extend(base)
+        picks.extend(
+            compute_derived_picks(
+                event,
+                prior,
+                same_season,
+                base,
+                model_names=models,
+                linear_weights=linear_weights,
+                boosted_model=boosted_model,
+            )
+        )
+
+    scheduled_history = sort_chronologically(scheduled or [])
+    for event in scheduled_history:
+        if not event.completed:
+            prior = [
+                e
+                for e in history
+                if e.completed
+                and (e.starts_at or _MIN_TIME) <= (event.starts_at or _MIN_TIME)
+            ]
+        else:  # defensive: a completed snapshot belongs in ``events``
+            prior = history
         same_season = [e for e in prior if e.season_id == event.season_id]
         base = compute_event_picks(event, prior, same_season, models=models)
         picks.extend(base)
@@ -888,6 +934,7 @@ def _summary(
     inserted: int,
     updated: int,
     derived: Optional[Mapping[str, int]] = None,
+    scheduled: int = 0,
 ) -> dict[str, Any]:
     """The generation result dict shared by every return path.
 
@@ -896,11 +943,13 @@ def _summary(
     all three derived heuristics, so the key is ALWAYS present (zeros
     when there was nothing to generate); the failure-tolerant sync
     caller merges the dict as-is, so existing keys are untouched.
-    """
+    FCL-12 adds ``scheduled_considered`` — upcoming fixtures tipped
+    this pass (forward tips; graded only once completed)."""
     return {
         "competition_id": competition_id,
         "seasons": season_labels,
         "events_considered": events,
+        "scheduled_considered": scheduled,
         "tips_inserted": inserted,
         "tips_updated": updated,
         "derived_tips": {
@@ -955,6 +1004,14 @@ class LeagueHeuristicsService:
             return _summary(competition_id, [], 0, 0, 0)
 
         events = await self._fetch_completed_events(db, [s.id for s in selected])
+        # FCL-12 forward tips: scheduled fixtures with both sides join the
+        # SAME chronological walk.  Every pick reads only prior completed
+        # evidence, so an upcoming fixture gets a real tip now and the
+        # idempotent upsert refreshes it as results land and retrains
+        # promote new versions.  Grading is untouched (completed only).
+        scheduled = await self._fetch_scheduled_events(
+            db, [s.id for s in selected]
+        )
         linear_weights = await self._load_linear_weights(
             db, competition_id=competition_id
         )
@@ -966,12 +1023,15 @@ class LeagueHeuristicsService:
             models=models,
             linear_weights=linear_weights,
             boosted_model=boosted_model,
+            scheduled=scheduled,
         )
         inserted, updated, derived_inserted = await self._upsert_tips(
             db,
             picks,
             competition_id=competition_id,
-            season_id_by_event={e.event_id: e.season_id for e in events},
+            season_id_by_event={
+                e.event_id: e.season_id for e in [*events, *scheduled]
+            },
         )
         await db.commit()
         summary = _summary(
@@ -981,6 +1041,7 @@ class LeagueHeuristicsService:
             inserted,
             updated,
             derived=derived_inserted,
+            scheduled=len(scheduled),
         )
         logger.info(
             "league heuristics: competition %s: %s", competition_id, summary
@@ -1181,6 +1242,61 @@ class LeagueHeuristicsService:
         ]
 
     @staticmethod
+    async def _fetch_scheduled_events(
+        db: AsyncSession, season_ids: Sequence[int]
+    ) -> list[CompletedEvent]:
+        """SCHEDULED fixtures with both sides, in the same snapshot shape
+        (FCL-12 forward tips).
+
+        Mirrors :meth:`_fetch_completed_events` with the completion filter
+        flipped to ``completed IS False AND status == 'scheduled'`` — a
+        cancelled/void fixture is never tipped.  Scores are ``NULL`` by
+        definition; every pick function reads only PRIOR completed
+        evidence, so a scheduled snapshot carries ``None`` scores without
+        affecting any pick.  The inner joins drop n-side/missing-side
+        rows exactly as for completed events.
+        """
+        home = aliased(EventParticipant)
+        away = aliased(EventParticipant)
+        rows = (
+            await db.execute(
+                select(
+                    Event.id,
+                    Event.season_id,
+                    Event.starts_at,
+                    home.id,
+                    away.id,
+                    home.participant_id,
+                    away.participant_id,
+                    home.score,
+                    away.score,
+                )
+                .join(home, and_(home.event_id == Event.id, home.side == "home"))
+                .join(away, and_(away.event_id == Event.id, away.side == "away"))
+                .where(
+                    Event.season_id.in_([int(sid) for sid in season_ids]),
+                    Event.completed.is_(False),
+                    Event.status == "scheduled",
+                )
+            )
+        ).all()
+        return [
+            CompletedEvent(
+                event_id=int(row[0]),
+                season_id=int(row[1]),
+                starts_at=row[2],
+                home_side_id=int(row[3]),
+                away_side_id=int(row[4]),
+                home_participant_id=int(row[5]),
+                away_participant_id=int(row[6]),
+                home_score=row[7],
+                away_score=row[8],
+                completed=False,
+            )
+            for row in rows
+        ]
+
+    @staticmethod
     async def _fetch_existing_tips(
         db: AsyncSession, event_ids: Sequence[int]
     ) -> dict[tuple[int, str], Optional[int]]:
@@ -1274,3 +1390,122 @@ async def generate_league_tips(
     return await LeagueHeuristicsService().generate_for_competition(
         db, competition_id=competition_id
     )
+
+
+async def league_round_tips(
+    db: AsyncSession, *, competition_id: int, round_id: int
+) -> dict[str, Any]:
+    """The round's fixtures with every stored league pick — read-only
+    bulk lookup for the league round pages (FCL-12).
+
+    Scoped to the competition's CURRENT season (round numbers repeat
+    across seasons) and ``round_id``.  Returns ``{"season": label,
+    "fixtures": [...]}`` where each fixture carries both side names,
+    the event slug/status and ``picks`` — ``{heuristic: participant
+    name or None}`` in canonical heuristic order (``None`` =
+    draw-no-pick).  NO AI explanations: the round page renders picks
+    only, so a page view never pays the LLM pipeline (the per-event
+    explanation endpoint stays the match page's job).  Fixtures without
+    tips yet (never generated / no sides) appear with empty ``picks``.
+    """
+    season_row = (
+        await db.execute(
+            select(Season.id, Season.label)
+            .where(Season.competition_id == competition_id)
+            .order_by(Season.is_current.desc(), Season.label.desc())
+        )
+    ).first()
+    if season_row is None:
+        return {"season": None, "fixtures": []}
+    season_id, season_label = int(season_row[0]), str(season_row[1])
+
+    home = aliased(EventParticipant)
+    away = aliased(EventParticipant)
+    home_p = aliased(Participant)
+    away_p = aliased(Participant)
+    event_rows = (
+        await db.execute(
+            select(
+                Event.id,
+                Event.slug,
+                Event.round_id,
+                Event.starts_at,
+                Event.status,
+                Event.completed,
+                home.id,
+                away.id,
+                home_p.name,
+                away_p.name,
+            )
+            .join(home, and_(home.event_id == Event.id, home.side == "home"))
+            .join(away, and_(away.event_id == Event.id, away.side == "away"))
+            .join(home_p, home_p.id == home.participant_id)
+            .join(away_p, away_p.id == away.participant_id)
+            .where(
+                Event.season_id == season_id,
+                Event.round_id == round_id,
+            )
+            .order_by(Event.starts_at, Event.id)
+        )
+    ).all()
+    if not event_rows:
+        return {"season": season_label, "fixtures": []}
+
+    canonical = [*DEFAULT_MODEL_SET, *DERIVED_LEAGUE_HEURISTICS]
+    event_ids = [int(r[0]) for r in event_rows]
+    # selected_participant_id targets EVENT_PARTICIPANTS.id (the side
+    # row), not participants.id — the pick's team name comes via the
+    # side row's participant FK (same discipline as the explanation
+    # service's _picked_name).
+    picked_side = aliased(EventParticipant)
+    picked_team = aliased(Participant)
+    tip_rows = (
+        await db.execute(
+            select(
+                LeagueTip.event_id,
+                LeagueTip.heuristic,
+                picked_team.name,
+            )
+            .outerjoin(
+                picked_side, picked_side.id == LeagueTip.selected_participant_id
+            )
+            .outerjoin(picked_team, picked_team.id == picked_side.participant_id)
+            .where(LeagueTip.event_id.in_(event_ids))
+        )
+    ).all()
+    picks_by_event: dict[int, dict[str, Optional[str]]] = {}
+    for event_id, heuristic, picked_name in tip_rows:
+        by_name = picks_by_event.setdefault(
+            int(event_id), {h: None for h in canonical}
+        )
+        if heuristic in by_name:
+            by_name[heuristic] = (
+                None if picked_name is None else str(picked_name)
+            )
+
+    fixtures = [
+        {
+            "event_id": int(event_id),
+            "slug": str(slug),
+            "round": int(event_round) if event_round is not None else None,
+            "starts_at": starts_at,
+            "status": str(status),
+            "completed": bool(completed),
+            "home_team": str(home_name),
+            "away_team": str(away_name),
+            "picks": picks_by_event.get(int(event_id), {}),
+        }
+        for (
+            event_id,
+            slug,
+            event_round,
+            starts_at,
+            status,
+            completed,
+            _home_side_id,
+            _away_side_id,
+            home_name,
+            away_name,
+        ) in event_rows
+    ]
+    return {"season": season_label, "fixtures": fixtures}

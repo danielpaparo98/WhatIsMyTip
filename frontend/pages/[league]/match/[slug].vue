@@ -3,12 +3,13 @@
     <!-- LEAGUE-ROUTES (2026-09-30, user request): the /{league}/match/{slug}
          event detail page.  Presentation mirrors /game/[slug].vue's header
          (back link, round/season/status strip, two teams with badges +
-         scores when completed, venue/date/time meta grid) — but the tips /
-         model-prediction / weather sections are deliberately ABSENT: state
-         leagues have no tipping data, so there is nothing honest to render
-         there.  Winner emphasis follows the league home's result rows
-         (bold-winner, monochrome) instead of the AFL page's accent-free
-         equality between sides. -->
+         scores when completed, venue/date/time meta grid).  FCL-12
+         (2026-10-13): upcoming fixtures now show the league's STORED
+         forward picks with cached AI explanations; the AFL-specific
+         model-prediction / weather sections remain absent (no state-
+         league equivalents).  Winner emphasis follows the league home's
+         result rows (bold-winner, monochrome) instead of the AFL page's
+         accent-free equality between sides. -->
     <!-- Loading State -->
     <div v-if="loading" class="loading" role="status" aria-live="polite">
       <div class="spinner"></div>
@@ -69,6 +70,22 @@
               <span class="label">Time:</span>
               <span class="value">{{ event.starts_at ? formatTime(event.starts_at) : 'TBD' }}</span>
             </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- FCL-12 forward tips: stored league picks for the upcoming
+           fixture, with their cached AI explanations. Non-completed
+           events only — a played match shows its result above. -->
+      <section v-if="leagueTips && leagueTips.length > 0" class="match-tips-section">
+        <h2 class="tips-heading">Model tips</h2>
+        <div class="tips-list">
+          <div v-for="tip in leagueTips" :key="tip.heuristic" class="tip-row">
+            <span class="tip-heuristic">{{ tip.heuristic.replaceAll('_', ' ') }}</span>
+            <span class="tip-pick" :class="{ 'tip-draw': tip.picked === null }">
+              {{ tip.picked === null ? 'Draw' : getTeamDisplayName(tip.picked) }}
+            </span>
+            <span v-if="tip.explanation" class="tip-explanation">{{ tip.explanation }}</span>
           </div>
         </div>
       </section>
@@ -210,6 +227,38 @@ const statusLabel = computed(() => {
   const raw = ev.status || 'upcoming'
   return raw.charAt(0).toUpperCase() + raw.slice(1)
 })
+
+// ---------------------------------------------------------------------------
+// FCL-12 forward tips: the stored league picks for THIS event, served by
+// GET /api/tips/league WITH cached AI explanations (the round page's bulk
+// endpoint is deliberately explanation-free; the match page is where the
+// explanation budget belongs). Declared AFTER the event fetch so
+// `event.value` is already resolved; a scheduled fixture shows its forward
+// tips, a completed one keeps the results-only header, and any failure or
+// empty payload is non-fatal (the section simply does not render).
+// ---------------------------------------------------------------------------
+interface LeagueTipRow {
+  heuristic: string
+  picked: string | null
+  explanation: string | null
+}
+
+const { data: leagueTips } = await useAsyncData<LeagueTipRow[] | null>(
+  computed(() => `league-match-tips-${league.value}-${slug.value}`),
+  async () => {
+    const ev = event.value
+    if (!ev || ev.completed) return null
+    const config = useRuntimeConfig()
+    const apiBase = config.public.apiBase as string
+    return await $fetch<{ tips: LeagueTipRow[] }>(
+      `${apiBase}/api/tips/league`,
+      { params: { league: league.value, slug: slug.value } },
+    )
+      .then((r) => (r.tips.length > 0 ? r.tips : null))
+      .catch(() => null)
+  },
+  { dedupe: 'cancel' },
+)
 
 // Badges resolve through the shared identity chain (explicit entry → AFL
 // map → generated initials badge for state-league clubs, colored via the
@@ -408,6 +457,64 @@ useHead({
   /* Monochrome pill — same treatment as the game page. */
   background: var(--color-text);
   color: var(--color-bg);
+}
+
+/* FCL-12 forward tips — monochrome, same card language as the header. */
+.match-tips-section {
+  margin-top: 1.5rem;
+  border: 1px solid var(--color-border);
+  padding: 1.5rem;
+}
+
+.tips-heading {
+  font-size: 0.6875rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--color-muted);
+  margin-bottom: 1rem;
+}
+
+.tips-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.875rem;
+}
+
+.tip-row {
+  display: grid;
+  grid-template-columns: 10rem 10rem 1fr;
+  gap: 0.75rem;
+  align-items: baseline;
+}
+
+.tip-heuristic {
+  font-size: 0.8125rem;
+  font-weight: 700;
+  text-transform: capitalize;
+  color: var(--color-muted);
+}
+
+.tip-pick {
+  font-size: 0.9375rem;
+  font-weight: 800;
+}
+
+.tip-pick.tip-draw {
+  font-weight: 600;
+  color: var(--color-muted);
+}
+
+.tip-explanation {
+  font-size: 0.875rem;
+  color: var(--color-muted);
+}
+
+@media (max-width: 640px) {
+  .tip-row {
+    grid-template-columns: 1fr;
+    gap: 0.25rem;
+  }
 }
 
 /* Teams */
