@@ -36,6 +36,15 @@ class LeagueConfig:
     #: origin registers as ``'tournament'``; see :mod:`.national_leagues`).
     #: Defaults to the state rollout's value.
     format: str = "rounds"
+    #: ``competitions.sport_id`` — the sport this league's results belong
+    #: to.  FCL-9 (post-review M-3): declared HERE so every consumer that
+    #: needs a league's sport (league-model-set resolution, model-set
+    #: grading, future sync wiring) reads the SAME registry the ingestion
+    #: syncs from, instead of re-deriving it from registry-key membership
+    #: and drifting the moment a second sport joins either registry.
+    #: Defaults to the state rollout's value (all state leagues are
+    #: Australian football); national entries override.
+    sport_id: str = "afl"
 
 
 __all__ = ["LeagueConfig"]
