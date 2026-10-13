@@ -826,3 +826,64 @@ async def test_cron_run_survives_one_leagues_retrain_failing(
     assert results[str(tiny["competition_id"])]["status"] == "skipped"
     # The job's own top-level summary is untouched by a league failure.
     assert second["status"] == "skipped"
+
+
+@pytest.mark.postgres
+@pytest.mark.asyncio
+async def test_model_load_failure_does_not_poison_the_generation_pass(
+    _db_at_head, monkeypatch
+) -> None:
+    """FCL-11: a failed scoped model-version read must not abort the pass.
+
+    Real operational fault (found syncing AFLW against a pre-0015
+    database): the scoped ``model_versions`` SELECT fails with
+    UndefinedColumnError, asyncpg ABORTS the transaction, and — without
+    a savepoint — every later statement of the generation pass (and the
+    enclosing sync's committed-together fixture writes) dies with
+    ``InFailedSQLTransactionError``.  The loaders now wrap the read in a
+    SAVEPOINT: this test patches the CRUD read to raise, runs the
+    sync-hook generation on REAL Postgres, and asserts the tips still
+    persist (fallback picks) AND the same session stays usable."""
+    _sync_dsn, async_dsn = _db_at_head
+    ids = await _seed_synced_league(
+        async_dsn,
+        competition_name="FCL E2E Savepoint League",
+        rounds=2,
+    )
+    cid = ids["competition_id"]
+
+    async def _boom(*_args: Any, **_kwargs: Any) -> Any:
+        raise RuntimeError("simulated scoped model-version fault")
+
+    monkeypatch.setattr(
+        "packages.shared.crud.model_versions.get_active_coefficients", _boom
+    )
+    monkeypatch.setattr(
+        "packages.shared.crud.model_versions.get_active_model_artifact", _boom
+    )
+
+    engine = create_async_engine(async_dsn, poolclass=NullPool)
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+    try:
+        async with factory() as session:
+            summary = await generate_league_tips(session, competition_id=cid)
+
+            # The SAME session must still be usable — the transaction is
+            # alive (this is the statement that died pre-FCL-11).
+            alive = (
+                await session.execute(
+                    text("SELECT count(*) FROM league_tips WHERE competition_id = :cid"),
+                    {"cid": cid},
+                )
+            ).scalar_one()
+    finally:
+        await engine.dispose()
+
+    # 4 completed events × (3 D3 base + 3 derived) — fallback picks.
+    assert summary["tips_inserted"] == 24
+    assert summary["derived_tips"] == {
+        "best_bet": 4,
+        "weighted_tip": 4,
+        "boosted_tip": 4,
+    }
+    assert alive == 24
