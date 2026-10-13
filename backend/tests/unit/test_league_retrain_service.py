@@ -435,7 +435,12 @@ class TestRunAllLeagueRetrains:
 
         monkeypatch.setattr(league_retrain, "run_league_retrain", fake_retrain)
 
-        summary = await league_retrain.run_all_league_retrains(MagicMock())
+        # AsyncMock: the H-1 rollback in the failure path awaits
+        # session.rollback(), so the fake session must be async-capable
+        # (a plain MagicMock would raise TypeError inside the handler).
+        session = AsyncMock()
+        summary = await league_retrain.run_all_league_retrains(session)
+        session.rollback.assert_awaited_once()  # the failed league's transaction
 
         assert attempted == [1, 2, 3]  # every league attempted, in order
         assert summary["competitions"] == 3
