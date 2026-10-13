@@ -31,6 +31,22 @@ and a second function would duplicate it.  Omitting the new arguments
   :class:`~packages.shared.models.ModelCoefficient` model too — so the
   existing coefficient-chart pipeline works unchanged.
 
+FCL-4 (first-class league heuristics): every version-lookup / promotion
+entry point now takes an optional ``competition_id`` scope, following ADR
+0001 D1 ("shared tables + scope columns").  ``NULL`` scope = legacy global
+model; a non-NULL scope = a version belonging to exactly one competition.
+The NULL scope is its OWN scope — SQL ``competition_id IS NULL`` matching,
+never ``== None``, because ``x = NULL`` is never true in SQL.  A promotion
+in one scope can therefore never deactivate another scope's active row, so
+the weekly global AFL retrain and a league's retrain coexist on the shared
+table (pinned by the partial unique indexes of migration 0015).  Omitting
+``competition_id`` (the default everywhere) keeps the legacy global-path
+statement shape: on any pre-FCL database every row is NULL-scope, so the
+appended ``IS NULL`` predicate selects exactly the rows the pre-FCL
+statements selected — byte-identical observable behaviour, which is why
+``services.model_retrain`` / ``services.boosted_retrain`` needed no
+changes.
+
 This module deliberately imports NO heavy ML library (no xgboost, shap
 or sklearn at module level): artifacts are opaque bytes here and
 serialisation stays in the (lazy) retrain/heuristic code paths — pinned
@@ -61,6 +77,7 @@ async def create_model_version(
     artifact: Optional[bytes] = None,
     artifact_format: Optional[str] = None,
     shap_base_value: Optional[float] = None,
+    competition_id: Optional[int] = None,
 ) -> ModelVersion:
     """Insert a model version and its coefficient rows in one transaction.
 
@@ -82,8 +99,9 @@ async def create_model_version(
             rows so the existing coefficient-chart pipeline works
             unchanged.
         set_active: When ``True`` (the default), deactivate every other
-            version with the same ``model_name`` and mark this one active,
-            so only one version per model is active at a time.
+            version with the same ``model_name`` in the SAME scope and
+            mark this one active, so only one version per
+            ``(model_name, competition_id)`` is active at a time (FCL-4).
         artifact: Optional serialized model blob (BT-1).  For
             ``boosted_tip`` this is ``get_booster().save_raw(raw_format=
             "json")`` bytes; ``weighted_tip`` callers omit it.
@@ -93,13 +111,44 @@ async def create_model_version(
         shap_base_value: Optional TreeExplainer expected value — the
             SHAP base that per-feature contributions sum against
             (BT-1, ``boosted_tip`` only).
+        competition_id: Optional scope (FCL-4).  ``None`` (the default)
+            stores a legacy global version and promotes within the NULL
+            scope; a competition id stores a version belonging to exactly
+            that competition and promotes only within it.  Promotions
+            deactivate ONLY versions in the same ``(model_name, scope)`` —
+            the NULL scope is its own scope (``competition_id IS NULL``) —
+            so a league's active model and the global active model are
+            independent.
 
     Returns:
         The freshly inserted, refreshed :class:`ModelVersion`.
     """
+    if set_active:
+        # Deactivate all other active versions of the same model IN THE
+        # SAME SCOPE first (FCL-4).  This MUST happen before the new row's
+        # INSERT below: migration 0015's partial unique indexes allow only
+        # one ACTIVE row per (model_name, scope), so an insert-then-
+        # deactivate sequence would fail the index at flush time with two
+        # active rows in flight.  Deactivating first needs no ``id != self``
+        # predicate — the new row does not exist in the database yet — and
+        # the observable end state is identical to the pre-FCL sequence.
+        #
+        # The scope predicate must handle NULL explicitly:
+        # ``competition_id == None`` never matches in SQL, so the NULL
+        # (legacy global) scope gets an ``IS NULL`` predicate and a scoped
+        # promotion gets an equality predicate — a promotion can therefore
+        # never touch another scope's active row.
+        deactivate = update(ModelVersion).where(ModelVersion.model_name == model_name)
+        if competition_id is None:
+            deactivate = deactivate.where(ModelVersion.competition_id.is_(None))
+        else:
+            deactivate = deactivate.where(ModelVersion.competition_id == competition_id)
+        await session.execute(deactivate.values(is_active=False))
+
     version_row = ModelVersion(
         model_name=model_name,
         version=version,
+        competition_id=competition_id,
         intercept=intercept,
         training_rows=training_rows,
         metrics=metrics,
@@ -120,24 +169,15 @@ async def create_model_version(
             )
         )
 
-    if set_active:
-        # Deactivate all other versions of the same model so at most one
-        # version per model_name is active at a time.
-        await session.execute(
-            update(ModelVersion)
-            .where(ModelVersion.model_name == model_name)
-            .where(ModelVersion.id != version_row.id)
-            .values(is_active=False)
-        )
-        version_row.is_active = True
-
     await session.commit()
     await session.refresh(version_row)
 
     logger.info(
-        "created model_version model_name=%s version=%s coefficients=%d active=%s",
+        "created model_version model_name=%s version=%s scope=%s "
+        "coefficients=%d active=%s",
         model_name,
         version,
+        "global" if competition_id is None else f"competition:{competition_id}",
         len(coefficients),
         set_active,
     )
@@ -145,15 +185,30 @@ async def create_model_version(
 
 
 async def get_active_model_version(
-    session: AsyncSession, model_name: str
+    session: AsyncSession,
+    model_name: str,
+    competition_id: Optional[int] = None,
 ) -> ModelVersion | None:
-    """Return the currently-active version for ``model_name``, or ``None``."""
+    """Return the currently-active version for ``model_name``, or ``None``.
+
+    FCL-4: ``competition_id=None`` (the default) reads the legacy global
+    (NULL-scope) active version only; a competition id reads that
+    competition's active version only.  The NULL scope is its own scope —
+    the filter is ``competition_id IS NULL``, never ``== None`` — so a
+    scoped read returns ``None`` when only a different scope has an active
+    version (no cross-scope leakage), and the legacy AFL serving path is
+    untouched by league models.
+    """
+    active_filter = select(ModelVersion).where(
+        ModelVersion.model_name == model_name,
+        ModelVersion.is_active.is_(True),
+    )
+    if competition_id is None:
+        active_filter = active_filter.where(ModelVersion.competition_id.is_(None))
+    else:
+        active_filter = active_filter.where(ModelVersion.competition_id == competition_id)
     result = await session.execute(
-        select(ModelVersion)
-        .where(ModelVersion.model_name == model_name)
-        .where(ModelVersion.is_active.is_(True))
-        .order_by(ModelVersion.version.desc())
-        .limit(1)
+        active_filter.order_by(ModelVersion.version.desc()).limit(1)
     )
     return result.scalar_one_or_none()
 
@@ -171,14 +226,20 @@ async def get_model_coefficients(
 
 
 async def get_active_coefficients(
-    session: AsyncSession, model_name: str
+    session: AsyncSession,
+    model_name: str,
+    competition_id: Optional[int] = None,
 ) -> tuple[float, dict[str, float]] | None:
     """Return ``(intercept, {feature_name: coefficient})`` for the active version.
 
     Convenience wrapper that reads the active version and its weights in
-    one go.  Returns ``None`` when no version is active for ``model_name``.
+    one go.  Returns ``None`` when no version is active for ``model_name``
+    in the requested scope (FCL-4: ``competition_id=None`` = legacy global
+    NULL scope; a scoped read never leaks another scope's weights).
     """
-    active = await get_active_model_version(session, model_name)
+    active = await get_active_model_version(
+        session, model_name, competition_id=competition_id
+    )
     if active is None:
         return None
     coefficients = await get_model_coefficients(session, active.id)
@@ -186,7 +247,9 @@ async def get_active_coefficients(
 
 
 async def get_active_model_artifact(
-    session: AsyncSession, model_name: str
+    session: AsyncSession,
+    model_name: str,
+    competition_id: Optional[int] = None,
 ) -> tuple[bytes, str, ModelVersion] | None:
     """Return ``(artifact_bytes, artifact_format, version_row)`` for the active version.
 
@@ -209,19 +272,46 @@ async def get_active_model_artifact(
     reads back as ``"json"`` — the canonical format this CRUD writes
     (``save_raw(raw_format="json")``), so the default is always correct
     for artifacts created by this codebase.
+
+    FCL-4: the lookup honours ``competition_id`` exactly like
+    :func:`get_active_model_version` — ``None`` = legacy global artifact
+    only; a scoped lookup never returns another league's artifact.
     """
-    active = await get_active_model_version(session, model_name)
+    active = await get_active_model_version(
+        session, model_name, competition_id=competition_id
+    )
     if active is None or active.artifact is None:
         return None
     return active.artifact, active.artifact_format or "json", active
 
 
-async def next_version_number(session: AsyncSession, model_name: str) -> int:
-    """Return ``max(version) + 1`` for ``model_name`` (or ``1`` if none exist)."""
-    result = await session.execute(
-        select(func.max(ModelVersion.version)).where(
-            ModelVersion.model_name == model_name
-        )
+async def next_version_number(
+    session: AsyncSession,
+    model_name: str,
+    competition_id: Optional[int] = None,
+) -> int:
+    """Return ``max(version) + 1`` for ``model_name`` (or ``1`` if none exist).
+
+    FCL-4: the max is taken per ``(model_name, competition_id)`` scope, so
+    the legacy global counter and each league's counter are independent —
+    a league's first version does not have to follow the global history.
+
+    Callers sharing a ``model_name`` across scopes should note that the
+    pre-existing ``uq_model_versions_name_version`` constraint keeps
+    ``(model_name, version)`` unique across ALL scopes; per-league retrains
+    that reuse a legacy model name should therefore allocate versions from
+    the global (no-argument) counter, while fully scoped model names can
+    count per league.
+    """
+    counter_filter = select(func.max(ModelVersion.version)).where(
+        ModelVersion.model_name == model_name
     )
+    if competition_id is None:
+        counter_filter = counter_filter.where(ModelVersion.competition_id.is_(None))
+    else:
+        counter_filter = counter_filter.where(
+            ModelVersion.competition_id == competition_id
+        )
+    result = await session.execute(counter_filter)
     max_version = result.scalar()
     return (max_version or 0) + 1
