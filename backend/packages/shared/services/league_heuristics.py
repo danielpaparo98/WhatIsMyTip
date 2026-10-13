@@ -1451,7 +1451,26 @@ async def league_round_tips(
     if not event_rows:
         return {"season": season_label, "fixtures": []}
 
-    canonical = [*DEFAULT_MODEL_SET, *DERIVED_LEAGUE_HEURISTICS]
+    # FCL-13: the canonical pick-key set resolves through the FULL
+    # registry (league → sport → default) — the same resolution
+    # generation and the explanation service use.  The previous static
+    # DEFAULT_MODEL_SET seed silently dropped rugby-league's elo/matchup
+    # picks from this payload (they fell out of the `if heuristic in
+    # by_name` filter), so an nrl round card could never honour them.
+    identity = (
+        await db.execute(
+            select(Competition.name, Competition.sport_id).where(
+                Competition.id == competition_id
+            )
+        )
+    ).first()
+    canonical = [
+        *league_model_set_for_competition(
+            str(identity[0]) if identity else None,
+            str(identity[1]) if identity else None,
+        ),
+        *DERIVED_LEAGUE_HEURISTICS,
+    ]
     event_ids = [int(r[0]) for r in event_rows]
     # selected_participant_id targets EVENT_PARTICIPANTS.id (the side
     # row), not participants.id — the pick's team name comes via the

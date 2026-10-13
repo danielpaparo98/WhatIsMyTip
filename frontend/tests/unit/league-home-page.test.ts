@@ -246,11 +246,21 @@ describe('league page states & a11y', () => {
     expect(PAGE).toContain('Retry')
   })
 
-  it('has NO tips/models/weather sections (no league data exists)', () => {
-    // NOTE: the hero copy ("Smart heuristics.") is shared with the AFL
-    // home and is fine — only the tipping UI must be absent.
+  it('offers the AFL-mirror heuristic selector (FCL-13) but NO AFL-only sections', () => {
+    // FCL-13 (2026-10-13, user request): the league round page mirrors
+    // the AFL home's user-selectable heuristic — a .heuristic-selector
+    // tablist drives which stored pick each upcoming card shows. The
+    // AFL-only surfaces (TipCard / WeatherCard / MatchAnalysisCard /
+    // model-prediction grids) remain absent — no state-league
+    // equivalents exist.
+    expect(PAGE).toMatch(/heuristic-selector/)
+    expect(PAGE).toMatch(/heuristic-btn/)
+    expect(PAGE).toMatch(/role="tab"/)
+    expect(PAGE).toMatch(/aria-selected/)
+    expect(PAGE).toMatch(/getLeagueHeuristicOptions\(/)
+    expect(PAGE).toMatch(/localStorage\.getItem\('selected-heuristic'\)/)
     expect(PAGE).not.toMatch(/TipCard|WeatherCard|MatchAnalysisCard|ModelPrediction/)
-    expect(PAGE).not.toMatch(/heuristic-selector|heuristic-btn|tips-grid|models-grid|model-card/)
+    expect(PAGE).not.toMatch(/tips-grid|models-grid|model-card/)
   })
 
   it('stays monochrome (design-system custom properties, no hex accents)', () => {

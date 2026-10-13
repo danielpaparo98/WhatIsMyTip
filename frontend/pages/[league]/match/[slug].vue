@@ -74,18 +74,22 @@
         </div>
       </section>
 
-      <!-- FCL-12 forward tips: stored league picks for the upcoming
-           fixture, with their cached AI explanations. Non-completed
-           events only — a played match shows its result above. -->
-      <section v-if="leagueTips && leagueTips.length > 0" class="match-tips-section">
-        <h2 class="tips-heading">Model tips</h2>
+      <!-- FCL-12/FCL-13: the league's tips for this fixture, ordered by
+           the league's heuristic list, with the user's selected
+           heuristic highlighted as the primary row. -->
+      <section v-if="orderedTips && orderedTips.length > 0" class="match-tips-section">
+        <h2 class="tips-heading">Tips</h2>
         <div class="tips-list">
-          <div v-for="tip in leagueTips" :key="tip.heuristic" class="tip-row">
-            <span class="tip-heuristic">{{ tip.heuristic.replaceAll('_', ' ') }}</span>
-            <span class="tip-pick" :class="{ 'tip-draw': tip.picked === null }">
-              {{ tip.picked === null ? 'Draw' : getTeamDisplayName(tip.picked) }}
+          <div
+            v-for="tip in orderedTips"
+            :key="tip.tipKey"
+            class="tip-row"
+            :class="{ 'tip-selected': tip.isSelection }"
+          >
+            <span class="tip-heuristic">{{ tip.label }}</span>
+            <span class="tip-pick" :class="{ 'tip-draw': tip.draw }">
+              {{ tip.tipText }}
             </span>
-            <span v-if="tip.explanation" class="tip-explanation">{{ tip.explanation }}</span>
           </div>
         </div>
       </section>
@@ -105,7 +109,7 @@ import {
   eventMatchesLeague,
   isValidEventSlug,
 } from '~/composables/useLeagueMatchRoute'
-import { getLeagueConfig } from '~/composables/useSportConfig'
+import { getLeagueConfig, getLeagueHeuristicOptions } from '~/composables/useSportConfig'
 
 definePageMeta({
   // Nuxt's validate() can only accept or 404 a route (no redirects), so
@@ -259,6 +263,42 @@ const { data: leagueTips } = await useAsyncData<LeagueTipRow[] | null>(
   },
   { dedupe: 'cancel' },
 )
+
+// ---------------------------------------------------------------------------
+// FCL-13: the user's selected heuristic (the SAME selection the round
+// page and the AFL home use — one localStorage key, one preference).
+// The tips render in the league's canonical heuristic order with the
+// selected heuristic highlighted as the primary row.
+// ---------------------------------------------------------------------------
+const selectedHeuristic = ref<string>('best_bet')
+onMounted(() => {
+  const stored = localStorage.getItem('selected-heuristic')
+  const legal = getLeagueHeuristicOptions(league.value).some(
+    (h) => h.value === stored,
+  )
+  if (stored && legal && stored !== selectedHeuristic.value) {
+    selectedHeuristic.value = stored
+  }
+})
+
+const orderedTips = computed(() => {
+  const rows = leagueTips.value
+  if (!rows || rows.length === 0) return null
+  const options = getLeagueHeuristicOptions(league.value)
+  const labelFor = new Map(options.map((h) => [h.value, h.label]))
+  const orderIndex = new Map(options.map((h, i) => [h.value, i]))
+  return [...rows]
+    .map((row) => ({
+      tipKey: row.heuristic,
+      label: labelFor.get(row.heuristic) ?? row.heuristic.replaceAll('_', ' '),
+      tipText:
+        row.picked === null ? 'Draw' : getTeamDisplayName(row.picked!),
+      draw: row.picked === null,
+      isSelection: row.heuristic === selectedHeuristic.value,
+      rank: orderIndex.get(row.heuristic) ?? options.length,
+    }))
+    .sort((a, b) => a.rank - b.rank)
+})
 
 // Badges resolve through the shared identity chain (explicit entry → AFL
 // map → generated initials badge for state-league clubs, colored via the
@@ -486,6 +526,17 @@ useHead({
   grid-template-columns: 10rem 10rem 1fr;
   gap: 0.75rem;
   align-items: baseline;
+}
+
+/* FCL-13: the user's selected heuristic is the primary row — inverted
+   monochrome emphasis, same language as the .heuristic-btn.active tab. */
+.tip-row.tip-selected {
+  border-left: 4px solid var(--color-text);
+  padding-left: 0.75rem;
+}
+
+.tip-row.tip-selected .tip-pick {
+  font-weight: 800;
 }
 
 .tip-heuristic {
