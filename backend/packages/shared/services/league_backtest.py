@@ -30,9 +30,24 @@ passes the reduced DB-only set (``elo``, ``form``, ``home_advantage``,
 ``matchup`` — no ``ladder`` entry is fetched or rendered); the default
 ``None`` keeps the D3 trio, so every pre-existing state-league payload
 is byte-identical.  The API layer derives the set from the league key's
-registry (national keys are rugby-league, even before their first
-sync), so a never-synced ``nrl`` still renders the sport's real model
-list in its zero payloads.
+registry entry (``LeagueConfig.sport_id``, FCL-9 — the same declaration
+the ingestion sync seeds from), so a never-synced ``nrl`` still renders
+the sport's real model list in its zero payloads.
+
+IN-SAMPLE grading caveat for the LEARNED heuristics (FCL-10, the
+conscious post-review M-2 decision): once a league's weekly retrain has
+activated scoped ``weighted_tip`` / ``boosted_tip`` versions, the tips
+persisted for PAST events in those columns are IN-SAMPLE predictions —
+the weights were fitted on the very events the backtest then grades
+(the AFL pipeline has the same property, so payload semantics stay
+parity-aligned across paths).  With league-sized corpora
+(``MIN_LEAGUE_TRAINING_ROWS = 30``) the XGBoost ensemble in particular
+will overfit, so treat learned-heuristic accuracy/profit as an UPPER
+BOUND, not an estimate — the result-derived base models (elo, form,
+ladder, home_advantage, matchup) and the training-free ``best_bet``
+consensus are computed from results alone and carry NO such bias.  A
+hold-out tail or post-``trained_at`` grading split is the recorded
+follow-up if learned-heuristic league numbers ever drive decisions.
 
 Rugby-league history specifics: the synced/backfilled events carry
 CANONICAL venue names (the ``venue_aliases`` normalization applied at

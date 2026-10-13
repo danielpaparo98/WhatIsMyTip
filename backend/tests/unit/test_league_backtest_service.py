@@ -898,15 +898,23 @@ async def test_compare_season_end_to_end(_db_at_head) -> None:
     assert comparison[HEURISTIC_LADDER]["overall_accuracy"] == pytest.approx(1 / 3)
 
     # FCL-7: the derived trio graded from league_tips at query time.
-    # Pre-training both combiners ARE the majority vote (FCL-3d): R1 an
-    # unanimous home vote, R2 the draw (NULL, push), R3 the away Reds
-    # (form + ladder outvote home_advantage) — so 2/3 like home_advantage.
+    # Pre-training both combiners ARE the majority vote (FCL-3d).
+    # VERIFIED pick trace over the 2025 seed (the prior hand-trace here
+    # was wrong — it assumed R3's away pick won, but R3 is a HOME win):
+    #   R1: unanimous home (no prior evidence, ties → home) → CORRECT.
+    #   R2: draw → NULL pick, push.
+    #   R3: home_advantage → home (Greens); form AND ladder both → away
+    #       (Reds: 1 prior win + higher pct vs Greens' 0) → the 2-1 away
+    #       vote LOSES to Greens' 100-60 home win.
+    # So the derived trio grades 1/3: +$9 (R1) − $10 (R3) = −$1 — the
+    # honest majority-vote penalty when the two evidence models agree on
+    # the wrong side.  (2026 votes home in both rounds → 2/2 there.)
     for name in DERIVED_LEAGUE_HEURISTICS:
         stats = comparison[name]
         assert stats["total_tips"] == 3, name
-        assert stats["total_correct"] == 2, name
-        assert stats["overall_accuracy"] == pytest.approx(2 / 3), name
-        assert stats["total_profit"] == pytest.approx(2 * _FALLBACK_WIN), name
+        assert stats["total_correct"] == 1, name
+        assert stats["overall_accuracy"] == pytest.approx(1 / 3), name
+        assert stats["total_profit"] == pytest.approx(_FALLBACK_WIN - 10.0), name
         assert stats["total_rounds"] == 3, name
         assert stats["odds_coverage"] == 0.0, name
 
