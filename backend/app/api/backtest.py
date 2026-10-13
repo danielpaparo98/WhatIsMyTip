@@ -49,13 +49,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.db_deps import get_db
 from app.core.exceptions import http_error
 from app.core.security import require_admin_key
-from packages.shared.ingestion.league_seeding import (
-    SPORT_ID as RUGBY_LEAGUE_SPORT_ID,
-)
-from packages.shared.ingestion.national_leagues import (
-    NATIONAL_LEAGUES,
-    get_league,
-)
+from packages.shared.ingestion.national_leagues import get_league
 from packages.shared.models import Competition
 from packages.shared.schemas import (
     BacktestListResponse,
@@ -176,21 +170,26 @@ def _league_model_set(league: str) -> Sequence[str] | None:
     Resolution is registry-pure (no DB), so it applies even BEFORE the
     competition's first sync: a never-synced ``nrl`` zero payload still
     renders the sport's real quartet plus the derived trio, and a state
-    key grades the D3 trio plus it.  National keys resolve through their
-    rugby-league sport id (the pre-FCL behaviour for the reduced
-    quartet); state keys pass no sport id — their names are not
-    registered in ``LEAGUE_MODEL_SETS``, so they fall through to the D3
-    default byte-identically.  Unknown keys return ``None`` (unreachable
-    via the endpoints — dispatch 404s them first), and the service keeps
-    its D3 default for ``None``.
+    key grades the D3 trio plus it.
+
+    FCL-9 (post-review M-3): the sport id comes from the league's OWN
+    registry entry (``LeagueConfig.sport_id``) — the same declaration
+    the ingestion sync seeds from — not from which registry the key was
+    found in.  Generation resolves the model set from the DB
+    competition's sport; grading now derives both from one source, so
+    registering a second sport in either registry cannot silently split
+    what generation writes from what this endpoint grades.  Today:
+    state keys carry the ``'afl'`` default (D3 trio, byte-identical),
+    national keys ``'rugby-league'`` (the reduced quartet).  Unknown
+    keys return ``None`` (unreachable via the endpoints — dispatch 404s
+    them first), and the service keeps its D3 default for ``None``.
     """
     try:
         config = get_league(league)
     except ValueError:
         return None
-    sport_id = RUGBY_LEAGUE_SPORT_ID if league in NATIONAL_LEAGUES else None
     return (
-        league_model_set_for_competition(config.name, sport_id)
+        league_model_set_for_competition(config.name, config.sport_id)
         + DERIVED_LEAGUE_HEURISTICS
     )
 
@@ -268,9 +267,16 @@ async def compare_heuristics(
 
     League (``league=<league key>``): the same response shape from
     the multisport tables, with ``season`` taken as the season LABEL
-    string.  Rugby-league keys grade the reduced per-sport model set.
-    An unknown league is a 404; a registered-but-unsynced league
-    returns the zero comparison structure.
+    string.  Model sets derive from the league's registry entry
+    (``LeagueConfig.sport_id``).  An unknown league is a 404; a
+    registered-but-unsynced league returns the zero comparison
+    structure.
+
+    FCL-10 caveat: once a league's retrain has activated scoped
+    ``weighted_tip``/``boosted_tip`` versions, past-season tips in
+    those columns are IN-SAMPLE predictions — treat learned-heuristic
+    accuracy/profit as an upper bound.  The result-derived base models
+    and the training-free ``best_bet`` carry no such bias.
     """
     if league and league != "afl":
         league_service = LeagueBacktestService()
@@ -469,9 +475,13 @@ async def get_current_season(
 
     League: the same ``CurrentSeasonResponse`` shape from the multisport
     tables, with the season LABEL stringified (the label is
-    competition-relative, not a calendar year).  Rugby-league keys grade
-    the reduced per-sport model set.  Unknown league → 404; unsynced
-    league → zeroed heuristics.
+    competition-relative, not a calendar year).  Model sets derive from
+    the league's registry entry (``LeagueConfig.sport_id``).  Unknown
+    league → 404; unsynced league → zeroed heuristics.
+
+    FCL-10 caveat: see ``/compare`` — learned ``weighted_tip`` /
+    ``boosted_tip`` figures are in-sample upper bounds once the
+    league's retrain has activated scoped versions.
     """
     if league and league != "afl":
         league_service = LeagueBacktestService()

@@ -86,6 +86,7 @@ NATIONAL_LEAGUES: Dict[str, LeagueConfig] = {
         source_note="fixturedownload.com/feed/json (open)",
         tier="national",
         format="rounds",
+        sport_id=SPORT_ID,
     ),
     "nrlw": LeagueConfig(
         name="NRL Women's Premiership",
@@ -95,6 +96,7 @@ NATIONAL_LEAGUES: Dict[str, LeagueConfig] = {
         source_note="fixturedownload.com/feed/json (open)",
         tier="national",
         format="rounds",
+        sport_id=SPORT_ID,
     ),
     "origin": LeagueConfig(
         name="State of Origin",
@@ -104,6 +106,7 @@ NATIONAL_LEAGUES: Dict[str, LeagueConfig] = {
         source_note="fixturedownload.com/feed/json (open)",
         tier="national",
         format="tournament",
+        sport_id=SPORT_ID,
     ),
 }
 

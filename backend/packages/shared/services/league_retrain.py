@@ -403,20 +403,18 @@ async def run_league_retrain(
         name: float(coef) for name, coef in zip(feature_names, linear.coef_)
     }
 
-    linear_version = await _next_version_number(session, WEIGHTED_TIP_MODEL_NAME)
-    linear_mv = await create_model_version(
-        session,
-        model_name=WEIGHTED_TIP_MODEL_NAME,
-        version=linear_version,
-        intercept=intercept,
-        training_rows=len(rows),
-        metrics=linear_metrics,
-        coefficients=coefficients,
-        set_active=True,
-        competition_id=competition_id,  # FCL-5e: scoped promotion ONLY
-    )
+    # --- boosted combiner (the league boosted_tip) — FIT ONLY ----------
+    # M-1 (post-review): BOTH models are fitted, the SHAP additivity
+    # check runs and the artifact is serialized BEFORE anything is
+    # persisted.  The previous order committed the linear version first,
+    # so a boosted-fit or additivity failure left the league with a
+    # freshly-activated weighted_tip and a stale boosted_tip —
+    # half-applied state reported as a bare error.  Every failure that
+    # depends on the DATA now happens before any write; only a DB fault
+    # between the two persists can still split the pair (each
+    # create_model_version commits its own transaction), and that class
+    # is handled by the caller's rollback + retry on the next weekly run.
 
-    # --- boosted combiner (the league boosted_tip) ------------------------
     # XGBoost with a fixed random_state is deterministic on identical data.
     boosted = xgb.XGBRegressor(**used_params)
     boosted.fit(X, y)
@@ -445,8 +443,8 @@ async def run_league_retrain(
     # ~1e-5 deviations are expected.  Deliberately a raise, not an
     # assert: this is the only runtime check that the artifact,
     # shap_base_value and SHAP-importance rows all describe the SAME
-    # model — it must survive ``python -O``.  The cron's per-league
-    # try/except turns the raise into the documented error result.
+    # model — it must survive ``python -O``.  Raised BEFORE persistence
+    # (M-1): a violation aborts the league with nothing written.
     max_deviation = float(np.abs(base + sv.sum(axis=1) - boosted_preds).max())
     if max_deviation > 1e-4:
         raise RuntimeError(
@@ -456,6 +454,20 @@ async def run_league_retrain(
         )
 
     model_bytes: bytes = boosted.get_booster().save_raw(raw_format="json")
+
+    # --- persist BOTH back-to-back (M-1) --------------------------------
+    linear_version = await _next_version_number(session, WEIGHTED_TIP_MODEL_NAME)
+    linear_mv = await create_model_version(
+        session,
+        model_name=WEIGHTED_TIP_MODEL_NAME,
+        version=linear_version,
+        intercept=intercept,
+        training_rows=len(rows),
+        metrics=linear_metrics,
+        coefficients=coefficients,
+        set_active=True,
+        competition_id=competition_id,  # FCL-5e: scoped promotion ONLY
+    )
 
     boosted_version = await _next_version_number(session, BOOSTED_TIP_MODEL_NAME)
     boosted_mv = await create_model_version(
