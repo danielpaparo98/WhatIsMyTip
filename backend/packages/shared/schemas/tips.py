@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Optional
+from typing import Dict, Optional
 
 from pydantic import BaseModel, Field
 
@@ -60,4 +60,39 @@ class LeagueTipsResponse(BaseModel):
     event: str
     competition: str
     tips: list[LeagueTipExplanationResponse] = []
+    count: int = 0
+
+
+class LeagueRoundFixture(BaseModel):
+    """One round fixture with its stored league picks (FCL-12).
+
+    ``picks`` maps heuristic name → picked side name (``None`` =
+    draw-no-pick); absent keys mean the heuristic has no stored tip for
+    the fixture.  NO AI explanations — the round page renders picks
+    only, so a page view never pays the LLM pipeline.
+    """
+
+    event_id: int
+    slug: str
+    round: Optional[int] = None
+    starts_at: Optional[datetime] = None
+    status: str
+    completed: bool
+    home_team: str
+    away_team: str
+    picks: Dict[str, Optional[str]] = {}
+
+
+class LeagueRoundTipsResponse(BaseModel):
+    """Bulk round tips for one league (GET /api/tips/league-round).
+
+    Additive (FCL-12): a NEW route payload — every existing tips shape
+    is untouched.  Scoped to the league's current season; ``count`` is
+    derived server-side from ``fixtures``.
+    """
+
+    league: str
+    round: int
+    season: Optional[str] = None
+    fixtures: list[LeagueRoundFixture] = []
     count: int = 0

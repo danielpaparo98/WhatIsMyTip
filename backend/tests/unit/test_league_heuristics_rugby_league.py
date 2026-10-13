@@ -519,6 +519,9 @@ def _patched_fetches(
         ),
         patch.object(service, "_load_linear_weights", AsyncMock(return_value=None)),
         patch.object(service, "_load_boosted_artifact", AsyncMock(return_value=None)),
+        patch.object(
+            service, "_fetch_scheduled_events", AsyncMock(return_value=[])
+        ),
     )
 
 
