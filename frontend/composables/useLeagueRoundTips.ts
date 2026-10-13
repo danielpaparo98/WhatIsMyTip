@@ -78,9 +78,13 @@ export async function useLeagueRoundTips(
       if (!league || league === 'afl' || round === null) return null
       const config = useRuntimeConfig()
       const apiBase = config.public.apiBase as string
+      // Explicit timeout: a slow API must never stall the prerenderer
+      // past its abort threshold (a partial static build 404s whole
+      // pages). Non-fatal by contract — the page degrades to status
+      // labels and the client-side refresh picks the tips up later.
       return await $fetch<LeagueRoundTipsPayload>(
         `${apiBase}/api/tips/league-round`,
-        { params: { league, round } },
+        { params: { league, round }, timeout: 8000 },
       ).catch(() => null)
     },
     { dedupe: 'cancel' },

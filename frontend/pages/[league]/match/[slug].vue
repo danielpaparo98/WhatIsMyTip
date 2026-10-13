@@ -256,7 +256,7 @@ const { data: leagueTips } = await useAsyncData<LeagueTipRow[] | null>(
     const apiBase = config.public.apiBase as string
     return await $fetch<{ tips: LeagueTipRow[] }>(
       `${apiBase}/api/tips/league`,
-      { params: { league: league.value, slug: slug.value } },
+      { params: { league: league.value, slug: slug.value }, timeout: 8000 },
     )
       .then((r) => (r.tips.length > 0 ? r.tips : null))
       .catch(() => null)
