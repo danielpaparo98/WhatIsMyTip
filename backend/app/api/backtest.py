@@ -23,11 +23,15 @@ legacy AFL path unchanged; any key resolved by the cross-registry
 ``get_league`` facade (the state rollout AND the national rugby-league
 registries) is looked up by canonical ``competitions.name`` — the
 frontend ``LEAGUE_COMPETITION_NAMES`` contract — and served from the
-multisport tables via :class:`LeagueBacktestService`, with the
-per-sport model set from ``league_model_set_for_sport`` (national keys
-grade the reduced rugby-league quartet even before their first sync).
+multisport tables via :class:`LeagueBacktestService`, with the model
+set from :func:`league_model_set_for_competition` PLUS the three
+derived heuristics (FCL-7: every league's ``league_tips`` carries
+``best_bet`` / ``weighted_tip`` / ``boosted_tip`` since FCL-6, so
+national keys grade their reduced rugby-league quartet plus the trio
+even before their first sync, and state keys the D3 trio plus it).
 An unknown key is a 404; a registered-but-never-synced league degrades
-to the service's graceful zero payloads.
+to the service's graceful zero payloads — now including the derived
+entries at zero.
 """
 
 from __future__ import annotations
@@ -70,7 +74,10 @@ from packages.shared.services.boosted_explanations import (
     get_active_boosted_model,
 )
 from packages.shared.services.league_backtest import LeagueBacktestService
-from packages.shared.services.league_heuristics import league_model_set_for_sport
+from packages.shared.services.league_heuristics import (
+    DERIVED_LEAGUE_HEURISTICS,
+    league_model_set_for_competition,
+)
 
 router = APIRouter()
 
@@ -159,19 +166,33 @@ async def _league_competition_id(db: AsyncSession, league: str) -> int:
 
 
 def _league_model_set(league: str) -> Sequence[str] | None:
-    """The per-sport backtest model set for a league key.
+    """The backtest model set for a league key: BASE set + derived trio.
 
-    National (rugby-league) keys grade the reduced DB-only set —
-    ``league_model_set_for_sport('rugby-league')`` = (``elo``, ``form``,
-    ``home_advantage``, ``matchup``) — resolved from the registry so it
-    applies even BEFORE the competition's first sync (a never-synced
-    ``nrl`` zero payload still renders the sport's real model list).
-    State-league keys return ``None``: the service keeps the D3 default
-    set, so their payloads stay byte-identical.
+    FCL-7: the set is the league's resolved BASE model set — the FULL
+    registry resolution league → sport → default
+    (:func:`league_model_set_for_competition`, keyed on the canonical
+    competition name the ``get_league`` facade returns) — PLUS the three
+    derived heuristics every league's ``league_tips`` carries (FCL-6).
+    Resolution is registry-pure (no DB), so it applies even BEFORE the
+    competition's first sync: a never-synced ``nrl`` zero payload still
+    renders the sport's real quartet plus the derived trio, and a state
+    key grades the D3 trio plus it.  National keys resolve through their
+    rugby-league sport id (the pre-FCL behaviour for the reduced
+    quartet); state keys pass no sport id — their names are not
+    registered in ``LEAGUE_MODEL_SETS``, so they fall through to the D3
+    default byte-identically.  Unknown keys return ``None`` (unreachable
+    via the endpoints — dispatch 404s them first), and the service keeps
+    its D3 default for ``None``.
     """
-    if league in NATIONAL_LEAGUES:
-        return league_model_set_for_sport(RUGBY_LEAGUE_SPORT_ID)
-    return None
+    try:
+        config = get_league(league)
+    except ValueError:
+        return None
+    sport_id = RUGBY_LEAGUE_SPORT_ID if league in NATIONAL_LEAGUES else None
+    return (
+        league_model_set_for_competition(config.name, sport_id)
+        + DERIVED_LEAGUE_HEURISTICS
+    )
 
 
 # Review #4: the league path consumes the season LABEL verbatim, so

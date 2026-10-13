@@ -7,16 +7,21 @@ normalized 2017+ rugby-league history.
 
 Contracts under test:
 
-* **Reduced model set only** — grading consumes
+* **Reduced base model set** — grading consumes
   ``league_model_set_for_sport('rugby-league')`` = (``elo``, ``form``,
   ``home_advantage``, ``matchup``); ``ladder`` never appears in a
-  rugby-league payload and its tips are never fetched.
+  rugby-league payload and its tips are never fetched.  FCL-7: the API
+  additionally passes the three DERIVED heuristics every league's
+  ``league_tips`` carries (``best_bet`` / ``weighted_tip`` /
+  ``boosted_tip``) on top of that base set.
 * **API league dispatch** — ``?league=nrl|nrlw|origin`` resolves through
   the cross-registry ``get_league`` facade (the guardrail flip: these
-  keys used to 404 as state-registry unknowns) and passes the reduced
-  set even before the competition is first synced; unknown keys stay a
-  404 in the repo-standard shape; absent/``afl``/state keys keep the
-  legacy payloads byte-identical (``models=None`` → the D3 default).
+  keys used to 404 as state-registry unknowns) and passes the base set
+  plus the derived trio even before the competition is first synced;
+  unknown keys stay a 404 in the repo-standard shape;
+  absent/``afl``/empty keys keep the legacy payloads byte-identical
+  (no league dispatch); state keys now also grade their D3 base set
+  plus the derived trio (FCL-7).
 * **Draws honored in grading** (``has_draws=True``) — a drawn event has
   no winner, so every tip on it grades incorrect but settles as a PUSH
   ($0, stake refunded) per the ``settlement.py`` kernel — never a loss.
@@ -65,6 +70,7 @@ from packages.shared.services.league_backtest import (
     grade_tip,
 )
 from packages.shared.services.league_heuristics import (
+    DERIVED_LEAGUE_HEURISTICS,
     HEURISTIC_ELO,
     HEURISTIC_FORM,
     HEURISTIC_HOME_ADVANTAGE,
@@ -74,6 +80,10 @@ from packages.shared.services.league_heuristics import (
     LeagueHeuristicsService,
     league_model_set_for_sport,
 )
+
+#: FCL-7: the model set the API passes for a national key — the sport's
+#: reduced base quartet plus the three derived heuristics.
+_BACKTEST_MODEL_SET = RUGBY_LEAGUE_MODELS + DERIVED_LEAGUE_HEURISTICS
 
 _BACKEND_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 
@@ -469,7 +479,7 @@ class TestNationalLeagueDispatch:
             session, competition_id=42
         )
 
-    def test_compare_for_nrl_passes_the_reduced_set(self):
+    def test_compare_for_nrl_passes_base_plus_derived(self):
         session = _session_returning(_ScalarResult(42))
         app = _build_app_with_backtest_router()
         _override_db(app, session)
@@ -486,10 +496,10 @@ class TestNationalLeagueDispatch:
             session,
             competition_id=42,
             season_label="2024",
-            models=RUGBY_LEAGUE_MODELS,
+            models=_BACKTEST_MODEL_SET,
         )
 
-    def test_current_season_for_origin_passes_the_reduced_set(self):
+    def test_current_season_for_origin_passes_base_plus_derived(self):
         session = _session_returning(_ScalarResult(7))
         app = _build_app_with_backtest_router()
         _override_db(app, session)
@@ -503,16 +513,17 @@ class TestNationalLeagueDispatch:
 
         assert resp.status_code == 200
         league_cls.return_value.get_current_season_performance.assert_awaited_once_with(
-            session, competition_id=7, models=RUGBY_LEAGUE_MODELS
+            session, competition_id=7, models=_BACKTEST_MODEL_SET
         )
 
     @pytest.mark.parametrize("league", _NATIONAL_KEYS)
-    def test_unsynced_national_league_renders_the_reduced_zero_payload(
+    def test_unsynced_national_league_renders_the_base_plus_derived_zero_payload(
         self, league: str
     ):
         """Registered but never synced: the REAL service runs against an
-        empty DB — and the zero payload already renders the rugby-league
-        model list (the set is registry-derived, not data-derived)."""
+        empty DB — and the zero payload already renders the base quartet
+        plus the derived trio (the set is registry-derived, not
+        data-derived)."""
         session = _session_returning(_EmptyResult())
         app = _build_app_with_backtest_router()
         _override_db(app, session)
@@ -524,7 +535,7 @@ class TestNationalLeagueDispatch:
         body = resp.json()
         assert body["season"] is None
         assert [h["heuristic"] for h in body["heuristics"]] == list(
-            RUGBY_LEAGUE_MODELS
+            _BACKTEST_MODEL_SET
         )
         assert all(
             h["rounds_played"] == 0 and h["total_profit"] == 0.0
@@ -542,7 +553,7 @@ class TestNationalLeagueDispatch:
         assert resp.status_code == 200
         body = resp.json()
         assert body["season"] == "2017"
-        assert set(body["comparison"]) == set(RUGBY_LEAGUE_MODELS)
+        assert set(body["comparison"]) == set(_BACKTEST_MODEL_SET)
         assert body["best_overall"] == {
             "heuristic": None,
             "accuracy": 0.0,
@@ -823,8 +834,12 @@ async def _seed_rugby_league(async_dsn: str) -> dict[str, int]:
 
 
 async def _generate_tips(async_dsn: str, competition_id: int) -> None:
-    """Populate league_tips exactly as the sync hook would (the sport's
-    reduced set: 5 completed events × 4 models = 20 tips)."""
+    """Populate league_tips exactly as the sync hook would.
+
+    FCL-6: every completed event persists its base picks AND the three
+    derived heuristics — 4 decided events × (4 base + 3 derived) plus
+    the draw event's 7 draw-no-pick rows = 35.
+    """
     engine = create_async_engine(async_dsn, poolclass=NullPool)
     factory = async_sessionmaker(engine, expire_on_commit=False)
     try:
@@ -834,7 +849,7 @@ async def _generate_tips(async_dsn: str, competition_id: int) -> None:
             )
     finally:
         await engine.dispose()
-    assert summary["tips_inserted"] == 20
+    assert summary["tips_inserted"] == 35
 
 
 def _by_heuristic(entries: list[dict]) -> dict[str, dict]:

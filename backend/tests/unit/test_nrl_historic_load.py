@@ -584,7 +584,9 @@ class TestIdempotentReload:
         tip_count_after_second = await _scalar(
             db, select(func.count(LeagueTip.id))
         )
-        assert tip_count_after_second == tip_count_after_first == 16
+        # 4 completed events × 7 heuristics: the 4 rugby-league base
+        # models + the three derived first-class heuristics (FCL-6).
+        assert tip_count_after_second == tip_count_after_first == 28
         assert second["results"]["nrl"][2026]["league_tips"]["tips_inserted"] == 0
 
 

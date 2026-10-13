@@ -11,13 +11,15 @@ Dispatch contract under test:
   passed as a LABEL string on ``/compare``;
 * national rugby-league key (``nrl``/``nrlw``/``origin``) → the same
   league path through the cross-registry ``get_league`` facade, with the
-  reduced per-sport model set (GUARDRAIL FLIP, Phase 5.2: these keys
-  used to 404 as state-registry unknowns — flipped in the same change
-  that made them valid; detailed coverage in
+  reduced per-sport base set plus the three derived heuristics
+  (GUARDRAIL FLIP, Phase 5.2: these keys used to 404 as state-registry
+  unknowns — flipped in the same change that made them valid; FCL-7
+  adds the derived trio.  Detailed coverage in
   ``test_league_backtest_rugby_league.py``);
 * unknown key                      → 404 repo-standard error shape;
 * registered but never synced      → the service's own graceful zero
-  payloads (empty ``available_years`` / zeroed heuristics) — never a 500.
+  payloads (empty ``available_years`` / zeroed heuristics — FCL-7 adds
+  the derived entries at zero) — never a 500.
 
 The zero-payload shapes themselves are proven in
 ``test_league_backtest_service.py``; here the unsynced cases run the REAL
@@ -36,9 +38,16 @@ from fastapi.testclient import TestClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from packages.shared.services.league_heuristics import (
+    DERIVED_LEAGUE_HEURISTICS,
     LEAGUE_HEURISTICS,
     RUGBY_LEAGUE_MODELS,
 )
+
+#: FCL-7: the model set the API passes for every registered league key —
+#: the resolved BASE set plus the derived trio every league's
+#: ``league_tips`` carries.
+_STATE_BACKTEST_MODEL_SET = LEAGUE_HEURISTICS + DERIVED_LEAGUE_HEURISTICS
+_NATIONAL_BACKTEST_MODEL_SET = RUGBY_LEAGUE_MODELS + DERIVED_LEAGUE_HEURISTICS
 
 # ---------------------------------------------------------------------------
 # Helpers (same app-builder convention as test_app_api_backtest.py)
@@ -411,7 +420,9 @@ class TestLeagueCurrentSeason:
         assert body["rounds_completed"] == 2
         assert body["total_rounds"] == 20
         league_cls.return_value.get_current_season_performance.assert_awaited_once_with(
-            session, competition_id=7, models=None
+            session,
+            competition_id=7,
+            models=_STATE_BACKTEST_MODEL_SET,
         )
 
     def test_current_season_unsynced_league_zero_payload(self):
@@ -427,8 +438,10 @@ class TestLeagueCurrentSeason:
         assert body["season"] is None
         assert body["rounds_completed"] == 0
         assert body["total_rounds"] == 0
+        # FCL-7: the zero payload renders the base set AND the derived
+        # trio (all zeroed).
         assert [h["heuristic"] for h in body["heuristics"]] == list(
-            LEAGUE_HEURISTICS
+            _STATE_BACKTEST_MODEL_SET
         )
         # Zeroed current-season entries (the CurrentSeasonResponse shape —
         # note: rounds_played, not the comparison shape's total_tips).
@@ -498,7 +511,10 @@ class TestLeagueCompare:
         assert body["season"] == "2025"
         assert body["best_overall"]["heuristic"] == "home_advantage"
         league_cls.return_value.compare_season.assert_awaited_once_with(
-            session, competition_id=42, season_label="2025", models=None
+            session,
+            competition_id=42,
+            season_label="2025",
+            models=_STATE_BACKTEST_MODEL_SET,
         )
 
     def test_compare_non_numeric_label_passes_through(self):
@@ -523,7 +539,10 @@ class TestLeagueCompare:
         assert resp.status_code == 200
         assert resp.json()["season"] == "2025-26"
         league_cls.return_value.compare_season.assert_awaited_once_with(
-            session, competition_id=42, season_label="2025-26", models=None
+            session,
+            competition_id=42,
+            season_label="2025-26",
+            models=_STATE_BACKTEST_MODEL_SET,
         )
 
     def test_compare_unsynced_league_zero_comparison(self):
@@ -542,7 +561,8 @@ class TestLeagueCompare:
             "accuracy": 0.0,
             "profit": 0.0,
         }
-        assert set(body["comparison"]) == set(LEAGUE_HEURISTICS)
+        # FCL-7: the zero comparison covers base + derived, all zeroed.
+        assert set(body["comparison"]) == set(_STATE_BACKTEST_MODEL_SET)
         assert all(
             stats["total_tips"] == 0 for stats in body["comparison"].values()
         )
@@ -603,9 +623,10 @@ class TestNationalLeagueGuardrailFlip:
             resp = client.get(f"/api/backtest/current-season?league={league}")
 
         assert resp.status_code == 200
-        # ...and grades the REDUCED rugby-league model set, not the D3 trio.
+        # ...and grades the reduced rugby-league base set plus the
+        # derived trio (FCL-7), not the D3 trio.
         league_cls.return_value.get_current_season_performance.assert_awaited_once_with(
-            session, competition_id=42, models=RUGBY_LEAGUE_MODELS
+            session, competition_id=42, models=_NATIONAL_BACKTEST_MODEL_SET
         )
 
 
