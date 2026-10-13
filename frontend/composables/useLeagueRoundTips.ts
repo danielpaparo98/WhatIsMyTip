@@ -65,6 +65,7 @@ export async function useLeagueRoundTips(
     data,
     error: fetchError,
     pending,
+    refresh: refetch,
   } = await useAsyncData<LeagueRoundTipsPayload | null>(
     computed(
       () => `league-round-tips-${drivingLeague.value}-${roundId.value}`,
@@ -84,6 +85,16 @@ export async function useLeagueRoundTips(
     },
     { dedupe: 'cancel' },
   )
+
+  // Client-side freshness on hydrated visits (same contract as
+  // useLeagueEvents): the prerendered payload paints first, then ONE
+  // background refresh pulls tips generated after the build (the daily
+  // league-sync cron runs long after any static build).
+  if (import.meta.client) {
+    onNuxtReady(() => {
+      void refetch()
+    })
+  }
 
   const tipsBySlug = computed<Record<string, LeagueRoundPicks>>(() => {
     const out: Record<string, LeagueRoundPicks> = {}
