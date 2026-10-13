@@ -285,33 +285,27 @@ async def get_active_model_artifact(
     return active.artifact, active.artifact_format or "json", active
 
 
-async def next_version_number(
-    session: AsyncSession,
-    model_name: str,
-    competition_id: Optional[int] = None,
-) -> int:
+async def next_version_number(session: AsyncSession, model_name: str) -> int:
     """Return ``max(version) + 1`` for ``model_name`` (or ``1`` if none exist).
 
-    FCL-4: the max is taken per ``(model_name, competition_id)`` scope, so
-    the legacy global counter and each league's counter are independent —
-    a league's first version does not have to follow the global history.
+    FCL-4 revision (post-review C-1): the max is taken ACROSS ALL SCOPEs —
+    every row with this ``model_name``, global (NULL ``competition_id``)
+    and every league alike.  The pre-existing
+    ``uq_model_versions_name_version`` constraint keeps
+    ``(model_name, version)`` unique across the WHOLE table, so any
+    per-scope counter hands out duplicates the moment a second scope
+    allocates: the weekly global AFL retrain (NULL-scoped counter) would
+    re-emit a version number a league row already owns and crash on
+    INSERT — one week after the first league trains, deterministically.
+    Cross-scope ``max`` is the only collision-free allocation.
 
-    Callers sharing a ``model_name`` across scopes should note that the
-    pre-existing ``uq_model_versions_name_version`` constraint keeps
-    ``(model_name, version)`` unique across ALL scopes; per-league retrains
-    that reuse a legacy model name should therefore allocate versions from
-    the global (no-argument) counter, while fully scoped model names can
-    count per league.
+    Active-version promotion is still scoped (see
+    :func:`create_model_version`); only the number-plate is shared.
     """
-    counter_filter = select(func.max(ModelVersion.version)).where(
-        ModelVersion.model_name == model_name
-    )
-    if competition_id is None:
-        counter_filter = counter_filter.where(ModelVersion.competition_id.is_(None))
-    else:
-        counter_filter = counter_filter.where(
-            ModelVersion.competition_id == competition_id
+    result = await session.execute(
+        select(func.max(ModelVersion.version)).where(
+            ModelVersion.model_name == model_name
         )
-    result = await session.execute(counter_filter)
+    )
     max_version = result.scalar()
     return (max_version or 0) + 1

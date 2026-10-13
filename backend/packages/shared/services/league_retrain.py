@@ -73,11 +73,11 @@ from __future__ import annotations
 
 from typing import Any, Optional, Sequence
 
-from sqlalchemy import and_, func, select
+from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
-from ..crud.model_versions import create_model_version
+from ..crud.model_versions import create_model_version, next_version_number
 from ..logger import get_logger
 from ..models import Competition, Event, EventParticipant, ModelVersion, Season
 from .league_consensus import build_league_feature_vector, league_feature_names_for
@@ -293,22 +293,16 @@ def build_league_training_rows(
 async def _next_version_number(session: AsyncSession, model_name: str) -> int:
     """Next free version for ``model_name`` across ALL scopes.
 
-    The pre-existing ``uq_model_versions_name_version`` constraint keeps
-    ``(model_name, version)`` unique across the WHOLE table — NULL scope
-    and every competition alike (see ``crud.model_versions.next_version_number``'s
-    caveat).  A per-scope counter is therefore unsafe for the legacy
-    model names the league retrain reuses: two leagues would each see
-    "no rows in MY scope" and both allocate version 1, and the second
-    insert would violate the constraint.  The only collision-free
-    allocation is ``max(version)`` over every row with this model name,
-    regardless of scope — which is exactly what this counter takes.
+    Post-review C-1 revision: this delegates to
+    :func:`packages.shared.crud.model_versions.next_version_number`,
+    which IS the cross-scope counter (FCL-4 revision) —
+    ``uq_model_versions_name_version`` keeps ``(model_name, version)``
+    unique across the whole table, so cross-scope ``max`` is the only
+    collision-free allocation for BOTH the legacy global retrains and
+    the league pass.  One source of truth: a future change to the
+    allocation rule cannot re-split the two counters.
     """
-    result = await session.execute(
-        select(func.max(ModelVersion.version)).where(
-            ModelVersion.model_name == model_name
-        )
-    )
-    return (result.scalar() or 0) + 1
+    return await next_version_number(session, model_name)
 
 
 # ---------------------------------------------------------------------------
@@ -542,6 +536,15 @@ async def run_all_league_retrains(session: AsyncSession) -> dict[str, object]:
                 session, competition_id=competition_id
             )
         except Exception as exc:  # noqa: BLE001 — one league never fails the pass (FCL-5f)
+            # H-1 (post-review): a failure at flush time (IntegrityError,
+            # connectivity) leaves the AsyncSession in a failed
+            # transaction — the next league's first execute() would then
+            # raise PendingRollbackError and cascade the error to every
+            # remaining competition.  Roll the poisoned transaction back
+            # before continuing: completed versions were already
+            # committed inside create_model_version, so only this
+            # league's partial work is discarded.
+            await session.rollback()
             logger.exception(
                 "league-retrain competition=%s failed; continuing with the "
                 "remaining leagues: %r",

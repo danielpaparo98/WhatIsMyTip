@@ -17,12 +17,17 @@ versioned WITHOUT touching the legacy global rows (and vice versa):
   active rows in flight).  The observable end state is identical to the
   pre-FCL sequence — exactly one active version per scope, one transaction.
 * ``get_active_model_version`` / ``get_active_coefficients`` /
-  ``get_active_model_artifact`` / ``next_version_number`` take an optional
-  ``competition_id``; a NULL-scope query matches only NULL-scope rows, so a
-  scoped read returns ``None`` when only a different-scope version is active
-  (no cross-scope leakage).
-* ``next_version_number`` takes ``max(version)`` per ``(model_name, scope)``
-  so league and global version counters are independent.
+  ``get_active_model_artifact`` take an optional ``competition_id``; a
+  NULL-scope query matches only NULL-scope rows, so a scoped read returns
+  ``None`` when only a different-scope version is active (no cross-scope
+  leakage).
+* ``next_version_number`` takes ``max(version)`` ACROSS ALL scopes
+  (post-review C-1 revision): ``uq_model_versions_name_version`` keeps
+  ``(model_name, version)`` unique table-wide, so any per-scope counter
+  would re-emit a number another scope already owns — the weekly global
+  AFL retrain would collide with a league row one week after the first
+  league trains.  Cross-scope max is the only collision-free allocation;
+  the postgres tier pins exactly that scenario.
 * Omitting ``competition_id`` (the default) keeps the legacy global-path
   statement shape: on any pre-FCL database every row is NULL-scope, so the
   appended ``IS NULL`` predicate selects exactly the rows the pre-FCL
@@ -270,20 +275,26 @@ class TestReadScopeFilters:
         await get_active_model_version(session, _MODEL, 7)
         assert "competition_id = :?" in _normalized_where(_captured_statement(session))
 
-    async def test_next_version_number_default_is_null_scope(self):
+    async def test_next_version_number_is_cross_scope(self):
+        """C-1 regression pin: the counter spans ALL scopes.
+
+        The max must cover NULL-scope and league rows alike — a per-scope
+        counter would let the weekly global AFL retrain re-emit a version
+        number a league row already owns and fail the table-wide
+        ``uq_model_versions_name_version`` on INSERT.
+        """
         session = _mock_session(scalar=4)
         assert await next_version_number(session, _MODEL) == 5
-        assert _normalized_where(_captured_statement(session)) == (
-            "model_name = :? AND competition_id IS NULL"
-        )
+        # No scope predicate at all: model_name is the only filter.
+        assert _normalized_where(_captured_statement(session)) == "model_name = :?"
 
-    async def test_next_version_number_scoped(self):
-        session = _mock_session(scalar=2)
-        n = await next_version_number(session, _MODEL, competition_id=11)
-        assert n == 3
-        stmt = _captured_statement(session)
-        assert "competition_id = :?" in _normalized_where(stmt)
-        assert 11 in stmt.compile().params.values()
+    async def test_next_version_number_takes_no_scope_argument(self):
+        """The allocation rule is global by construction — no scope knob."""
+        import inspect
+
+        assert "competition_id" not in inspect.signature(
+            next_version_number
+        ).parameters
 
 
 class TestReadWrappersPassScopeThrough:
@@ -600,8 +611,14 @@ class TestScopedPromoteSemantics:
         assert artifact_format == "json"
         assert row.id == active.id
 
-    async def test_next_version_number_scopes_are_independent(self, db):
-        """``max(version)`` is taken per (model_name, scope)."""
+    async def test_next_version_number_spans_global_and_league_rows(self, db):
+        """C-1 end-to-end: global allocation sees league-owned versions.
+
+        The exact post-review collision sequence: NULL-scope rows up to
+        v1, a league row at v2 — the GLOBAL retrain's counter must hand
+        back v3 (not v2, which the league row owns and the table-wide
+        ``uq_model_versions_name_version`` would reject on INSERT).
+        """
         comp_a = await _seed_competition(db, "Scoped CRUD League G")
         comp_b = await _seed_competition(db, "Scoped CRUD League H")
 
@@ -610,12 +627,13 @@ class TestScopedPromoteSemantics:
             db, **_version_kwargs(2), set_active=False, competition_id=comp_a.id
         )
 
-        # Global counter sees only the NULL-scope row.
-        assert await next_version_number(db, _MODEL) == 2
-        # League A's counter sees only its own row.
-        assert await next_version_number(db, _MODEL, competition_id=comp_a.id) == 3
-        # League B has no rows: its counter starts from scratch.
-        assert await next_version_number(db, _MODEL, competition_id=comp_b.id) == 1
+        # The global (weekly AFL retrain) counter skips the league row.
+        assert await next_version_number(db, _MODEL) == 3
+        # A second league with its own scoped row also allocates past it.
+        await create_model_version(
+            db, **_version_kwargs(3), set_active=False, competition_id=comp_b.id
+        )
+        assert await next_version_number(db, _MODEL) == 4
 
     async def test_legacy_global_path_reads_active_global_row(self, db):
         """No-argument reads keep the legacy semantics end to end."""
