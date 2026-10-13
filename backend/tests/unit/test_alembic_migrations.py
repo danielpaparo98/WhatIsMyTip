@@ -371,13 +371,14 @@ def test_migration_0008_downgrade_drops_table():
     assert "ix_match_reports_game_id" in src
 
 
-def test_migration_head_is_0014():
-    """After adding 0014 (league_tips, performance-per-league D3), the
-    migration tree must have exactly one head: 0014_create_league_tips.
+def test_migration_head_is_0015():
+    """After adding 0015 (model_versions.competition_id, first-class
+    league heuristics FCL-1), the migration tree must have exactly one
+    head: 0015_model_versions_competition_scope.
     """
     revisions = _all_migrations()
     heads = [rev for rev in revisions if rev not in set(revisions.values())]
-    assert "0014_create_league_tips" in heads
+    assert "0015_model_versions_competition_scope" in heads
     assert len(heads) == 1, f"expected a single head, got {heads}"
 
 
@@ -488,3 +489,90 @@ def test_migration_0011_adds_team_identity_columns():
     assert 'op.drop_column("teams", "logo_url")' in down_src
     assert 'op.drop_column("teams", "primary_color")' in down_src
     assert 'op.drop_column("teams", "secondary_color")' in down_src
+
+
+# ---------------------------------------------------------------------------
+# Migration 0015: nullable model_versions.competition_id + scoped
+# unique-active semantics (FCL-1).
+#
+# Per-league model storage (first-class league heuristics): NULL
+# competition_id = legacy global model (existing AFL pipeline, byte-
+# identical semantics); non-NULL = version scoped to one competition.
+# Two PARTIAL UNIQUE indexes enforce "at most one active version per
+# (model_name, scope)" while leaving legacy rows unconstrained.
+# ---------------------------------------------------------------------------
+
+_MIG_0015 = "2026_10_12_1000-0015_model_versions_competition_scope"
+
+
+def test_migration_0015_registers_revision_ids():
+    """The competition-scope migration must declare the expected ids."""
+    mod = _load_module(_MIG_0015)
+    assert mod.revision == "0015_model_versions_competition_scope"
+    assert mod.down_revision == "0014_create_league_tips"
+
+
+def test_migration_0015_chains_off_0014():
+    """0015 must chain directly off 0014 (the previous head)."""
+    revisions = _all_migrations()
+    assert (
+        revisions.get("0015_model_versions_competition_scope")
+        == "0014_create_league_tips"
+    )
+
+
+def test_migration_0015_upgrade_adds_nullable_competition_fk():
+    """FCL-1: the upgrade must add a NULLABLE ``competition_id`` FK to
+    ``competitions.id`` on ``model_versions``.
+
+    Nullable-by-design: every existing row is a legacy global model and
+    keeps NULL scope; the FK follows the repo convention for
+    competitions references (no ON DELETE — see league_tips/seasons).
+    """
+    up_src = _read_source(_MIG_0015, "upgrade")
+    assert '"model_versions"' in up_src
+    assert '"competition_id"' in up_src
+    assert "sa.Integer()" in up_src
+    assert "nullable=True" in up_src
+    # ALTER-table FK additions use Alembic's canonical two-step
+    # (add_column then create_foreign_key targeting ``competitions``).
+    assert "op.create_foreign_key" in up_src
+    assert '"competitions"' in up_src
+    assert "fk_model_versions_competition_id_competitions" in up_src
+    # Repo convention: FK columns are indexed (matches LeagueTip/Season).
+    assert "ix_model_versions_competition_id" in up_src
+
+
+def test_migration_0015_upgrade_creates_scoped_unique_active_indexes():
+    """FCL-1: two PARTIAL UNIQUE indexes must cap active versions per
+    (model_name, scope) — global (NULL scope) and per-competition —
+    without constraining inactive rows."""
+    up_src = _read_source(_MIG_0015, "upgrade")
+    assert "uq_model_versions_global_active" in up_src
+    assert "uq_model_versions_competition_active" in up_src
+    assert "unique=True" in up_src
+    assert "postgresql_where" in up_src
+    assert "is_active" in up_src
+    assert "competition_id IS NULL" in up_src
+    assert "competition_id IS NOT NULL" in up_src
+
+
+def test_migration_0015_upgrade_preserves_existing_name_version_uq():
+    """The scoped-active indexes must NOT touch the pre-existing
+    ``(model_name, version)`` uniqueness (uq_model_versions_name_version)
+    or any other constraint on the table."""
+    up_src = _read_source(_MIG_0015, "upgrade")
+    assert "uq_model_versions_name_version" not in up_src
+    assert "drop_constraint" not in up_src
+
+
+def test_migration_0015_downgrade_reverses_everything():
+    """The downgrade must drop both partial indexes and then the column
+    (reverse order of upgrade), leaving the table as 0014 had it."""
+    down_src = _read_source(_MIG_0015, "downgrade")
+    assert "uq_model_versions_competition_active" in down_src
+    assert "uq_model_versions_global_active" in down_src
+    assert "ix_model_versions_competition_id" in down_src
+    assert 'op.drop_column("model_versions", "competition_id")' in down_src
+    # Indexes must be dropped before the column that participates in them.
+    assert down_src.index("drop_index") < down_src.index("drop_column")

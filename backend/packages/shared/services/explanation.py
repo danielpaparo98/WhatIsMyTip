@@ -42,6 +42,7 @@ from ..openrouter import OpenRouterClient
 from ..orchestrator import ModelOrchestrator
 from ..sport_context import RUGBY_LEAGUE
 from .league_heuristics import (
+    DERIVED_LEAGUE_HEURISTICS,
     FORM_WINDOW,
     HEURISTIC_ELO,
     HEURISTIC_FORM,
@@ -52,7 +53,7 @@ from .league_heuristics import (
     compute_elo_ratings,
     head_to_head_wins,
     is_drawn,
-    league_model_set_for_sport,
+    league_model_set_for_competition,
     require_league_model,
     sort_chronologically,
     wins_in_last_n,
@@ -592,10 +593,15 @@ class LeagueTipExplanationService:
         # Registry gate: excluded AFL-scrape models → 400
         # model_unavailable_for_sport (league_heuristics' shape); names
         # unknown to the result-derived registry → 422 invalid_heuristic.
-        try:
-            require_league_model(heuristic, sport_id=sport_id)
-        except ValueError as exc:
-            raise http_error(422, "invalid_heuristic", str(exc)) from None
+        # FCL-7: the derived trio (best_bet / weighted_tip / boosted_tip)
+        # is persisted for EVERY league (FCL-6), so a derived-named tip
+        # row is first-class data — it bypasses the result-derived gate
+        # and is explained exactly like a base-model pick.
+        if heuristic not in DERIVED_LEAGUE_HEURISTICS:
+            try:
+                require_league_model(heuristic, sport_id=sport_id)
+            except ValueError as exc:
+                raise http_error(422, "invalid_heuristic", str(exc)) from None
 
         event = await self._fetch_event(db, event_id, competition_id)
         if event is None:
@@ -685,7 +691,7 @@ class LeagueTipExplanationService:
         ).first()
         if row is None:
             return []
-        event, competition_id, sport_id, _competition_name = row
+        event, competition_id, sport_id, competition_name = row
 
         tips = list(
             (
@@ -697,9 +703,18 @@ class LeagueTipExplanationService:
         if not tips:
             return []
 
-        models_order = league_model_set_for_sport(
-            str(sport_id) if sport_id is not None else None
-        )
+        # FCL-7: the allowed set is the competition's FULL registry
+        # resolution (league → sport → default, keyed on the canonical
+        # competition name) PLUS the derived trio — derived-named rows
+        # are generation output (FCL-6), never data bugs, so they are
+        # explained and ordered after the base set.  Derived names can
+        # never collide with a base set (they are not registry entries),
+        # so plain concatenation is the canonical order.
+        models_order = list(
+            league_model_set_for_competition(
+                competition_name, str(sport_id) if sport_id is not None else None
+            )
+        ) + list(DERIVED_LEAGUE_HEURISTICS)
         allowed = set(models_order)
         sides = await self._fetch_sides(db, event_id)
 

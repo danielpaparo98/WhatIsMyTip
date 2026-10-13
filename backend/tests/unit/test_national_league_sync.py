@@ -279,9 +279,12 @@ class TestNrlEndToEnd:
 
         assert stats["league_tips"]["status"] == "success"
         tip_count = await _scalar(db, select(func.count(LeagueTip.id)))
-        # 4 completed events (draw included — draw-no-pick tips) × 4
-        # rugby-league models (elo, form, home_advantage, matchup).
-        assert tip_count == 16
+        # 4 completed events (draw included — draw-no-pick tips) × 7
+        # heuristics: the 4 rugby-league base models (elo, form,
+        # home_advantage, matchup) + the three derived first-class
+        # heuristics every league carries (best_bet, weighted_tip,
+        # boosted_tip — fallback picks before training, FCL-6).
+        assert tip_count == 28
 
 
 # ---------------------------------------------------------------------------
@@ -552,11 +555,12 @@ class TestIdempotentRerun:
         first = await run_league_sync(db, "nrl", 2026)
         second = await run_league_sync(db, "nrl", 2026)
 
-        assert first["league_tips"]["tips_inserted"] == 16
+        # 4 completed events × 7 heuristics (4 base + 3 derived, FCL-6).
+        assert first["league_tips"]["tips_inserted"] == 28
         assert second["league_tips"]["tips_inserted"] == 0
         assert second["league_tips"]["tips_updated"] == 0
         tip_count = await _scalar(db, select(func.count(LeagueTip.id)))
-        assert tip_count == 16
+        assert tip_count == 28
 
 
 class TestResultsBackfill:
@@ -596,8 +600,9 @@ class TestResultsBackfill:
         assert sides["away"].score == 22
         assert sides["away"].is_winner is True  # Blues take the series
 
-        assert first["league_tips"]["tips_inserted"] == 8  # two completed × 4
-        assert second["league_tips"]["tips_inserted"] == 4
+        # × 7 heuristics: 4 rugby base + 3 derived first-class (FCL-6).
+        assert first["league_tips"]["tips_inserted"] == 14  # two completed × 7
+        assert second["league_tips"]["tips_inserted"] == 7
 
     async def test_tip_for_backfilled_result_appears(self, db, recorded_feed):
         payloads = {"state-of-origin-2026": copy.deepcopy(
@@ -611,17 +616,17 @@ class TestResultsBackfill:
         await run_league_sync(db, "origin", 2026)
         assert (
             await _scalar(db, select(func.count(LeagueTip.id)))
-        ) == 8  # two completed games × 4
+        ) == 14  # two completed games × 7 heuristics (4 base + 3 derived)
 
         payloads["state-of-origin-2026"][2] = _payload(
             "state-of-origin-2026.json"
         )[2]
         stats = await run_league_sync(db, "origin", 2026)
 
-        assert stats["league_tips"]["tips_inserted"] == 4
+        assert stats["league_tips"]["tips_inserted"] == 7
         assert (
             await _scalar(db, select(func.count(LeagueTip.id)))
-        ) == 12  # all three games now tipped (3 × 4 models)
+        ) == 21  # all three games now tipped (3 × 7 heuristics)
 
 
 # ---------------------------------------------------------------------------

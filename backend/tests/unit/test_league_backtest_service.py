@@ -50,6 +50,7 @@ from packages.shared.services.league_backtest import (
     winning_side_id,
 )
 from packages.shared.services.league_heuristics import (
+    DERIVED_LEAGUE_HEURISTICS,
     HEURISTIC_FORM,
     HEURISTIC_HOME_ADVANTAGE,
     HEURISTIC_LADDER,
@@ -57,6 +58,10 @@ from packages.shared.services.league_heuristics import (
     LeagueHeuristicsService,
     SeasonRef,
 )
+
+#: FCL-7: the backtest set the API passes — the D3 base trio plus the
+#: three derived heuristics every league's ``league_tips`` carries.
+_BACKTEST_MODEL_SET = LEAGUE_HEURISTICS + DERIVED_LEAGUE_HEURISTICS
 
 _BACKEND_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 
@@ -749,7 +754,12 @@ async def _seed_competition(async_dsn: str) -> dict[str, int]:
 
 
 async def _generate_tips(async_dsn: str, competition_id: int) -> None:
-    """Populate league_tips exactly as the sync hook would."""
+    """Populate league_tips exactly as the sync hook would.
+
+    FCL-6: every completed event persists its base picks AND the three
+    derived heuristics — 4 decided events × (3 base + 3 derived) plus
+    the draw event's 6 draw-no-pick rows = 30.
+    """
     engine = create_async_engine(async_dsn, poolclass=NullPool)
     factory = async_sessionmaker(engine, expire_on_commit=False)
     try:
@@ -759,7 +769,7 @@ async def _generate_tips(async_dsn: str, competition_id: int) -> None:
             )
     finally:
         await engine.dispose()
-    assert summary["tips_inserted"] == 15  # 5 completed events × 3 heuristics
+    assert summary["tips_inserted"] == 30
 
 
 @pytest.mark.postgres
@@ -778,7 +788,9 @@ async def test_seasons_and_current_season_end_to_end(_db_at_head) -> None:
                 session, competition_id=ids["competition_id"]
             )
             current = await service.get_current_season_performance(
-                session, competition_id=ids["competition_id"]
+                session,
+                competition_id=ids["competition_id"],
+                models=_BACKTEST_MODEL_SET,
             )
     finally:
         await engine.dispose()
@@ -796,7 +808,8 @@ async def test_seasons_and_current_season_end_to_end(_db_at_head) -> None:
     assert current["rounds_completed"] == 2
 
     by_heuristic = {entry["heuristic"]: entry for entry in current["heuristics"]}
-    assert set(by_heuristic) == set(LEAGUE_HEURISTICS)
+    # FCL-7: the payload covers the base trio AND the derived trio.
+    assert set(by_heuristic) == set(_BACKTEST_MODEL_SET)
 
     home = by_heuristic[HEURISTIC_HOME_ADVANTAGE]
     assert home["total_profit"] == pytest.approx(2 * _FALLBACK_WIN)
@@ -816,6 +829,20 @@ async def test_seasons_and_current_season_end_to_end(_db_at_head) -> None:
     assert ladder["total_profit"] == pytest.approx(2 * _FALLBACK_WIN)
     assert ladder["total_accuracy"] == pytest.approx(1.0)
 
+    # FCL-7: the derived trio grades at query time exactly like a base
+    # model.  Pre-training both combiners ARE the majority vote (FCL-3d),
+    # and both 2026 events vote home — so 2/2 at the fallback price.
+    for name in DERIVED_LEAGUE_HEURISTICS:
+        entry = by_heuristic[name]
+        assert entry["total_profit"] == pytest.approx(2 * _FALLBACK_WIN), name
+        assert entry["total_accuracy"] == pytest.approx(1.0), name
+        assert entry["rounds_played"] == 2, name
+        assert entry["avg_profit_per_round"] == pytest.approx(_FALLBACK_WIN), name
+        assert entry["projected_annual_profit"] == pytest.approx(
+            3 * _FALLBACK_WIN
+        ), name
+        assert entry["odds_coverage"] == 0.0, name
+
 
 @pytest.mark.postgres
 @pytest.mark.asyncio
@@ -830,10 +857,16 @@ async def test_compare_season_end_to_end(_db_at_head) -> None:
         async with factory() as session:
             service = LeagueBacktestService()
             past = await service.compare_season(
-                session, competition_id=ids["competition_id"], season_label="2025"
+                session,
+                competition_id=ids["competition_id"],
+                season_label="2025",
+                models=_BACKTEST_MODEL_SET,
             )
             present = await service.compare_season(
-                session, competition_id=ids["competition_id"], season_label="2026"
+                session,
+                competition_id=ids["competition_id"],
+                season_label="2026",
+                models=_BACKTEST_MODEL_SET,
             )
     finally:
         await engine.dispose()
@@ -842,7 +875,7 @@ async def test_compare_season_end_to_end(_db_at_head) -> None:
     # ladder 1/3 (the form/ladder picks follow prior results).
     assert past["season"] == "2025"
     comparison = past["comparison"]
-    assert set(comparison) == set(LEAGUE_HEURISTICS)
+    assert set(comparison) == set(_BACKTEST_MODEL_SET)
 
     home = comparison[HEURISTIC_HOME_ADVANTAGE]
     assert home["total_tips"] == 3
@@ -864,6 +897,21 @@ async def test_compare_season_end_to_end(_db_at_head) -> None:
     assert comparison[HEURISTIC_LADDER]["total_correct"] == 1
     assert comparison[HEURISTIC_LADDER]["overall_accuracy"] == pytest.approx(1 / 3)
 
+    # FCL-7: the derived trio graded from league_tips at query time.
+    # Pre-training both combiners ARE the majority vote (FCL-3d): R1 an
+    # unanimous home vote, R2 the draw (NULL, push), R3 the away Reds
+    # (form + ladder outvote home_advantage) — so 2/3 like home_advantage.
+    for name in DERIVED_LEAGUE_HEURISTICS:
+        stats = comparison[name]
+        assert stats["total_tips"] == 3, name
+        assert stats["total_correct"] == 2, name
+        assert stats["overall_accuracy"] == pytest.approx(2 / 3), name
+        assert stats["total_profit"] == pytest.approx(2 * _FALLBACK_WIN), name
+        assert stats["total_rounds"] == 3, name
+        assert stats["odds_coverage"] == 0.0, name
+
+    # Best overall: the 2/3 accuracy tie resolves to the canonical
+    # model-set order (home_advantage first).
     assert past["best_overall"]["heuristic"] == HEURISTIC_HOME_ADVANTAGE
     assert past["best_overall"]["accuracy"] == pytest.approx(2 / 3)
 
@@ -871,6 +919,8 @@ async def test_compare_season_end_to_end(_db_at_head) -> None:
     assert present["season"] == "2026"
     assert present["comparison"][HEURISTIC_HOME_ADVANTAGE]["total_correct"] == 2
     assert present["comparison"][HEURISTIC_FORM]["total_correct"] == 1
+    for name in DERIVED_LEAGUE_HEURISTICS:
+        assert present["comparison"][name]["total_correct"] == 2, name
     assert present["best_overall"]["heuristic"] in (
         HEURISTIC_HOME_ADVANTAGE,
         HEURISTIC_LADDER,
