@@ -78,8 +78,9 @@
               </div>
             </div>
 
-            <!-- Results when played; status label otherwise. State leagues
-                 have no tipping models, so cards show fixtures/results only. -->
+            <!-- Results when played; FCL-12 forward tips for upcoming
+                 fixtures (consensus over the league's stored picks);
+                 bare status label only when no tips exist yet. -->
             <div v-if="ev.completed" class="tip-info league-result">
               <div class="result-row">
                 <span class="result-team" :class="{ winner: sideIsWinner(ev, 'home') }">
@@ -93,6 +94,13 @@
                 </span>
                 <span class="result-score">{{ sideScore(ev, 'away') ?? '—' }}</span>
               </div>
+            </div>
+            <div v-else-if="consensusPick(ev)" class="no-tip league-tip">
+              <p class="league-tip-label">Model tip</p>
+              <p class="league-tip-pick">{{ displayName(consensusPick(ev)!.name) }}</p>
+              <p class="league-tip-meta">
+                {{ consensusPick(ev)!.agreement }}/{{ consensusPick(ev)!.total }} models
+              </p>
             </div>
             <div v-else class="no-tip">
               <p>{{ ev.status === 'scheduled' ? 'Scheduled' : ev.status }}</p>
@@ -122,6 +130,7 @@
 // canonicalised back to '/' so the AFL home stays single-sourced.
 import { LEAGUES, getLeagueConfig } from '~/composables/useSportConfig'
 import { useLeagueEvents } from '~/composables/useLeagueEvents'
+import { useLeagueRoundTips } from '~/composables/useLeagueRoundTips'
 import type { SportEvent } from '~/composables/useApi'
 import { derivePremier, deriveSeasonState } from '~/composables/useSeasonState'
 import { leagueColorFor } from '~/composables/useLeagueColors'
@@ -198,6 +207,42 @@ const {
   unavailable,
   refresh,
 } = await useLeagueEvents(leagueKey)
+
+// ---------------------------------------------------------------------------
+// FCL-12 forward tips: the round's stored league picks (bulk endpoint,
+// NO AI explanations). Awaited AFTER the fixtures fetch so `roundId` is
+// already resolved and the payload inlines at generate time; a null or
+// failed payload degrades to the pre-FCL status labels (non-fatal).
+// ---------------------------------------------------------------------------
+const { tipsBySlug } = await useLeagueRoundTips(leagueKey, roundId)
+
+/**
+ * The card's consensus tip for an upcoming fixture: the best_bet
+ * consensus when present, else the first heuristic that picked a side.
+ * `agreement` counts the heuristics that picked the same side, `total`
+ * the heuristics that picked at all — "3/5 models" on the card. Null
+ * when no stored tips exist (the card keeps its status label).
+ */
+const consensusPick = (
+  ev: SportEvent,
+): { name: string; agreement: number; total: number; isDrawTip: boolean } | null => {
+  const picks = tipsBySlug.value[ev.slug]
+  if (!picks) return null
+  const entries = Object.entries(picks).filter(([, name]) => name !== null) as [
+    string,
+    string,
+  ][]
+  if (entries.length === 0) return null
+  const consensus = entries.find(([h]) => h === 'best_bet') ?? entries[0]!
+  const agreement = entries.filter(([, name]) => name === consensus[1]).length
+  const isDrawTip = consensus[1] === null
+  return {
+    name: consensus[1] ?? 'Draw',
+    agreement,
+    total: entries.length,
+    isDrawTip,
+  }
+}
 
 // Per-league presentation config resolved from the ROUTE (not the
 // global activeConfig): the prerender bakes every league page in one
@@ -476,6 +521,34 @@ useHead({
   flex-direction: column;
   align-items: center;
   justify-content: center;
+}
+
+/* FCL-12 forward tips — same monochrome card language as the result
+   block: muted label, bold pick, quiet model-agreement meta. */
+.league-tip {
+  background: var(--color-hover);
+  padding: 1.25rem;
+  border-radius: 4px;
+  gap: 0.25rem;
+}
+
+.league-tip-label {
+  font-size: 0.6875rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--color-muted);
+}
+
+.league-tip-pick {
+  font-size: 1.125rem;
+  font-weight: 800;
+  color: var(--color-text);
+}
+
+.league-tip-meta {
+  font-size: 0.8125rem;
+  color: var(--color-muted);
 }
 
 /* League fixture results — winner emphasised without colour, matching

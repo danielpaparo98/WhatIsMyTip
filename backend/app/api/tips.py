@@ -30,6 +30,7 @@ from fastapi import APIRouter, Body, Depends, Path, Query, Request
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 from sqlalchemy import select
+from sqlalchemy.exc import MultipleResultsFound
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.db_deps import get_db
@@ -38,7 +39,7 @@ from app.core.security import require_admin_key
 from packages.shared.crud import GameCRUD, ModelPredictionCRUD, TipCRUD
 from packages.shared.crud.events import EventsCRUD
 from packages.shared.ingestion.national_leagues import get_league
-from packages.shared.models import Game, Tip
+from packages.shared.models import Competition, Game, Tip
 from packages.shared.schemas import (
     ModelPrediction as ModelPredictionSchema,
 )
@@ -48,10 +49,12 @@ from packages.shared.schemas import (
 )
 from packages.shared.schemas.admin import TipGenerateRequest
 from packages.shared.schemas.tips import (
+    LeagueRoundTipsResponse,
     LeagueTipExplanationResponse,
     LeagueTipsResponse,
 )
 from packages.shared.services.explanation import LeagueTipExplanationService
+from packages.shared.services.league_heuristics import league_round_tips
 from packages.shared.services.tip_generation import TipGenerationService
 
 router = APIRouter()
@@ -346,6 +349,76 @@ async def league_event_tips(
         competition=config.name,
         tips=tips,
         count=len(tips),
+    )
+
+
+# ---------------------------------------------------------------------------
+# GET /league-round — bulk round picks, NO AI explanations (FCL-12)
+# ---------------------------------------------------------------------------
+
+
+@router.get("/league-round", response_model=LeagueRoundTipsResponse)
+async def league_round_tips_endpoint(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    league: Annotated[
+        str,
+        Query(min_length=1, description="League key, e.g. 'aflw', 'nrl'"),
+    ],
+    round: Annotated[
+        int,
+        Query(ge=0, description="Round number within the league's current season"),
+    ],
+) -> LeagueRoundTipsResponse:
+    """Bulk league picks for one round — the round-page read (FCL-12).
+
+    Returns every fixture of the round (current season) with both side
+    names and each stored heuristic's pick (side name, or ``null`` for
+    a draw-no-pick).  Forward tips: upcoming fixtures carry picks made
+    from prior completed evidence (FCL-12); fixtures without stored
+    tips render empty ``picks``.  Deliberately NO AI explanations — a
+    round-page view must never pay the LLM pipeline; the per-event
+    ``GET /league`` endpoint owns explanations for the match page.
+
+    Errors (repo-standard shape): 404 ``not_found`` for an unknown
+    league key or a league that has never been synced.
+    """
+    try:
+        config = get_league(league)
+    except ValueError:
+        raise http_error(
+            404,
+            "not_found",
+            f"Unknown league {league!r} — not in the league registries",
+        ) from None
+    try:
+        competition_id = (
+            await db.execute(
+                select(Competition.id).where(Competition.name == config.name)
+            )
+        ).scalar_one_or_none()
+    except MultipleResultsFound:
+        raise http_error(
+            404,
+            "not_found",
+            f"League {league!r} resolved to multiple competitions — "
+            "scope the competition registry before querying this league",
+        ) from None
+    if competition_id is None:
+        raise http_error(
+            404,
+            "not_found",
+            f"League {league!r} has never been synced — no fixtures yet",
+        )
+
+    payload = await league_round_tips(
+        db, competition_id=int(competition_id), round_id=round
+    )
+    return LeagueRoundTipsResponse(
+        league=league,
+        round=round,
+        season=payload["season"],
+        fixtures=payload["fixtures"],
+        count=len(payload["fixtures"]),
     )
 
 

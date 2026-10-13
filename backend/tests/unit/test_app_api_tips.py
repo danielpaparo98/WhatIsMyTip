@@ -973,3 +973,95 @@ class TestHeuristicAllowlists:
         assert resp.status_code == 422
         body = resp.json()
         assert body["code"] == "invalid_heuristics"
+
+
+class TestLeagueRoundTips:
+    """GET /league-round - bulk round picks, no AI (FCL-12)."""
+
+    def _mock_db(self, competition_id: int | None) -> AsyncMock:
+        db = AsyncMock()
+        result = MagicMock()
+        result.scalar_one_or_none = MagicMock(return_value=competition_id)
+        db.execute = AsyncMock(return_value=result)
+        return db
+
+    def test_round_tips_happy_path(self, monkeypatch) -> None:
+        app = _build_app_with_tips_router(monkeypatch)
+        db = self._mock_db(36)
+        _override_db(app, db)
+        client = TestClient(app)
+
+        payload = {
+            "season": "2026",
+            "fixtures": [
+                {
+                    "event_id": 7060,
+                    "slug": "fcl12a",
+                    "round": 11,
+                    "starts_at": "2026-10-17T14:40:00",
+                    "status": "scheduled",
+                    "completed": False,
+                    "home_team": "Sydney",
+                    "away_team": "Carlton",
+                    "picks": {
+                        "home_advantage": "Sydney",
+                        "form": "Sydney",
+                        "ladder": "Carlton",
+                        "best_bet": "Sydney",
+                        "weighted_tip": "Sydney",
+                        "boosted_tip": "Sydney",
+                    },
+                },
+                {
+                    "event_id": 7061,
+                    "slug": "fcl12b",
+                    "round": 11,
+                    "starts_at": "2026-10-17T14:40:00",
+                    "status": "scheduled",
+                    "completed": False,
+                    "home_team": "Brisbane",
+                    "away_team": "North Melbourne",
+                    "picks": {},
+                },
+            ],
+        }
+        service_mock = AsyncMock(return_value=payload)
+        monkeypatch.setattr("app.api.tips.league_round_tips", service_mock)
+
+        resp = client.get("/api/tips/league-round?league=aflw&round=11")
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["league"] == "aflw"
+        assert body["round"] == 11
+        assert body["season"] == "2026"
+        assert body["count"] == 2
+        assert body["fixtures"][0]["picks"]["best_bet"] == "Sydney"
+        assert body["fixtures"][1]["picks"] == {}
+        service_mock.assert_awaited_once_with(db, competition_id=36, round_id=11)
+
+    def test_unknown_league_is_404(self, monkeypatch) -> None:
+        app = _build_app_with_tips_router(monkeypatch)
+        _override_db(app, self._mock_db(36))
+        client = TestClient(app)
+
+        resp = client.get("/api/tips/league-round?league=not-a-league&round=1")
+        assert resp.status_code == 404
+        assert resp.json()["code"] == "not_found"
+
+    def test_never_synced_league_is_404(self, monkeypatch) -> None:
+        app = _build_app_with_tips_router(monkeypatch)
+        _override_db(app, self._mock_db(None))
+        client = TestClient(app)
+
+        resp = client.get("/api/tips/league-round?league=aflw&round=1")
+        assert resp.status_code == 404
+        assert resp.json()["code"] == "not_found"
+
+    def test_negative_round_is_422(self, monkeypatch) -> None:
+        app = _build_app_with_tips_router(monkeypatch)
+        _override_db(app, self._mock_db(36))
+        client = TestClient(app)
+
+        resp = client.get("/api/tips/league-round?league=aflw&round=-1")
+        assert resp.status_code == 422
