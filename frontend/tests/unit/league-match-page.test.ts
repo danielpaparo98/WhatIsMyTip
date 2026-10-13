@@ -231,13 +231,18 @@ describe('match page wiring (source-grep)', () => {
     expect(PAGE).toMatch(/font-weight:\s*800/)
   })
 
-  it('renders FCL-12 forward tips but NO AFL-specific sections', () => {
+  it('renders FCL-12/13 tips with config labels but NO AFL-specific sections', () => {
     // FCL-12 (2026-10-13): upcoming fixtures show the league's STORED
-    // picks from /api/tips/league (with cached AI explanations). The
-    // AFL-only surfaces (AFL TipCard / weather / match analysis / model
-    // predictions) remain absent — no state-league equivalents exist.
+    // picks from /api/tips/league (with cached AI explanations).
+    // FCL-13: rows render as TipCard-style cards ordered by the league
+    // canonical order, with the user's selected heuristic highlighted
+    // primary. The AFL-only surfaces (AFL TipCard / weather / match
+    // analysis / model predictions) remain absent — no state-league
+    // equivalents exist.
     expect(PAGE).toMatch(/match-tips-section/)
     expect(PAGE).toMatch(/api\/tips\/league\b/)
+    expect(PAGE).toMatch(/tip-selected/)
+    expect(PAGE).toMatch(/getLeagueHeuristicOptions\(/)
     expect(PAGE).not.toMatch(/TipCard/)
     expect(PAGE).not.toMatch(/models-section/)
     expect(PAGE).not.toMatch(/WeatherCard/)

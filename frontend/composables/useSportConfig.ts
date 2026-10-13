@@ -160,6 +160,53 @@ export function getLeagueConfig(key: string): SportConfig {
   return config
 }
 
+// ---------------------------------------------------------------------------
+// League heuristic selection (FCL-13, 2026-10-13 user request)
+// ---------------------------------------------------------------------------
+
+/**
+ * The DERIVED heuristics every first-class league carries (FCL-6) —
+ * shared names with the AFL derived pair, NO `yolo` (AFL-only, never
+ * generated for league tips).
+ */
+const LEAGUE_DERIVED_HEURISTICS = ['best_bet', 'weighted_tip', 'boosted_tip'] as const
+
+const LEAGUE_DERIVED_LABELS: Record<string, string> = {
+  best_bet: 'Best Bet',
+  weighted_tip: 'Weighted Tip',
+  boosted_tip: 'Boosted Tip',
+}
+
+/**
+ * The user-selectable heuristics for a league (FCL-13): the league's
+ * BASE model set (result-derived, per sport) followed by the derived
+ * trio — the same canonical order the backend persists and grades.
+ * State leagues (sport 'afl'): home_advantage, form, ladder + trio.
+ * Rugby-league keys: elo, form, home_advantage, matchup + trio.
+ * Deliberately NOT `getLeagueConfig(key).heuristicOrder` — those lists
+ * predate first-class leagues (the rugby config's exclusion pin keeps
+ * the derived names out of it) and include the AFL-only `yolo`.
+ */
+export function getLeagueHeuristicOptions(
+  key: string | null | undefined,
+): { value: string; label: string }[] {
+  const config = getLeagueConfig(key ?? 'afl')
+  const baseOrder =
+    config.sportId === 'rugby-league'
+      ? ['elo', 'form', 'home_advantage', 'matchup']
+      : ['home_advantage', 'form', 'ladder']
+  return [
+    ...baseOrder.map((value) => ({
+      value,
+      label: config.modelDisplayNames[value] ?? value,
+    })),
+    ...LEAGUE_DERIVED_HEURISTICS.map((value) => ({
+      value,
+      label: LEAGUE_DERIVED_LABELS[value] ?? value,
+    })),
+  ]
+}
+
 /** The active sport config — AFL by default.  The live selection is
  *  managed by `useActiveLeague()` below and read via `useSportConfig()`;
  *  consumers that need the CURRENT league must call the composable

@@ -52,62 +52,82 @@
       <div v-if="roundEvents.length === 0" class="empty" role="status" aria-live="polite">
         <p>No fixtures found for this round yet.</p>
       </div>
-      <div v-else class="games-grid">
-        <NuxtLink
-          v-for="ev in roundEvents"
-          :key="ev.slug"
-          :to="`/${leagueKey}/match/${ev.slug}`"
-          class="game-card-link"
-        >
-          <article class="game-card">
-            <div class="match-info">
-              <div class="teams">
-                <div class="team home">
-                  <img :src="sideLogo(ev, 'home')" :alt="`${sideName(ev, 'home')} logo`" class="team-logo" loading="lazy" decoding="async" width="40" height="40" />
-                  <span class="team-name">{{ displayName(sideName(ev, 'home')) }}</span>
-                </div>
-                <span class="vs">VS</span>
-                <div class="team away">
-                  <img :src="sideLogo(ev, 'away')" :alt="`${sideName(ev, 'away')} logo`" class="team-logo" loading="lazy" decoding="async" width="40" height="40" />
-                  <span class="team-name">{{ displayName(sideName(ev, 'away')) }}</span>
-                </div>
-              </div>
-              <div class="match-details">
-                <span class="venue">{{ ev.venue ?? 'TBD' }}</span>
-                <span class="date">{{ ev.starts_at ? formatDate(ev.starts_at) : 'TBD' }}</span>
-              </div>
-            </div>
+      <template v-else>
+        <!-- FCL-13: the AFL home's user-selectable heuristic, mirrored —
+             the selected tab drives which stored pick each upcoming
+             card shows (no refetch; the payload carries every pick). -->
+        <div class="heuristic-selector" role="tablist" aria-label="Heuristic filter">
+          <button
+            v-for="h in heuristicOptions"
+            :key="h.value"
+            role="tab"
+            :aria-selected="selectedHeuristic === h.value"
+            @click="selectedHeuristic = h.value"
+            :class="['heuristic-btn', { active: selectedHeuristic === h.value }]"
+          >
+            {{ h.label }}
+          </button>
+        </div>
 
-            <!-- Results when played; FCL-12 forward tips for upcoming
-                 fixtures (consensus over the league's stored picks);
-                 bare status label only when no tips exist yet. -->
-            <div v-if="ev.completed" class="tip-info league-result">
-              <div class="result-row">
-                <span class="result-team" :class="{ winner: sideIsWinner(ev, 'home') }">
-                  {{ sideName(ev, 'home') }}
-                </span>
-                <span class="result-score">{{ sideScore(ev, 'home') ?? '—' }}</span>
-              </div>
-              <div class="result-row">
-                <span class="result-team" :class="{ winner: sideIsWinner(ev, 'away') }">
-                  {{ sideName(ev, 'away') }}
-                </span>
-                <span class="result-score">{{ sideScore(ev, 'away') ?? '—' }}</span>
-              </div>
-            </div>
-            <div v-else-if="consensusPick(ev)" class="no-tip league-tip">
-              <p class="league-tip-label">Model tip</p>
-              <p class="league-tip-pick">{{ displayName(consensusPick(ev)!.name) }}</p>
-              <p class="league-tip-meta">
-                {{ consensusPick(ev)!.agreement }}/{{ consensusPick(ev)!.total }} models
-              </p>
-            </div>
-            <div v-else class="no-tip">
-              <p>{{ ev.status === 'scheduled' ? 'Scheduled' : ev.status }}</p>
-            </div>
-          </article>
-        </NuxtLink>
-      </div>
+        <Transition name="fade" mode="out-in">
+          <div :key="selectedHeuristic" class="games-grid">
+            <NuxtLink
+              v-for="ev in roundEvents"
+              :key="ev.slug"
+              :to="`/${leagueKey}/match/${ev.slug}`"
+              class="game-card-link"
+            >
+              <article class="game-card">
+                <div class="match-info">
+                  <div class="teams">
+                    <div class="team home">
+                      <img :src="sideLogo(ev, 'home')" :alt="`${sideName(ev, 'home')} logo`" class="team-logo" loading="lazy" decoding="async" width="40" height="40" />
+                      <span class="team-name">{{ displayName(sideName(ev, 'home')) }}</span>
+                    </div>
+                    <span class="vs">VS</span>
+                    <div class="team away">
+                      <img :src="sideLogo(ev, 'away')" :alt="`${sideName(ev, 'away')} logo`" class="team-logo" loading="lazy" decoding="async" width="40" height="40" />
+                      <span class="team-name">{{ displayName(sideName(ev, 'away')) }}</span>
+                    </div>
+                  </div>
+                  <div class="match-details">
+                    <span class="venue">{{ ev.venue ?? 'TBD' }}</span>
+                    <span class="date">{{ ev.starts_at ? formatDate(ev.starts_at) : 'TBD' }}</span>
+                  </div>
+                </div>
+
+                <!-- Results when played; the SELECTED heuristic's stored
+                     pick for upcoming fixtures (FCL-13); bare status
+                     label only when no stored tip exists yet. -->
+                <div v-if="ev.completed" class="tip-info league-result">
+                  <div class="result-row">
+                    <span class="result-team" :class="{ winner: sideIsWinner(ev, 'home') }">
+                      {{ sideName(ev, 'home') }}
+                    </span>
+                    <span class="result-score">{{ sideScore(ev, 'home') ?? '—' }}</span>
+                  </div>
+                  <div class="result-row">
+                    <span class="result-team" :class="{ winner: sideIsWinner(ev, 'away') }">
+                      {{ sideName(ev, 'away') }}
+                    </span>
+                    <span class="result-score">{{ sideScore(ev, 'away') ?? '—' }}</span>
+                  </div>
+                </div>
+                <div v-else-if="pickFor(ev)" class="no-tip league-tip">
+                  <p class="league-tip-label">{{ heuristicLabel }}</p>
+                  <p class="league-tip-pick">{{ displayName(pickFor(ev)!.name) }}</p>
+                  <p class="league-tip-meta">
+                    {{ pickFor(ev)!.agreement }}/{{ pickFor(ev)!.total }} models agree
+                  </p>
+                </div>
+                <div v-else class="no-tip">
+                  <p>{{ ev.status === 'scheduled' ? 'Scheduled' : ev.status }}</p>
+                </div>
+              </article>
+            </NuxtLink>
+          </div>
+        </Transition>
+      </template>
     </section>
   </template>
 
@@ -128,7 +148,7 @@
 // league branch of the home view with a first-class route. The AFL
 // keeps '/' (its home states are untouched); 'afl' visited here is
 // canonicalised back to '/' so the AFL home stays single-sourced.
-import { LEAGUES, getLeagueConfig } from '~/composables/useSportConfig'
+import { LEAGUES, getLeagueConfig, getLeagueHeuristicOptions } from '~/composables/useSportConfig'
 import { useLeagueEvents } from '~/composables/useLeagueEvents'
 import { useLeagueRoundTips } from '~/composables/useLeagueRoundTips'
 import type { SportEvent } from '~/composables/useApi'
@@ -216,31 +236,59 @@ const {
 // ---------------------------------------------------------------------------
 const { tipsBySlug } = await useLeagueRoundTips(leagueKey, roundId)
 
+// ---------------------------------------------------------------------------
+// FCL-13 (2026-10-13, user request): the AFL home's user-selectable
+// heuristic, mirrored for every league. The tablist lists the league's
+// BASE model set + the derived trio (no AFL-only `yolo`); the selected
+// heuristic drives which stored pick each upcoming card shows — no
+// refetch, the round payload already carries every heuristic's pick.
+// Restore mirrors the AFL home's localStorage read (same key), client-
+// only and validated against the league-legal list.
+// ---------------------------------------------------------------------------
+const heuristicOptions = computed(() =>
+  getLeagueHeuristicOptions(leagueKey.value ?? 'afl'),
+)
+const selectedHeuristic = ref<string>('best_bet')
+/** The selected tab's display label (the card's tip badge). */
+const heuristicLabel = computed(
+  () =>
+    heuristicOptions.value.find((h) => h.value === selectedHeuristic.value)
+      ?.label ?? 'Model tip',
+)
+onMounted(() => {
+  const stored = localStorage.getItem('selected-heuristic')
+  const legal = heuristicOptions.value.some((h) => h.value === stored)
+  if (stored && legal && stored !== selectedHeuristic.value) {
+    selectedHeuristic.value = stored
+  }
+})
+
 /**
- * The card's consensus tip for an upcoming fixture: the best_bet
- * consensus when present, else the first heuristic that picked a side.
- * `agreement` counts the heuristics that picked the same side, `total`
- * the heuristics that picked at all — "3/5 models" on the card. Null
- * when no stored tips exist (the card keeps its status label).
+ * The card's tip for an upcoming fixture under the SELECTED heuristic:
+ * the stored pick for `selectedHeuristic` (a team name, or null for a
+ * draw-no-pick). Null when no stored tip exists for that heuristic —
+ * the card keeps its status label. `agreement` still reports how many
+ * of the stored heuristics picked the same side, for the meta line.
  */
-const consensusPick = (
+const pickFor = (
   ev: SportEvent,
-): { name: string; agreement: number; total: number; isDrawTip: boolean } | null => {
+): { name: string; agreement: number; total: number } | null => {
   const picks = tipsBySlug.value[ev.slug]
   if (!picks) return null
+  const selected = picks[selectedHeuristic.value]
+  if (selected === undefined) return null
   const entries = Object.entries(picks).filter(([, name]) => name !== null) as [
     string,
     string,
   ][]
-  if (entries.length === 0) return null
-  const consensus = entries.find(([h]) => h === 'best_bet') ?? entries[0]!
-  const agreement = entries.filter(([, name]) => name === consensus[1]).length
-  const isDrawTip = consensus[1] === null
+  const agreement =
+    selected === null
+      ? 0
+      : entries.filter(([, name]) => name === selected).length
   return {
-    name: consensus[1] ?? 'Draw',
+    name: selected === null ? 'Draw' : selected,
     agreement,
     total: entries.length,
-    isDrawTip,
   }
 }
 
@@ -400,6 +448,58 @@ useHead({
 .game-count {
   font-size: 0.8125rem;
   color: var(--color-muted);
+}
+
+/* FCL-13 heuristic selector — byte-identical monochrome tablist to the
+   AFL home's .heuristic-selector (inverted active tab). */
+.heuristic-selector {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  margin-bottom: 1.5rem;
+}
+
+.heuristic-btn {
+  font-size: 0.8125rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 0.5rem 0.875rem;
+  min-height: 44px;
+  border: 2px solid var(--color-border);
+  background: none;
+  color: var(--color-muted);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.heuristic-btn:hover {
+  color: var(--color-text);
+  border-color: var(--color-text);
+}
+
+.heuristic-btn.active {
+  background: var(--color-text);
+  color: var(--color-bg);
+  border-color: var(--color-text);
+}
+
+.heuristic-btn:focus-visible {
+  outline: 2px solid var(--color-text);
+  outline-offset: 2px;
+}
+
+/* AFL home parity: keyed fade between heuristic selections. */
+.fade-enter-active,
+.fade-leave-active {
+  transition: opacity 0.15s ease;
+}
+
+.fade-enter-from,
+.fade-leave-to {
+  opacity: 0;
 }
 
 .loading, .error, .empty {
