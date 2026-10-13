@@ -363,6 +363,243 @@ class TestBacktestCurrentSeason:
 
 
 # ---------------------------------------------------------------------------
+# League model set + league branches grade the derived heuristics (FCL-7)
+# ---------------------------------------------------------------------------
+
+
+class TestLeagueModelSetDerivedHeuristics:
+    """``_league_model_set`` = the registry's BASE set + the derived trio.
+
+    FCL-7: every league's ``league_tips`` now carries ``best_bet`` /
+    ``weighted_tip`` / ``boosted_tip`` rows (FCL-6), so the model set the
+    API hands the grading service is the league's resolved BASE set —
+    the FULL registry resolution league → sport → default
+    (:func:`league_model_set_for_competition`, keyed on the canonical
+    competition name) — PLUS the three derived names.  Resolution is
+    registry-pure (no DB), so it works before a league's first sync
+    exactly like the national-key behaviour it replaces.
+    """
+
+    def test_national_key_returns_base_set_plus_derived(self):
+        from app.api.backtest import _league_model_set
+        from packages.shared.services.league_heuristics import (
+            DERIVED_LEAGUE_HEURISTICS,
+            RUGBY_LEAGUE_MODELS,
+        )
+
+        assert _league_model_set("nrl") == (
+            RUGBY_LEAGUE_MODELS + DERIVED_LEAGUE_HEURISTICS
+        )
+
+    def test_state_key_returns_d3_base_plus_derived(self):
+        from app.api.backtest import _league_model_set
+        from packages.shared.services.league_heuristics import (
+            DERIVED_LEAGUE_HEURISTICS,
+            LEAGUE_HEURISTICS,
+        )
+
+        assert _league_model_set("wafl") == (
+            LEAGUE_HEURISTICS + DERIVED_LEAGUE_HEURISTICS
+        )
+
+    @pytest.mark.parametrize("league", ["nrl", "nrlw", "origin", "wafl", "vfl"])
+    def test_derived_tail_is_the_shared_constant_in_canonical_order(self, league):
+        from app.api.backtest import _league_model_set
+        from packages.shared.services.league_heuristics import (
+            DERIVED_LEAGUE_HEURISTICS,
+        )
+
+        models = _league_model_set(league)
+        assert models is not None
+        assert models[-len(DERIVED_LEAGUE_HEURISTICS):] == tuple(
+            DERIVED_LEAGUE_HEURISTICS
+        )
+
+    def test_unknown_key_resolves_to_none(self):
+        # Unreachable via the endpoints (dispatch 404s first) — the
+        # helper degrades to ``None`` so the service keeps its default.
+        from app.api.backtest import _league_model_set
+
+        assert _league_model_set("not-a-league") is None
+
+
+class _ScalarResult:
+    """``execute()`` result resolving one scalar (the competition lookup)."""
+
+    def __init__(self, value):
+        self._value = value
+
+    def scalar_one_or_none(self):
+        return self._value
+
+
+class _EmptyResult:
+    """``execute()`` result with no rows — the unsynced-competition case."""
+
+    def scalar_one_or_none(self):
+        return None
+
+    def scalar(self):
+        return 0
+
+    def all(self):
+        return []
+
+
+def _session_returning(value) -> AsyncMock:
+    """AsyncSession mock whose ``execute`` always resolves ``value``."""
+    session = AsyncMock(spec=AsyncSession)
+    session.execute = AsyncMock(return_value=value)
+    return session
+
+
+class TestLeagueBranchesGradeDerivedHeuristics:
+    """The league branches hand the grading service base + derived (FCL-7).
+
+    ``GET /compare`` and ``GET /current-season`` must grade the three
+    derived heuristics from ``league_tips`` at query time, and the
+    zero/unsynced payloads must include the derived entries at zero —
+    the API passes the full set, the service's own empty-state machinery
+    renders it.  Unknown leagues stay a 404 (pinned in
+    ``test_backtest_api_league.py`` / ``test_league_backtest_rugby_league.py``).
+    """
+
+    def test_compare_state_league_passes_base_plus_derived(self):
+        from packages.shared.services.league_heuristics import (
+            DERIVED_LEAGUE_HEURISTICS,
+            LEAGUE_HEURISTICS,
+        )
+
+        session = _session_returning(_ScalarResult(42))
+        app = _build_app_with_backtest_router()
+        _override_db(app, session)
+
+        with patch("app.api.backtest.LeagueBacktestService") as league_cls:
+            league_cls.return_value.compare_season = AsyncMock(
+                return_value={"season": "2025", "comparison": {}, "best_overall": {}}
+            )
+            client = TestClient(app)
+            resp = client.get("/api/backtest/compare?league=wafl&season=2025")
+
+        assert resp.status_code == 200
+        league_cls.return_value.compare_season.assert_awaited_once_with(
+            session,
+            competition_id=42,
+            season_label="2025",
+            models=LEAGUE_HEURISTICS + DERIVED_LEAGUE_HEURISTICS,
+        )
+
+    def test_compare_national_league_passes_base_plus_derived(self):
+        from packages.shared.services.league_heuristics import (
+            DERIVED_LEAGUE_HEURISTICS,
+            RUGBY_LEAGUE_MODELS,
+        )
+
+        session = _session_returning(_ScalarResult(42))
+        app = _build_app_with_backtest_router()
+        _override_db(app, session)
+
+        with patch("app.api.backtest.LeagueBacktestService") as league_cls:
+            league_cls.return_value.compare_season = AsyncMock(
+                return_value={"season": "2024", "comparison": {}, "best_overall": {}}
+            )
+            client = TestClient(app)
+            resp = client.get("/api/backtest/compare?league=nrl&season=2024")
+
+        assert resp.status_code == 200
+        league_cls.return_value.compare_season.assert_awaited_once_with(
+            session,
+            competition_id=42,
+            season_label="2024",
+            models=RUGBY_LEAGUE_MODELS + DERIVED_LEAGUE_HEURISTICS,
+        )
+
+    def test_current_season_league_passes_base_plus_derived(self):
+        from packages.shared.services.league_heuristics import (
+            DERIVED_LEAGUE_HEURISTICS,
+            RUGBY_LEAGUE_MODELS,
+        )
+
+        session = _session_returning(_ScalarResult(7))
+        app = _build_app_with_backtest_router()
+        _override_db(app, session)
+
+        with patch("app.api.backtest.LeagueBacktestService") as league_cls:
+            league_cls.return_value.get_current_season_performance = AsyncMock(
+                return_value={"season": "2026", "heuristics": []}
+            )
+            client = TestClient(app)
+            resp = client.get("/api/backtest/current-season?league=origin")
+
+        assert resp.status_code == 200
+        league_cls.return_value.get_current_season_performance.assert_awaited_once_with(
+            session,
+            competition_id=7,
+            models=RUGBY_LEAGUE_MODELS + DERIVED_LEAGUE_HEURISTICS,
+        )
+
+    def test_unsynced_state_league_zero_payloads_include_derived(self):
+        """Registered but never synced: the REAL service runs against an
+        empty DB — the zero payload renders base + derived, all zeroed."""
+        from packages.shared.services.league_heuristics import (
+            DERIVED_LEAGUE_HEURISTICS,
+            LEAGUE_HEURISTICS,
+        )
+
+        expected = list(LEAGUE_HEURISTICS + DERIVED_LEAGUE_HEURISTICS)
+        session = _session_returning(_EmptyResult())
+        app = _build_app_with_backtest_router()
+        _override_db(app, session)
+
+        client = TestClient(app)
+        current = client.get("/api/backtest/current-season?league=wafl")
+        compare = client.get("/api/backtest/compare?league=wafl&season=2025")
+
+        assert current.status_code == 200
+        body = current.json()
+        assert body["season"] is None
+        assert [h["heuristic"] for h in body["heuristics"]] == expected
+        assert all(
+            h["rounds_played"] == 0 and h["total_profit"] == 0.0
+            for h in body["heuristics"]
+        )
+
+        assert compare.status_code == 200
+        body = compare.json()
+        assert set(body["comparison"]) == set(expected)
+        assert all(
+            stats["total_tips"] == 0 for stats in body["comparison"].values()
+        )
+
+    def test_unsynced_national_league_zero_comparison_includes_derived(self):
+        from packages.shared.services.league_heuristics import (
+            DERIVED_LEAGUE_HEURISTICS,
+            RUGBY_LEAGUE_MODELS,
+        )
+
+        session = _session_returning(_EmptyResult())
+        app = _build_app_with_backtest_router()
+        _override_db(app, session)
+
+        client = TestClient(app)
+        resp = client.get("/api/backtest/compare?league=nrl&season=2017")
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert set(body["comparison"]) == set(
+            RUGBY_LEAGUE_MODELS + DERIVED_LEAGUE_HEURISTICS
+        )
+        assert all(
+            stats["total_tips"] == 0 for stats in body["comparison"].values()
+        )
+        assert body["best_overall"] == {
+            "heuristic": None,
+            "accuracy": 0.0,
+            "profit": 0.0,
+        }
+
+
+# ---------------------------------------------------------------------------
 # GET /active-boosted-model  (BT-1)
 # ---------------------------------------------------------------------------
 

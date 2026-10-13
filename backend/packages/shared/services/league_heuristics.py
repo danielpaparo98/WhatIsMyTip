@@ -24,6 +24,37 @@ rugby-league registers the reduced DB-only set (:data:`RUGBY_LEAGUE_MODELS`
 rugby-league — they have no NRL source — and :func:`require_league_model`
 rejects them with the repo-standard ``BackendServiceError``.
 
+Per-league model registry (FCL-2): a competition's model set is, the
+same way, a *registration* (:data:`LEAGUE_MODEL_SETS`) layered above
+the per-sport default.  Resolution is league → sport → default
+(:func:`league_model_set_for_competition`), keyed on the stable
+competition name (``LeagueConfig.name`` == ``competitions.name``): a
+registered league gets exactly its registered set; every unregistered
+competition — AFL included — resolves through its sport, byte-identical
+to the pre-FCL behaviour.  Values hold BASE pick models only: the
+derived heuristics (best_bet / weighted_tip / boosted_tip) are built
+ON the resolved set by the generation pipeline and are never registry
+entries.
+
+Generation wiring (FCL-6): :meth:`LeagueHeuristicsService.
+generate_for_competition` resolves the competition's set through the
+FULL registry (league → sport → default, keyed on the competition NAME
+as well as its sport) and persists the base models' tips PLUS the
+three derived heuristics every league gets
+(:data:`DERIVED_LEAGUE_HEURISTICS`): ``best_bet`` — a pure majority
+vote over the base picks, available instantly on sync with no training
+dependency — and the ``weighted_tip`` / ``boosted_tip`` combiners,
+which load the competition's scoped trained weights/artifact (FCL-4
+CRUD) and fall back to the same majority vote before a league's first
+training run or on ANY load/prediction failure — tip generation never
+crashes on a model.  Both learned paths read the exact chronological
+prefix slices the base picks read (:func:`compute_all_picks_and_derived`
+walks history once, so no derived pick can see its own event's
+result).  Derived heuristic names stay global on ``league_tips`` (each
+event belongs to exactly one competition, so the UNIQUE
+``(event_id, heuristic)`` constraint is safe) while every row carries
+the competition id.
+
 Structure (code-quality standard): the pick rules are pure functions
 over frozen dataclasses — same input, same output, no DB — while
 :class:`LeagueHeuristicsService` is a thin shell that loads the
@@ -37,7 +68,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Callable, Optional, Sequence
+from typing import Any, Callable, Mapping, Optional, Sequence
 
 from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -84,6 +115,24 @@ SPORT_MODEL_SETS: dict[str, tuple[str, ...]] = {
 #: The default (bootstrap AFL / D3) set for any sport without an
 #: explicit registration — the historical behaviour, byte-identical.
 DEFAULT_MODEL_SET: tuple[str, ...] = LEAGUE_HEURISTICS
+
+#: The three DERIVED heuristics (FCL-6) every competition gets, built ON
+#: the resolved base set by the generation pipeline — never registry
+#: entries themselves (pinned by ``TestLeagueModelSets``).  The strings
+#: are the trio's ``league_tips``-global identity shared with the AFL
+#: path; ``best_bet``'s value is kept in lockstep with
+#: ``league_consensus.HEURISTIC_BEST_BET`` — that module imports THIS
+#: one, so the constant lives here and the mirror is pinned by tests.
+HEURISTIC_BEST_BET = "best_bet"
+HEURISTIC_WEIGHTED_TIP = "weighted_tip"
+HEURISTIC_BOOSTED_TIP = "boosted_tip"
+
+#: Derived-heuristic persistence/summary order (FCL-6).
+DERIVED_LEAGUE_HEURISTICS: tuple[str, ...] = (
+    HEURISTIC_BEST_BET,
+    HEURISTIC_WEIGHTED_TIP,
+    HEURISTIC_BOOSTED_TIP,
+)
 
 #: AFL-scrape-sourced models with NO rugby-league equivalent (Phase 5.2
 #: scope decision, 2026-10-09): weather needs an NRL weather history,
@@ -455,6 +504,22 @@ LEAGUE_MODELS: dict[str, LeagueModelSpec] = {
 }
 
 
+#: Per-league model-set registry (FCL-2), keyed on the competition
+#: name (``LeagueConfig.name`` == ``competitions.name`` — the stable
+#: identity that survives re-seeding).  Values are tuples of BASE pick
+#: models — every entry MUST exist in :data:`LEAGUE_MODELS`; the
+#: derived heuristics (best_bet / weighted_tip / boosted_tip) are
+#: computed FROM the resolved set by the generation pipeline and are
+#: never registered here.  Like :data:`SPORT_MODEL_SETS`, this map
+#: only ever carries leagues whose set DIFFERS from their sport's
+#: default, so an empty map is the correct bootstrap: every competition
+#: resolves through its sport, byte-identical.  Adding a league
+#: override is a registration here, not an edit to the pipeline; the
+#: import-time validation below fails fast on an unknown model name
+#: or an empty set.
+LEAGUE_MODEL_SETS: dict[str, tuple[str, ...]] = {}
+
+
 def _validate_registry() -> None:
     """Fail fast on a registration referencing an unregistered pick."""
     for sport_id, names in SPORT_MODEL_SETS.items():
@@ -462,6 +527,18 @@ def _validate_registry() -> None:
         if unknown:
             raise ValueError(
                 f"Sport {sport_id!r} registers unknown league models: {unknown}"
+            )
+    for competition_name, names in LEAGUE_MODEL_SETS.items():
+        if not names:
+            raise ValueError(
+                f"Competition {competition_name!r} registers an empty "
+                f"league model set"
+            )
+        unknown = [name for name in names if name not in LEAGUE_MODELS]
+        if unknown:
+            raise ValueError(
+                f"Competition {competition_name!r} registers unknown "
+                f"league models: {unknown}"
             )
 
 
@@ -478,6 +555,26 @@ def league_model_set_for_sport(sport_id: Optional[str]) -> tuple[str, ...]:
     if sport_id is None:
         return DEFAULT_MODEL_SET
     return SPORT_MODEL_SETS.get(sport_id, DEFAULT_MODEL_SET)
+
+
+def league_model_set_for_competition(
+    name: Optional[str],
+    sport_id: Optional[str] = None,
+) -> tuple[str, ...]:
+    """The league-model set for one competition (FCL-2).
+
+    Resolution is league → sport → default: a competition name
+    registered in :data:`LEAGUE_MODEL_SETS` gets exactly that set;
+    every other name falls through to :func:`league_model_set_for_sport`
+    UNCHANGED — so an unregistered competition (AFL included) resolves
+    byte-identically to the pre-FCL behaviour.  An unresolvable name
+    (``None`` — a competition row not yet synced) falls through the
+    same way rather than failing the pass.
+    """
+    registered = LEAGUE_MODEL_SETS.get(name)
+    if registered is not None:
+        return registered
+    return league_model_set_for_sport(sport_id)
 
 
 def _raise_model_unavailable(model: str, sport_id: Optional[str]) -> None:
@@ -584,6 +681,184 @@ def compute_all_picks(
     return picks
 
 
+# ---------------------------------------------------------------------------
+# Derived heuristics (FCL-6) — best_bet consensus + learned combiners,
+# built ON the base picks over the SAME chronological slices.
+# ---------------------------------------------------------------------------
+
+
+def _league_linear_pick(
+    event: CompletedEvent,
+    prior_history: Sequence[CompletedEvent],
+    season_history: Sequence[CompletedEvent],
+    base_picks: Sequence[TipPick],
+    model_names: Sequence[str],
+    linear_weights: Optional[tuple[float, Mapping[str, float]]],
+) -> TipPick:
+    """The ``weighted_tip`` pick for one event (FCL-6).
+
+    Learned linear combiner when the competition's scoped weights are
+    loaded (FCL-4 CRUD → FCL-3 composite), the majority vote otherwise
+    (FCL-3d).  A learned prediction that RAISES — a stale feature
+    contract, a corrupt row — demotes to the same fallback with a
+    warning instead of failing the pass: generation never crashes on a
+    model.  The import is deferred (``league_consensus`` imports this
+    module, so a top-level edge would be circular).
+    """
+    from .league_consensus import league_consensus_fallback, league_linear_tip
+
+    if linear_weights is None:
+        tip = league_consensus_fallback(event, base_picks)
+    else:
+        intercept, coefficients = linear_weights
+        try:
+            tip = league_linear_tip(
+                event,
+                prior_history,
+                season_history,
+                intercept=intercept,
+                coefficients=coefficients,
+                model_names=model_names,
+            )
+        except Exception:  # noqa: BLE001 — a broken model never fails generation
+            logger.warning(
+                "league heuristics: learned weighted_tip prediction failed "
+                "for event %s — using the majority-vote fallback",
+                event.event_id,
+                exc_info=True,
+            )
+            tip = league_consensus_fallback(event, base_picks)
+    return TipPick(event.event_id, HEURISTIC_WEIGHTED_TIP, tip.selected_side_id)
+
+
+def _league_boosted_pick(
+    event: CompletedEvent,
+    prior_history: Sequence[CompletedEvent],
+    season_history: Sequence[CompletedEvent],
+    base_picks: Sequence[TipPick],
+    model_names: Sequence[str],
+    boosted_model: Optional[Any],
+) -> TipPick:
+    """The ``boosted_tip`` pick for one event (FCL-6).
+
+    Same contract as :func:`_league_linear_pick` with the XGBoost
+    combiner in place of the linear one — the model arrives already
+    deserialized (BT-2: the service pays the artifact load once per
+    pass, not per event).
+    """
+    from .league_consensus import league_boosted_tip, league_consensus_fallback
+
+    if boosted_model is None:
+        tip = league_consensus_fallback(event, base_picks)
+    else:
+        try:
+            tip = league_boosted_tip(
+                event,
+                prior_history,
+                season_history,
+                boosted_model,
+                model_names=model_names,
+            )
+        except Exception:  # noqa: BLE001 — a broken model never fails generation
+            logger.warning(
+                "league heuristics: learned boosted_tip prediction failed "
+                "for event %s — using the majority-vote fallback",
+                event.event_id,
+                exc_info=True,
+            )
+            tip = league_consensus_fallback(event, base_picks)
+    return TipPick(event.event_id, HEURISTIC_BOOSTED_TIP, tip.selected_side_id)
+
+
+def compute_derived_picks(
+    event: CompletedEvent,
+    prior_history: Sequence[CompletedEvent],
+    season_history: Sequence[CompletedEvent],
+    base_picks: Sequence[TipPick],
+    *,
+    model_names: Sequence[str] = LEAGUE_HEURISTICS,
+    linear_weights: Optional[tuple[float, Mapping[str, float]]] = None,
+    boosted_model: Optional[Any] = None,
+) -> list[TipPick]:
+    """The three derived heuristics' tips for one completed event (FCL-6).
+
+    ``best_bet`` is always the pure majority vote over ``base_picks``
+    (FCL-3a) — no training dependency, correct from the first sync.
+    ``weighted_tip``/``boosted_tip`` take the learned combiner when the
+    caller supplies the competition's scoped weights/model and fall
+    back to the same majority vote otherwise (FCL-3d); a learned
+    prediction failure demotes to the fallback rather than raising.
+
+    ``prior_history``/``season_history`` must be the EXACT prefix
+    slices the base picks were computed from — the learned features
+    then see precisely the evidence the base picks saw (no look-ahead;
+    the caller owns the chronological slicing, as for every pick
+    function).  ``model_names`` is the league's resolved BASE set: it
+    orders both the feature contract and the vote.
+
+    Returns up to three picks in :data:`DERIVED_LEAGUE_HEURISTICS`
+    order.  A drawn event yields draw-no-pick (NULL) tips for all
+    three, matching the base models' own draw discipline; an event
+    without both sides yields no tips at all (the pick FK targets the
+    side rows).
+    """
+    from .league_consensus import pick_best_bet
+
+    if event.home_side_id is None or event.away_side_id is None:
+        return []
+    return [
+        pick_best_bet(event, base_picks),
+        _league_linear_pick(
+            event, prior_history, season_history, base_picks, model_names,
+            linear_weights,
+        ),
+        _league_boosted_pick(
+            event, prior_history, season_history, base_picks, model_names,
+            boosted_model,
+        ),
+    ]
+
+
+def compute_all_picks_and_derived(
+    events: Sequence[CompletedEvent],
+    *,
+    models: Sequence[str] = LEAGUE_HEURISTICS,
+    linear_weights: Optional[tuple[float, Mapping[str, float]]] = None,
+    boosted_model: Optional[Any] = None,
+) -> list[TipPick]:
+    """Base + derived tips for every completed event in ONE walk (FCL-6).
+
+    The derived heuristics are computed per event from the SAME
+    chronological prefix slices the base picks read — consensus over
+    the event's own base picks, features built from the same prior
+    evidence — so no derived pick ever sees its own event's result
+    (no look-ahead) and history is never walked twice.
+    ``linear_weights``/``boosted_model`` are the competition's scoped
+    learned combiners (``None`` → majority-vote fallback, FCL-3d);
+    ``models`` selects the per-sport/league BASE set exactly as for
+    :func:`compute_all_picks`.
+    """
+    history = sort_chronologically(events)
+    picks: list[TipPick] = []
+    for index, event in enumerate(history):
+        prior = history[:index]
+        same_season = [e for e in prior if e.season_id == event.season_id]
+        base = compute_event_picks(event, prior, same_season, models=models)
+        picks.extend(base)
+        picks.extend(
+            compute_derived_picks(
+                event,
+                prior,
+                same_season,
+                base,
+                model_names=models,
+                linear_weights=linear_weights,
+                boosted_model=boosted_model,
+            )
+        )
+    return picks
+
+
 def select_tip_seasons(seasons: Sequence[SeasonRef]) -> list[SeasonRef]:
     """D3 scope: the current season + the most recent past season.
 
@@ -612,14 +887,26 @@ def _summary(
     events: int,
     inserted: int,
     updated: int,
+    derived: Optional[Mapping[str, int]] = None,
 ) -> dict[str, Any]:
-    """The generation result dict shared by every return path."""
+    """The generation result dict shared by every return path.
+
+    FCL-6 adds ``derived_tips`` — per-derived-heuristic insert counts
+    (best_bet / weighted_tip / boosted_tip).  Every competition gets
+    all three derived heuristics, so the key is ALWAYS present (zeros
+    when there was nothing to generate); the failure-tolerant sync
+    caller merges the dict as-is, so existing keys are untouched.
+    """
     return {
         "competition_id": competition_id,
         "seasons": season_labels,
         "events_considered": events,
         "tips_inserted": inserted,
         "tips_updated": updated,
+        "derived_tips": {
+            name: derived.get(name, 0) if derived else 0
+            for name in DERIVED_LEAGUE_HEURISTICS
+        },
     }
 
 
@@ -640,13 +927,24 @@ class LeagueHeuristicsService:
     ) -> dict[str, Any]:
         """Compute and persist the competition's tips; returns a summary.
 
-        The competition's ``sport_id`` selects the per-sport model set
-        (P2-3): rugby-league competitions (nrl / nrlw / origin) get the
-        reduced DB-only set; AFL and unresolvable competitions keep the
-        D3 trio — the historical behaviour, byte-identical.
+        FCL-6: the model set resolves through the FULL registry —
+        league (by competition NAME) → sport → default — and the pass
+        persists the base models' tips PLUS the three derived
+        heuristics every league gets: ``best_bet`` (pure majority vote
+        over the base picks, correct from the first sync) and the
+        ``weighted_tip``/``boosted_tip`` combiners, which load the
+        competition's scoped active weights/artifact and fall back to
+        the same majority vote before training or on any load failure —
+        generation NEVER crashes on a model.  Derived names stay global
+        on ``league_tips`` (each event belongs to exactly one league,
+        so UNIQUE ``(event_id, heuristic)`` is safe) while every row
+        carries this ``competition_id``.  An unresolvable competition
+        (no row / no sport) keeps the D3 trio + derived names rather
+        than failing the pass.
         """
         sport_id = await self._fetch_sport_id(db, competition_id)
-        models = league_model_set_for_sport(sport_id)
+        name = await self._fetch_competition_name(db, competition_id)
+        models = league_model_set_for_competition(name, sport_id)
         seasons = await self._fetch_seasons(db, competition_id)
         selected = select_tip_seasons(seasons)
         if not selected:
@@ -657,8 +955,19 @@ class LeagueHeuristicsService:
             return _summary(competition_id, [], 0, 0, 0)
 
         events = await self._fetch_completed_events(db, [s.id for s in selected])
-        picks = compute_all_picks(events, models=models)
-        inserted, updated = await self._upsert_tips(
+        linear_weights = await self._load_linear_weights(
+            db, competition_id=competition_id
+        )
+        boosted_model = await self._load_boosted_artifact(
+            db, competition_id=competition_id
+        )
+        picks = compute_all_picks_and_derived(
+            events,
+            models=models,
+            linear_weights=linear_weights,
+            boosted_model=boosted_model,
+        )
+        inserted, updated, derived_inserted = await self._upsert_tips(
             db,
             picks,
             competition_id=competition_id,
@@ -666,7 +975,12 @@ class LeagueHeuristicsService:
         )
         await db.commit()
         summary = _summary(
-            competition_id, [s.label for s in selected], len(events), inserted, updated
+            competition_id,
+            [s.label for s in selected],
+            len(events),
+            inserted,
+            updated,
+            derived=derived_inserted,
         )
         logger.info(
             "league heuristics: competition %s: %s", competition_id, summary
@@ -693,6 +1007,102 @@ class LeagueHeuristicsService:
             )
         ).scalar_one_or_none()
         return None if sport is None else str(sport)
+
+    @staticmethod
+    async def _fetch_competition_name(
+        db: AsyncSession, competition_id: int
+    ) -> Optional[str]:
+        """The competition's NAME — the :data:`LEAGUE_MODEL_SETS` key (FCL-2).
+
+        Deliberately a separate fetcher (not a wider identity fetch):
+        the single-fetcher patch surface used by the service tests stays
+        valid, and an unresolvable name falls through
+        :func:`league_model_set_for_competition` to the sport resolution
+        byte-identically, exactly like an unresolvable sport.
+        """
+        name = (
+            await db.execute(
+                select(Competition.name).where(Competition.id == competition_id)
+            )
+        ).scalar_one_or_none()
+        return None if name is None else str(name)
+
+    # -- learned-model loaders (patched out in unit tests) --------------
+
+    @staticmethod
+    async def _load_linear_weights(
+        db: AsyncSession, *, competition_id: int
+    ) -> Optional[tuple[float, dict[str, float]]]:
+        """The competition's scoped active ``weighted_tip`` coefficients.
+
+        FCL-4 scope: reads ONLY this competition's active version — a
+        league never leaks another league's (or the global AFL's)
+        weights.  ``None`` — no active scoped version yet, or a load
+        failure — selects the majority-vote fallback (FCL-3d): tip
+        generation never crashes on model load (FCL-6).  The CRUD import
+        is deferred so this module's import surface stays unchanged.
+        """
+        from ..crud.model_versions import get_active_coefficients
+
+        try:
+            return await get_active_coefficients(
+                db, HEURISTIC_WEIGHTED_TIP, competition_id=competition_id
+            )
+        except Exception:  # noqa: BLE001 — model load never fails generation
+            logger.warning(
+                "league heuristics: loading weighted_tip coefficients "
+                "failed for competition %s — using the majority-vote "
+                "fallback",
+                competition_id,
+                exc_info=True,
+            )
+            return None
+
+    @staticmethod
+    async def _load_boosted_artifact(
+        db: AsyncSession, *, competition_id: int
+    ) -> Optional[Any]:
+        """The competition's boosted combiner, deserialized ONCE per pass.
+
+        FCL-4 scope as for :func:`_load_linear_weights`; BT-2 on the
+        shape — the artifact is deserialized HERE (not per event) so a
+        season-wide pass pays the xgboost load once.  ``None`` — no
+        scoped artifact, or a load/deserialize failure — selects the
+        majority-vote fallback (FCL-3d); generation never crashes on
+        model load (FCL-6).  Deserialization is reached only when an
+        artifact actually exists, keeping the no-artifact path free of
+        the xgboost import (FCL-3b).
+        """
+        from ..crud.model_versions import get_active_model_artifact
+
+        try:
+            loaded = await get_active_model_artifact(
+                db, HEURISTIC_BOOSTED_TIP, competition_id=competition_id
+            )
+        except Exception:  # noqa: BLE001 — model load never fails generation
+            logger.warning(
+                "league heuristics: loading boosted_tip artifact failed "
+                "for competition %s — using the majority-vote fallback",
+                competition_id,
+                exc_info=True,
+            )
+            return None
+        if loaded is None:
+            return None
+        artifact, artifact_format, _version = loaded
+        from .league_consensus import load_league_boosted_model
+
+        try:
+            return load_league_boosted_model(artifact, artifact_format)
+        except Exception:  # noqa: BLE001 — a corrupt artifact is a fallback, not a crash
+            logger.warning(
+                "league heuristics: deserializing the boosted_tip artifact "
+                "failed for competition %s — using the majority-vote "
+                "fallback",
+                competition_id,
+                exc_info=True,
+            )
+            return None
 
     @staticmethod
     async def _fetch_seasons(
@@ -785,16 +1195,20 @@ class LeagueHeuristicsService:
         *,
         competition_id: int,
         season_id_by_event: dict[int, int],
-    ) -> tuple[int, int]:
+    ) -> tuple[int, int, dict[str, int]]:
         """Diff picks against stored tips; insert new, update changed.
 
         Unchanged picks are untouched (no churn on re-sync).  The
         UNIQUE ``(event_id, heuristic)`` constraint is honoured by
         construction — one pick per key, new keys only inserted.
+        FCL-6: returns ``(inserted, updated, inserted_by_heuristic)``
+        — the third element breaks the insert count out per heuristic
+        name so the generation summary can report derived-tip counts.
         """
         existing = await self._fetch_existing_tips(db, [p.event_id for p in picks])
         inserted = 0
         updated = 0
+        inserted_by_heuristic: dict[str, int] = {}
         for pick in picks:
             key = (pick.event_id, pick.heuristic)
             if key not in existing:
@@ -808,13 +1222,16 @@ class LeagueHeuristicsService:
                     )
                 )
                 inserted += 1
+                inserted_by_heuristic[pick.heuristic] = (
+                    inserted_by_heuristic.get(pick.heuristic, 0) + 1
+                )
             elif existing[key] != pick.selected_side_id:
                 if await self._update_tip(
                     db, pick.event_id, pick.heuristic, pick.selected_side_id
                 ):
                     updated += 1
         await db.flush()
-        return inserted, updated
+        return inserted, updated, inserted_by_heuristic
 
     @staticmethod
     async def _update_tip(

@@ -5,7 +5,10 @@ alembic autogenerate.  BT-1: :class:`ModelVersion` additionally carries
 nullable artifact columns (``artifact`` / ``artifact_format`` /
 ``shap_base_value``) so the ``boosted_tip`` XGBoost heuristic can
 persist its serialized ensemble alongside the ``weighted_tip`` linear
-state in the same table.
+state in the same table.  FCL-1: it also carries a nullable
+``competition_id`` scope column (with complementary partial unique
+indexes) so per-league trained models live in the same shared table —
+NULL scope = legacy global model, unchanged semantics.
 """
 
 from datetime import datetime, timezone
@@ -17,11 +20,13 @@ from sqlalchemy import (
     DateTime,
     Float,
     ForeignKey,
+    Index,
     Integer,
     LargeBinary,
     String,
     Text,
     UniqueConstraint,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import relationship
@@ -347,6 +352,17 @@ class ModelVersion(Base):
     TreeExplainer expected value.  All three are ``NULL`` for linear
     (``weighted_tip``) versions, which keep their weights in
     :class:`ModelCoefficient` rows instead.
+
+    FCL-1 (first-class league heuristics, migration 0015): the nullable
+    ``competition_id`` scope column lets the same shared table store
+    per-league trained models (ADR 0001 D1, "shared tables + scope
+    columns").  ``NULL`` = legacy global model — every existing AFL row
+    keeps NULL, so the legacy pipeline is byte-identical.  At most one
+    ACTIVE version may exist per ``(model_name, scope)``; two
+    complementary partial unique indexes enforce this per scope
+    (``uq_model_versions_global_active`` for the NULL scope,
+    ``uq_model_versions_competition_active`` per competition), keeping
+    global and per-league actives independent.
     """
 
     __tablename__ = "model_versions"
@@ -354,6 +370,11 @@ class ModelVersion(Base):
     id = Column(Integer, primary_key=True, index=True)
     model_name = Column(String(64), nullable=False)
     version = Column(Integer, nullable=False)
+    # FCL-1: NULL = legacy global model; non-NULL = scoped to one
+    # competition.  Nullable so existing global rows are untouched.
+    competition_id = Column(
+        Integer, ForeignKey("competitions.id"), nullable=True, index=True
+    )
     intercept = Column(Float, nullable=False, default=0.0)
     trained_at = Column(
         DateTime(timezone=True),
@@ -380,6 +401,24 @@ class ModelVersion(Base):
 
     __table_args__ = (
         UniqueConstraint("model_name", "version", name="uq_model_versions_name_version"),
+        # FCL-1: at most one active version per (model_name, scope).  A
+        # plain unique constraint cannot express "unique within each
+        # scope" (NULL vs non-NULL) with the active flag in the
+        # predicate, so two complementary partial unique indexes are
+        # used — one per scope.  Mirrors migration 0015 exactly.
+        Index(
+            "uq_model_versions_global_active",
+            "model_name",
+            unique=True,
+            postgresql_where=text("is_active AND competition_id IS NULL"),
+        ),
+        Index(
+            "uq_model_versions_competition_active",
+            "model_name",
+            "competition_id",
+            unique=True,
+            postgresql_where=text("is_active AND competition_id IS NOT NULL"),
+        ),
     )
 
 

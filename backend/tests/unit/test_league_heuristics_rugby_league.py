@@ -26,6 +26,7 @@ Layers, mirroring ``test_league_heuristics``:
 
 from __future__ import annotations
 
+import contextlib
 from datetime import datetime
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -35,6 +36,7 @@ import pytest
 from app.core.exceptions import BackendServiceError
 from packages.shared.services.league_heuristics import (
     DEFAULT_MODEL_SET,
+    DERIVED_LEAGUE_HEURISTICS,
     ELO_START_RATING,
     HEURISTIC_ELO,
     HEURISTIC_MATCHUP,
@@ -496,10 +498,17 @@ def _patched_fetches(
     existing: dict[tuple[int, str], int | None],
 ) -> tuple[Any, ...]:
     """Instance-level fetch patches — the class's real staticmethods are
-    never touched (each test builds its own service instance)."""
+    never touched (each test builds its own service instance).  FCL-6:
+    the name fetcher resolves to no registered league and both
+    learned-model loaders resolve to ``None`` (the majority-vote
+    fallback), so the pass is deterministic and the sport scoping under
+    test is the only variable."""
     return (
         patch.object(
             service, "_fetch_sport_id", AsyncMock(return_value=sport_id)
+        ),
+        patch.object(
+            service, "_fetch_competition_name", AsyncMock(return_value=None)
         ),
         patch.object(service, "_fetch_seasons", AsyncMock(return_value=seasons)),
         patch.object(
@@ -508,14 +517,24 @@ def _patched_fetches(
         patch.object(
             service, "_fetch_existing_tips", AsyncMock(return_value=existing)
         ),
+        patch.object(service, "_load_linear_weights", AsyncMock(return_value=None)),
+        patch.object(service, "_load_boosted_artifact", AsyncMock(return_value=None)),
     )
+
+
+def _enter_all(stack: contextlib.ExitStack, patchers: tuple[Any, ...]) -> None:
+    """Enter every patcher from :func:`_patched_fetches` on one stack."""
+    for patcher in patchers:
+        stack.enter_context(patcher)
 
 
 class TestGenerateForCompetitionSportScoping:
     @pytest.mark.asyncio
-    async def test_rugby_league_competition_generates_the_four_model_tips(
+    async def test_rugby_league_competition_generates_base_plus_derived_tips(
         self,
     ) -> None:
+        """FCL-6: the sport-scoped BASE quartet (never ladder) plus the
+        three derived heuristics every league gets."""
         seasons = [SeasonRef(id=7, label="2026", is_current=True)]
         events = [
             _event(1, season_id=7, home_score=90, away_score=70),
@@ -524,16 +543,33 @@ class TestGenerateForCompetitionSportScoping:
         db = _fake_session()
         service = LeagueHeuristicsService()
         patches = _patched_fetches(service, "rugby-league", seasons, events, {})
-        with patches[0], patches[1], patches[2], patches[3]:
+        with contextlib.ExitStack() as stack:
+            _enter_all(stack, patches)
             summary = await service.generate_for_competition(db, competition_id=42)
 
         rows = [call.args[0] for call in db.add.call_args_list]
-        # 1 decided event × 4 models + 1 draw × 4 draw-no-pick rows.
-        assert len(rows) == 8
-        assert {row.heuristic for row in rows} == set(RUGBY_LEAGUE_MODELS)
+        # 1 decided event × (4 base + 3 derived) + 1 draw × 7 draw-no-pick.
+        assert len(rows) == 14
+        base_rows = [
+            row for row in rows if row.heuristic in set(RUGBY_LEAGUE_MODELS)
+        ]
+        derived_rows = [
+            row for row in rows if row.heuristic in set(DERIVED_LEAGUE_HEURISTICS)
+        ]
+        # BASE-set scoping (the original intent): exactly the sport's
+        # reduced quartet, persisted for BOTH events, ladder never.
+        assert {row.heuristic for row in base_rows} == set(RUGBY_LEAGUE_MODELS)
+        assert len(base_rows) == 8
         assert "ladder" not in {row.heuristic for row in rows}
+        # DERIVED (FCL-6): the trio rides along for every event.
+        assert {row.heuristic for row in derived_rows} == set(
+            DERIVED_LEAGUE_HEURISTICS
+        )
+        assert len(derived_rows) == 6
         assert all(row.competition_id == 42 for row in rows)
         assert all(row.season_id == 7 for row in rows)
+        # The draw is draw-no-pick for base AND derived alike; the
+        # decided event's picks resolve to a side.
         assert all(
             row.selected_participant_id is None for row in rows if row.event_id == 2
         )
@@ -542,51 +578,80 @@ class TestGenerateForCompetitionSportScoping:
             for row in rows
             if row.event_id == 1
         )
-        assert summary["tips_inserted"] == 8
+        assert summary["tips_inserted"] == 14
+        assert summary["derived_tips"] == {
+            name: 2 for name in DERIVED_LEAGUE_HEURISTICS
+        }
         db.commit.assert_awaited_once()
 
     @pytest.mark.asyncio
-    async def test_afl_competition_still_generates_exactly_the_d3_three(
+    async def test_afl_competition_base_stays_the_d3_three_plus_derived(
         self,
     ) -> None:
+        """FCL-6: AFL's BASE set is still the historical D3 trio — the
+        derived trio rides along for every league."""
         seasons = [SeasonRef(id=7, label="2026", is_current=True)]
         events = [_event(1, season_id=7, home_score=90, away_score=70)]
         db = _fake_session()
         service = LeagueHeuristicsService()
         patches = _patched_fetches(service, "afl", seasons, events, {})
-        with patches[0], patches[1], patches[2], patches[3]:
+        with contextlib.ExitStack() as stack:
+            _enter_all(stack, patches)
             summary = await service.generate_for_competition(db, competition_id=42)
 
         rows = [call.args[0] for call in db.add.call_args_list]
-        assert len(rows) == 3
-        assert {row.heuristic for row in rows} == set(LEAGUE_HEURISTICS)
-        assert summary["tips_inserted"] == 3
+        assert len(rows) == 6  # 3 base + 3 derived for the decided event
+        base = {
+            row.heuristic for row in rows if row.heuristic in set(LEAGUE_HEURISTICS)
+        }
+        derived = {
+            row.heuristic
+            for row in rows
+            if row.heuristic in set(DERIVED_LEAGUE_HEURISTICS)
+        }
+        assert base == set(LEAGUE_HEURISTICS)
+        assert derived == set(DERIVED_LEAGUE_HEURISTICS)
+        assert summary["tips_inserted"] == 6
 
     @pytest.mark.asyncio
     async def test_unresolvable_sport_falls_back_to_the_d3_set(self) -> None:
-        """No competition row (sport None) → the historical behaviour."""
+        """No competition row (sport None) → the historical BASE set —
+        plus the derived trio every league gets (FCL-6)."""
         seasons = [SeasonRef(id=7, label="2026", is_current=True)]
         events = [_event(1, season_id=7, home_score=90, away_score=70)]
         db = _fake_session()
         service = LeagueHeuristicsService()
         patches = _patched_fetches(service, None, seasons, events, {})
-        with patches[0], patches[1], patches[2], patches[3]:
+        with contextlib.ExitStack() as stack:
+            _enter_all(stack, patches)
             summary = await service.generate_for_competition(db, competition_id=42)
 
         rows = [call.args[0] for call in db.add.call_args_list]
-        assert {row.heuristic for row in rows} == set(LEAGUE_HEURISTICS)
-        assert summary["tips_inserted"] == 3
+        # The BASE set falls back to the D3 trio exactly as before...
+        base = {
+            row.heuristic for row in rows if row.heuristic in set(LEAGUE_HEURISTICS)
+        }
+        assert base == set(LEAGUE_HEURISTICS)
+        # ...and the derived trio completes the pass.
+        assert {row.heuristic for row in rows} == (
+            set(LEAGUE_HEURISTICS) | set(DERIVED_LEAGUE_HEURISTICS)
+        )
+        assert summary["tips_inserted"] == 6
 
     @pytest.mark.asyncio
     async def test_persisted_order_follows_the_registry_order(self) -> None:
-        """Rugby-league rows persist in the canonical (registry) order."""
+        """Rows persist as base models in registry order, then the
+        derived trio in its canonical order (FCL-6)."""
         seasons = [SeasonRef(id=7, label="2026", is_current=True)]
         events = [_event(1, season_id=7, home_score=90, away_score=70)]
         db = _fake_session()
         service = LeagueHeuristicsService()
         patches = _patched_fetches(service, "rugby-league", seasons, events, {})
-        with patches[0], patches[1], patches[2], patches[3]:
+        with contextlib.ExitStack() as stack:
+            _enter_all(stack, patches)
             await service.generate_for_competition(db, competition_id=42)
 
         rows = [call.args[0] for call in db.add.call_args_list]
-        assert [row.heuristic for row in rows] == list(RUGBY_LEAGUE_MODELS)
+        assert [row.heuristic for row in rows] == (
+            list(RUGBY_LEAGUE_MODELS) + list(DERIVED_LEAGUE_HEURISTICS)
+        )

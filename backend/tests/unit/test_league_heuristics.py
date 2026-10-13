@@ -1,16 +1,23 @@
 """Unit tests for the league heuristics service (performance-per-league D3).
 
-Three layers, mirroring established repo patterns:
+Four layers, mirroring established repo patterns:
 
 * **Pure pick logic** — the three result-derived heuristics with the
   EXACT D3 semantics.  No database: the pick functions take plain
   frozen dataclasses, so every rule below is a table-driven unit test.
+* **Derived-heuristic pipeline (FCL-6)** — the pure best_bet consensus
+  and the weighted_tip/boosted_tip combiners over the SAME
+  chronological slices the base picks read, with the majority-vote
+  fallback wherever a learned model is missing or fails.
 * **Service orchestration** — ``LeagueHeuristicsService.generate_for_competition``
   against a fake session with the thin DB fetchers patched (the
   ``test_local_competition_sync`` pattern).  Proves the two-season
   scope (current + most recent past), the draw-no-pick persistence
-  shape, and IDEMPOTENCE: a re-run inserts nothing, updates nothing
-  and never touches the UNIQUE (event_id, heuristic) constraint.
+  shape, the per-competition persistence of the base models AND the
+  three derived names (best_bet / weighted_tip / boosted_tip, FCL-6),
+  the graceful fallback on scoped model-load failure, and
+  IDEMPOTENCE: a re-run inserts nothing, updates nothing and never
+  touches the UNIQUE (event_id, heuristic) constraint.
 * **End-to-end** (``@pytest.mark.postgres``) — the real migration chain
   on a podman Postgres testcontainer (the ``test_league_tips_model``
   pattern): generate → re-generate against the real constraint.
@@ -38,18 +45,35 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
 from packages.shared.services.league_heuristics import (
+    DEFAULT_MODEL_SET,
+    DERIVED_LEAGUE_HEURISTICS,
+    HEURISTIC_BEST_BET,
+    HEURISTIC_BOOSTED_TIP,
+    HEURISTIC_ELO,
     HEURISTIC_FORM,
     HEURISTIC_HOME_ADVANTAGE,
     HEURISTIC_LADDER,
+    HEURISTIC_MATCHUP,
+    HEURISTIC_WEIGHTED_TIP,
     LEAGUE_HEURISTICS,
+    LEAGUE_MODEL_SETS,
+    LEAGUE_MODELS,
+    RUGBY_LEAGUE_MODELS,
+    SPORT_MODEL_SETS,
     CompletedEvent,
     LeagueHeuristicsService,
     SeasonRef,
     Standing,
+    TipPick,
+    _validate_registry,
     compute_all_picks,
+    compute_all_picks_and_derived,
+    compute_derived_picks,
     compute_event_picks,
     compute_standings,
     is_drawn,
+    league_model_set_for_competition,
+    league_model_set_for_sport,
     pick_form,
     pick_home_advantage,
     pick_ladder,
@@ -342,6 +366,93 @@ class TestSelectTipSeasons:
 
 
 # ---------------------------------------------------------------------------
+# Per-league model registry (FCL-2) — league → sport → default resolution.
+# ---------------------------------------------------------------------------
+
+
+class TestLeagueModelSets:
+    """The per-league registry layered above the per-sport one: keyed on
+    the competition name (``LeagueConfig.name`` == ``competitions.name``),
+    holding BASE pick models only — the derived heuristics
+    (best_bet / weighted_tip / boosted_tip) are built ON the resolved set,
+    never registered in it."""
+
+    def test_values_are_non_empty_tuples_of_registered_base_models(self) -> None:
+        for name, models in LEAGUE_MODEL_SETS.items():
+            assert isinstance(name, str) and name, "key is the competition name"
+            assert isinstance(models, tuple) and models, name
+            assert all(model in LEAGUE_MODELS for model in models), name
+
+    def test_derived_heuristics_are_not_registry_eligible(self) -> None:
+        derived = {"best_bet", "weighted_tip", "boosted_tip"}
+        assert not derived & set(LEAGUE_MODELS)
+        for models in LEAGUE_MODEL_SETS.values():
+            assert not derived & set(models)
+
+    def test_registered_league_overrides_its_sport_default(self, monkeypatch) -> None:
+        monkeypatch.setitem(LEAGUE_MODEL_SETS, "Override Test League", (HEURISTIC_ELO,))
+        assert (
+            league_model_set_for_competition("Override Test League", sport_id="afl")
+            == (HEURISTIC_ELO,)
+        )
+        # The league step wins even when the sport carries its own set.
+        monkeypatch.setitem(
+            SPORT_MODEL_SETS, "override-test-sport", (HEURISTIC_MATCHUP,)
+        )
+        assert (
+            league_model_set_for_competition(
+                "Override Test League", sport_id="override-test-sport"
+            )
+            == (HEURISTIC_ELO,)
+        )
+
+    @pytest.mark.parametrize(
+        ("name", "sport_id"),
+        [
+            ("Never Registered League", "afl"),
+            ("Never Registered League", "rugby-league"),
+            ("Never Registered League", "netball"),
+            ("Never Registered League", None),
+        ],
+    )
+    def test_unregistered_league_is_byte_identical_to_sport_resolution(
+        self, name: str | None, sport_id: str | None
+    ) -> None:
+        assert league_model_set_for_competition(
+            name, sport_id
+        ) == league_model_set_for_sport(sport_id)
+
+    def test_unresolvable_name_still_falls_through_to_sport(self) -> None:
+        assert league_model_set_for_competition(None) == DEFAULT_MODEL_SET
+        assert (
+            league_model_set_for_competition(None, sport_id="rugby-league")
+            == RUGBY_LEAGUE_MODELS
+        )
+
+    def test_unknown_model_name_in_a_registration_fails_fast(
+        self, monkeypatch
+    ) -> None:
+        monkeypatch.setitem(LEAGUE_MODEL_SETS, "Broken League", ("no_such_model",))
+        with pytest.raises(ValueError, match="Broken League"):
+            _validate_registry()
+
+    def test_empty_model_set_in_a_registration_fails_fast(
+        self, monkeypatch
+    ) -> None:
+        monkeypatch.setitem(LEAGUE_MODEL_SETS, "Empty League", ())
+        with pytest.raises(ValueError, match="Empty League"):
+            _validate_registry()
+
+    def test_valid_registration_passes_validation(self, monkeypatch) -> None:
+        monkeypatch.setitem(
+            LEAGUE_MODEL_SETS,
+            "Valid Test League",
+            (HEURISTIC_ELO, HEURISTIC_FORM),
+        )
+        _validate_registry()  # must not raise
+
+
+# ---------------------------------------------------------------------------
 # Service orchestration — fake session, patched fetchers (no database).
 # ---------------------------------------------------------------------------
 
@@ -360,9 +471,14 @@ def _patched_fetches(
     seasons: list[SeasonRef],
     events: list[CompletedEvent],
     existing: dict[tuple[int, str], int | None],
-) -> tuple[Any, Any, Any]:
-    """Instance-level fetch patches — the class's real staticmethods
-    are never touched (each test builds its own service instance)."""
+    *,
+    linear_weights: tuple[float, dict[str, float]] | None = None,
+    boosted_model: Any | None = None,
+) -> tuple[Any, ...]:
+    """Instance-level fetch/loader patches — the class's real staticmethods
+    are never touched (each test builds its own service instance).  The
+    learned-model loaders default to ``None`` — the majority-vote
+    fallback (FCL-3d), i.e. no scoped trained model."""
     return (
         patch.object(service, "_fetch_seasons", AsyncMock(return_value=seasons)),
         patch.object(
@@ -371,12 +487,27 @@ def _patched_fetches(
         patch.object(
             service, "_fetch_existing_tips", AsyncMock(return_value=existing)
         ),
+        patch.object(
+            service,
+            "_load_linear_weights",
+            AsyncMock(return_value=linear_weights),
+        ),
+        patch.object(
+            service,
+            "_load_boosted_artifact",
+            AsyncMock(return_value=boosted_model),
+        ),
     )
 
 
 class TestGenerateForCompetition:
     @pytest.mark.asyncio
-    async def test_generates_three_tips_per_completed_event_across_two_seasons(self) -> None:
+    async def test_generates_base_and_derived_tips_per_completed_event(
+        self,
+    ) -> None:
+        """FCL-6: every completed event persists the base models' tips AND
+        the three derived heuristics (best_bet / weighted_tip /
+        boosted_tip) — drawn events carry NULL selections across all six."""
         seasons = [SeasonRef(id=1, label="2025", is_current=False),
                    SeasonRef(id=2, label="2026", is_current=True)]
         events = [
@@ -387,26 +518,34 @@ class TestGenerateForCompetition:
         db = _fake_session()
         service = LeagueHeuristicsService()
         patches = _patched_fetches(service, seasons, events, {})
-        with patches[0], patches[1], patches[2]:
+        with patches[0], patches[1], patches[2], patches[3], patches[4]:
             summary = await service.generate_for_competition(db, competition_id=42)
 
         rows = [call.args[0] for call in db.add.call_args_list]
-        assert len(rows) == 9  # 3 completed events × 3 heuristics
-        assert {row.heuristic for row in rows} == set(LEAGUE_HEURISTICS)
+        assert len(rows) == 18  # 3 completed events × (3 base + 3 derived)
+        assert {row.heuristic for row in rows} == (
+            set(LEAGUE_HEURISTICS) | set(DERIVED_LEAGUE_HEURISTICS)
+        )
         assert all(row.competition_id == 42 for row in rows)
         assert {row.season_id for row in rows} == {1, 2}
-        # The drawn event persists draw-no-pick tips (NULL selection).
+        # The drawn event persists draw-no-pick tips (NULL selection)
+        # for every name, derived ones included.
         assert all(
             row.selected_participant_id is None for row in rows if row.event_id == 2
         )
-        # Every selection points at an event_participants row id.
+        # Every other selection points at an event_participants row id.
         assert all(
             row.selected_participant_id in (101, 102)
             for row in rows
             if row.event_id != 2
         )
-        assert summary["tips_inserted"] == 9
+        assert summary["tips_inserted"] == 18
         assert summary["tips_updated"] == 0
+        assert summary["derived_tips"] == {
+            "best_bet": 3,
+            "weighted_tip": 3,
+            "boosted_tip": 3,
+        }
         db.commit.assert_awaited_once()
 
     @pytest.mark.asyncio
@@ -416,26 +555,31 @@ class TestGenerateForCompetition:
         events = [_event(1, season_id=1, home_score=90, away_score=70)]
         db = _fake_session()
         service = LeagueHeuristicsService()
-        picks = compute_all_picks(events)
+        picks = compute_all_picks_and_derived(events)
         existing = {(p.event_id, p.heuristic): p.selected_side_id for p in picks}
         first_patches = _patched_fetches(service, seasons, events, {})
         second_patches = _patched_fetches(service, seasons, events, existing)
-        with first_patches[0], first_patches[1], first_patches[2]:
+        with first_patches[0], first_patches[1], first_patches[2], \
+                first_patches[3], first_patches[4]:
             first = await service.generate_for_competition(db, competition_id=42)
         db.add = MagicMock()  # fresh spy for the re-run
-        with second_patches[0], second_patches[1], second_patches[2]:
+        with second_patches[0], second_patches[1], second_patches[2], \
+                second_patches[3], second_patches[4]:
             second = await service.generate_for_competition(db, competition_id=42)
 
-        assert first["tips_inserted"] == 3
+        assert first["tips_inserted"] == 6  # 3 base + 3 derived
         assert second["tips_inserted"] == 0
         assert second["tips_updated"] == 0
+        assert second["derived_tips"] == {
+            name: 0 for name in DERIVED_LEAGUE_HEURISTICS
+        }
         db.add.assert_not_called()  # no churn: unchanged rows are untouched
 
     @pytest.mark.asyncio
     async def test_changed_pick_updates_the_existing_row_in_place(self) -> None:
         seasons = [SeasonRef(id=2, label="2026", is_current=True)]
         events = [_event(1, season_id=2, home_score=90, away_score=70)]
-        picks = compute_all_picks(events)
+        picks = compute_all_picks_and_derived(events)
         existing = {(p.event_id, p.heuristic): p.selected_side_id for p in picks}
         # Upstream score revision: the stored home_advantage pick is stale.
         existing[(1, HEURISTIC_HOME_ADVANTAGE)] = 999
@@ -447,12 +591,13 @@ class TestGenerateForCompetition:
         )
         service = LeagueHeuristicsService()
         patches = _patched_fetches(service, seasons, events, existing)
-        with patches[0], patches[1], patches[2]:
+        with patches[0], patches[1], patches[2], patches[3], patches[4]:
             summary = await service.generate_for_competition(db, competition_id=42)
 
         assert summary["tips_inserted"] == 0
         assert summary["tips_updated"] == 1
-        # The row was pointed at the recomputed pick (the home side).
+        # The row was pointed at the recomputed pick (the home side);
+        # picks[0] is the first BASE pick — derived names follow it.
         assert tip_row.selected_participant_id == picks[0].selected_side_id == 101
         db.add.assert_not_called()
         db.commit.assert_awaited_once()
@@ -467,8 +612,560 @@ class TestGenerateForCompetition:
             summary = await service.generate_for_competition(db, competition_id=42)
 
         assert summary["tips_inserted"] == 0
+        assert summary["derived_tips"] == {
+            name: 0 for name in DERIVED_LEAGUE_HEURISTICS
+        }
         db.add.assert_not_called()
         db.commit.assert_not_awaited()
+
+
+# ---------------------------------------------------------------------------
+# Derived-heuristic pipeline (FCL-6) — pure consensus + learned combiners
+# over the SAME chronological slices the base picks read.
+# ---------------------------------------------------------------------------
+
+
+def _d3_linear_weights(form_wins_diff: float) -> tuple[float, dict[str, float]]:
+    """Linear weights over the D3 feature contract, isolating the form
+    feature so tests can steer the learned margin deterministically."""
+    return (
+        0.0,
+        {
+            "home_advantage_home_constant": 0.0,
+            "form_wins_diff": form_wins_diff,
+            "ladder_wins_diff": 0.0,
+            "ladder_pct_diff": 0.0,
+        },
+    )
+
+
+class _ExplodingPredictor:
+    """A 'loaded' boosted model whose predict always fails — stands in
+    for a corrupt artifact / stale feature contract at prediction time."""
+
+    def predict(self, features: Any) -> list[float]:
+        raise RuntimeError("booster exploded")
+
+
+class TestDerivedHeuristicContract:
+    def test_derived_names_under_their_contract_names(self) -> None:
+        assert HEURISTIC_BEST_BET == "best_bet"
+        assert HEURISTIC_WEIGHTED_TIP == "weighted_tip"
+        assert HEURISTIC_BOOSTED_TIP == "boosted_tip"
+
+    def test_derived_set_is_exactly_the_three_in_canonical_order(self) -> None:
+        assert DERIVED_LEAGUE_HEURISTICS == (
+            "best_bet",
+            "weighted_tip",
+            "boosted_tip",
+        )
+
+    def test_best_bet_name_matches_the_consensus_module(self) -> None:
+        """league_consensus imports THIS module, so the constant lives here
+        and the mirror is pinned — the two can never silently drift."""
+        from packages.shared.services.league_consensus import (
+            HEURISTIC_BEST_BET as CONSENSUS_BEST_BET,
+        )
+
+        assert HEURISTIC_BEST_BET == CONSENSUS_BEST_BET
+
+    def test_derived_names_are_not_base_models(self) -> None:
+        for name in DERIVED_LEAGUE_HEURISTICS:
+            assert name not in LEAGUE_MODELS
+
+
+class TestComputeDerivedPicks:
+    """Per-event derived picks: pure, fed the SAME prior/same-season
+    slices the base picks read (the caller owns the no-look-ahead
+    slicing, exactly as for ``compute_event_picks``)."""
+
+    def test_missing_sides_yield_no_derived_tips(self) -> None:
+        assert compute_derived_picks(_event(1, home_side=None), [], [], []) == []
+        assert compute_derived_picks(_event(2, away_side=None), [], [], []) == []
+
+    def test_drawn_event_yields_draw_no_pick_for_all_three(self) -> None:
+        event = _event(1, home_score=44, away_score=44)
+        picks = compute_derived_picks(event, [], [], [])
+        assert [p.heuristic for p in picks] == list(DERIVED_LEAGUE_HEURISTICS)
+        assert all(p.event_id == 1 for p in picks)
+        assert all(p.selected_side_id is None for p in picks)
+
+    def test_learned_inputs_do_not_disturb_the_draw_discipline(self) -> None:
+        event = _event(1, home_score=44, away_score=44)
+        picks = compute_derived_picks(
+            event,
+            [],
+            [],
+            [],
+            linear_weights=_d3_linear_weights(-100.0),
+            boosted_model=SimpleNamespace(predict=lambda features: [-100.0]),
+        )
+        assert all(p.selected_side_id is None for p in picks)
+
+    def test_best_bet_is_the_majority_vote_over_the_base_picks(self) -> None:
+        event = _event(5, home_score=80, away_score=70)
+        base = [
+            TipPick(5, HEURISTIC_HOME_ADVANTAGE, 101),
+            TipPick(5, HEURISTIC_FORM, 102),
+            TipPick(5, HEURISTIC_LADDER, 101),
+        ]
+        by_name = {
+            p.heuristic: p.selected_side_id
+            for p in compute_derived_picks(event, [], [], base)
+        }
+        assert by_name[HEURISTIC_BEST_BET] == 101  # 2 home votes vs 1 away
+
+    def test_vote_tie_and_zero_info_go_home(self) -> None:
+        event = _event(5, home_score=80, away_score=70)
+        split = [
+            TipPick(5, HEURISTIC_HOME_ADVANTAGE, 101),
+            TipPick(5, HEURISTIC_FORM, 102),
+        ]
+        by_name = {
+            p.heuristic: p.selected_side_id
+            for p in compute_derived_picks(event, [], [], split)
+        }
+        assert by_name[HEURISTIC_BEST_BET] == 101  # FCL-3a tie → home
+        empty = {
+            p.heuristic: p.selected_side_id
+            for p in compute_derived_picks(event, [], [], [])
+        }
+        assert empty[HEURISTIC_BEST_BET] == 101  # zero-info → home default
+
+    def test_weighted_tip_without_weights_is_the_majority_vote(self) -> None:
+        event = _event(5, home_score=80, away_score=70)
+        base = [
+            TipPick(5, HEURISTIC_HOME_ADVANTAGE, 102),
+            TipPick(5, HEURISTIC_FORM, 102),
+        ]
+        by_name = {
+            p.heuristic: p.selected_side_id
+            for p in compute_derived_picks(event, [], [], base)
+        }
+        assert by_name[HEURISTIC_WEIGHTED_TIP] == 102
+        assert by_name[HEURISTIC_WEIGHTED_TIP] == by_name[HEURISTIC_BEST_BET]
+
+    def test_weighted_tip_uses_the_learned_linear_combiner(self) -> None:
+        # 11 won the prior meeting, so form_wins_diff = +1 for the home
+        # side; the -100 coefficient flips the learned margin to -100 →
+        # away — DIVERGING from the unanimous-home base consensus.
+        prior = [_event(1, home_pid=11, away_pid=12, home_score=90, away_score=70)]
+        event = _event(2)
+        base = [TipPick(2, name, 101) for name in LEAGUE_HEURISTICS]
+        by_name = {
+            p.heuristic: p.selected_side_id
+            for p in compute_derived_picks(
+                event,
+                prior,
+                prior,
+                base,
+                linear_weights=_d3_linear_weights(-100.0),
+            )
+        }
+        assert by_name[HEURISTIC_WEIGHTED_TIP] == 102
+        assert by_name[HEURISTIC_BEST_BET] == 101
+
+    def test_boosted_tip_without_a_model_is_the_majority_vote(self) -> None:
+        event = _event(5, home_score=80, away_score=70)
+        base = [
+            TipPick(5, HEURISTIC_HOME_ADVANTAGE, 102),
+            TipPick(5, HEURISTIC_FORM, 102),
+        ]
+        by_name = {
+            p.heuristic: p.selected_side_id
+            for p in compute_derived_picks(event, [], [], base)
+        }
+        assert by_name[HEURISTIC_BOOSTED_TIP] == 102
+        assert by_name[HEURISTIC_BOOSTED_TIP] == by_name[HEURISTIC_BEST_BET]
+
+    def test_boosted_tip_uses_the_learned_model(self) -> None:
+        model = SimpleNamespace(predict=lambda features: [-100.0])
+        prior = [_event(1, home_pid=11, away_pid=12, home_score=90, away_score=70)]
+        event = _event(2)
+        base = [TipPick(2, name, 101) for name in LEAGUE_HEURISTICS]
+        by_name = {
+            p.heuristic: p.selected_side_id
+            for p in compute_derived_picks(
+                event, prior, prior, base, boosted_model=model
+            )
+        }
+        assert by_name[HEURISTIC_BOOSTED_TIP] == 102
+        assert by_name[HEURISTIC_BEST_BET] == 101
+
+    def test_learned_linear_failure_falls_back_to_the_majority_vote(self) -> None:
+        # A non-numeric intercept fails float() inside the linear
+        # prediction — the pick must degrade to the fallback, not raise.
+        event = _event(2)
+        base = [TipPick(2, name, 101) for name in LEAGUE_HEURISTICS]
+        by_name = {
+            p.heuristic: p.selected_side_id
+            for p in compute_derived_picks(
+                event, [], [], base, linear_weights=("not-a-number", {})
+            )
+        }
+        assert by_name[HEURISTIC_WEIGHTED_TIP] == 101
+
+    def test_learned_boosted_failure_falls_back_to_the_majority_vote(self) -> None:
+        event = _event(2)
+        base = [TipPick(2, name, 101) for name in LEAGUE_HEURISTICS]
+        by_name = {
+            p.heuristic: p.selected_side_id
+            for p in compute_derived_picks(
+                event, [], [], base, boosted_model=_ExplodingPredictor()
+            )
+        }
+        assert by_name[HEURISTIC_BOOSTED_TIP] == 101
+
+
+class TestComputeAllPicksAndDerived:
+    """The single-walk pipeline: base + derived per event, no re-walk,
+    no look-ahead — derived picks only ever see PRIOR evidence."""
+
+    def test_emits_base_then_derived_for_every_event_in_one_walk(self) -> None:
+        e1 = _event(1, home_pid=11, away_pid=12, home_score=90, away_score=70)
+        e2 = _event(2, home_pid=12, away_pid=11, home_score=80, away_score=60)
+        picks = compute_all_picks_and_derived([e1, e2])
+        per_event = list(LEAGUE_HEURISTICS) + list(DERIVED_LEAGUE_HEURISTICS)
+        assert [p.heuristic for p in picks] == per_event + per_event
+
+    def test_drawn_event_carries_null_base_and_derived_picks(self) -> None:
+        draw = _event(1, home_score=44, away_score=44)
+        picks = compute_all_picks_and_derived([draw])
+        assert len(picks) == 6
+        assert {p.heuristic for p in picks} == (
+            set(LEAGUE_HEURISTICS) | set(DERIVED_LEAGUE_HEURISTICS)
+        )
+        assert all(p.selected_side_id is None for p in picks)
+
+    def test_no_lookahead_a_later_event_never_changes_an_earlier_pick(self) -> None:
+        early = _event(
+            1,
+            starts_at=datetime(2026, 4, 2),
+            home_pid=11,
+            away_pid=12,
+            home_score=90,
+            away_score=70,
+        )
+        later = _event(
+            2,
+            starts_at=datetime(2026, 5, 2),
+            home_pid=11,
+            away_pid=12,
+            home_score=50,
+            away_score=90,
+        )
+        # The later event is in the input (deliberately shuffled) — the
+        # early event's base AND derived picks must not see it.
+        shuffled = compute_all_picks_and_derived([later, early])
+        alone = compute_all_picks_and_derived([early])
+        assert [p for p in shuffled if p.event_id == 1] == alone
+
+    def test_learned_weights_reach_the_derived_picks_through_the_walk(self) -> None:
+        e1 = _event(1, home_pid=11, away_pid=12, home_score=90, away_score=70)
+        e2 = _event(2, home_pid=11, away_pid=12, home_score=70, away_score=50)
+        picks = compute_all_picks_and_derived(
+            [e1, e2], linear_weights=_d3_linear_weights(-100.0)
+        )
+        by_key = {(p.event_id, p.heuristic): p.selected_side_id for p in picks}
+        # Event 1: empty prior → all-zero features → y = 0 → home.
+        assert by_key[(1, HEURISTIC_WEIGHTED_TIP)] == 101
+        # Event 2: form_wins_diff = +1 × (-100) → away, while the
+        # majority-vote base consensus stays home.
+        assert by_key[(2, HEURISTIC_WEIGHTED_TIP)] == 102
+        assert by_key[(2, HEURISTIC_BEST_BET)] == 101
+
+    def test_base_picks_match_the_standalone_base_pipeline(self) -> None:
+        e1 = _event(1, home_pid=11, away_pid=12, home_score=90, away_score=70)
+        e2 = _event(2, home_pid=12, away_pid=11, home_score=80, away_score=60)
+        picks = compute_all_picks_and_derived([e1, e2])
+        base = compute_all_picks([e1, e2])
+        assert [p for p in picks if p.heuristic in LEAGUE_MODELS] == base
+
+
+class TestGenerateForCompetitionDerived:
+    """FCL-6 service wiring: derived names persist per competition, the
+    learned combiners load scoped, and every failure mode degrades to
+    the majority-vote fallback — generation never crashes on a model."""
+
+    @pytest.mark.asyncio
+    async def test_persists_base_and_derived_rows_per_completed_event(
+        self,
+    ) -> None:
+        seasons = [SeasonRef(id=7, label="2026", is_current=True)]
+        events = [_event(1, season_id=7, home_score=90, away_score=70)]
+        db = _fake_session()
+        service = LeagueHeuristicsService()
+        patches = _patched_fetches(service, seasons, events, {})
+        with patches[0], patches[1], patches[2], patches[3], patches[4]:
+            summary = await service.generate_for_competition(db, competition_id=42)
+
+        rows = [call.args[0] for call in db.add.call_args_list]
+        assert len(rows) == 6  # 1 event × (3 base + 3 derived)
+        assert {row.heuristic for row in rows} == (
+            set(LEAGUE_HEURISTICS) | set(DERIVED_LEAGUE_HEURISTICS)
+        )
+        assert all(row.competition_id == 42 for row in rows)
+        assert all(row.season_id == 7 for row in rows)
+        assert summary["tips_inserted"] == 6
+        assert summary["derived_tips"] == {
+            "best_bet": 1,
+            "weighted_tip": 1,
+            "boosted_tip": 1,
+        }
+        db.commit.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_drawn_event_derives_null_tips_too(self) -> None:
+        seasons = [SeasonRef(id=7, label="2026", is_current=True)]
+        events = [_event(1, season_id=7, home_score=44, away_score=44)]
+        db = _fake_session()
+        service = LeagueHeuristicsService()
+        patches = _patched_fetches(service, seasons, events, {})
+        with patches[0], patches[1], patches[2], patches[3], patches[4]:
+            summary = await service.generate_for_competition(db, competition_id=42)
+
+        rows = [call.args[0] for call in db.add.call_args_list]
+        assert len(rows) == 6
+        assert all(row.selected_participant_id is None for row in rows)
+        assert summary["tips_inserted"] == 6
+
+    @pytest.mark.asyncio
+    async def test_best_bet_is_the_majority_vote_over_disagreeing_base_models(
+        self,
+    ) -> None:
+        seasons = [SeasonRef(id=7, label="2026", is_current=True)]
+        events = [
+            # 11: 1-0 at ~101.7%; 12: 1-0 at 180.0%.
+            _event(
+                1,
+                season_id=7,
+                home_pid=11,
+                away_pid=41,
+                home_score=60,
+                away_score=59,
+            ),
+            _event(
+                2,
+                season_id=7,
+                home_pid=12,
+                away_pid=42,
+                home_score=90,
+                away_score=50,
+            ),
+            # Target: home_advantage → home, form ties 1-1 → home,
+            # ladder → away (12's percentage is higher) — a 2-1 split.
+            _event(
+                3,
+                season_id=7,
+                home_pid=11,
+                away_pid=12,
+                home_score=70,
+                away_score=50,
+            ),
+        ]
+        db = _fake_session()
+        service = LeagueHeuristicsService()
+        patches = _patched_fetches(service, seasons, events, {})
+        with patches[0], patches[1], patches[2], patches[3], patches[4]:
+            await service.generate_for_competition(db, competition_id=42)
+
+        rows = [call.args[0] for call in db.add.call_args_list]
+        by_key = {
+            (row.event_id, row.heuristic): row.selected_participant_id
+            for row in rows
+            if row.event_id == 3
+        }
+        assert by_key[(3, HEURISTIC_BEST_BET)] == 101  # majority of the split
+        assert by_key[(3, HEURISTIC_LADDER)] == 102  # the dissenting base vote
+        # Before training both combiners fall back to the SAME majority.
+        assert by_key[(3, HEURISTIC_WEIGHTED_TIP)] == 101
+        assert by_key[(3, HEURISTIC_BOOSTED_TIP)] == 101
+
+    @pytest.mark.asyncio
+    async def test_loaded_learned_combiners_override_the_fallback(self) -> None:
+        seasons = [SeasonRef(id=7, label="2026", is_current=True)]
+        events = [
+            _event(
+                1, season_id=7, home_pid=11, away_pid=12,
+                home_score=90, away_score=70,
+            ),
+            _event(
+                2, season_id=7, home_pid=11, away_pid=12,
+                home_score=70, away_score=50,
+            ),
+        ]
+        linear = _d3_linear_weights(-100.0)
+        boosted = SimpleNamespace(predict=lambda features: [-100.0])
+        db = _fake_session()
+        service = LeagueHeuristicsService()
+        patches = _patched_fetches(
+            service,
+            seasons,
+            events,
+            {},
+            linear_weights=linear,
+            boosted_model=boosted,
+        )
+        with patches[0], patches[1], patches[2], patches[3], patches[4]:
+            await service.generate_for_competition(db, competition_id=42)
+
+        rows = [call.args[0] for call in db.add.call_args_list]
+        by_key = {
+            (row.event_id, row.heuristic): row.selected_participant_id
+            for row in rows
+        }
+        # Event 2: form_wins_diff +1 × (-100) → away for BOTH combiners,
+        # while the base consensus stays home.
+        assert by_key[(2, HEURISTIC_WEIGHTED_TIP)] == 102
+        assert by_key[(2, HEURISTIC_BOOSTED_TIP)] == 102
+        assert by_key[(2, HEURISTIC_BEST_BET)] == 101
+        # Event 1: zero features → linear y = 0 → home; the boosted
+        # model still says -100 → away (the two paths are independent).
+        assert by_key[(1, HEURISTIC_WEIGHTED_TIP)] == 101
+        assert by_key[(1, HEURISTIC_BOOSTED_TIP)] == 102
+
+    @pytest.mark.asyncio
+    async def test_scoped_model_load_failure_falls_back_and_never_crashes(
+        self,
+    ) -> None:
+        """The CRUD reads raising (DB outage) must not fail generation —
+        the REAL loaders degrade to ``None`` (their guard is under test
+        here, so they are NOT patched out) and both combiners ride the
+        majority-vote fallback."""
+        seasons = [SeasonRef(id=7, label="2026", is_current=True)]
+        events = [_event(1, season_id=7, home_score=90, away_score=70)]
+        db = _fake_session()
+        service = LeagueHeuristicsService()
+        patches = (
+            patch.object(service, "_fetch_seasons", AsyncMock(return_value=seasons)),
+            patch.object(
+                service, "_fetch_completed_events", AsyncMock(return_value=events)
+            ),
+            patch.object(
+                service, "_fetch_existing_tips", AsyncMock(return_value={})
+            ),
+            patch(
+                "packages.shared.crud.model_versions.get_active_coefficients",
+                new=AsyncMock(side_effect=RuntimeError("db down")),
+            ),
+            patch(
+                "packages.shared.crud.model_versions.get_active_model_artifact",
+                new=AsyncMock(side_effect=RuntimeError("db down")),
+            ),
+        )
+        with patches[0], patches[1], patches[2], patches[3], patches[4]:
+            summary = await service.generate_for_competition(db, competition_id=42)
+
+        rows = [call.args[0] for call in db.add.call_args_list]
+        by_key = {
+            (row.event_id, row.heuristic): row.selected_participant_id
+            for row in rows
+        }
+        assert by_key[(1, HEURISTIC_WEIGHTED_TIP)] == by_key[
+            (1, HEURISTIC_BEST_BET)
+        ]
+        assert by_key[(1, HEURISTIC_BOOSTED_TIP)] == by_key[
+            (1, HEURISTIC_BEST_BET)
+        ]
+        assert summary["tips_inserted"] == 6
+        db.commit.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_learned_prediction_failure_falls_back_per_combiner(
+        self,
+    ) -> None:
+        """A loaded model that fails at PREDICT time (corrupt artifact /
+        stale feature contract) degrades that combiner to the fallback —
+        the pass and the other combiner are unaffected."""
+        seasons = [SeasonRef(id=7, label="2026", is_current=True)]
+        events = [_event(1, season_id=7, home_score=90, away_score=70)]
+        db = _fake_session()
+        service = LeagueHeuristicsService()
+        patches = _patched_fetches(
+            service,
+            seasons,
+            events,
+            {},
+            linear_weights=("not-a-number", {}),
+            boosted_model=_ExplodingPredictor(),
+        )
+        with patches[0], patches[1], patches[2], patches[3], patches[4]:
+            summary = await service.generate_for_competition(db, competition_id=42)
+
+        rows = [call.args[0] for call in db.add.call_args_list]
+        by_key = {
+            (row.event_id, row.heuristic): row.selected_participant_id
+            for row in rows
+        }
+        assert by_key[(1, HEURISTIC_WEIGHTED_TIP)] == by_key[
+            (1, HEURISTIC_BEST_BET)
+        ]
+        assert by_key[(1, HEURISTIC_BOOSTED_TIP)] == by_key[
+            (1, HEURISTIC_BEST_BET)
+        ]
+        assert summary["tips_inserted"] == 6
+        db.commit.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_registered_competition_resolves_its_set_through_its_name(
+        self,
+        monkeypatch,
+    ) -> None:
+        """FCL-2 resolution flows through generation: the league-registered
+        BASE set is honoured, and the three derived names are appended."""
+        monkeypatch.setitem(LEAGUE_MODEL_SETS, "Named Test League", (HEURISTIC_ELO,))
+        seasons = [SeasonRef(id=7, label="2026", is_current=True)]
+        events = [_event(1, season_id=7, home_score=90, away_score=70)]
+        db = _fake_session()
+        service = LeagueHeuristicsService()
+        patches = _patched_fetches(service, seasons, events, {})
+        with patches[0], patches[1], patches[2], patches[3], patches[4], \
+                patch.object(
+                    service, "_fetch_sport_id", AsyncMock(return_value="afl")
+                ), \
+                patch.object(
+                    service,
+                    "_fetch_competition_name",
+                    AsyncMock(return_value="Named Test League"),
+                ):
+            summary = await service.generate_for_competition(db, competition_id=42)
+
+        rows = [call.args[0] for call in db.add.call_args_list]
+        assert {row.heuristic for row in rows} == (
+            {HEURISTIC_ELO} | set(DERIVED_LEAGUE_HEURISTICS)
+        )
+        assert summary["tips_inserted"] == 4
+
+    @pytest.mark.asyncio
+    async def test_unregistered_competition_falls_through_to_sport_plus_derived(
+        self,
+    ) -> None:
+        """All leagues are first-class (FCL-6): an unregistered name keeps
+        its sport's base set byte-identically AND gains the three derived
+        names."""
+        seasons = [SeasonRef(id=7, label="2026", is_current=True)]
+        events = [_event(1, season_id=7, home_score=90, away_score=70)]
+        db = _fake_session()
+        service = LeagueHeuristicsService()
+        patches = _patched_fetches(service, seasons, events, {})
+        with patches[0], patches[1], patches[2], patches[3], patches[4], \
+                patch.object(
+                    service,
+                    "_fetch_sport_id",
+                    AsyncMock(return_value="rugby-league"),
+                ), \
+                patch.object(
+                    service,
+                    "_fetch_competition_name",
+                    AsyncMock(return_value="Mystery League"),
+                ):
+            summary = await service.generate_for_competition(db, competition_id=42)
+
+        rows = [call.args[0] for call in db.add.call_args_list]
+        assert {row.heuristic for row in rows} == (
+            set(RUGBY_LEAGUE_MODELS) | set(DERIVED_LEAGUE_HEURISTICS)
+        )
+        assert summary["tips_inserted"] == 7
 
 
 # ---------------------------------------------------------------------------
@@ -720,13 +1417,15 @@ async def test_generation_round_trip_is_idempotent_against_unique_constraint(
     finally:
         await engine.dispose()
 
-    # 5 completed events × 3 heuristics; the scheduled event got nothing.
-    assert first["tips_inserted"] == 15
-    assert total == 15
-    assert heuristics == set(LEAGUE_HEURISTICS)
+    # 5 completed events × (3 base + 3 derived) heuristics; the
+    # scheduled event got nothing.  No scoped trained models exist, so
+    # both combiners ride the majority-vote fallback — rows still exist.
+    assert first["tips_inserted"] == 30
+    assert total == 30
+    assert heuristics == set(LEAGUE_HEURISTICS) | set(DERIVED_LEAGUE_HEURISTICS)
     assert season_ids == {ids["season_2025"], ids["season_2026"]}
-    # Exactly the three draw tips carry a NULL selection.
-    assert null_picks == 3
+    # Exactly the six draw tips (one drawn event × 6 names) carry NULL.
+    assert null_picks == 6
     # Re-running must not duplicate or crash — and must not churn.
     assert second["tips_inserted"] == 0
     assert second["tips_updated"] == 0
@@ -750,4 +1449,5 @@ async def test_module_level_entry_point_matches_service(_db_at_head) -> None:
     finally:
         await engine.dispose()
 
-    assert summary["tips_inserted"] == 15
+    # 5 completed events × (3 base + 3 derived) heuristics.
+    assert summary["tips_inserted"] == 30

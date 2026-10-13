@@ -58,6 +58,7 @@ from packages.shared.services.explanation import (
     rugby_league_system_prompt,
 )
 from packages.shared.services.league_heuristics import (
+    DERIVED_LEAGUE_HEURISTICS,
     RUGBY_LEAGUE_EXCLUDED_MODELS,
     RUGBY_LEAGUE_MODELS,
     CompletedEvent,
@@ -677,6 +678,8 @@ async def _seed_rugby_league(db) -> dict[str, int]:
         "event_id": upcoming.id,
         "broncos_id": broncos.id,
         "knights_id": knights.id,
+        "upcoming_home_side_id": upcoming_home.id,
+        "upcoming_away_side_id": upcoming_away.id,
     }
 
 
@@ -969,6 +972,70 @@ class TestLeagueTipExplanationService:
             client=_fake_client(), cache=memory_cache
         )
         assert await service.explanations_for_event(db, event_id=999999) == []
+
+    # -- FCL-7: derived-named tip rows are first-class data -------------
+
+    async def _seed_derived_tips(self, db, ids: dict[str, int]) -> None:
+        """Plant the derived trio's rows on the upcoming event — exactly
+        what FCL-6 generation persists for EVERY league (picking the
+        home side, the side id being the ``event_participants`` FK)."""
+        for heuristic in DERIVED_LEAGUE_HEURISTICS:
+            db.add(
+                LeagueTip(
+                    event_id=ids["event_id"],
+                    heuristic=heuristic,
+                    selected_participant_id=ids["upcoming_home_side_id"],
+                    competition_id=ids["competition_id"],
+                    season_id=ids["season_id"],
+                )
+            )
+        await db.commit()
+
+    async def test_batch_explains_derived_named_tips_never_skips(
+        self, db, memory_cache
+    ):
+        """A derived-named tip row is generation output (FCL-6), never a
+        data bug — the batch must explain it, not log-and-skip it."""
+        ids = await _seed_rugby_league(db)
+        await self._seed_derived_tips(db, ids)
+        service = LeagueTipExplanationService(
+            client=_fake_client(), cache=memory_cache
+        )
+        rows = await service.explanations_for_event(db, event_id=ids["event_id"])
+        by_heuristic = {row["heuristic"]: row for row in rows}
+        for heuristic in DERIVED_LEAGUE_HEURISTICS:
+            assert heuristic in by_heuristic, heuristic
+            assert by_heuristic[heuristic]["picked"] == "Broncos"
+            assert by_heuristic[heuristic]["explanation"] == (
+                "The signals say Broncos."
+            )
+
+    async def test_batch_orders_base_registry_then_derived(self, db, memory_cache):
+        ids = await _seed_rugby_league(db)
+        await self._seed_derived_tips(db, ids)
+        service = LeagueTipExplanationService(
+            client=_fake_client(), cache=memory_cache
+        )
+        rows = await service.explanations_for_event(db, event_id=ids["event_id"])
+        assert [row["heuristic"] for row in rows] == (
+            list(RUGBY_LEAGUE_MODELS) + list(DERIVED_LEAGUE_HEURISTICS)
+        )
+
+    async def test_single_derived_named_tip_is_explained(self, db, memory_cache):
+        """The one-tip path explains a derived name instead of rejecting
+        it as an unknown model (FCL-7)."""
+        ids = await _seed_rugby_league(db)
+        await self._seed_derived_tips(db, ids)
+        service = LeagueTipExplanationService(
+            client=_fake_client(), cache=memory_cache
+        )
+        text = await service.generate_explanation_for_tip(
+            db,
+            competition_id=ids["competition_id"],
+            event_id=ids["event_id"],
+            heuristic="best_bet",
+        )
+        assert text == "The signals say Broncos."
 
 
 # ---------------------------------------------------------------------------

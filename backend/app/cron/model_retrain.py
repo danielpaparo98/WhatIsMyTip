@@ -19,6 +19,17 @@ retrain succeeded (mirroring the orchestrator's never-crash philosophy) —
 only a LINEAR retrain failure propagates to :meth:`BaseJob.execute`'s
 retry/alert handling, unchanged.
 
+FCL-5: after the existing retrains, ``run()`` also runs the per-league
+pass (:func:`packages.shared.services.league_retrain.
+run_all_league_retrains`) — every competition with completed-event
+history gets its own linear + boosted combiners trained on its own
+results (all leagues are first-class; discovery is registration-free).
+The league outcome nests under a NEW ``"leagues"`` key, leaving every
+existing top-level key untouched; the pass is NOT gated by
+``boosted_retrain_enabled`` (it owns the league boosted fit itself), and
+a league-pass failure — like a boosted failure — is logged and reported
+in the nested dict without failing the job.
+
 Mirrors :class:`app.cron.historic_refresh.HistoricRefreshJob` — another
 weekly long-running job — so the timeout/retry guard rails match.
 """
@@ -29,6 +40,7 @@ from app.cron.base import BaseJob
 from packages.shared.config import settings
 from packages.shared.logger import get_logger
 from packages.shared.services.boosted_retrain import run_boosted_retrain
+from packages.shared.services.league_retrain import run_all_league_retrains
 from packages.shared.services.model_retrain import run_model_retrain
 
 logger = get_logger(__name__)
@@ -43,6 +55,11 @@ class ModelRetrainJob(BaseJob):
     gradient-boosted regression, and atomically promotes both new active
     versions.  The boosted step is skipped entirely when
     ``settings.boosted_retrain_enabled`` is off (linear-only run).
+
+    FCL-5: each run then also trains every league's own linear + boosted
+    combiners (:func:`packages.shared.services.league_retrain.
+    run_all_league_retrains`) — per-competition outcomes nest under the
+    summary's ``"leagues"`` key and never fail the job.
     """
 
     name = "model-retrain"
@@ -54,13 +71,16 @@ class ModelRetrainJob(BaseJob):
     jitter = 0.1
 
     async def run(self) -> dict:
-        """Invoke both retrain services within the active session.
+        """Invoke the retrain services, then the per-league pass.
 
         Returns:
             The linear retrain's summary dict with its keys untouched at
             the top level, plus ``"boosted_tip": <boosted summary>`` when
             the boosted step ran and ``settings.boosted_retrain_enabled``
-            is on.  If the boosted fit raises, the nested value is
+            is on, plus ``"leagues": <league pass summary>`` (FCL-5) with
+            ``{"competitions": N, "results": {...}}`` for every
+            competition with completed-event history.  If the boosted fit
+            or the league pass raises, the respective nested value is
             ``{"status": "error", "reason": str(exc)}`` and the job still
             succeeds — a partial-success run.  Only a LINEAR retrain
             failure raises (existing retry/alert behaviour, unchanged).
@@ -79,5 +99,21 @@ class ModelRetrainJob(BaseJob):
                         "status": "error",
                         "reason": str(exc),
                     }
+
+            # FCL-5: every competition with completed-event history gets its
+            # own linear + boosted combiners.  Not gated by
+            # boosted_retrain_enabled (the pass owns the league boosted fit
+            # itself); a failure here never fails the job — the nested
+            # "leagues" dict carries the error instead.
+            try:
+                summary["leagues"] = await run_all_league_retrains(session)
+            except Exception as exc:  # noqa: BLE001 — league pass never crashes the job (FCL-5)
+                logger.exception(
+                    "league retrain pass failed; keeping earlier results: %r", exc
+                )
+                summary["leagues"] = {
+                    "status": "error",
+                    "reason": str(exc),
+                }
 
             return summary
