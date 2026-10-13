@@ -177,6 +177,17 @@ const LEAGUE_DERIVED_LABELS: Record<string, string> = {
   boosted_tip: 'Boosted Tip',
 }
 
+/** Base-model labels — self-contained so a league base model that the
+ * AFL config's modelDisplayNames lacks (ladder is league-only) still
+ * gets a proper display label. */
+const LEAGUE_BASE_LABELS: Record<string, string> = {
+  home_advantage: 'Home Advantage',
+  form: 'Form',
+  ladder: 'Ladder',
+  elo: 'Elo Rating',
+  matchup: 'Matchup',
+}
+
 /**
  * The user-selectable heuristics for a league (FCL-13): the league's
  * BASE model set (result-derived, per sport) followed by the derived
@@ -198,7 +209,7 @@ export function getLeagueHeuristicOptions(
   return [
     ...baseOrder.map((value) => ({
       value,
-      label: config.modelDisplayNames[value] ?? value,
+      label: LEAGUE_BASE_LABELS[value] ?? config.modelDisplayNames[value] ?? value,
     })),
     ...LEAGUE_DERIVED_HEURISTICS.map((value) => ({
       value,
