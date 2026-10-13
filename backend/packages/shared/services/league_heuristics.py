@@ -1045,9 +1045,18 @@ class LeagueHeuristicsService:
         from ..crud.model_versions import get_active_coefficients
 
         try:
-            return await get_active_coefficients(
-                db, HEURISTIC_WEIGHTED_TIP, competition_id=competition_id
-            )
+            # FCL-11: the read runs inside a SAVEPOINT.  A failed load
+            # (DB fault, un-migrated schema) otherwise leaves the
+            # AsyncSession's transaction ABORTED — every later statement
+            # of the generation pass (and the enclosing sync's fixture
+            # writes!) then dies with PendingRollbackError.  Rolling
+            # back to the savepoint discards only the failed read and
+            # keeps the outer transaction — and the majority-vote
+            # fallback — fully alive.
+            async with db.begin_nested():
+                return await get_active_coefficients(
+                    db, HEURISTIC_WEIGHTED_TIP, competition_id=competition_id
+                )
         except Exception:  # noqa: BLE001 — model load never fails generation
             logger.warning(
                 "league heuristics: loading weighted_tip coefficients "
@@ -1076,9 +1085,13 @@ class LeagueHeuristicsService:
         from ..crud.model_versions import get_active_model_artifact
 
         try:
-            loaded = await get_active_model_artifact(
-                db, HEURISTIC_BOOSTED_TIP, competition_id=competition_id
-            )
+            # FCL-11: SAVEPOINT around the DB read — same reasoning as
+            # :meth:`_load_linear_weights` (a failed read must not abort
+            # the generation pass's transaction).
+            async with db.begin_nested():
+                loaded = await get_active_model_artifact(
+                    db, HEURISTIC_BOOSTED_TIP, competition_id=competition_id
+                )
         except Exception:  # noqa: BLE001 — model load never fails generation
             logger.warning(
                 "league heuristics: loading boosted_tip artifact failed "
