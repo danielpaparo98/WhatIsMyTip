@@ -109,14 +109,14 @@ describe('rugby-league SportConfig', () => {
     }
   })
 
-  it('orders the reduced heuristic set — elo, form, home_advantage, matchup', () => {
+  it('orders the AFL heuristic set — identical tabs across AFL and every league (PARITY)', () => {
     for (const key of RUGBY_LEAGUE_KEYS) {
       const config = getLeagueConfig(key)
       expect(config.heuristicOrder, key).toEqual([
-        'elo',
-        'form',
-        'home_advantage',
-        'matchup',
+        'boosted_tip',
+        'weighted_tip',
+        'best_bet',
+        'yolo',
       ])
       for (const h of config.heuristicOrder) {
         expect(config.heuristicLabels, `Missing label for heuristic: ${h}`).toHaveProperty(h)
@@ -125,20 +125,12 @@ describe('rugby-league SportConfig', () => {
     }
   })
 
-  it('labels ONLY the reduced model set — no AFL-only or unsourced models leak in', () => {
-    const models = ['elo', 'form', 'home_advantage', 'matchup']
-    // Excluded per the session bundle: no NRL source for these yet, and
-    // the AFL heuristics must not leak through a config spread.
-    const excluded = [
-      'weather_impact',
-      'injury_impact',
-      'player_form',
-      'value',
-      'boosted_tip',
-      'weighted_tip',
-      'best_bet',
-      'yolo',
-    ]
+  it('labels ONLY the six-model parity set — injury/player data-starved models never leak in', () => {
+    const models = ['elo', 'form', 'home_advantage', 'matchup', 'value', 'weather_impact']
+    // Excluded per the parity scope decision: no league data source for
+    // these two AFL scrapes. The AFL-derived heuristics are the TABS
+    // (heuristicOrder), never model entries.
+    const excluded = ['injury_impact', 'player_form']
     for (const key of RUGBY_LEAGUE_KEYS) {
       const config = getLeagueConfig(key)
       for (const m of models) {

@@ -1,7 +1,7 @@
-<template>
+﻿<template>
   <!--
     EDITORIAL REDESIGN (2026-09-20, user direction): the report reads as
-    a centered magazine column — hairline section rules and typographic
+    a centered magazine column â€” hairline section rules and typographic
     hierarchy instead of stacked cards.  One eyebrow total ("Grand
     Final"); every section after it is a numbered small-caps label over
     a hairline.  Monochrome tokens only; the confetti is the colour
@@ -14,7 +14,7 @@
       <div class="teams">
         <div class="team">
           <img
-            :src="getLogoUrl(game.home_team ?? 'TBD')"
+            :src="logoUrlFor(game.home_team ?? 'TBD')"
             :alt="`${game.home_team ?? 'TBD'} logo`"
             class="team-logo"
             loading="lazy"
@@ -27,7 +27,7 @@
         <span class="vs">VS</span>
         <div class="team">
           <img
-            :src="getLogoUrl(game.away_team ?? 'TBD')"
+            :src="logoUrlFor(game.away_team ?? 'TBD')"
             :alt="`${game.away_team ?? 'TBD'} logo`"
             class="team-logo"
             loading="lazy"
@@ -47,7 +47,7 @@
       <p v-if="report.executive_summary" class="lede">{{ report.executive_summary }}</p>
     </header>
 
-    <!-- 01 · The Verdict -->
+    <!-- 01 Â· The Verdict -->
     <section v-if="report.prediction" class="gf-section">
       <h2 class="section-label"><span class="section-no">01</span>The Verdict</h2>
       <p class="verdict">
@@ -65,7 +65,7 @@
       </p>
     </section>
 
-    <!-- 02 · The Tips — weighted tip leads; one card per heuristic -->
+    <!-- 02 Â· The Tips â€” weighted tip leads; one card per heuristic -->
     <section v-if="tips.length > 0" class="gf-section">
       <h2 class="section-label"><span class="section-no">02</span>The Tips</h2>
       <div class="tip-cards">
@@ -79,7 +79,7 @@
       </div>
     </section>
 
-    <!-- 03 · The Models — every model's raw call, so users can see what
+    <!-- 03 Â· The Models â€” every model's raw call, so users can see what
          feeds the heuristics above -->
     <section v-if="models.length > 0" class="gf-section">
       <h2 class="section-label"><span class="section-no">03</span>The Models</h2>
@@ -94,7 +94,7 @@
       </div>
     </section>
 
-    <!-- 04 · Season Story -->
+    <!-- 04 Â· Season Story -->
     <section v-if="seasonStorySides.length > 0" class="gf-section">
       <h2 class="section-label"><span class="section-no">04</span>Season Story</h2>
       <div class="two-col">
@@ -108,7 +108,7 @@
       </div>
     </section>
 
-    <!-- 04 · Keys to the Game -->
+    <!-- 04 Â· Keys to the Game -->
     <section v-if="keys.length > 0" class="gf-section">
       <h2 class="section-label"><span class="section-no">05</span>Keys to the Game</h2>
       <ol class="key-list">
@@ -119,7 +119,7 @@
       </ol>
     </section>
 
-    <!-- 05 · Players to Watch -->
+    <!-- 05 Â· Players to Watch -->
     <section v-if="homePlayers.length > 0 || awayPlayers.length > 0" class="gf-section">
       <h2 class="section-label"><span class="section-no">06</span>Players to Watch</h2>
       <div class="two-col">
@@ -144,7 +144,7 @@
       </div>
     </section>
 
-    <!-- 06 · Injury Watch (hidden entirely when no data) -->
+    <!-- 06 Â· Injury Watch (hidden entirely when no data) -->
     <section v-if="homeInjuries.length > 0 || awayInjuries.length > 0" class="gf-section">
       <h2 class="section-label"><span class="section-no">07</span>Injury Watch</h2>
       <div class="two-col">
@@ -171,8 +171,8 @@
       </div>
     </section>
 
-    <!-- 07 · Conditions & X-Factor (each half hidden when the agent
-         could not assess it — no "unavailable" filler prose) -->
+    <!-- 07 Â· Conditions & X-Factor (each half hidden when the agent
+         could not assess it â€” no "unavailable" filler prose) -->
     <section v-if="weatherVisible || xFactorVisible" class="gf-section">
       <h2 class="section-label"><span class="section-no">08</span>Conditions &amp; X-Factor</h2>
       <div class="two-col">
@@ -187,7 +187,7 @@
       </div>
     </section>
 
-    <!-- 09 · Talking Points — horizontal quick-hit panels (scroll-snap
+    <!-- 09 Â· Talking Points â€” horizontal quick-hit panels (scroll-snap
          on mobile, a distinct layout family from the sections above) -->
     <section v-if="talkingPoints.length > 0" class="gf-section">
       <h2 class="section-label"><span class="section-no">09</span>Talking Points</h2>
@@ -213,25 +213,50 @@ import type {
 } from '~/composables/useApi'
 import { formatExplanationImpl, sortByHeuristicOrder } from '~/composables/useFormatters'
 
+/**
+ * PARITY (2026-10-14): the minimal header shape the component reads.
+ * Both the AFL `Game` and the league event adapter
+ * (`{home_team, away_team, venue, date}`) satisfy it structurally, so
+ * the SAME component renders the report for every league.
+ */
+interface GrandFinalGameShape {
+  home_team: string | null
+  away_team: string | null
+  venue: string | null
+  date: string | null
+}
+
 interface Props {
   report: GrandFinalReport
-  game: Game
+  game: GrandFinalGameShape
   /** Heuristic tips for the game (from the game-detail payload). */
   tips?: Tip[]
   /** Every model's raw call, so users see what feeds the heuristics. */
   models?: ModelPrediction[]
+  /**
+   * PARITY: the league key â€” when set, club badges resolve through the
+   * league identity chain (generated initials for state-league clubs)
+   * instead of the AFL logo map.
+   */
+  leagueKey?: string
 }
 
 const props = withDefaults(defineProps<Props>(), {
   tips: () => [],
   models: () => [],
+  leagueKey: undefined,
 })
 
 const { getLogoUrl, getTeamDisplayName } = useTeamLogos()
+const { logoFor } = useTeamIdentity()
 const { formatDate, formatHeuristic, getModelDisplayName } = useFormatters()
 
+/** PARITY: league-aware badge resolution (AFL map by default). */
+const logoUrlFor = (name: string): string =>
+  props.leagueKey ? (logoFor(name, props.leagueKey) ?? '') : getLogoUrl(name)
+
 // BT-1 (boosted-tip): boosted_tip is the site's flagship recommendation
-// — it leads the card row, weighted_tip and yolo follow.  best_bet is
+// â€” it leads the card row, weighted_tip and yolo follow.  best_bet is
 // KEPT so historical seasons' stored tips still render in order; it is
 // simply no longer generated for new games.
 const TIP_ORDER: Record<string, number> = {
@@ -255,7 +280,7 @@ const seasonStorySides = computed<Array<{ side: string; story: TeamStory }>>(() 
 
 // GF-CONTENT (2026-09-20, user report): the research agent once emitted
 // a placeholder entry ("Unknown" / "leaders unavailable") instead of
-// omitting the section — filter those out defensively here as well as
+// omitting the section â€” filter those out defensively here as well as
 // at the source.
 const isPlaceholderPlayer = (p: PlayerSpotlight): boolean =>
   !p.name?.trim() || p.name.trim().toLowerCase() === 'unknown'
@@ -270,7 +295,7 @@ const homeInjuries = computed<InjuryNote[]>(() => props.report.injury_watch?.hom
 const awayInjuries = computed<InjuryNote[]>(() => props.report.injury_watch?.away ?? [])
 
 // GF-CONTENT: "unavailable" filler prose (legacy stored reports) is
-// hidden — an empty section beats a paragraph that says nothing.
+// hidden â€” an empty section beats a paragraph that says nothing.
 const isUnavailableNote = (text: string | null | undefined): boolean =>
   !!text && /unavailable/i.test(text)
 
@@ -383,7 +408,7 @@ const talkingPoints = computed<string[]>(() =>
 .lede {
   font-size: 1.0625rem;
   line-height: 1.75;
-  /* GF-DESIGN: full text colour — muted grey read as "too light" on the
+  /* GF-DESIGN: full text colour â€” muted grey read as "too light" on the
      live site (user report, 2026-09-20). */
   color: var(--color-text);
   max-width: 65ch;
@@ -458,7 +483,7 @@ const talkingPoints = computed<string[]>(() =>
   font-variant-numeric: tabular-nums;
 }
 
-/* Tips + Models: card grids (user request — scores as cards).
+/* Tips + Models: card grids (user request â€” scores as cards).
    Weighted tip leads via the sort in script; visually the FIRST card
    carries a stronger border so hierarchy reads without colour. */
 .tip-cards {

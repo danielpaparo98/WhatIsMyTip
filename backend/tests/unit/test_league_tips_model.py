@@ -69,6 +69,9 @@ class TestLeagueTipModelMirrorsMigration:
         assert self._table().name == "league_tips"
 
     def test_columns_exact_set_and_types(self) -> None:
+        """The ORM mirrors 0014 PLUS the additive FCL-14 (0016)
+        confidence/margin columns and the PARITY-1 (0017) explanation
+        column — exactly what the migration chain produces at head."""
         cols = self._table().columns
         assert set(cols.keys()) == {
             "id",
@@ -78,11 +81,19 @@ class TestLeagueTipModelMirrorsMigration:
             "competition_id",
             "season_id",
             "generated_at",
+            # 0016 (FCL-14): the AFL card numbers.
+            "confidence",
+            "margin",
+            # 0017 (PARITY-1): the persisted AI explanation.
+            "explanation",
         }
         assert cols["id"].primary_key
         for name in ("event_id", "selected_participant_id", "competition_id", "season_id"):
             assert str(cols[name].type) == "INTEGER", name
         assert "VARCHAR" in str(cols["heuristic"].type).upper()
+        assert str(cols["confidence"].type) == "FLOAT"
+        assert str(cols["margin"].type) == "INTEGER"
+        assert "TEXT" in str(cols["explanation"].type).upper()
         # Type-CLASS assertion, not a render string: SQLAlchemy's generic
         # dialect renders DateTime as "DATETIME" while Postgres reports
         # "timestamp with time zone" — only the class is dialect-stable.
@@ -98,6 +109,11 @@ class TestLeagueTipModelMirrorsMigration:
         # Draw-no-pick: the selected side may be absent.
         assert cols["selected_participant_id"].nullable
         assert cols["generated_at"].nullable
+        # 0016/0017: the card numbers and the AI text are advisory —
+        # NULL for base picks, draw-no-pick rows and unexplained tips.
+        assert cols["confidence"].nullable
+        assert cols["margin"].nullable
+        assert cols["explanation"].nullable
 
     def test_generated_at_has_server_default(self) -> None:
         assert self._table().c.generated_at.server_default is not None

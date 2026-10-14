@@ -50,18 +50,25 @@ from packages.shared.services.league_backtest import (
     winning_side_id,
 )
 from packages.shared.services.league_heuristics import (
+    DEFAULT_MODEL_SET,
     DERIVED_LEAGUE_HEURISTICS,
+    HEURISTIC_ELO,
     HEURISTIC_FORM,
     HEURISTIC_HOME_ADVANTAGE,
     HEURISTIC_LADDER,
+    HEURISTIC_MATCHUP,
+    HEURISTIC_VALUE,
     LEAGUE_HEURISTICS,
     LeagueHeuristicsService,
     SeasonRef,
 )
 
-#: FCL-7: the backtest set the API passes — the D3 base trio plus the
-#: three derived heuristics every league's ``league_tips`` carries.
-_BACKTEST_MODEL_SET = LEAGUE_HEURISTICS + DERIVED_LEAGUE_HEURISTICS
+#: FCL-7 (PARITY): the backtest set the API passes — the league's
+#: resolved BASE set (the parity five for every sport) plus the derived
+#: heuristics every league's ``league_tips`` carries.  (LEAGUE_HEURISTICS
+#: — the D3 trio — remains the SERVICE's default ``models=None`` set and
+#: is exercised by the default-path tests below.)
+_BACKTEST_MODEL_SET = DEFAULT_MODEL_SET + DERIVED_LEAGUE_HEURISTICS
 
 _BACKEND_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 
@@ -756,9 +763,9 @@ async def _seed_competition(async_dsn: str) -> dict[str, int]:
 async def _generate_tips(async_dsn: str, competition_id: int) -> None:
     """Populate league_tips exactly as the sync hook would.
 
-    FCL-6: every completed event persists its base picks AND the three
-    derived heuristics — 4 decided events × (3 base + 3 derived) plus
-    the draw event's 6 draw-no-pick rows = 30.
+    FCL-6 + PARITY: every event (completed, drawn or scheduled)
+    persists its base picks AND the four derived heuristics —
+    6 events × (5 base + 4 derived) = 54.
     """
     engine = create_async_engine(async_dsn, poolclass=NullPool)
     factory = async_sessionmaker(engine, expire_on_commit=False)
@@ -769,7 +776,7 @@ async def _generate_tips(async_dsn: str, competition_id: int) -> None:
             )
     finally:
         await engine.dispose()
-    assert summary["tips_inserted"] == 42
+    assert summary["tips_inserted"] == 54
 
 
 @pytest.mark.postgres
@@ -801,14 +808,15 @@ async def test_seasons_and_current_season_end_to_end(_db_at_head) -> None:
     }
 
     # Expected from the seed (see test_league_heuristics): 2026 has
-    # home_advantage and ladder at 2/2, form at 1/2; the scheduled
-    # round-3 event makes exactly two of three rounds complete.
+    # home_advantage and matchup at 2/2, form/elo/value at 1/2; the
+    # scheduled round-3 event makes exactly two of three rounds complete.
     assert current["season"] == "2026"
     assert current["total_rounds"] == 3
     assert current["rounds_completed"] == 2
 
     by_heuristic = {entry["heuristic"]: entry for entry in current["heuristics"]}
-    # FCL-7: the payload covers the base trio AND the derived trio.
+    # FCL-7 + PARITY: the payload covers the parity base set AND the
+    # derived set.
     assert set(by_heuristic) == set(_BACKTEST_MODEL_SET)
 
     home = by_heuristic[HEURISTIC_HOME_ADVANTAGE]
@@ -825,37 +833,38 @@ async def test_seasons_and_current_season_end_to_end(_db_at_head) -> None:
     assert form["rounds_played"] == 2
     assert form["projected_annual_profit"] == pytest.approx(-1.5)
 
-    ladder = by_heuristic[HEURISTIC_LADDER]
-    assert ladder["total_profit"] == pytest.approx(2 * _FALLBACK_WIN)
-    assert ladder["total_accuracy"] == pytest.approx(1.0)
+    # PARITY base entries: matchup reads 2/2 (R4's h2h edge and R5's
+    # h2h tie both vote home, both won); elo and value back the away
+    # side in R5 — 1/2, −$1.
+    matchup = by_heuristic[HEURISTIC_MATCHUP]
+    assert matchup["total_profit"] == pytest.approx(2 * _FALLBACK_WIN)
+    assert matchup["total_accuracy"] == pytest.approx(1.0)
+    for name in (HEURISTIC_ELO, HEURISTIC_VALUE):
+        entry = by_heuristic[name]
+        assert entry["total_profit"] == pytest.approx(
+            _FALLBACK_WIN - 10.0
+        ), name
+        assert entry["total_accuracy"] == pytest.approx(0.5), name
 
     # FCL-7/FCL-14: the derived heuristics grade at query time exactly
     # like a base model.  Pre-training the combiners ARE the majority
-    # vote (FCL-3d), and both 2026 events vote home — so 2/2 at the
-    # fallback price.  yolo grades its OWN trace (R4 matchup→home ✓,
-    # R5 form→away ✗): 1/2, +$9 − $10 = −$1.
+    # vote (FCL-3d): R4's parity base vote is unanimous home ✓, but R5
+    # splits 3-away (form/elo/value) to 2-home (home_advantage/matchup)
+    # → the majority votes AWAY and loses (Blues won 85-65).  yolo
+    # grades its OWN trace — the strongest signal is elo in BOTH rounds
+    # (R4 +9.12 → home ✓; R5 −28.86 → away ✗).  All four grade 1/2, −$1.
     for name in DERIVED_LEAGUE_HEURISTICS:
         entry = by_heuristic[name]
-        if name == "yolo":
-            assert entry["total_profit"] == pytest.approx(
-                _FALLBACK_WIN - 10.0
-            ), name
-            assert entry["total_accuracy"] == pytest.approx(0.5), name
-            assert entry["rounds_played"] == 2, name
-            assert entry["avg_profit_per_round"] == pytest.approx(
-                (_FALLBACK_WIN - 10.0) / 2
-            ), name
-            assert entry["projected_annual_profit"] == pytest.approx(
-                3 * (_FALLBACK_WIN - 10.0) / 2
-            ), name
-            assert entry["odds_coverage"] == 0.0, name
-            continue
-        assert entry["total_profit"] == pytest.approx(2 * _FALLBACK_WIN), name
-        assert entry["total_accuracy"] == pytest.approx(1.0), name
+        assert entry["total_profit"] == pytest.approx(
+            _FALLBACK_WIN - 10.0
+        ), name
+        assert entry["total_accuracy"] == pytest.approx(0.5), name
         assert entry["rounds_played"] == 2, name
-        assert entry["avg_profit_per_round"] == pytest.approx(_FALLBACK_WIN), name
+        assert entry["avg_profit_per_round"] == pytest.approx(
+            (_FALLBACK_WIN - 10.0) / 2
+        ), name
         assert entry["projected_annual_profit"] == pytest.approx(
-            3 * _FALLBACK_WIN
+            3 * (_FALLBACK_WIN - 10.0) / 2
         ), name
         assert entry["odds_coverage"] == 0.0, name
 
@@ -887,8 +896,8 @@ async def test_compare_season_end_to_end(_db_at_head) -> None:
     finally:
         await engine.dispose()
 
-    # Past season: home_advantage 2/3 (draw round pushes), form and
-    # ladder 1/3 (the form/ladder picks follow prior results).
+    # Past season: home_advantage and matchup 2/3 (the draw round
+    # pushes); form/elo/value 1/3 (they follow the prior results).
     assert past["season"] == "2025"
     comparison = past["comparison"]
     assert set(comparison) == set(_BACKTEST_MODEL_SET)
@@ -910,21 +919,29 @@ async def test_compare_season_end_to_end(_db_at_head) -> None:
 
     assert comparison[HEURISTIC_FORM]["total_correct"] == 1
     assert comparison[HEURISTIC_FORM]["overall_accuracy"] == pytest.approx(1 / 3)
-    assert comparison[HEURISTIC_LADDER]["total_correct"] == 1
-    assert comparison[HEURISTIC_LADDER]["overall_accuracy"] == pytest.approx(1 / 3)
+    # PARITY base entries: elo backs the away Reds in R3 (higher rating)
+    # and value follows the win-rate edge (Reds 1.0 vs Greens' draw-only
+    # 0.5 default) — both 1/3 like form; matchup has no h2h data at all
+    # in 2025, so its tie→home default wins both decided rounds (2/3).
+    assert comparison[HEURISTIC_ELO]["total_correct"] == 1
+    assert comparison[HEURISTIC_ELO]["overall_accuracy"] == pytest.approx(1 / 3)
+    assert comparison[HEURISTIC_VALUE]["total_correct"] == 1
+    assert comparison[HEURISTIC_VALUE]["overall_accuracy"] == pytest.approx(1 / 3)
+    assert comparison[HEURISTIC_MATCHUP]["total_correct"] == 2
+    assert comparison[HEURISTIC_MATCHUP]["overall_accuracy"] == pytest.approx(2 / 3)
 
-    # FCL-7: the derived trio graded from league_tips at query time.
+    # FCL-7: the derived set graded from league_tips at query time.
     # Pre-training both combiners ARE the majority vote (FCL-3d).
-    # VERIFIED pick trace over the 2025 seed (the prior hand-trace here
-    # was wrong — it assumed R3's away pick won, but R3 is a HOME win):
+    # VERIFIED pick trace over the 2025 seed under the PARITY base set:
     #   R1: unanimous home (no prior evidence, ties → home) → CORRECT.
     #   R2: draw → NULL pick, push.
-    #   R3: home_advantage → home (Greens); form AND ladder both → away
-    #       (Reds: 1 prior win + higher pct vs Greens' 0) → the 2-1 away
-    #       vote LOSES to Greens' 100-60 home win.
-    # So the derived trio grades 1/3: +$9 (R1) − $10 (R3) = −$1 — the
-    # honest majority-vote penalty when the two evidence models agree on
-    # the wrong side.  (2026 votes home in both rounds → 2/2 there.)
+    #   R3: home_advantage AND matchup → home (Greens; no h2h meetings
+    #       → tie → home), but form/elo/value all → away (Reds' prior
+    #       win / higher rating / 1.0 win rate) — the 3-2 away vote
+    #       LOSES to Greens' 100-60 home win.
+    # So the derived set grades 1/3: +$9 (R1) − $10 (R3) = −$1 — the
+    # honest majority-vote penalty when the evidence models agree on
+    # the wrong side.  (2026 votes home in R4; R5's 3-away vote loses.)
     for name in DERIVED_LEAGUE_HEURISTICS:
         stats = comparison[name]
         assert stats["total_tips"] == 3, name
@@ -934,8 +951,8 @@ async def test_compare_season_end_to_end(_db_at_head) -> None:
         assert stats["total_rounds"] == 3, name
         assert stats["odds_coverage"] == 0.0, name
 
-    # Best overall: the 2/3 accuracy tie resolves to the canonical
-    # model-set order (home_advantage first).
+    # Best overall: the 2/3 accuracy tie (home_advantage vs matchup)
+    # resolves to the canonical parity-set order (home_advantage first).
     assert past["best_overall"]["heuristic"] == HEURISTIC_HOME_ADVANTAGE
     assert past["best_overall"]["accuracy"] == pytest.approx(2 / 3)
 
@@ -943,16 +960,14 @@ async def test_compare_season_end_to_end(_db_at_head) -> None:
     assert present["season"] == "2026"
     assert present["comparison"][HEURISTIC_HOME_ADVANTAGE]["total_correct"] == 2
     assert present["comparison"][HEURISTIC_FORM]["total_correct"] == 1
-    # FCL-14: yolo grades its OWN trace — R4's strongest signal is the
-    # matchup h2h (Reds 1-0 Blues) → home ✓; R5's strongest is form
-    # (Greens 1 win vs Blues 0) → away ✗ (Blues won 85-65).  The other
-    # three derived heuristics follow the majority vote (2/2).
+    # FCL-14 + PARITY: R5's parity base vote splits 3-away (form, elo,
+    # value) to 2-home (home_advantage, matchup) — so best_bet and both
+    # fallback combiners vote away and LOSE (Blues won 85-65) → 1/2.
+    # yolo grades its OWN trace — the strongest signal is elo in both
+    # rounds (R4 +9.12 → home ✓; R5 −28.86 → away ✗) → 1/2.
     for name in DERIVED_LEAGUE_HEURISTICS:
-        if name == "yolo":
-            continue
-        assert present["comparison"][name]["total_correct"] == 2, name
-    assert present["comparison"]["yolo"]["total_correct"] == 1
+        assert present["comparison"][name]["total_correct"] == 1, name
     assert present["best_overall"]["heuristic"] in (
         HEURISTIC_HOME_ADVANTAGE,
-        HEURISTIC_LADDER,
+        HEURISTIC_MATCHUP,
     )

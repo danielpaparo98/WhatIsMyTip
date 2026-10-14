@@ -55,6 +55,28 @@ class TipGenerationJob(BaseJob):
         async with self._session_factory() as session:
             result = await run_tip_generation(session)
 
+        # PARITY-1 (AFL/league parity): the league NLP sweep rides the
+        # SAME nightly pass — persisted explanations + talking points
+        # for every league's upcoming fixtures.  Best-effort by
+        # contract; failure is recorded, never raised.
+        try:
+            from packages.shared.services.league_nlp_sweep import (
+                run_league_nlp_sweep,
+            )
+
+            async with self._session_factory() as session:
+                sweep = await run_league_nlp_sweep(session)
+            result["league_nlp_sweep"] = {
+                "explanations_created": sweep.get("explanations_created", 0),
+                "match_analyses_created": sweep.get(
+                    "match_analyses_created", 0
+                ),
+                "error": sweep.get("error"),
+            }
+        except Exception as e:  # noqa: BLE001 — leagues never fail AFL generation
+            logger.warning("league NLP sweep failed: %s", e, exc_info=True)
+            result["league_nlp_sweep"] = {"status": "failed", "error": str(e)}
+
         # Best-effort SSG freshness: rebuild the static frontend so the
         # baked HTML picks up the new content.  Fired after every
         # successful run; the payload now carries every content signal
@@ -65,6 +87,16 @@ class TipGenerationJob(BaseJob):
                 "tips_updated": result.get("tips_updated", 0),
                 "match_analyses_created": result.get("match_analyses_created", 0),
                 "match_reports_created": result.get("match_reports_created", 0),
+                "league_explanations_created": (
+                    result.get("league_nlp_sweep", {}).get(
+                        "explanations_created", 0
+                    )
+                ),
+                "league_match_analyses_created": (
+                    result.get("league_nlp_sweep", {}).get(
+                        "match_analyses_created", 0
+                    )
+                ),
             },
         )
         if rebuild is not None:

@@ -72,12 +72,16 @@ class LeaguePickDetail(BaseModel):
     ``picked`` is the side name (``None`` = draw-no-pick);
     ``confidence`` (0..1) and ``margin`` (points) ride on the row for
     the derived heuristics — the same numbers the AFL cards render —
-    and are ``None`` for the base result-derived models.
+    and are ``None`` for the base result-derived models.  PARITY-1:
+    ``explanation`` is the persisted AI text (written by the nightly
+    league NLP sweep), so round cards render the same explanation the
+    AFL cards do at zero per-view LLM cost; ``None`` until generated.
     """
 
     picked: Optional[str] = None
     confidence: Optional[float] = None
     margin: Optional[int] = None
+    explanation: Optional[str] = None
 
 
 class LeagueRoundFixture(BaseModel):

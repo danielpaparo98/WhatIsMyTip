@@ -618,6 +618,12 @@ class LeagueTipExplanationService:
                 f"No {heuristic} tip found for event {event_id}",
             )
 
+        # PARITY-1 (AFL parity): the PERSISTED explanation wins — the
+        # nightly league NLP sweep writes the same pre-generated text
+        # the AFL tips table carries, so reads never pay the LLM.
+        if tip.explanation:
+            return str(tip.explanation)
+
         cache = self._cache if self._cache is not None else LEAGUE_EXPLANATION_CACHE
         cache_key = self._cache_key(competition_id, event_id, heuristic)
         cached = await cache.get(cache_key)
@@ -664,6 +670,22 @@ class LeagueTipExplanationService:
             ) from None
 
         await cache.set(cache_key, explanation)
+
+        # PARITY-1: write-back — an on-demand generation is persisted on
+        # the tip row exactly like the AFL service persists onto
+        # ``tips.explanation``, so every later read (round page
+        # included) is LLM-free.  A persistence failure never blocks
+        # the response: the caller already has the text.
+        try:
+            tip.explanation = explanation
+            await db.commit()
+        except Exception:  # noqa: BLE001 — degrade, never block
+            logger.warning(
+                "League explanations: persisting explanation for "
+                f"(event {event_id}, {heuristic}) failed",
+                exc_info=True,
+            )
+            await db.rollback()
         return explanation
 
     async def explanations_for_event(

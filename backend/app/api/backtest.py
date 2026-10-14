@@ -321,17 +321,40 @@ async def compare_heuristics(
 async def compare_models(
     db: Annotated[AsyncSession, Depends(get_db)],
     season: Annotated[
-        int,
-        Query(ge=2000, description="Season year to compare"),
+        str,
+        Query(description="Season year to compare (AFL) or season label (leagues)"),
     ],
+    league: Annotated[
+        Optional[str],
+        Query(
+            description=(
+                "League key (e.g. 'wafl'). Absent, empty, or 'afl' "
+                "selects the legacy AFL model backtest."
+            )
+        ),
+    ] = None,
 ):
     """Compare individual ML model performance for a season.
 
-    Returns a list of model metrics (sorted by accuracy descending) and
-    a ``best_overall`` summary pointing at the top model.
+    AFL (no ``league``/``afl``): per-model metrics sorted by accuracy
+    descending plus ``best_overall``; ``season`` is a calendar year
+    validated with the original int semantics.
+
+    League (``league=<key>``): the same shape graded on
+    ``league_model_predictions`` (PARITY-1) — ``season`` is the season
+    LABEL string.  Unknown league → 404; unsynced league → the empty
+    comparison structure.
     """
+    if league and league != "afl":
+        league_service = LeagueBacktestService()
+        competition_id = await _league_competition_id(db, league)
+        return await league_service.model_compare(
+            db, competition_id=competition_id, season_label=season
+        )
+
+    year = _legacy_season_year(season)
     service = BacktestService()
-    comparison = await service.compare_models(db, season)
+    comparison = await service.compare_models(db, year)
 
     if comparison:
         best_model = comparison[0]  # already sorted by accuracy desc
@@ -344,7 +367,7 @@ async def compare_models(
         best = {"model_name": None, "accuracy": 0.0, "profit": 0.0}
 
     return {
-        "season": season,
+        "season": year,
         "comparison": comparison,
         "best_overall": best,
     }
@@ -505,13 +528,41 @@ async def get_current_season(
 @router.get("/active-model")
 async def get_active_model(
     db: Annotated[AsyncSession, Depends(get_db)],
+    league: Annotated[
+        Optional[str],
+        Query(
+            description=(
+                "League key (e.g. 'wafl'). Absent, empty, or 'afl' "
+                "selects the legacy global AFL model."
+            )
+        ),
+    ] = None,
 ):
     """Return the currently-active ``weighted_tip`` model version with its
     learned coefficients and training metadata.
 
-    Returns ``{"active": false, "message": "..."}`` when no trained version
-    exists (e.g. before the first weekly retrain has run).
+    AFL (no ``league``/``afl``): the global (NULL-scope) version.
+    League (PARITY-1): the competition's OWN scoped active version — a
+    league never leaks the global AFL model or another league's.
+
+    Returns ``{"active": false, "message": "..."}`` when no trained
+    version exists in scope (e.g. before the league's first retrain).
     """
+    if league and league != "afl":
+        league_service = LeagueBacktestService()
+        competition_id = await _league_competition_id(db, league)
+        result = await league_service.get_active_weighted_model(
+            db, competition_id=competition_id
+        )
+        if result is None:
+            return {
+                "active": False,
+                "message": f"No active Weighted Tip model version found for "
+                f"{league}. The model will be trained after the league's "
+                f"first retrain job runs.",
+            }
+        return {"active": True, "model": result}
+
     service = BacktestService()
     result = await service.get_active_weighted_model(db)
     if result is None:
@@ -531,16 +582,44 @@ async def get_active_model(
 @router.get("/active-boosted-model")
 async def get_boosted_active_model(
     db: Annotated[AsyncSession, Depends(get_db)],
+    league: Annotated[
+        Optional[str],
+        Query(
+            description=(
+                "League key (e.g. 'wafl'). Absent, empty, or 'afl' "
+                "selects the legacy global AFL model."
+            )
+        ),
+    ] = None,
 ):
     """Return the currently-active ``boosted_tip`` (XGBoost) model version
     with its global SHAP feature importances and training metadata (BT-1).
 
+    AFL (no ``league``/``afl``): the global (NULL-scope) version.
+    League (PARITY-1): the competition's OWN scoped active version.
+
     Mirrors ``GET /active-model`` but raises 404 ``not_found`` when no
-    active boosted version exists (e.g. before the first weekly retrain,
-    or while ``BOOSTED_RETRAIN_ENABLED=false``) — unlike the weighted
-    section, the SHAP section has no meaningful "empty" rendering, so the
-    client gets the repo-standard error shape.
+    active boosted version exists in scope (e.g. before the first
+    retrain, or while ``BOOSTED_RETRAIN_ENABLED=false``) — unlike the
+    weighted section, the SHAP section has no meaningful "empty"
+    rendering, so the client gets the repo-standard error shape.
     """
+    if league and league != "afl":
+        league_service = LeagueBacktestService()
+        competition_id = await _league_competition_id(db, league)
+        result = await league_service.get_active_boosted_model(
+            db, competition_id=competition_id
+        )
+        if result is None:
+            raise http_error(
+                404,
+                "not_found",
+                f"No active boosted_tip model version found for {league}. "
+                f"The model will be trained after the league's first "
+                f"retrain job runs.",
+            )
+        return result
+
     result = await get_active_boosted_model(db)
     if result is None:
         raise http_error(

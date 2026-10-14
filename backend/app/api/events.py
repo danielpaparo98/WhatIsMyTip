@@ -41,11 +41,17 @@ from sqlalchemy.exc import MultipleResultsFound
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.db_deps import get_db
-from app.core.exceptions import http_error
+from app.core.exceptions import BackendServiceError, http_error
 from packages.shared.crud.events import EventsCRUD
 from packages.shared.ingestion.national_leagues import get_league
 from packages.shared.models import Competition
-from packages.shared.schemas.events import EventListResponse, EventResponse
+from packages.shared.schemas.events import (
+    EventListResponse,
+    EventResponse,
+    LeagueEventDetailResponse,
+    LeagueMatchReportResponse,
+)
+from packages.shared.schemas.tips import LeagueTipExplanationResponse
 
 router = APIRouter()
 
@@ -211,3 +217,140 @@ async def get_event(
     if not event:
         raise http_error(404, "not_found", "Event not found")
     return EventResponse.model_validate(event)
+
+
+@router.get("/{slug}/detail", response_model=LeagueEventDetailResponse)
+async def get_event_detail(
+    slug: Annotated[str, Path(min_length=1, max_length=16)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> LeagueEventDetailResponse:
+    """Return an event with all related data (PARITY-1, AFL parity) —
+    the league twin of ``GET /api/games/{slug}/detail``: tips (with
+    persisted AI explanations), the numeric model breakdown, match
+    analysis talking points, and weather.
+
+    Raises 404 ``not_found`` when no event exists for ``slug``.  Every
+    section degrades independently: a missing analysis or weather row
+    is ``null``, never an error — exactly like the AFL detail.
+    """
+    from packages.shared.models import (
+        LeagueEventWeather,
+        LeagueMatchAnalysis,
+        LeagueModelPrediction,
+    )
+    from packages.shared.schemas.events import (
+        LeagueMatchAnalysisResponse,
+        LeagueModelPredictionSchema,
+    )
+    from packages.shared.schemas.games import WeatherResponse
+    from packages.shared.services.explanation import LeagueTipExplanationService
+
+    event = await EventsCRUD.get_by_slug_with_participants(db, slug)
+    if not event:
+        raise http_error(404, "not_found", "Event not found")
+    event_id = int(event["id"])
+
+    tips = await LeagueTipExplanationService().explanations_for_event(
+        db, event_id=event_id
+    )
+
+    prediction_rows = (
+        await db.execute(
+            select(LeagueModelPrediction)
+            .where(LeagueModelPrediction.event_id == event_id)
+            .order_by(LeagueModelPrediction.id)
+        )
+    ).scalars().all()
+    model_predictions = [
+        LeagueModelPredictionSchema(
+            model_name=p.model_name,
+            winner=p.winner,
+            confidence=p.confidence,
+            margin=p.margin,
+        )
+        for p in prediction_rows
+    ]
+
+    analysis_row = (
+        await db.execute(
+            select(LeagueMatchAnalysis).where(
+                LeagueMatchAnalysis.event_id == event_id
+            )
+        )
+    ).scalar_one_or_none()
+    match_analysis = (
+        LeagueMatchAnalysisResponse.model_validate(analysis_row)
+        if analysis_row
+        else None
+    )
+
+    weather_row = (
+        await db.execute(
+            select(LeagueEventWeather).where(
+                LeagueEventWeather.event_id == event_id
+            )
+        )
+    ).scalar_one_or_none()
+    weather = (
+        WeatherResponse.model_validate(weather_row) if weather_row else None
+    )
+
+    return LeagueEventDetailResponse(
+        event=EventResponse.model_validate(event),
+        tips=[LeagueTipExplanationResponse.model_validate(t) for t in tips],
+        model_predictions=model_predictions,
+        match_analysis=match_analysis,
+        weather=weather,
+    )
+
+
+@router.get("/{slug}/report", response_model=LeagueMatchReportResponse)
+async def get_event_report(
+    slug: Annotated[str, Path(min_length=1, max_length=16)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> LeagueMatchReportResponse:
+    """Return the stored grand-final pre-match report for an event
+    (PARITY-1) — the league twin of ``GET /api/games/{slug}/report``.
+
+    Raises 404 ``not_found`` when no event exists for ``slug``, when the
+    event is not the grand final, or when the report has not been
+    generated yet — the exact degradation contract the AFL endpoint
+    defines (the frontend treats 404 as "fall back to the detail
+    experience").
+    """
+    from packages.shared.schemas.events import LeagueMatchReportResponse
+    from packages.shared.services.league_match_report import (
+        LeagueMatchReportService,
+    )
+
+    event = await EventsCRUD.get_by_slug_with_participants(db, slug)
+    if not event:
+        raise http_error(404, "not_found", "Event not found")
+    event_id = int(event["id"])
+
+    # Static gate — no OpenRouter client is constructed just to evaluate it.
+    if not await LeagueMatchReportService.is_grand_final(db, event_id=event_id):
+        raise http_error(
+            404, "not_found", "Match report is only available for the grand final"
+        )
+
+    # REVIEW-MINOR-2 parity: a storage or validation problem on a
+    # read-only cosmetic endpoint degrades to 404 ("not yet generated")
+    # instead of a 500 — the frontend already treats 404 as "fall back
+    # to the detail experience".
+    try:
+        row = await LeagueMatchReportService.get_report(db, event_id=event_id)
+        if row is None:
+            raise http_error(404, "not_found", "Match report not yet generated")
+        return LeagueMatchReportResponse.model_validate(row).model_dump(
+            mode="json"
+        )
+    except BackendServiceError:
+        raise
+    except Exception:
+        from packages.shared.logger import get_logger
+
+        get_logger(__name__).exception(
+            "League match report unavailable for %s (degrading to 404)", slug
+        )
+        raise http_error(404, "not_found", "Match report not yet generated")

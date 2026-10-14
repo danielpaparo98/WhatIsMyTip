@@ -9,11 +9,10 @@
 
        Data source: the league-aware backtest API. AFL omits the league
        param (byte-identical legacy URLs); state leagues pass their key.
-       The AFL-only model slots (weighted / boosted / model-compare) are
-       fetched only for AFL today — the sections below render whenever
-       those slots carry data, so a league gains them automatically the
-       moment the API serves league model payloads (drop the isAfl gate
-       in fetchPerformance()).
+       PARITY (2026-10-14): the model slots (weighted / boosted /
+       model-compare) serve EVERY league — the league endpoints resolve
+       competition-scoped payloads, so the sections render (or show
+       their not-yet-trained empty state) identically across the site.
        ===================================================================== -->
   <section class="hero">
     <h1>{{ leagueConfig.displayName }}<br>Performance</h1>
@@ -109,8 +108,8 @@
       <div v-if="!hasSeasonResults" class="season-empty">
         <p>The {{ currentSeason.season }} season hasn't started yet.</p>
         <p class="season-empty-sub">
-          Performance tracking begins once Round 1 tips are graded.<template v-if="isAfl">
-            Historical performance feeds the model weights shown below.</template>
+          Performance tracking begins once Round 1 tips are graded.
+          Historical performance feeds the model weights shown below.
         </p>
       </div>
 
@@ -189,7 +188,7 @@
               :class="{ 'best-model-card': model.model_name === currentSeasonBestModel }"
             >
               <div class="model-mini-header">
-                <span class="model-mini-name">{{ getModelDisplayName(model.model_name) }}</span>
+                <span class="model-mini-name">{{ modelDisplayName(model.model_name) }}</span>
                 <span v-if="model.model_name === currentSeasonBestModel" class="best-dot" title="Best performing model this season">★</span>
               </div>
               <div class="model-mini-acc">
@@ -209,9 +208,9 @@
       </template>
     </section>
 
-    <!-- Active Weighted Model Section (AFL model slot — renders only
-         when the league has a model source; see the header comment). -->
-    <section v-if="isAfl" class="active-model-section">
+    <!-- Active Weighted Model Section (every league — PARITY
+         2026-10-14; the empty state covers the not-yet-trained case). -->
+    <section class="active-model-section">
       <div class="active-model-header">
         <h2>Weighted Tip Model</h2>
         <span v-if="activeModelData?.active" class="version-badge">
@@ -269,7 +268,7 @@
                 <span class="eq-op">{{ row.margin_coef >= 0 ? '+' : '−' }}</span>
                 <span class="eq-coeff">{{ Math.abs(row.margin_coef).toFixed(3) }}</span>
                 <span class="eq-dot">·</span>
-                <span class="eq-model">{{ getModelDisplayName(row.model) }}<sub class="eq-sub">m</sub></span>
+                <span class="eq-model">{{ modelDisplayName(row.model) }}<sub class="eq-sub">m</sub></span>
               </span>
             </div>
             <p class="equation-note">
@@ -292,11 +291,12 @@
       </div>
     </section>
 
-    <!-- Active Boosted Model (XGBoost) Section (BT-1) — AFL model slot.
+    <!-- Active Boosted Model (XGBoost) Section (BT-1) — every league
+         (PARITY 2026-10-14).
          Degradation contract: both boosted endpoints map "no active
          model / no data" to null, and the slot simply never renders —
          a missing model must never break the page. -->
-    <section v-if="isAfl && boostedModelData" class="active-model-section">
+    <section v-if="boostedModelData" class="active-model-section">
       <div class="active-model-header">
         <h2>Active Boosted Model (XGBoost)</h2>
         <span v-if="boostedModelData" class="version-badge">
@@ -423,8 +423,9 @@ interface ActiveModelResponse {
 interface PerformancePayload {
   current: CurrentSeasonView | null
   past: { season: number | string; rows: PastSeasonHeuristicRow[] } | null
-  // AFL-only model slots — null for state leagues until the API serves
-  // league model payloads (then drop the isAfl gates and they light up).
+  // PARITY (2026-10-14): the model slots serve EVERY league — the
+  // league endpoints resolve competition-scoped payloads (null until
+  // the league's first retrain, mirroring the AFL pre-retrain state).
   models: ModelComparisonStats[] | null
   modelsError: string | null
   activeModel: ActiveModelResponse | null
@@ -474,47 +475,51 @@ const fetchPast = async (): Promise<PerformancePayload['past']> => {
   }
 }
 
-/** Active weighted model (AFL slot). Distinct error state preserved
- *  (the old page's error block); the boosted contract is "hide, never
- *  error": both model endpoints throw on "no active model", the catch
- *  nulls the slot, the section stays hidden. */
+/** Active weighted model (every league — PARITY 2026-10-14). The
+ *  endpoint dispatches on `league`: AFL keeps the byte-identical legacy
+ *  URL (no league param), leagues resolve their OWN competition-scoped
+ *  active version. Distinct error state preserved (the old page's error
+ *  block); the boosted contract is "hide, never error": both model
+ *  endpoints throw on "no active model", the catch nulls the slot, the
+ *  section stays hidden. */
 const fetchActiveModel = async (): Promise<{
   activeModel: PerformancePayload['activeModel']
   activeModelError: string | null
 }> => {
-  if (!isAfl.value) return { activeModel: null, activeModelError: null }
   try {
-    return { activeModel: await api.getActiveModel(), activeModelError: null }
+    const payload = isAfl.value
+      ? await api.getActiveModel()
+      : await api.getLeagueActiveModel(props.league)
+    return { activeModel: payload, activeModelError: null }
   } catch {
     return { activeModel: null, activeModelError: 'Failed to load active model data' }
   }
 }
 
-/** Boosted (XGBoost) model (AFL slot, BT-1). */
+/** Boosted (XGBoost) model (every league — PARITY 2026-10-14). */
 const fetchBoostedModel = async (): Promise<ActiveBoostedModel | null> => {
-  if (!isAfl.value) return null
   try {
-    const data = await api.getActiveBoostedModel()
+    const data = isAfl.value
+      ? await api.getActiveBoostedModel()
+      : await api.getLeagueActiveBoostedModel(props.league)
     return data.is_active ? data : null
   } catch {
     return null
   }
 }
 
-/** Model comparison (AFL slot) — the one slot that DEPENDS on current:
- *  the compared season comes from the server's current-season payload
- *  (falls back to the client year — a client clock near New Year must
- *  not query a season with no data). */
+/** Model comparison (every league — PARITY 2026-10-14) — the one slot
+ *  that DEPENDS on current: the compared season comes from the server's
+ *  current-season payload (AFL: calendar-year int; leagues: the season
+ *  LABEL string, passed through verbatim). */
 const fetchModels = async (
   current: CurrentSeasonView | null,
 ): Promise<{ models: PerformancePayload['models']; modelsError: string | null }> => {
-  if (!isAfl.value || !current) return { models: null, modelsError: null }
-  const parsed = typeof current.season === 'number'
-    ? current.season
-    : Number.parseInt(String(current.season), 10)
-  const season = Number.isFinite(parsed) ? parsed : new Date().getFullYear()
+  if (!current) return { models: null, modelsError: null }
   try {
-    const data = await api.compareModels(season)
+    const data = isAfl.value
+      ? await api.compareModels(current.season as number)
+      : await api.getLeagueModelComparison(props.league, current.season)
     return { models: data.comparison, modelsError: null }
   } catch {
     return { models: null, modelsError: 'Could not load model accuracy data' }
@@ -590,20 +595,35 @@ const currentSeasonBestModel = computed(() => {
 // ---------------------------------------------------------------------------
 // Presentation helpers (pure).
 //
-// Labels: the league heuristics (home_advantage / form / ladder) have no
-// entry in the AFL-shaped HEURISTIC_LABELS, so they are mapped here and
-// fall back to the shared formatter for anything else.
-// Ordering: sortByHeuristicOrder is AFL-ordered; league heuristics are
-// unlisted (a NaN-comparison edge the code review flagged) — the league
-// view sorts with its own explicit, deterministic order instead.
+// PARITY (2026-10-14): the canonical heuristic list is the SAME for
+// every league — the five parity base models (elo, form, home_advantage,
+// matchup, value) followed by the four derived heuristics — the exact
+// order the backend's canonical set resolves. Labels fall back to the
+// shared formatter for anything unlisted.
+//
+// Ordering: sortByHeuristicOrder is AFL-derived-heuristic ordered; the
+// base models are unlisted there, so the view sorts with its own
+// explicit, deterministic parity order for BOTH paths' base entries.
 // ---------------------------------------------------------------------------
 
-const LEAGUE_HEURISTIC_ORDER = ['home_advantage', 'form', 'ladder']
+const LEAGUE_HEURISTIC_ORDER = [
+  'elo',
+  'form',
+  'home_advantage',
+  'matchup',
+  'value',
+  'best_bet',
+  'weighted_tip',
+  'boosted_tip',
+  'yolo',
+]
 
 const LEAGUE_HEURISTIC_LABELS: Record<string, string> = {
-  home_advantage: 'Home Advantage',
+  elo: 'Elo Rating',
   form: 'Form',
-  ladder: 'Ladder',
+  home_advantage: 'Home Advantage',
+  matchup: 'Matchup',
+  value: 'Value',
 }
 
 const heuristicLabel = (heuristic: string): string =>
@@ -620,6 +640,14 @@ const sortedCurrentHeuristics = computed<LeagueCurrentSeasonHeuristicPerformance
   const list = currentSeason.value?.heuristics ?? []
   return isAfl.value ? list : byLeagueHeuristicOrder(list)
 })
+
+// PARITY: per-league model display names — the six-model parity set
+// (never the AFL 8). AFL keeps the shared formatter (its 8-model map).
+const modelDisplayName = (modelName: string): string =>
+  isAfl.value
+    ? getModelDisplayName(modelName)
+    : (leagueConfig.value.modelDisplayNames[modelName] ??
+      modelName.replaceAll('_', ' '))
 
 // ---------------------------------------------------------------------------
 // Active Weighted Model presentation (AFL slot).
@@ -651,10 +679,10 @@ const modelExplanationText = computed(() => {
   if (!activeModelData.value?.active || !activeModelData.value.model) return ''
   const m = activeModelData.value.model
   const top = groupedModelCoefficients.value.slice(0, 3)
-  const topNames = top.map((r) => getModelDisplayName(r.model)).join(', ')
-  const r2 = m.metrics?.r2 != null ? m.metrics.r2.toFixed(3) : 'N/A'
+  const topNames = top.map((r) => modelDisplayName(r.model)).join(', ')
+  const r2 = m.metrics?.r2 != null ? Number(m.metrics.r2).toFixed(3) : 'N/A'
   return (
-    `The Weighted Tip model combines all 8 ML model predictions using a ` +
+    `The Weighted Tip model combines all ${groupedModelCoefficients.value.length} ML model predictions using a ` +
     `linear regression trained on ${m.training_rows} historical games. ` +
     `Each model contributes a margin weight (influence on score margin) and a ` +
     `confidence weight (influence on confidence). ` +
@@ -685,11 +713,11 @@ const boostedModelExplanationText = computed(() => {
   const r2 = m.metrics.r2 != null ? m.metrics.r2.toFixed(3) : 'N/A'
   const mae = m.metrics.mae != null ? m.metrics.mae.toFixed(1) : 'N/A'
   const top = groupedShapImportances.value.slice(0, 3)
-  const topNames = top.map((r) => getModelDisplayName(r.model)).join(', ')
+  const topNames = top.map((r) => modelDisplayName(r.model)).join(', ')
   return (
     `The Boosted Tip model is a gradient-boosted tree ensemble (XGBoost) trained on ` +
     `${m.training_rows} historical games to predict the home-team-signed margin from the ` +
-    `same 8 model predictions the Weighted Tip model uses. ` +
+    `same model predictions the Weighted Tip model uses. ` +
     `The current model (v${m.version}) reaches R² = ${r2} with MAE = ${mae} points and is ` +
     `retrained weekly. ` +
     `Feature importances below are mean |SHAP| values — how much each model's margin and ` +

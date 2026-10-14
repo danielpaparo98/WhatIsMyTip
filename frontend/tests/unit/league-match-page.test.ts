@@ -184,8 +184,11 @@ describe('match page wiring (source-grep)', () => {
     expect(PAGE).toMatch(/middleware:\s*\[/)
   })
 
-  it('fetches the event through getEvent inside a reactive-key useAsyncData', () => {
-    expect(PAGE).toMatch(/getEvent\(slug\.value\)/)
+  it('fetches the event detail through getEventDetail inside a reactive-key useAsyncData (PARITY)', () => {
+    // PARITY (2026-10-14): ONE detail fetch — /api/events/{slug}/detail,
+    // field-identical to the AFL game page's payload — serves the tips,
+    // numeric model predictions, analysis and weather.
+    expect(PAGE).toMatch(/getEventDetail\(slug\.value\)/)
     expect(PAGE).toMatch(/league-match-\$\{league\.value\}-\$\{slug\.value\}/)
     expect(PAGE).toMatch(/dedupe:\s*'cancel'/)
   })
@@ -231,29 +234,26 @@ describe('match page wiring (source-grep)', () => {
     expect(PAGE).toMatch(/font-weight:\s*800/)
   })
 
-  it('renders the AFL game-page section split (FCL-14) without AFL-only data', () => {
-    // FCL-12: upcoming fixtures show the league's STORED picks from
-    // /api/tips/league (with cached AI explanations).  FCL-14
-    // (absolute AFL parity): the AFL game page's TWO tipping sections
-    // — Heuristic Tips (TipCard shape: badge/confidence/margin/
-    // explanation, selected heuristic highlighted) and Model
-    // Predictions (the league's base models).  The AFL-only DATA
-    // surfaces (weather / match analysis / model_predictions payload)
-    // remain absent — no state-league sources exist.
+  it('renders the AFL game-page section split — full parity, same data surfaces', () => {
+    // PARITY (2026-10-14): the AFL game page's sections render here
+    // ALL — Heuristic Tips (TipCard shape: badge/confidence/margin/
+    // explanation, selected heuristic highlighted), Model Predictions
+    // with NUMBERS (confidence % + margin), WeatherCard and the
+    // MatchAnalysisCard talking points — all served by the ONE
+    // /api/events/{slug}/detail fetch. No /api/tips/league side-call.
     expect(PAGE).toMatch(/match-tips-section/)
     expect(PAGE).toMatch(/match-models-section/)
     expect(PAGE).toMatch(/Heuristic Tips/)
     expect(PAGE).toMatch(/Model Predictions/)
     expect(PAGE).toMatch(/tip-card/)
     expect(PAGE).toMatch(/model-card/)
-    expect(PAGE).toMatch(/api\/tips\/league\b/)
+    expect(PAGE).toMatch(/api\/events\/\$\{slug\.value\}\/detail|getEventDetail\(slug\.value\)/)
     expect(PAGE).toMatch(/tip-selected/)
+    expect(PAGE).toMatch(/<WeatherCard/)
+    expect(PAGE).toMatch(/<MatchAnalysisCard/)
+    expect(PAGE).toMatch(/model-confidence/)
+    expect(PAGE).toMatch(/model-margin/)
     expect(PAGE).toMatch(/getLeagueHeuristicOptions\(/)
-    expect(PAGE).not.toMatch(/TipCard/)
-    expect(PAGE).not.toMatch(/WeatherCard/)
-    expect(PAGE).not.toMatch(/weather-section/)
-    expect(PAGE).not.toMatch(/match-analysis/)
-    expect(PAGE).not.toMatch(/model_predictions/)
   })
 
   it('keeps the header league selector in sync with the route (client only)', () => {
