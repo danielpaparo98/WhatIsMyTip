@@ -371,15 +371,39 @@ def test_migration_0008_downgrade_drops_table():
     assert "ix_match_reports_game_id" in src
 
 
-def test_migration_head_is_0015():
-    """After adding 0015 (model_versions.competition_id, first-class
-    league heuristics FCL-1), the migration tree must have exactly one
-    head: 0015_model_versions_competition_scope.
+def test_migration_head_is_0016():
+    """After adding 0016 (league_tips confidence/margin, AFL-parity tip
+    shape FCL-14), the migration tree must have exactly one head:
+    0016_league_tips_confidence_margin.
     """
     revisions = _all_migrations()
     heads = [rev for rev in revisions if rev not in set(revisions.values())]
-    assert "0015_model_versions_competition_scope" in heads
+    assert "0016_league_tips_confidence_margin" in heads
     assert len(heads) == 1, f"expected a single head, got {heads}"
+
+
+def test_migration_0016_registers_revision_ids():
+    """0016 (league_tips confidence/margin, FCL-14) must declare the
+    expected ids and chain off 0015."""
+    mod = _load_module(_MIG_0016)
+    assert mod.revision == "0016_league_tips_confidence_margin"
+    assert mod.down_revision == "0015_model_versions_competition_scope"
+
+
+def test_migration_0016_upgrade_adds_nullable_tip_numbers():
+    """FCL-14: the upgrade adds NULLABLE ``confidence``/``margin`` to
+    ``league_tips`` (the AFL card shape rides on the row); the
+    downgrade drops them in reverse order."""
+    up_src = _read_source(_MIG_0016, "upgrade")
+    down_src = _read_source(_MIG_0016, "downgrade")
+    assert '"league_tips"' in up_src
+    assert '"confidence"' in up_src
+    assert '"margin"' in up_src
+    assert "sa.Float()" in up_src
+    assert "sa.Integer()" in up_src
+    assert "nullable=True" in up_src
+    assert 'op.drop_column("league_tips", "margin")' in down_src
+    assert 'op.drop_column("league_tips", "confidence")' in down_src
 
 
 _MIG_0013 = "2026_10_04_1200-0013_add_model_artifact_columns"
@@ -503,6 +527,7 @@ def test_migration_0011_adds_team_identity_columns():
 # ---------------------------------------------------------------------------
 
 _MIG_0015 = "2026_10_12_1000-0015_model_versions_competition_scope"
+_MIG_0016 = "2026_10_13_1400-0016_league_tips_confidence_margin"
 
 
 def test_migration_0015_registers_revision_ids():

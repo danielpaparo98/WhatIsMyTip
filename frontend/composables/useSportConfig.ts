@@ -161,61 +161,26 @@ export function getLeagueConfig(key: string): SportConfig {
 }
 
 // ---------------------------------------------------------------------------
-// League heuristic selection (FCL-13, 2026-10-13 user request)
+// League heuristic selection (FCL-13/FCL-14, absolute AFL parity)
 // ---------------------------------------------------------------------------
 
 /**
- * The DERIVED heuristics every first-class league carries (FCL-6) —
- * shared names with the AFL derived pair, NO `yolo` (AFL-only, never
- * generated for league tips).
- */
-const LEAGUE_DERIVED_HEURISTICS = ['best_bet', 'weighted_tip', 'boosted_tip'] as const
-
-const LEAGUE_DERIVED_LABELS: Record<string, string> = {
-  best_bet: 'Best Bet',
-  weighted_tip: 'Weighted Tip',
-  boosted_tip: 'Boosted Tip',
-}
-
-/** Base-model labels — self-contained so a league base model that the
- * AFL config's modelDisplayNames lacks (ladder is league-only) still
- * gets a proper display label. */
-const LEAGUE_BASE_LABELS: Record<string, string> = {
-  home_advantage: 'Home Advantage',
-  form: 'Form',
-  ladder: 'Ladder',
-  elo: 'Elo Rating',
-  matchup: 'Matchup',
-}
-
-/**
- * The user-selectable heuristics for a league (FCL-13): the league's
- * BASE model set (result-derived, per sport) followed by the derived
- * trio — the same canonical order the backend persists and grades.
- * State leagues (sport 'afl'): home_advantage, form, ladder + trio.
- * Rugby-league keys: elo, form, home_advantage, matchup + trio.
- * Deliberately NOT `getLeagueConfig(key).heuristicOrder` — those lists
- * predate first-class leagues (the rugby config's exclusion pin keeps
- * the derived names out of it) and include the AFL-only `yolo`.
+ * The user-selectable heuristics for a league (FCL-14, absolute AFL
+ * parity): EXACTLY the AFL heuristic list — same values, same order,
+ * same labels — so the selector is indistinguishable across AFL and
+ * every league.  The league pipeline generates all four (best_bet,
+ * weighted_tip, boosted_tip + the FCL-14 yolo), so every tab works.
+ * (The league BASE models are not selectable tabs — they are the
+ * "models" layer, rendered on the match page's model-predictions
+ * section exactly like the AFL page's.)
  */
 export function getLeagueHeuristicOptions(
   key: string | null | undefined,
 ): { value: string; label: string }[] {
-  const config = getLeagueConfig(key ?? 'afl')
-  const baseOrder =
-    config.sportId === 'rugby-league'
-      ? ['elo', 'form', 'home_advantage', 'matchup']
-      : ['home_advantage', 'form', 'ladder']
-  return [
-    ...baseOrder.map((value) => ({
-      value,
-      label: LEAGUE_BASE_LABELS[value] ?? config.modelDisplayNames[value] ?? value,
-    })),
-    ...LEAGUE_DERIVED_HEURISTICS.map((value) => ({
-      value,
-      label: LEAGUE_DERIVED_LABELS[value] ?? value,
-    })),
-  ]
+  return AFL_CONFIG.heuristicOrder.map((value) => ({
+    value,
+    label: AFL_CONFIG.heuristicLabels[value] ?? value,
+  }))
 }
 
 /** The active sport config — AFL by default.  The live selection is

@@ -98,7 +98,11 @@ class TestPickBestBet:
             _pick(5, "ladder", 101),
             _pick(5, "elo", 102),
         ]
-        assert pick_best_bet(event, picks) == TipPick(5, HEURISTIC_BEST_BET, 102)
+        # FCL-14: the vote-share confidence (2/3 → 0.767) and the AFL
+        # fallback's 6-point margin ride on the tip.
+        assert pick_best_bet(event, picks) == TipPick(
+            5, HEURISTIC_BEST_BET, 102, 0.767, 6
+        )
 
     def test_home_majority_picks_home(self) -> None:
         event = _event(5)
@@ -120,7 +124,7 @@ class TestPickBestBet:
         event = _event(5, home_score=80, away_score=80)
         picks = [_pick(5, "form", 101), _pick(5, "ladder", 102)]
         pick = pick_best_bet(event, picks)
-        assert pick == TipPick(5, HEURISTIC_BEST_BET, None)
+        assert pick == TipPick(5, HEURISTIC_BEST_BET, None, None, None)
 
     def test_picks_for_other_events_are_ignored(self) -> None:
         event = _event(5)

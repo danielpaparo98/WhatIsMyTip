@@ -74,22 +74,42 @@
         </div>
       </section>
 
-      <!-- FCL-12/FCL-13: the league's tips for this fixture, ordered by
-           the league's heuristic list, with the user's selected
-           heuristic highlighted as the primary row. -->
-      <section v-if="orderedTips && orderedTips.length > 0" class="match-tips-section">
-        <h2 class="tips-heading">Tips</h2>
-        <div class="tips-list">
+      <!-- FCL-12/FCL-14: the AFL game page's two tipping sections,
+           mirrored — Heuristic Tips (the derived heuristics in the AFL
+           tip-card shape) then Model Predictions (the league's base
+           models, pick-only where the data is pick-only). -->
+      <section v-if="derivedTips && derivedTips.length > 0" class="match-tips-section">
+        <h2 class="tips-heading">Heuristic Tips</h2>
+        <div class="tips-grid">
           <div
-            v-for="tip in orderedTips"
+            v-for="tip in derivedTips"
             :key="tip.tipKey"
-            class="tip-row"
+            class="tip-card"
             :class="{ 'tip-selected': tip.isSelection }"
           >
-            <span class="tip-heuristic">{{ tip.label }}</span>
-            <span class="tip-pick" :class="{ 'tip-draw': tip.draw }">
-              {{ tip.tipText }}
-            </span>
+            <div class="tip-card-header">
+              <span class="tip-card-heuristic">{{ tip.label }}</span>
+              <span v-if="tip.confidence !== null" class="tip-card-confidence">
+                {{ Math.round(tip.confidence * 100) }}%
+              </span>
+            </div>
+            <div class="tip-card-body">
+              <h3>{{ tip.tipText }}</h3>
+              <p v-if="tip.margin !== null" class="tip-card-margin">
+                Margin: {{ tip.margin }} pts
+              </p>
+            </div>
+            <p v-if="tip.explanation" class="tip-card-explanation">{{ tip.explanation }}</p>
+          </div>
+        </div>
+      </section>
+
+      <section v-if="modelTips && modelTips.length > 0" class="match-models-section">
+        <h2 class="tips-heading">Model Predictions</h2>
+        <div class="models-grid">
+          <div v-for="tip in modelTips" :key="tip.tipKey" class="model-card">
+            <span class="model-name">{{ tip.label }}</span>
+            <h3 class="model-pick">{{ tip.tipText }}</h3>
           </div>
         </div>
       </section>
@@ -298,6 +318,35 @@ const orderedTips = computed(() => {
       rank: orderIndex.get(row.heuristic) ?? options.length,
     }))
     .sort((a, b) => a.rank - b.rank)
+})
+
+// FCL-14: the AFL game page's section split — the DERIVED heuristics
+// render as AFL-style tip cards (badge/confidence/margin/explanation); the
+// league's BASE models render as model-prediction cards (pick-only —
+// result-derived models produce picks, not numbers).  Both ordered by
+// the league's canonical lists.
+const DERIVED_SET = new Set(['best_bet', 'weighted_tip', 'boosted_tip', 'yolo'])
+
+const derivedTips = computed(() => {
+  const rows = orderedTips.value
+  if (!rows) return null
+  return rows
+    .filter((tip) => DERIVED_SET.has(tip.tipKey))
+    .map((tip) => {
+      const row = leagueTips.value!.find((r) => r.heuristic === tip.tipKey)!
+      return {
+        ...tip,
+        confidence: row.confidence ?? null,
+        margin: row.margin ?? null,
+        explanation: row.explanation ?? null,
+      }
+    })
+})
+
+const modelTips = computed(() => {
+  const rows = orderedTips.value
+  if (!rows) return null
+  return rows.filter((tip) => !DERIVED_SET.has(tip.tipKey))
 })
 
 // Badges resolve through the shared identity chain (explicit entry → AFL
@@ -521,51 +570,95 @@ useHead({
   gap: 0.875rem;
 }
 
-.tip-row {
+/* FCL-14: the AFL game page's tipping sections — tip cards with the
+   AFL card treatment (monochrome spine, badge/confidence/winner/
+   margin/explanation) and the model-predictions grid. */
+.tips-grid {
   display: grid;
-  grid-template-columns: 10rem 10rem 1fr;
-  gap: 0.75rem;
-  align-items: baseline;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 1rem;
 }
 
-/* FCL-13: the user's selected heuristic is the primary row — inverted
-   monochrome emphasis, same language as the .heuristic-btn.active tab. */
-.tip-row.tip-selected {
+.tip-card {
+  border: 1px solid var(--color-border);
   border-left: 4px solid var(--color-text);
-  padding-left: 0.75rem;
+  padding: 1.5rem;
 }
 
-.tip-row.tip-selected .tip-pick {
-  font-weight: 800;
+.tip-card.tip-selected {
+  /* The user's selected heuristic is the primary card. */
+  background: var(--color-hover);
 }
 
-.tip-heuristic {
+.tip-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.875rem;
+  padding-bottom: 0.875rem;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.tip-card-heuristic {
+  font-size: 0.6875rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--color-muted);
+}
+
+.tip-card-confidence {
   font-size: 0.8125rem;
   font-weight: 700;
-  text-transform: capitalize;
-  color: var(--color-muted);
 }
 
-.tip-pick {
-  font-size: 0.9375rem;
-  font-weight: 800;
+.tip-card-body h3 {
+  font-size: 1.25rem;
+  margin-bottom: 0.5rem;
 }
 
-.tip-pick.tip-draw {
-  font-weight: 600;
-  color: var(--color-muted);
+.tip-card-margin {
+  font-size: 0.8125rem;
+  margin: 0;
 }
 
-.tip-explanation {
+.tip-card-explanation {
+  margin-top: 0.875rem;
   font-size: 0.875rem;
   color: var(--color-muted);
 }
 
-@media (max-width: 640px) {
-  .tip-row {
-    grid-template-columns: 1fr;
-    gap: 0.25rem;
-  }
+.models-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+  gap: 1rem;
+}
+
+.model-card {
+  border: 1px solid var(--color-border);
+  padding: 1.5rem;
+  transition: border-color 0.2s ease;
+}
+
+.model-card:hover {
+  border-color: var(--color-text);
+}
+
+.model-name {
+  display: block;
+  font-size: 0.6875rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--color-muted);
+  margin-bottom: 0.75rem;
+  padding-bottom: 0.75rem;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.model-pick {
+  font-size: 1.25rem;
+  margin: 0;
 }
 
 /* Teams */

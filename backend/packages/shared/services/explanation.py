@@ -755,6 +755,11 @@ class LeagueTipExplanationService:
                     "heuristic": heuristic,
                     "picked": picked,
                     "explanation": explanation,
+                    # FCL-14: the AFL card numbers ride on the row.
+                    "confidence": (
+                        None if tip.confidence is None else float(tip.confidence)
+                    ),
+                    "margin": None if tip.margin is None else int(tip.margin),
                 }
             )
         results.sort(key=lambda item: models_order.index(item["heuristic"]))
