@@ -46,6 +46,20 @@ export interface ModelPrediction {
   margin: number
 }
 
+/**
+ * PARITY (2026-10-14): one league model's numeric prediction — mirrors
+ * `LeagueModelPredictionSchema` in backend/.../schemas/events.py.  The
+ * league model-predictions table stores abstaining models as NO row,
+ * but the schema widens the numbers to nullable to match the backend
+ * contract field-for-field.
+ */
+export interface LeagueModelPrediction {
+  model_name: string
+  winner: string | null
+  confidence: number | null
+  margin: number | null
+}
+
 /** Mirrors `MatchAnalysisResponse` in backend/.../schemas/match_analysis.py. */
 export interface MatchAnalysis {
   id: number
@@ -220,6 +234,20 @@ export interface MatchReportResponse {
   created_at: string
 }
 
+/**
+ * PARITY (2026-10-14): stored LEAGUE match report row — mirrors
+ * `LeagueMatchReportResponse` in backend/.../schemas/events.py.  The
+ * inner `report` is the SAME `GrandFinalReport` payload the AFL report
+ * endpoint returns; `event_id` replaces `game_id`.
+ */
+export interface LeagueMatchReportResponse {
+  id: number
+  event_id: number
+  report_type: string
+  report: GrandFinalReport
+  created_at: string
+}
+
 // ---------------------------------------------------------------------------
 // Multi-league read side (ADR 0001 read APIs, 2026-09).
 // Mirrors backend/.../schemas/events.py and the /api/sports payload —
@@ -254,6 +282,42 @@ export interface SportEvent {
 export interface EventListResponse {
   events: SportEvent[]
   count: number
+}
+
+/**
+ * PARITY (2026-10-14): one league model tip with its persisted AI
+ * explanation — mirrors `LeagueTipExplanationResponse` in
+ * backend/.../schemas/tips.py.  `picked` is null for a predicted draw;
+ * `explanation` is null until the nightly NLP sweep (or an on-demand
+ * match-page read) has generated it.
+ */
+export interface LeagueTipExplanation {
+  heuristic: string
+  picked: string | null
+  explanation: string | null
+  confidence: number | null
+  margin: number | null
+}
+
+/** Mirrors `LeagueMatchAnalysisResponse` — stored talking points. */
+export interface LeagueMatchAnalysis {
+  id: number
+  event_id: number
+  analysis_text: string
+  created_at: string
+}
+
+/**
+ * PARITY (2026-10-14): full league event detail — mirrors
+ * `LeagueEventDetailResponse` in backend/.../schemas/events.py, the
+ * league twin of `GameDetailResponse`.
+ */
+export interface LeagueEventDetailResponse {
+  event: SportEvent
+  tips: LeagueTipExplanation[]
+  model_predictions: LeagueModelPrediction[]
+  match_analysis: LeagueMatchAnalysis | null
+  weather: Weather | null
 }
 
 // LEAGUE-ROUTES (2026-09-30, user request): `GET /api/events/{slug}` returns
@@ -417,6 +481,52 @@ export interface LeagueComparisonResponse {
     heuristic: string | null
     accuracy: number
     profit: number
+  }
+}
+
+/** PARITY: one per-model entry of the model-compare list (mirrors `compare_models`). */
+export interface LeagueModelSeasonStats {
+  model_name: string
+  total_tips: number
+  total_correct: number
+  overall_accuracy: number
+  total_profit: number
+  avg_margin: number
+  /** 0 for leagues — no odds source (fallback price settles every tip). */
+  odds_coverage: number
+}
+
+/** Mirrors `GET /api/backtest/model-compare` (label widened for leagues). */
+export interface LeagueModelComparisonResponse {
+  season: number | string
+  comparison: LeagueModelSeasonStats[]
+  best_overall: {
+    model_name: string | null
+    accuracy: number
+    profit: number
+  }
+}
+
+/** One weighted-model coefficient row (mirrors the AFL active-model payload). */
+export interface WeightedModelCoefficient {
+  feature_name: string
+  coefficient: number
+  model: string
+  type: 'margin' | 'confidence' | 'other'
+}
+
+/** Mirrors `GET /api/backtest/active-model` — `{active, model}` envelope. */
+export interface ActiveWeightedModelResponse {
+  active: boolean
+  message?: string
+  model?: {
+    model_name: string
+    version: number
+    trained_at: string | null
+    training_rows: number
+    intercept: number
+    metrics: Record<string, unknown>
+    coefficients: WeightedModelCoefficient[]
   }
 }
 
@@ -704,6 +814,47 @@ export const useApi = () => {
     return response.json()
   }
 
+  // PARITY (2026-10-14): league model-compare + active-model variants —
+  // the same payloads the AFL performance page renders, served from the
+  // league tables. `season` is a season LABEL (string) for leagues.
+  const getLeagueModelComparison = async (
+    league?: string,
+    season?: number | string,
+  ): Promise<LeagueModelComparisonResponse> => {
+    const queryParams = new URLSearchParams()
+    queryParams.append('season', season?.toString() ?? '')
+    if (league && league !== 'afl') queryParams.append('league', league)
+    const response = await fetchWithTimeout(
+      `/api/backtest/model-compare?${queryParams}`,
+    )
+    if (!response.ok) throw new Error('Failed to compare models')
+    return response.json()
+  }
+
+  const getLeagueActiveModel = async (
+    league?: string,
+  ): Promise<ActiveWeightedModelResponse> => {
+    const queryString = leagueQueryString(league)
+    const response = await fetchWithTimeout(
+      queryString ? `/api/backtest/active-model?${queryString}` : '/api/backtest/active-model',
+    )
+    if (!response.ok) throw new Error('Failed to fetch active model')
+    return response.json()
+  }
+
+  const getLeagueActiveBoostedModel = async (
+    league?: string,
+  ): Promise<ActiveBoostedModel> => {
+    const queryString = leagueQueryString(league)
+    const response = await fetchWithTimeout(
+      queryString
+        ? `/api/backtest/active-boosted-model?${queryString}`
+        : '/api/backtest/active-boosted-model',
+    )
+    if (!response.ok) throw new Error('Failed to fetch active boosted model')
+    return response.json()
+  }
+
   // Multi-league read side (ADR 0001): sport/competition discovery and
   // the event list per competition season. The 404 "unknown competition
   // or season" case THROWS like every other non-OK response — callers
@@ -739,6 +890,26 @@ export const useApi = () => {
   const getEvent = async (slug: string): Promise<EventDetailResponse> => {
     const response = await fetchWithTimeout(`/api/events/${slug}`)
     if (!response.ok) throw new Error('Failed to fetch event')
+    return response.json()
+  }
+
+  // PARITY (2026-10-14): full league event detail — the league twin of
+  // getGameDetail. Same 404-throws convention as getEvent: the match
+  // page owns the not-found presentation.
+  const getEventDetail = async (slug: string): Promise<LeagueEventDetailResponse> => {
+    const response = await fetchWithTimeout(`/api/events/${slug}/detail`)
+    if (!response.ok) throw new Error('Failed to fetch event detail')
+    return response.json()
+  }
+
+  // PARITY (2026-10-14): stored league grand-final report — the league
+  // twin of getGameReport. 404 means "no report for this event" (not
+  // the grand final, or not generated yet) — an expected, non-error
+  // state mapped to `null` exactly like the AFL mapping.
+  const getEventReport = async (slug: string): Promise<LeagueMatchReportResponse | null> => {
+    const response = await fetchWithTimeout(`/api/events/${slug}/report`)
+    if (response.status === 404) return null
+    if (!response.ok) throw new Error('Failed to fetch match report')
     return response.json()
   }
 
@@ -780,9 +951,14 @@ export const useApi = () => {
     getLeagueSeasons,
     getLeagueCurrentSeasonPerformance,
     getLeagueComparison,
+    getLeagueModelComparison,
+    getLeagueActiveModel,
+    getLeagueActiveBoostedModel,
     getSports,
     getEvents,
     getEvent,
+    getEventDetail,
+    getEventReport,
     getTeams,
   }
 }

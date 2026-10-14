@@ -4,10 +4,12 @@ The rugby-league explanation path reuses the EXISTING OpenRouter
 pipeline (``packages.shared.openrouter``) — import and wire, never
 rewrite — with a per-sport prompt layer so the LLM speaks rugby league:
 
-* the reduced factor set ONLY (elo, form, home_advantage, matchup) —
-  the AFL-scrape models (weather_impact, injury_impact, player_form,
-  value) are rejected at the registry AND never appear in any prompt
-  evidence or generated output;
+* the parity factor set (elo, form, home_advantage, matchup, value) —
+  the two AFL-scrape models with no league source at all
+  (``injury_impact``, ``player_form``) are rejected at the registry AND
+  never appear in any prompt evidence or generated output
+  (``weather_impact`` is simply unknown to the result-derived registry,
+  so it 422s as an invalid heuristic);
 * SportConfig language: "Match" contests, "Round N" stages, competition
   display names (National Rugby League / NRL Women's Premiership /
   State of Origin), points scoring, and draws as a live outcome;
@@ -659,6 +661,9 @@ async def _seed_rugby_league(db) -> dict[str, int]:
         "form": upcoming_away.id,
         "home_advantage": upcoming_home.id,
         "matchup": upcoming_home.id,
+        # PARITY: value is a base rugby-league model now — the all-time
+        # decided win rates tie (2 of 4 each; draws excluded) → home.
+        "value": upcoming_home.id,
     }
     for heuristic, side_id in picks.items():
         db.add(
@@ -887,8 +892,8 @@ class TestLeagueTipExplanationService:
         service = LeagueTipExplanationService(
             client=_fake_client(), cache=memory_cache
         )
-        # 'ladder' is a registered league model but NOT in the reduced
-        # rugby-league set, and no such tip row exists either way.
+        # 'ladder' is a registered league model but NOT in any league's
+        # active parity set, and no such tip row exists either way.
         with pytest.raises(BackendServiceError) as excinfo:
             await service.generate_explanation_for_tip(
                 db,

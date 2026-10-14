@@ -279,10 +279,10 @@ class TestNrlEndToEnd:
 
         assert stats["league_tips"]["status"] == "success"
         tip_count = await _scalar(db, select(func.count(LeagueTip.id)))
-        # 5 fixtures × 8 heuristics (4 rugby base + 4 derived, FCL-6/14):
+        # 5 fixtures × 9 heuristics (5 parity base + 4 derived, FCL-6/14):
         # 4 completed events (draw included — draw-no-pick tips) plus the
         # 5th as a FCL-12 forward tip (scheduled fixture).
-        assert tip_count == 40
+        assert tip_count == 45
 
 
 # ---------------------------------------------------------------------------
@@ -553,13 +553,14 @@ class TestIdempotentRerun:
         first = await run_league_sync(db, "nrl", 2026)
         second = await run_league_sync(db, "nrl", 2026)
 
-        # 5 fixtures × 8 heuristics (4 base + 4 derived, FCL-6/14): the 4
-        # completed events plus the scheduled fixture's FCL-12 forward tip.
-        assert first["league_tips"]["tips_inserted"] == 40
+        # 5 fixtures × 9 heuristics (5 parity base + 4 derived, FCL-6/14):
+        # the 4 completed events plus the scheduled fixture's FCL-12
+        # forward tip.
+        assert first["league_tips"]["tips_inserted"] == 45
         assert second["league_tips"]["tips_inserted"] == 0
         assert second["league_tips"]["tips_updated"] == 0
         tip_count = await _scalar(db, select(func.count(LeagueTip.id)))
-        assert tip_count == 40
+        assert tip_count == 45
 
 
 class TestResultsBackfill:
@@ -599,13 +600,13 @@ class TestResultsBackfill:
         assert sides["away"].score == 22
         assert sides["away"].is_winner is True  # Blues take the series
 
-        # × 8 heuristics: 4 rugby base + 4 derived first-class (FCL-6/14).
-        # FCL-12: game 3 is SCHEDULED on the first pass and already
-        # carries a forward tip, so the first pass tips all three games
-        # (21) and the backfill pass inserts NOTHING — the result lands
-        # on the same evidence the forward pick used, so the pick is
-        # unchanged (insert 0, update 0).
-        assert first["league_tips"]["tips_inserted"] == 24  # 3 games × 8
+        # × 9 heuristics: 5 parity base + 4 derived first-class
+        # (FCL-6/14).  FCL-12: game 3 is SCHEDULED on the first pass and
+        # already carries a forward tip, so the first pass tips all
+        # three games (27) and the backfill pass inserts NOTHING — the
+        # result lands on the same evidence the forward pick used, so
+        # the pick is unchanged (insert 0, update 0).
+        assert first["league_tips"]["tips_inserted"] == 27  # 3 games × 9
         assert second["league_tips"]["tips_inserted"] == 0
         assert second["league_tips"]["tips_updated"] == 0
 
@@ -621,7 +622,7 @@ class TestResultsBackfill:
         await run_league_sync(db, "origin", 2026)
         assert (
             await _scalar(db, select(func.count(LeagueTip.id)))
-        ) == 24  # all three games tipped on the first pass (3 × 8 heuristics):
+        ) == 27  # all three games tipped on the first pass (3 × 9 heuristics):
         # two completed + game 3 as a FCL-12 forward tip (scheduled).
 
         payloads["state-of-origin-2026"][2] = _payload(
@@ -636,7 +637,7 @@ class TestResultsBackfill:
         assert stats["league_tips"]["tips_updated"] == 0
         assert (
             await _scalar(db, select(func.count(LeagueTip.id)))
-        ) == 24  # all three games tipped (3 × 8 heuristics)
+        ) == 27  # all three games tipped (3 × 9 heuristics)
 
 
 # ---------------------------------------------------------------------------

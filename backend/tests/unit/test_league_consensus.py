@@ -163,6 +163,22 @@ class TestLeagueFeatureNames:
             "ladder_pct_diff",
         ]
 
+    def test_parity_set_feature_contract(self) -> None:
+        """PARITY (2026-10-14): the active base set for EVERY league —
+        the parity five in canonical order — yields exactly these five
+        features in model_names order (value's win-rate diff included)."""
+        from packages.shared.services.league_heuristics import (
+            PARITY_LEAGUE_MODEL_SET,
+        )
+
+        assert league_feature_names_for(PARITY_LEAGUE_MODEL_SET) == [
+            "elo_rating_diff",
+            "form_wins_diff",
+            "home_advantage_home_constant",
+            "matchup_h2h_wins_diff",
+            "value_win_rate_diff",
+        ]
+
     def test_unknown_model_raises(self) -> None:
         with pytest.raises(ValueError, match="weather_impact"):
             league_feature_names_for(("weather_impact",))

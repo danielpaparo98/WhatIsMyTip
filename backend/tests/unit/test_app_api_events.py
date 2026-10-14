@@ -111,6 +111,7 @@ class TestRouterPaths:
         paths = sorted({r.path for r in router.routes})
         assert "/" in paths
         assert "/{slug}" in paths
+        assert "/{slug}/detail" in paths
 
 
 # ---------------------------------------------------------------------------
@@ -281,6 +282,125 @@ class TestGetEventBySlug:
             mock_crud.get_by_slug_with_participants = AsyncMock(return_value=None)
             client = TestClient(app)
             resp = client.get("/api/events/does-not-exist")
+
+        assert resp.status_code == 404
+        body = resp.json()
+        assert body["code"] == "not_found"
+
+
+# ---------------------------------------------------------------------------
+# GET /{slug}/detail — the league twin of /games/{slug}/detail (PARITY-1)
+# ---------------------------------------------------------------------------
+
+
+class TestGetEventDetail:
+    """``GET /api/events/{slug}/detail`` returns event + tips (with
+    explanations) + model_predictions + match_analysis + weather, every
+    optional section degrading to null independently."""
+
+    def test_get_event_detail_full(self):
+        mock_session = AsyncMock(spec=AsyncSession)
+        tip = {
+            "heuristic": "elo",
+            "picked": "Peel Thunder",
+            "explanation": "The Elo gap says Peel.",
+            "confidence": None,
+            "margin": None,
+        }
+        prediction_row = MagicMock(
+            model_name="elo", winner="Peel Thunder", confidence=0.7, margin=12
+        )
+        analysis_row = SimpleNamespace(
+            id=1,
+            event_id=501,
+            analysis_text="Talking points",
+            created_at=datetime(2026, 4, 3, 13, 10),
+        )
+
+        # Query order: model predictions (scalars().all) → match analysis
+        # (scalar_one_or_none) → weather (scalar_one_or_none → None).
+        predictions_result = MagicMock()
+        predictions_result.scalars.return_value.all.return_value = [
+            prediction_row
+        ]
+        analysis_result = MagicMock()
+        analysis_result.scalar_one_or_none.return_value = analysis_row
+        weather_result = MagicMock()
+        weather_result.scalar_one_or_none.return_value = None
+        mock_session.execute = AsyncMock(
+            side_effect=[predictions_result, analysis_result, weather_result]
+        )
+
+        app = _build_app_with_events_router()
+        _override_db(app, mock_session)
+
+        with patch("app.api.events.EventsCRUD") as mock_crud, patch(
+            "packages.shared.services.explanation.LeagueTipExplanationService"
+        ) as service_cls:
+            mock_crud.get_by_slug_with_participants = AsyncMock(
+                return_value=_make_event_dict()
+            )
+            service_cls.return_value.explanations_for_event = AsyncMock(
+                return_value=[tip]
+            )
+            client = TestClient(app)
+            resp = client.get("/api/events/wafl-abc12345/detail")
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["event"]["slug"] == "wafl-abc12345"
+        assert body["tips"][0]["heuristic"] == "elo"
+        assert body["tips"][0]["explanation"] == "The Elo gap says Peel."
+        assert len(body["model_predictions"]) == 1
+        assert body["model_predictions"][0]["model_name"] == "elo"
+        assert body["model_predictions"][0]["margin"] == 12
+        assert body["match_analysis"]["analysis_text"] == "Talking points"
+        assert body["weather"] is None
+
+    def test_get_event_detail_sections_degrade_to_null(self):
+        mock_session = AsyncMock(spec=AsyncSession)
+
+        predictions_result = MagicMock()
+        predictions_result.scalars.return_value.all.return_value = []
+        analysis_result = MagicMock()
+        analysis_result.scalar_one_or_none.return_value = None
+        weather_result = MagicMock()
+        weather_result.scalar_one_or_none.return_value = None
+        mock_session.execute = AsyncMock(
+            side_effect=[predictions_result, analysis_result, weather_result]
+        )
+
+        app = _build_app_with_events_router()
+        _override_db(app, mock_session)
+
+        with patch("app.api.events.EventsCRUD") as mock_crud, patch(
+            "packages.shared.services.explanation.LeagueTipExplanationService"
+        ) as service_cls:
+            mock_crud.get_by_slug_with_participants = AsyncMock(
+                return_value=_make_event_dict()
+            )
+            service_cls.return_value.explanations_for_event = AsyncMock(
+                return_value=[]
+            )
+            client = TestClient(app)
+            resp = client.get("/api/events/wafl-abc12345/detail")
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["tips"] == []
+        assert body["model_predictions"] == []
+        assert body["match_analysis"] is None
+        assert body["weather"] is None
+
+    def test_get_event_detail_not_found(self):
+        mock_session = AsyncMock(spec=AsyncSession)
+        app = _build_app_with_events_router()
+        _override_db(app, mock_session)
+
+        with patch("app.api.events.EventsCRUD") as mock_crud:
+            mock_crud.get_by_slug_with_participants = AsyncMock(return_value=None)
+            client = TestClient(app)
+            resp = client.get("/api/events/does-not-exist/detail")
 
         assert resp.status_code == 404
         body = resp.json()

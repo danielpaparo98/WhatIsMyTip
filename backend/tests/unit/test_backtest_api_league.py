@@ -38,15 +38,15 @@ from fastapi.testclient import TestClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from packages.shared.services.league_heuristics import (
+    DEFAULT_MODEL_SET,
     DERIVED_LEAGUE_HEURISTICS,
-    LEAGUE_HEURISTICS,
     RUGBY_LEAGUE_MODELS,
 )
 
-#: FCL-7: the model set the API passes for every registered league key —
-#: the resolved BASE set plus the derived trio every league's
-#: ``league_tips`` carries.
-_STATE_BACKTEST_MODEL_SET = LEAGUE_HEURISTICS + DERIVED_LEAGUE_HEURISTICS
+#: FCL-7 (PARITY): the model set the API passes for every registered
+#: league key — the resolved BASE set (the parity five for every sport)
+#: plus the derived set every league's ``league_tips`` carries.
+_STATE_BACKTEST_MODEL_SET = DEFAULT_MODEL_SET + DERIVED_LEAGUE_HEURISTICS
 _NATIONAL_BACKTEST_MODEL_SET = RUGBY_LEAGUE_MODELS + DERIVED_LEAGUE_HEURISTICS
 
 # ---------------------------------------------------------------------------
@@ -396,7 +396,7 @@ class TestLeagueCurrentSeason:
                     "projected_annual_profit": 95.0,
                     "odds_coverage": 0.0,
                 }
-                for heuristic in LEAGUE_HEURISTICS
+                for heuristic in _STATE_BACKTEST_MODEL_SET
             ],
             "rounds_completed": 2,
             "total_rounds": 20,
@@ -416,7 +416,7 @@ class TestLeagueCurrentSeason:
         body = resp.json()
         # Same shape the AFL current-season payload renders, str-labelled.
         assert body["season"] == "2025"
-        assert len(body["heuristics"]) == len(LEAGUE_HEURISTICS)
+        assert len(body["heuristics"]) == len(_STATE_BACKTEST_MODEL_SET)
         assert body["rounds_completed"] == 2
         assert body["total_rounds"] == 20
         league_cls.return_value.get_current_season_performance.assert_awaited_once_with(

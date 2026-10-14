@@ -250,21 +250,26 @@ describe('league page states & a11y', () => {
     expect(PAGE).toContain('Retry')
   })
 
-  it('offers the AFL-mirror heuristic selector (FCL-13) but NO AFL-only sections', () => {
+  it('offers the AFL-mirror heuristic selector (FCL-13) and the GF-week parity surfaces', () => {
     // FCL-13 (2026-10-13, user request): the league round page mirrors
     // the AFL home's user-selectable heuristic — a .heuristic-selector
-    // tablist drives which stored pick each upcoming card shows. The
-    // AFL-only surfaces (TipCard / WeatherCard / MatchAnalysisCard /
-    // model-prediction grids) remain absent — no state-league
-    // equivalents exist.
+    // tablist drives which stored pick each upcoming card shows.
+    // PARITY (2026-10-14): the AFL home's grand-final surfaces render
+    // here too — GrandFinalReport with the WeatherCard / TipCard /
+    // MatchAnalysisCard fallback experience — served by the league
+    // detail + report endpoints during grand-final week.
     expect(PAGE).toMatch(/heuristic-selector/)
     expect(PAGE).toMatch(/heuristic-btn/)
     expect(PAGE).toMatch(/role="tab"/)
     expect(PAGE).toMatch(/aria-selected/)
     expect(PAGE).toMatch(/getLeagueHeuristicOptions\(/)
     expect(PAGE).toMatch(/localStorage\.getItem\('selected-heuristic'\)/)
-    expect(PAGE).not.toMatch(/TipCard|WeatherCard|MatchAnalysisCard|ModelPrediction/)
-    expect(PAGE).not.toMatch(/tips-grid|models-grid|model-card/)
+    expect(PAGE).toMatch(/<GrandFinalReport/)
+    expect(PAGE).toMatch(/<WeatherCard/)
+    expect(PAGE).toMatch(/<TipCard/)
+    expect(PAGE).toMatch(/<MatchAnalysisCard/)
+    expect(PAGE).toMatch(/getEventReport\(/)
+    expect(PAGE).toMatch(/Load full report/)
   })
 
   it('stays monochrome (design-system custom properties, no hex accents)', () => {

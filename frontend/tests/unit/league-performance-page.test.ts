@@ -137,12 +137,13 @@ describe('performance view unification', () => {
     expect(VIEW).toMatch(/Active Boosted Model \(XGBoost\)/)
   })
 
-  it('model sections are gated on isAfl (leagues render them the moment data exists)', () => {
-    // The weighted/boosted sections are AFL-only because the model API
-    // is AFL-only — the gate is the data source, not a different
-    // presentation. When league model endpoints land, dropping the
-    // isAfl fetch gate lights the sections up for every league.
-    expect(VIEW).toMatch(/v-if="isAfl"/)
+  it('model sections render for EVERY league (PARITY: league-scoped fetches)', () => {
+    // PARITY (2026-10-14): the weighted/boosted sections are no longer
+    // AFL-gated — the league endpoints resolve competition-scoped
+    // payloads, and each league's not-yet-trained state renders its own
+    // approved empty state. The isAfl computed remains (it still routes
+    // AFL to the legacy endpoints), but it no longer gates a section.
+    expect(VIEW).not.toMatch(/v-if="isAfl"/)
     expect(VIEW).toMatch(/const isAfl = computed\(\(\) => props\.league === 'afl'\)/)
   })
 })
@@ -247,12 +248,20 @@ describe('performance view data wiring', () => {
     expect(VIEW).toMatch(/<section v-if="currentSeason" class="current-season-section">/)
   })
 
-  it('fetches the AFL-only model slots only for AFL, each failure-isolated', () => {
-    expect(VIEW).toMatch(/if \(!isAfl\.value \|\| !current\) return \{ models: null, modelsError: null \}/)
+  it('fetches the model slots for EVERY league, each failure-isolated (PARITY)', () => {
+    // PARITY (2026-10-14): the model-compare slot fetches for every
+    // league (current gates it — the compared season comes from the
+    // current-season payload), dispatching AFL → legacy, league → the
+    // competition-scoped endpoints.
+    expect(VIEW).toMatch(/if \(!current\) return \{ models: null, modelsError: null \}/)
+    expect(VIEW).toMatch(
+      /isAfl\.value\s*\n?\s*\?\s*await api\.compareModels\(current\.season as number\)\s*\n?\s*:\s*await api\.getLeagueModelComparison\(props\.league, current\.season\)/,
+    )
     // Every slot is wrapped so no single failure can break the page.
-    expect(VIEW).toMatch(/api\.compareModels\(season\)/)
     expect(VIEW).toMatch(/api\.getActiveModel\(\)/)
     expect(VIEW).toMatch(/api\.getActiveBoostedModel\(\)/)
+    expect(VIEW).toMatch(/api\.getLeagueActiveModel\(props\.league\)/)
+    expect(VIEW).toMatch(/api\.getLeagueActiveBoostedModel\(props\.league\)/)
   })
 
   it('renders the weighted-model states as ONE mutually-exclusive chain', () => {
@@ -317,11 +326,14 @@ describe('performance view presentation', () => {
     expect(VIEW).toContain("The {{ currentSeason.season }} season hasn't started yet.")
   })
 
-  it('orders league heuristics deterministically (review-flagged NaN edge retired)', () => {
-    // League heuristics are unlisted in the AFL heuristicOrder — the
-    // view sorts them with an explicit league order instead of relying
-    // on NaN-comparison stability.
-    expect(VIEW).toMatch(/LEAGUE_HEURISTIC_ORDER = \['home_advantage', 'form', 'ladder'\]/)
+  it('orders league heuristics deterministically (PARITY canonical order)', () => {
+    // PARITY (2026-10-14): the league order is the canonical parity set
+    // — five base models (elo, form, home_advantage, matchup, value)
+    // followed by the four derived heuristics — never the retired D3
+    // trio.
+    expect(VIEW).toMatch(
+      /LEAGUE_HEURISTIC_ORDER = \[\s*\n\s*'elo',\s*\n\s*'form',\s*\n\s*'home_advantage',\s*\n\s*'matchup',\s*\n\s*'value',\s*\n\s*'best_bet',\s*\n\s*'weighted_tip',\s*\n\s*'boosted_tip',\s*\n\s*'yolo',\s*\n\s*\]/,
+    )
     expect(VIEW).toMatch(/byLeagueHeuristicOrder/)
   })
 

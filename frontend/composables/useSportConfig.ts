@@ -61,15 +61,32 @@ export const AFL_CONFIG: SportConfig = {
 }
 
 /**
- * The rugby-league config (nrl-expansion-07, Phase 5.2) — reduced
- * DB-only model set first: elo, form, home_advantage, matchup.  The
- * AFL-only heuristics (boosted_tip/weighted_tip/best_bet/yolo) and the
- * unsourced models (weather_impact, injury_impact, player_form, value)
- * are deliberately ABSENT — there is no NRL source for them yet, and a
- * spread of AFL_CONFIG here would leak them into every rugby-league
- * page.  Nouns per the session bundle: contests are 'Match'es, stages
- * are 'Round's (Origin's RoundNumber = series game number, still a
- * "Round" for display).  Display timezone is the rugby-league
+ * The PARITY league model display names (2026-10-14, absolute AFL/league
+ * parity): every league runs the same base model set as the AFL
+ * flagship minus the two with no non-AFL data source — the six
+ * computable models: elo, form, home_advantage, value, weather_impact,
+ * matchup (no injury_impact / player_form: no league scrapers).  The
+ * SELECTABLE heuristics are the AFL four for every league (see
+ * getLeagueHeuristicOptions) — this map is the "models" layer the
+ * match page's model-predictions section renders.
+ */
+export const LEAGUE_MODEL_DISPLAY_NAMES: Record<string, string> = {
+  elo: 'Elo Rating',
+  form: 'Form',
+  home_advantage: 'Home Advantage',
+  value: 'Value',
+  weather_impact: 'Weather Impact',
+  matchup: 'Matchup',
+}
+
+/**
+ * The rugby-league config (nrl-expansion-07, Phase 5.2; PARITY
+ * 2026-10-14).  heuristicOrder is the AFL four (identical tabs across
+ * AFL and every league — the backend generates all four derived
+ * heuristics for every league); modelDisplayNames is the six-model
+ * parity set.  Nouns per the session bundle: contests are 'Match'es,
+ * stages are 'Round's (Origin's RoundNumber = series game number,
+ * still a "Round" for display).  Display timezone is the rugby-league
  * SportContext cron anchor (Australia/Brisbane).
  */
 export const RUGBY_LEAGUE_CONFIG: SportConfig = {
@@ -79,19 +96,9 @@ export const RUGBY_LEAGUE_CONFIG: SportConfig = {
   contestNoun: 'Match',
   stageNoun: 'Round',
   displayTimezone: 'Australia/Brisbane',
-  heuristicOrder: ['elo', 'form', 'home_advantage', 'matchup'],
-  heuristicLabels: {
-    elo: 'Elo Rating',
-    form: 'Form',
-    home_advantage: 'Home Advantage',
-    matchup: 'Matchup',
-  },
-  modelDisplayNames: {
-    elo: 'Elo Rating',
-    form: 'Form',
-    home_advantage: 'Home Advantage',
-    matchup: 'Matchup',
-  },
+  heuristicOrder: AFL_CONFIG.heuristicOrder,
+  heuristicLabels: { ...AFL_CONFIG.heuristicLabels },
+  modelDisplayNames: LEAGUE_MODEL_DISPLAY_NAMES,
 }
 
 export interface LeagueMeta {
@@ -141,18 +148,19 @@ export function getLeagueConfig(key: string): SportConfig {
   if (!meta) return AFL_CONFIG
   // State-league configs reuse the AFL styling defaults for now —
   // per-league labels/nouns are refined with the read-side cutover.
+  // PARITY (2026-10-14): every league's MODEL list is the six-model
+  // parity set (never the AFL 8 — injury_impact/player_form have no
+  // league sources) and the selectable heuristics are the AFL four.
   // Rugby-league keys (nrl-expansion-07) resolve through
   // RUGBY_LEAGUE_CONFIG instead, keeping sportId = 'rugby-league' (the
   // real backend sport id) while displayName/shortLabel follow the
   // league meta — so sport-scoped consumers (e.g. /api/teams?sport=)
   // can trust config.sportId for the rugby-league competitions.
+  const isRugbyLeague = RUGBY_LEAGUE_LEAGUE_KEYS.has(meta.key)
   const config: SportConfig = {
-    ...(RUGBY_LEAGUE_LEAGUE_KEYS.has(meta.key)
-      ? RUGBY_LEAGUE_CONFIG
-      : AFL_CONFIG),
-    sportId: RUGBY_LEAGUE_LEAGUE_KEYS.has(meta.key)
-      ? RUGBY_LEAGUE_CONFIG.sportId
-      : meta.key,
+    ...(isRugbyLeague ? RUGBY_LEAGUE_CONFIG : AFL_CONFIG),
+    modelDisplayNames: LEAGUE_MODEL_DISPLAY_NAMES,
+    sportId: isRugbyLeague ? RUGBY_LEAGUE_CONFIG.sportId : meta.key,
     displayName: meta.displayName,
     shortLabel: meta.shortLabel,
   }

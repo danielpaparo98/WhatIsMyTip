@@ -371,15 +371,48 @@ def test_migration_0008_downgrade_drops_table():
     assert "ix_match_reports_game_id" in src
 
 
-def test_migration_head_is_0016():
-    """After adding 0016 (league_tips confidence/margin, AFL-parity tip
-    shape FCL-14), the migration tree must have exactly one head:
-    0016_league_tips_confidence_margin.
+def test_migration_head_is_0017():
+    """After adding 0017 (league AFL-parity storage: model predictions,
+    persisted explanations, match analyses, event weather — PARITY-1),
+    the migration tree must have exactly one head:
+    0017_league_afl_parity_storage.
     """
     revisions = _all_migrations()
     heads = [rev for rev in revisions if rev not in set(revisions.values())]
-    assert "0016_league_tips_confidence_margin" in heads
+    assert "0017_league_afl_parity_storage" in heads
     assert len(heads) == 1, f"expected a single head, got {heads}"
+
+
+_MIG_0017 = "2026_10_14_1000-0017_league_afl_parity_storage"
+
+
+def test_migration_0017_registers_revision_ids():
+    """0017 (league AFL-parity storage, PARITY-1) must declare the
+    expected ids and chain off 0016."""
+    mod = _load_module(_MIG_0017)
+    assert mod.revision == "0017_league_afl_parity_storage"
+    assert mod.down_revision == "0016_league_tips_confidence_margin"
+
+
+def test_migration_0017_upgrade_creates_parity_tables():
+    """PARITY-1: the upgrade creates the league model-predictions,
+    match-analyses, event-weather and match-report tables and adds the
+    persisted explanation column; the downgrade reverses it all."""
+    up_src = _read_source(_MIG_0017, "upgrade")
+    down_src = _read_source(_MIG_0017, "downgrade")
+    assert '"league_model_predictions"' in up_src
+    assert '"league_match_analyses"' in up_src
+    assert '"league_event_weather"' in up_src
+    assert '"league_match_reports"' in up_src
+    assert '"events.id"' in up_src
+    assert "uq_league_model_predictions_event_model" in up_src
+    assert '"explanation"' in up_src
+    assert "JSONB" in up_src
+    assert "op.drop_table(\"league_match_reports\")" in down_src
+    assert "op.drop_table(\"league_event_weather\")" in down_src
+    assert "op.drop_table(\"league_match_analyses\")" in down_src
+    assert "op.drop_table(\"league_model_predictions\")" in down_src
+    assert 'op.drop_column("league_tips", "explanation")' in down_src
 
 
 def test_migration_0016_registers_revision_ids():
