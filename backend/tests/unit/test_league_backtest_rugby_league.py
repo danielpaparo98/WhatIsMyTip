@@ -849,7 +849,7 @@ async def _generate_tips(async_dsn: str, competition_id: int) -> None:
             )
     finally:
         await engine.dispose()
-    assert summary["tips_inserted"] == 35
+    assert summary["tips_inserted"] == 48
 
 
 def _by_heuristic(entries: list[dict]) -> dict[str, dict]:

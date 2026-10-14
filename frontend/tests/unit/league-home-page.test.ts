@@ -173,8 +173,12 @@ describe('league page cards', () => {
     expect(PAGE).toMatch(/result-score/)
   })
 
-  it('shows a status label for upcoming events', () => {
-    expect(PAGE).toMatch(/'Scheduled'/)
+  it('shows the AFL no-tip state for untipped upcoming events (FCL-14)', () => {
+    // Absolute AFL parity: an upcoming fixture with no stored tip for
+    // the selected heuristic shows the AFL home's exact no-tip state —
+    // never a bare status label.
+    expect(PAGE).toMatch(/No tip available/)
+    expect(PAGE).not.toMatch(/'Scheduled'/)
   })
 
   it('renders venue and a formatted date', () => {

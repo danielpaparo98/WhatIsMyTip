@@ -475,17 +475,18 @@ async def test_registered_league_sync_persists_base_and_fallback_derived_tips(
     finally:
         await engine.dispose()
 
-    # 6 completed events × (1 base [elo] + 3 derived).
-    assert summary["tips_inserted"] == 24
+    # 6 completed events × (1 base [elo] + 4 derived).
+    assert summary["tips_inserted"] == 30
     assert summary["tips_updated"] == 0
     assert summary["derived_tips"] == {
         "best_bet": 6,
         "weighted_tip": 6,
         "boosted_tip": 6,
+        "yolo": 6,
     }
 
     stored = await _stored_tips(async_dsn, cid)
-    assert len(stored) == 24
+    assert len(stored) == 30
     assert {h for _, h in stored} == {HEURISTIC_ELO} | set(DERIVED_LEAGUE_HEURISTICS)
 
     # Every row is scoped to the competition and its season.
@@ -494,7 +495,7 @@ async def test_registered_league_sync_persists_base_and_fallback_derived_tips(
         "SELECT count(*) FROM league_tips "
         "WHERE competition_id = :cid AND season_id = :sid",
         {"cid": cid, "sid": ids["season_id"]},
-    ) == 24
+    ) == 30
 
     # No trained models exist yet — the fallback is absence-driven.
     assert await _scalar(async_dsn, "SELECT count(*) FROM model_versions") == 0
@@ -549,8 +550,8 @@ async def test_scheduled_fixture_gets_forward_tips_grading_stays_clean(
     finally:
         await engine.dispose()
 
-    # 4 completed + 1 scheduled, × 6 names (unregistered → D3 trio + derived).
-    assert summary["tips_inserted"] == 30
+    # 4 completed + 1 scheduled, × 7 names (unregistered → D3 trio + derived).
+    assert summary["tips_inserted"] == 35
     assert summary["scheduled_considered"] == 1
 
     stored = await _stored_tips(async_dsn, cid)
@@ -614,11 +615,20 @@ async def test_scheduled_fixture_gets_forward_tips_grading_stays_clean(
     assert len(round_payload["fixtures"]) == 1
     fixture = round_payload["fixtures"][0]
     assert fixture["slug"].startswith("fcl08")
-    named = [v for v in fixture["picks"].values() if v is not None]
+    # FCL-14: picks are detail objects — {picked, confidence, margin}.
+    picks = fixture["picks"]
+    assert set(picks) == set(LEAGUE_HEURISTICS) | set(DERIVED_LEAGUE_HEURISTICS)
+    named = [d["picked"] for d in picks.values() if d["picked"] is not None]
     assert len(named) == len(LEAGUE_HEURISTICS) + len(
         DERIVED_LEAGUE_HEURISTICS
-    ), fixture["picks"]
+    ), picks
     assert set(named) <= team_names, (named, team_names)
+    # The derived picks carry the AFL card numbers; the base picks don't.
+    assert picks["best_bet"]["confidence"] is not None
+    assert picks["best_bet"]["margin"] is not None
+    assert picks["home_advantage"]["confidence"] is None
+    assert picks["weighted_tip"]["confidence"] is not None
+    assert picks["yolo"]["confidence"] is not None
 
 
 # ---------------------------------------------------------------------------
@@ -673,7 +683,7 @@ async def test_retrain_switches_combiners_from_fallback_to_scoped_learned_model(
             (p.event_id, p.heuristic): p.selected_side_id
             for p in compute_all_picks_and_derived(events, models=models)
         }
-        assert first["tips_inserted"] == 240  # 40 events × (3 base + 3 derived)
+        assert first["tips_inserted"] == 280  # 40 events × (3 base + 4 derived)
         assert stored == fallback
         # The opener's fallback is the tie→home majority vote (FCL-3a).
         assert fallback[(opener["event_id"], HEURISTIC_WEIGHTED_TIP)] == (
@@ -802,13 +812,13 @@ async def test_unregistered_state_league_keeps_pre_fcl_base_set_and_gains_derive
     assert set(DERIVED_LEAGUE_HEURISTICS) <= {h for _, h in stored}
     # 6 completed events + 1 scheduled fixture (FCL-12 forward tip) ×
     # (3 base + 3 derived) = 42.
-    assert summary["tips_inserted"] == 42
-    assert len(stored) == 42
+    assert summary["tips_inserted"] == 49
+    assert len(stored) == 49
     assert await _scalar(
         async_dsn,
         "SELECT count(*) FROM league_tips WHERE event_id = :eid",
         {"eid": scheduled_id},
-    ) == 6
+    ) == 7
 
     # THE byte-identical pin: every base pick equals the pre-FCL
     # pipeline's pick for the same event, exactly.
@@ -1002,11 +1012,12 @@ async def test_model_load_failure_does_not_poison_the_generation_pass(
     finally:
         await engine.dispose()
 
-    # 4 completed events × (3 D3 base + 3 derived) — fallback picks.
-    assert summary["tips_inserted"] == 24
+    # 4 completed events × (3 D3 base + 4 derived) — fallback picks.
+    assert summary["tips_inserted"] == 28
     assert summary["derived_tips"] == {
         "best_bet": 4,
         "weighted_tip": 4,
         "boosted_tip": 4,
+        "yolo": 4,
     }
-    assert alive == 24
+    assert alive == 28

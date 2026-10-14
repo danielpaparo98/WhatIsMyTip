@@ -1137,6 +1137,10 @@ class TestLeagueTipsEndpoint:
             "heuristic": "elo",
             "picked": "Broncos",
             "explanation": "Elo edge.",
+            # FCL-14: the AFL card numbers ride on the row (NULL for the
+            # base result-derived models).
+            "confidence": None,
+            "margin": None,
         }
         assert body["tips"][1]["explanation"] is None
 

@@ -769,7 +769,7 @@ async def _generate_tips(async_dsn: str, competition_id: int) -> None:
             )
     finally:
         await engine.dispose()
-    assert summary["tips_inserted"] == 30
+    assert summary["tips_inserted"] == 42
 
 
 @pytest.mark.postgres
@@ -829,11 +829,27 @@ async def test_seasons_and_current_season_end_to_end(_db_at_head) -> None:
     assert ladder["total_profit"] == pytest.approx(2 * _FALLBACK_WIN)
     assert ladder["total_accuracy"] == pytest.approx(1.0)
 
-    # FCL-7: the derived trio grades at query time exactly like a base
-    # model.  Pre-training both combiners ARE the majority vote (FCL-3d),
-    # and both 2026 events vote home — so 2/2 at the fallback price.
+    # FCL-7/FCL-14: the derived heuristics grade at query time exactly
+    # like a base model.  Pre-training the combiners ARE the majority
+    # vote (FCL-3d), and both 2026 events vote home — so 2/2 at the
+    # fallback price.  yolo grades its OWN trace (R4 matchup→home ✓,
+    # R5 form→away ✗): 1/2, +$9 − $10 = −$1.
     for name in DERIVED_LEAGUE_HEURISTICS:
         entry = by_heuristic[name]
+        if name == "yolo":
+            assert entry["total_profit"] == pytest.approx(
+                _FALLBACK_WIN - 10.0
+            ), name
+            assert entry["total_accuracy"] == pytest.approx(0.5), name
+            assert entry["rounds_played"] == 2, name
+            assert entry["avg_profit_per_round"] == pytest.approx(
+                (_FALLBACK_WIN - 10.0) / 2
+            ), name
+            assert entry["projected_annual_profit"] == pytest.approx(
+                3 * (_FALLBACK_WIN - 10.0) / 2
+            ), name
+            assert entry["odds_coverage"] == 0.0, name
+            continue
         assert entry["total_profit"] == pytest.approx(2 * _FALLBACK_WIN), name
         assert entry["total_accuracy"] == pytest.approx(1.0), name
         assert entry["rounds_played"] == 2, name
@@ -927,8 +943,15 @@ async def test_compare_season_end_to_end(_db_at_head) -> None:
     assert present["season"] == "2026"
     assert present["comparison"][HEURISTIC_HOME_ADVANTAGE]["total_correct"] == 2
     assert present["comparison"][HEURISTIC_FORM]["total_correct"] == 1
+    # FCL-14: yolo grades its OWN trace — R4's strongest signal is the
+    # matchup h2h (Reds 1-0 Blues) → home ✓; R5's strongest is form
+    # (Greens 1 win vs Blues 0) → away ✗ (Blues won 85-65).  The other
+    # three derived heuristics follow the majority vote (2/2).
     for name in DERIVED_LEAGUE_HEURISTICS:
+        if name == "yolo":
+            continue
         assert present["comparison"][name]["total_correct"] == 2, name
+    assert present["comparison"]["yolo"]["total_correct"] == 1
     assert present["best_overall"]["heuristic"] in (
         HEURISTIC_HOME_ADVANTAGE,
         HEURISTIC_LADDER,

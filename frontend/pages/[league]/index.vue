@@ -96,9 +96,11 @@
                   </div>
                 </div>
 
-                <!-- Results when played; the SELECTED heuristic's stored
-                     pick for upcoming fixtures (FCL-13); bare status
-                     label only when no stored tip exists yet. -->
+                <!-- Results when played; the SELECTED heuristic's tip in
+                     the AFL card shape (FCL-14: badge, confidence,
+                     winner, margin); "No tip available" when the
+                     heuristic has no stored tip — byte-identical to
+                     the AFL home's card states. -->
                 <div v-if="ev.completed" class="tip-info league-result">
                   <div class="result-row">
                     <span class="result-team" :class="{ winner: sideIsWinner(ev, 'home') }">
@@ -113,15 +115,23 @@
                     <span class="result-score">{{ sideScore(ev, 'away') ?? '—' }}</span>
                   </div>
                 </div>
-                <div v-else-if="pickFor(ev)" class="no-tip league-tip">
-                  <p class="league-tip-label">{{ heuristicLabel }}</p>
-                  <p class="league-tip-pick">{{ displayName(pickFor(ev)!.name) }}</p>
-                  <p class="league-tip-meta">
-                    {{ pickFor(ev)!.agreement }}/{{ pickFor(ev)!.total }} models agree
-                  </p>
+                <div v-else-if="pickFor(ev)" class="tip-info">
+                  <div class="tip-header">
+                    <span class="heuristic-badge">{{ heuristicLabel }}</span>
+                    <span
+                      v-if="pickFor(ev)!.confidence !== null"
+                      class="confidence"
+                    >{{ Math.round(pickFor(ev)!.confidence! * 100) }}%</span>
+                  </div>
+                  <div class="tip-body">
+                    <h3>{{ displayName(pickFor(ev)!.name) }}</h3>
+                    <p v-if="pickFor(ev)!.margin !== null" class="margin">
+                      Margin: {{ pickFor(ev)!.margin }} pts
+                    </p>
+                  </div>
                 </div>
                 <div v-else class="no-tip">
-                  <p>{{ ev.status === 'scheduled' ? 'Scheduled' : ev.status }}</p>
+                  <p>No tip available</p>
                 </div>
               </article>
             </NuxtLink>
@@ -264,31 +274,24 @@ onMounted(() => {
 })
 
 /**
- * The card's tip for an upcoming fixture under the SELECTED heuristic:
- * the stored pick for `selectedHeuristic` (a team name, or null for a
- * draw-no-pick). Null when no stored tip exists for that heuristic —
- * the card keeps its status label. `agreement` still reports how many
- * of the stored heuristics picked the same side, for the meta line.
+ * The card's tip for an upcoming fixture under the SELECTED heuristic —
+ * the AFL card shape (FCL-14): the stored pick's side name, confidence
+ * (0..1) and margin (points).  Null when no stored tip exists for that
+ * heuristic — the card shows the AFL's "No tip available" state.
  */
 const pickFor = (
   ev: SportEvent,
-): { name: string; agreement: number; total: number } | null => {
-  const picks = tipsBySlug.value[ev.slug]
-  if (!picks) return null
-  const selected = picks[selectedHeuristic.value]
-  if (selected === undefined) return null
-  const entries = Object.entries(picks).filter(([, name]) => name !== null) as [
-    string,
-    string,
-  ][]
-  const agreement =
-    selected === null
-      ? 0
-      : entries.filter(([, name]) => name === selected).length
+): {
+  name: string
+  confidence: number | null
+  margin: number | null
+} | null => {
+  const pick = tipsBySlug.value[ev.slug]?.[selectedHeuristic.value]
+  if (!pick || pick.picked === undefined) return null
   return {
-    name: selected === null ? 'Draw' : selected,
-    agreement,
-    total: entries.length,
+    name: pick.picked === null ? 'Draw' : pick.picked,
+    confidence: pick.confidence ?? null,
+    margin: pick.margin ?? null,
   }
 }
 
@@ -623,16 +626,27 @@ useHead({
   justify-content: center;
 }
 
-/* FCL-12 forward tips — same monochrome card language as the result
-   block: muted label, bold pick, quiet model-agreement meta. */
-.league-tip {
+/* FCL-14: the AFL card's tip block — byte-identical classes and
+   treatment to the AFL home's .tip-info (badge / confidence / winner /
+   margin), so a league card is indistinguishable from an AFL card. */
+.tip-info {
   background: var(--color-hover);
   padding: 1.25rem;
   border-radius: 4px;
-  gap: 0.25rem;
+  /* Fill remaining card height so sibling cards align */
+  flex: 1;
 }
 
-.league-tip-label {
+.tip-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.875rem;
+  padding-bottom: 0.875rem;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.heuristic-badge {
   font-size: 0.6875rem;
   font-weight: 700;
   text-transform: uppercase;
@@ -640,15 +654,19 @@ useHead({
   color: var(--color-muted);
 }
 
-.league-tip-pick {
-  font-size: 1.125rem;
-  font-weight: 800;
-  color: var(--color-text);
+.confidence {
+  font-size: 0.8125rem;
+  font-weight: 700;
 }
 
-.league-tip-meta {
+.tip-body h3 {
+  font-size: 1.25rem;
+  margin-bottom: 0.5rem;
+}
+
+.tip-body .margin {
   font-size: 0.8125rem;
-  color: var(--color-muted);
+  margin: 0;
 }
 
 /* League fixture results — winner emphasised without colour, matching

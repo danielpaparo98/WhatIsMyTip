@@ -40,12 +40,15 @@ class LeagueTipExplanationResponse(BaseModel):
     ``picked`` is ``None`` when the model expects a draw (the
     ``league_tips`` draw-no-pick convention); ``explanation`` is
     ``None`` when generation degraded — a tip is never blocked by the
-    AI layer.
+    AI layer.  FCL-14: ``confidence``/``margin`` ride on the row for
+    the derived heuristics (the AFL card shape), ``None`` otherwise.
     """
 
     heuristic: str
     picked: Optional[str] = None
     explanation: Optional[str] = None
+    confidence: Optional[float] = None
+    margin: Optional[int] = None
 
 
 class LeagueTipsResponse(BaseModel):
@@ -63,13 +66,27 @@ class LeagueTipsResponse(BaseModel):
     count: int = 0
 
 
+class LeaguePickDetail(BaseModel):
+    """One heuristic's stored pick for a fixture (FCL-14 AFL parity).
+
+    ``picked`` is the side name (``None`` = draw-no-pick);
+    ``confidence`` (0..1) and ``margin`` (points) ride on the row for
+    the derived heuristics — the same numbers the AFL cards render —
+    and are ``None`` for the base result-derived models.
+    """
+
+    picked: Optional[str] = None
+    confidence: Optional[float] = None
+    margin: Optional[int] = None
+
+
 class LeagueRoundFixture(BaseModel):
     """One round fixture with its stored league picks (FCL-12).
 
-    ``picks`` maps heuristic name → picked side name (``None`` =
-    draw-no-pick); absent keys mean the heuristic has no stored tip for
-    the fixture.  NO AI explanations — the round page renders picks
-    only, so a page view never pays the LLM pipeline.
+    ``picks`` maps heuristic name → :class:`LeaguePickDetail`; absent
+    keys mean the heuristic has no stored tip for the fixture.  NO AI
+    explanations — the round page renders picks only, so a page view
+    never pays the LLM pipeline.
     """
 
     event_id: int
@@ -80,7 +97,7 @@ class LeagueRoundFixture(BaseModel):
     completed: bool
     home_team: str
     away_team: str
-    picks: Dict[str, Optional[str]] = {}
+    picks: Dict[str, LeaguePickDetail] = {}
 
 
 class LeagueRoundTipsResponse(BaseModel):

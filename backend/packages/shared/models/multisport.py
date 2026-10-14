@@ -428,6 +428,13 @@ class LeagueTip(Base):
     )
     season_id = Column(Integer, ForeignKey("seasons.id"), nullable=False, index=True)
     generated_at = Column(DateTime(timezone=True), server_default=func.now())
+    # FCL-14 (AFL-parity): the derived heuristics carry the AFL tip
+    # shape — a 0..1 confidence and a home-signed margin in points — so
+    # the league cards render exactly like the AFL cards.  NULL for the
+    # base result-derived models (they produce picks, not numbers) and
+    # for draw-no-pick rows.
+    confidence = Column(Float, nullable=True)
+    margin = Column(Integer, nullable=True)
 
 
 __all__ = [

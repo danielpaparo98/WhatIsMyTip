@@ -57,6 +57,7 @@ from packages.shared.services.league_heuristics import (
     HEURISTIC_LADDER,
     HEURISTIC_MATCHUP,
     HEURISTIC_WEIGHTED_TIP,
+    HEURISTIC_YOLO,
     LEAGUE_HEURISTICS,
     LEAGUE_MODEL_SETS,
     LEAGUE_MODELS,
@@ -478,6 +479,8 @@ def _patched_fetches(
     existing: dict[tuple[int, str], int | None],
     *,
     scheduled_events: list[CompletedEvent] | None = None,
+    existing_numbers: tuple[dict[tuple[int, str], float | None],
+                            dict[tuple[int, str], int | None]] | None = None,
     linear_weights: tuple[float, dict[str, float]] | None = None,
     boosted_model: Any | None = None,
 ) -> tuple[Any, ...]:
@@ -485,7 +488,9 @@ def _patched_fetches(
     are never touched (each test builds its own service instance).  The
     learned-model loaders default to ``None`` — the majority-vote
     fallback (FCL-3d), i.e. no scoped trained model.  ``scheduled_events``
-    defaults to ``()`` — no upcoming fixtures (FCL-12 forward tips)."""
+    defaults to ``()`` — no upcoming fixtures (FCL-12 forward tips).
+    ``existing_numbers`` defaults to empty maps — no stored confidence/
+    margin (FCL-14)."""
     return (
         patch.object(service, "_fetch_seasons", AsyncMock(return_value=seasons)),
         patch.object(
@@ -508,6 +513,11 @@ def _patched_fetches(
             service,
             "_fetch_scheduled_events",
             AsyncMock(return_value=scheduled_events or []),
+        ),
+        patch.object(
+            service,
+            "_fetch_existing_tip_numbers",
+            AsyncMock(return_value=existing_numbers or ({}, {})),
         ),
     )
 
@@ -543,7 +553,7 @@ class TestGenerateForCompetition:
             summary = await service.generate_for_competition(db, competition_id=42)
 
         rows = [call.args[0] for call in db.add.call_args_list]
-        assert len(rows) == 18  # 3 completed events × (3 base + 3 derived)
+        assert len(rows) == 21  # 3 completed events × (3 base + 4 derived)
         assert {row.heuristic for row in rows} == (
             set(LEAGUE_HEURISTICS) | set(DERIVED_LEAGUE_HEURISTICS)
         )
@@ -560,12 +570,13 @@ class TestGenerateForCompetition:
             for row in rows
             if row.event_id != 2
         )
-        assert summary["tips_inserted"] == 18
+        assert summary["tips_inserted"] == 21
         assert summary["tips_updated"] == 0
         assert summary["derived_tips"] == {
             "best_bet": 3,
             "weighted_tip": 3,
             "boosted_tip": 3,
+            "yolo": 3,
         }
         db.commit.assert_awaited_once()
 
@@ -578,15 +589,21 @@ class TestGenerateForCompetition:
         service = LeagueHeuristicsService()
         picks = compute_all_picks_and_derived(events)
         existing = {(p.event_id, p.heuristic): p.selected_side_id for p in picks}
+        numbers = (
+            {(p.event_id, p.heuristic): p.confidence for p in picks},
+            {(p.event_id, p.heuristic): p.margin for p in picks},
+        )
         first_patches = _patched_fetches(service, seasons, events, {})
-        second_patches = _patched_fetches(service, seasons, events, existing)
+        second_patches = _patched_fetches(
+            service, seasons, events, existing, existing_numbers=numbers
+        )
         with _applied(first_patches):
             first = await service.generate_for_competition(db, competition_id=42)
         db.add = MagicMock()  # fresh spy for the re-run
         with _applied(second_patches):
             second = await service.generate_for_competition(db, competition_id=42)
 
-        assert first["tips_inserted"] == 6  # 3 base + 3 derived
+        assert first["tips_inserted"] == 7  # 3 base + 4 derived
         assert second["tips_inserted"] == 0
         assert second["tips_updated"] == 0
         assert second["derived_tips"] == {
@@ -602,6 +619,10 @@ class TestGenerateForCompetition:
         existing = {(p.event_id, p.heuristic): p.selected_side_id for p in picks}
         # Upstream score revision: the stored home_advantage pick is stale.
         existing[(1, HEURISTIC_HOME_ADVANTAGE)] = 999
+        numbers = (
+            {(p.event_id, p.heuristic): p.confidence for p in picks},
+            {(p.event_id, p.heuristic): p.margin for p in picks},
+        )
         tip_row = SimpleNamespace(id=7, selected_participant_id=999)
         db = _fake_session()
         # _update_tip loads the ORM row via scalar_one_or_none().
@@ -609,7 +630,9 @@ class TestGenerateForCompetition:
             return_value=SimpleNamespace(scalar_one_or_none=lambda: tip_row)
         )
         service = LeagueHeuristicsService()
-        patches = _patched_fetches(service, seasons, events, existing)
+        patches = _patched_fetches(
+            service, seasons, events, existing, existing_numbers=numbers
+        )
         with _applied(patches):
             summary = await service.generate_for_competition(db, competition_id=42)
 
@@ -672,11 +695,15 @@ class TestDerivedHeuristicContract:
         assert HEURISTIC_WEIGHTED_TIP == "weighted_tip"
         assert HEURISTIC_BOOSTED_TIP == "boosted_tip"
 
-    def test_derived_set_is_exactly_the_three_in_canonical_order(self) -> None:
+    def test_derived_set_is_exactly_the_four_in_canonical_order(self) -> None:
+        """FCL-14 (AFL parity): the derived set is the AFL heuristic set —
+        best_bet, weighted_tip, boosted_tip AND yolo — so the selectable
+        heuristic list is IDENTICAL across AFL and every league."""
         assert DERIVED_LEAGUE_HEURISTICS == (
             "best_bet",
             "weighted_tip",
             "boosted_tip",
+            "yolo",
         )
 
     def test_best_bet_name_matches_the_consensus_module(self) -> None:
@@ -850,11 +877,13 @@ class TestComputeAllPicksAndDerived:
     def test_drawn_event_carries_null_base_and_derived_picks(self) -> None:
         draw = _event(1, home_score=44, away_score=44)
         picks = compute_all_picks_and_derived([draw])
-        assert len(picks) == 6
+        assert len(picks) == 7
         assert {p.heuristic for p in picks} == (
             set(LEAGUE_HEURISTICS) | set(DERIVED_LEAGUE_HEURISTICS)
         )
         assert all(p.selected_side_id is None for p in picks)
+        # FCL-14: draw-no-pick rows carry NO card numbers either.
+        assert all(p.confidence is None and p.margin is None for p in picks)
 
     def test_no_lookahead_a_later_event_never_changes_an_earlier_pick(self) -> None:
         early = _event(
@@ -919,17 +948,18 @@ class TestGenerateForCompetitionDerived:
             summary = await service.generate_for_competition(db, competition_id=42)
 
         rows = [call.args[0] for call in db.add.call_args_list]
-        assert len(rows) == 6  # 1 event × (3 base + 3 derived)
+        assert len(rows) == 7  # 1 event × (3 base + 4 derived)
         assert {row.heuristic for row in rows} == (
             set(LEAGUE_HEURISTICS) | set(DERIVED_LEAGUE_HEURISTICS)
         )
         assert all(row.competition_id == 42 for row in rows)
         assert all(row.season_id == 7 for row in rows)
-        assert summary["tips_inserted"] == 6
+        assert summary["tips_inserted"] == 7
         assert summary["derived_tips"] == {
             "best_bet": 1,
             "weighted_tip": 1,
             "boosted_tip": 1,
+            "yolo": 1,
         }
         db.commit.assert_awaited_once()
 
@@ -944,9 +974,9 @@ class TestGenerateForCompetitionDerived:
             summary = await service.generate_for_competition(db, competition_id=42)
 
         rows = [call.args[0] for call in db.add.call_args_list]
-        assert len(rows) == 6
+        assert len(rows) == 7
         assert all(row.selected_participant_id is None for row in rows)
-        assert summary["tips_inserted"] == 6
+        assert summary["tips_inserted"] == 7
 
     @pytest.mark.asyncio
     async def test_best_bet_is_the_majority_vote_over_disagreeing_base_models(
@@ -1066,6 +1096,11 @@ class TestGenerateForCompetitionDerived:
             patch.object(
                 service, "_fetch_scheduled_events", AsyncMock(return_value=[])
             ),
+            patch.object(
+                service,
+                "_fetch_existing_tip_numbers",
+                AsyncMock(return_value=({}, {})),
+            ),
             patch(
                 "packages.shared.crud.model_versions.get_active_coefficients",
                 new=AsyncMock(side_effect=RuntimeError("db down")),
@@ -1089,7 +1124,7 @@ class TestGenerateForCompetitionDerived:
         assert by_key[(1, HEURISTIC_BOOSTED_TIP)] == by_key[
             (1, HEURISTIC_BEST_BET)
         ]
-        assert summary["tips_inserted"] == 6
+        assert summary["tips_inserted"] == 7
         db.commit.assert_awaited_once()
 
     @pytest.mark.asyncio
@@ -1125,7 +1160,7 @@ class TestGenerateForCompetitionDerived:
         assert by_key[(1, HEURISTIC_BOOSTED_TIP)] == by_key[
             (1, HEURISTIC_BEST_BET)
         ]
-        assert summary["tips_inserted"] == 6
+        assert summary["tips_inserted"] == 7
         db.commit.assert_awaited_once()
 
     @pytest.mark.asyncio
@@ -1159,7 +1194,7 @@ class TestGenerateForCompetitionDerived:
         assert {row.heuristic for row in rows} == (
             {HEURISTIC_ELO} | set(DERIVED_LEAGUE_HEURISTICS)
         )
-        assert summary["tips_inserted"] == 4
+        assert summary["tips_inserted"] == 5
 
     @pytest.mark.asyncio
     async def test_unregistered_competition_falls_through_to_sport_plus_derived(
@@ -1193,7 +1228,7 @@ class TestGenerateForCompetitionDerived:
         assert {row.heuristic for row in rows} == (
             set(RUGBY_LEAGUE_MODELS) | set(DERIVED_LEAGUE_HEURISTICS)
         )
-        assert summary["tips_inserted"] == 7
+        assert summary["tips_inserted"] == 8
 
 
 class TestScheduledEventTips:
@@ -1239,7 +1274,7 @@ class TestScheduledEventTips:
         assert all(
             row.selected_participant_id in (101, 102) for row in scheduled_rows
         )
-        assert summary["tips_inserted"] == 12  # 2 events × 6 names
+        assert summary["tips_inserted"] == 14  # 2 events × 7 names
         assert summary["scheduled_considered"] == 1
         assert summary["events_considered"] == 1  # completed only, unchanged
 
@@ -1279,6 +1314,7 @@ class TestScheduledEventTips:
             HEURISTIC_BEST_BET: 101,
             HEURISTIC_WEIGHTED_TIP: 101,
             HEURISTIC_BOOSTED_TIP: 101,
+            HEURISTIC_YOLO: 101,
         }
 
     @pytest.mark.asyncio
@@ -1311,7 +1347,7 @@ class TestScheduledEventTips:
 
         rows = [call.args[0] for call in db.add.call_args_list]
         assert [row for row in rows if row.event_id == 2] == []
-        assert summary["tips_inserted"] == 6
+        assert summary["tips_inserted"] == 7
         assert summary["scheduled_considered"] == 1
 
     @pytest.mark.asyncio
@@ -1342,12 +1378,12 @@ class TestScheduledEventTips:
 
         rows = [call.args[0] for call in db.add.call_args_list]
         scheduled_rows = [row for row in rows if row.event_id == 2]
-        assert len(scheduled_rows) == 6
+        assert len(scheduled_rows) == 7
         assert all(
             row.selected_participant_id == 101  # the unanimous home vote
             for row in scheduled_rows
         )
-        assert summary["tips_inserted"] == 12
+        assert summary["tips_inserted"] == 14
 
     @pytest.mark.asyncio
     async def test_scheduled_picks_exclude_later_completed_evidence(self) -> None:
@@ -1407,6 +1443,7 @@ class TestScheduledEventTips:
             HEURISTIC_BEST_BET: 101,
             HEURISTIC_WEIGHTED_TIP: 101,
             HEURISTIC_BOOSTED_TIP: 101,
+            HEURISTIC_YOLO: 101,
         }
 
 
@@ -1659,15 +1696,15 @@ async def test_generation_round_trip_is_idempotent_against_unique_constraint(
     finally:
         await engine.dispose()
 
-    # 5 completed events × (3 base + 3 derived) heuristics; the
+    # 5 completed events × (3 base + 4 derived) heuristics; the
     # scheduled event got nothing.  No scoped trained models exist, so
     # both combiners ride the majority-vote fallback — rows still exist.
-    assert first["tips_inserted"] == 30
-    assert total == 30
+    assert first["tips_inserted"] == 35
+    assert total == 35
     assert heuristics == set(LEAGUE_HEURISTICS) | set(DERIVED_LEAGUE_HEURISTICS)
     assert season_ids == {ids["season_2025"], ids["season_2026"]}
-    # Exactly the six draw tips (one drawn event × 6 names) carry NULL.
-    assert null_picks == 6
+    # Exactly the seven draw tips (one drawn event × 7 names) carry NULL.
+    assert null_picks == 7
     # Re-running must not duplicate or crash — and must not churn.
     assert second["tips_inserted"] == 0
     assert second["tips_updated"] == 0
@@ -1691,5 +1728,5 @@ async def test_module_level_entry_point_matches_service(_db_at_head) -> None:
     finally:
         await engine.dispose()
 
-    # 5 completed events × (3 base + 3 derived) heuristics.
-    assert summary["tips_inserted"] == 30
+    # 5 completed events × (3 base + 4 derived) heuristics.
+    assert summary["tips_inserted"] == 35
