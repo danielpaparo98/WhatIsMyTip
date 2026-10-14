@@ -1004,12 +1004,13 @@ class TestLeagueRoundTips:
                     "home_team": "Sydney",
                     "away_team": "Carlton",
                     "picks": {
-                        "home_advantage": "Sydney",
-                        "form": "Sydney",
-                        "ladder": "Carlton",
-                        "best_bet": "Sydney",
-                        "weighted_tip": "Sydney",
-                        "boosted_tip": "Sydney",
+                        "home_advantage": {"picked": "Sydney", "confidence": None, "margin": None},
+                        "form": {"picked": "Sydney", "confidence": None, "margin": None},
+                        "ladder": {"picked": "Carlton", "confidence": None, "margin": None},
+                        "best_bet": {"picked": "Sydney", "confidence": 0.767, "margin": 6},
+                        "weighted_tip": {"picked": "Sydney", "confidence": 0.55, "margin": 6},
+                        "boosted_tip": {"picked": "Sydney", "confidence": 0.55, "margin": 6},
+                        "yolo": {"picked": "Sydney", "confidence": 0.77, "margin": 16},
                     },
                 },
                 {
@@ -1036,7 +1037,8 @@ class TestLeagueRoundTips:
         assert body["round"] == 11
         assert body["season"] == "2026"
         assert body["count"] == 2
-        assert body["fixtures"][0]["picks"]["best_bet"] == "Sydney"
+        assert body["fixtures"][0]["picks"]["best_bet"]["picked"] == "Sydney"
+        assert body["fixtures"][0]["picks"]["best_bet"]["confidence"] == 0.767
         assert body["fixtures"][1]["picks"] == {}
         service_mock.assert_awaited_once_with(db, competition_id=36, round_id=11)
 

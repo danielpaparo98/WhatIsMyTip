@@ -231,20 +231,25 @@ describe('match page wiring (source-grep)', () => {
     expect(PAGE).toMatch(/font-weight:\s*800/)
   })
 
-  it('renders FCL-12/13 tips with config labels but NO AFL-specific sections', () => {
-    // FCL-12 (2026-10-13): upcoming fixtures show the league's STORED
-    // picks from /api/tips/league (with cached AI explanations).
-    // FCL-13: rows render as TipCard-style cards ordered by the league
-    // canonical order, with the user's selected heuristic highlighted
-    // primary. The AFL-only surfaces (AFL TipCard / weather / match
-    // analysis / model predictions) remain absent — no state-league
-    // equivalents exist.
+  it('renders the AFL game-page section split (FCL-14) without AFL-only data', () => {
+    // FCL-12: upcoming fixtures show the league's STORED picks from
+    // /api/tips/league (with cached AI explanations).  FCL-14
+    // (absolute AFL parity): the AFL game page's TWO tipping sections
+    // — Heuristic Tips (TipCard shape: badge/confidence/margin/
+    // explanation, selected heuristic highlighted) and Model
+    // Predictions (the league's base models).  The AFL-only DATA
+    // surfaces (weather / match analysis / model_predictions payload)
+    // remain absent — no state-league sources exist.
     expect(PAGE).toMatch(/match-tips-section/)
+    expect(PAGE).toMatch(/match-models-section/)
+    expect(PAGE).toMatch(/Heuristic Tips/)
+    expect(PAGE).toMatch(/Model Predictions/)
+    expect(PAGE).toMatch(/tip-card/)
+    expect(PAGE).toMatch(/model-card/)
     expect(PAGE).toMatch(/api\/tips\/league\b/)
     expect(PAGE).toMatch(/tip-selected/)
     expect(PAGE).toMatch(/getLeagueHeuristicOptions\(/)
     expect(PAGE).not.toMatch(/TipCard/)
-    expect(PAGE).not.toMatch(/models-section/)
     expect(PAGE).not.toMatch(/WeatherCard/)
     expect(PAGE).not.toMatch(/weather-section/)
     expect(PAGE).not.toMatch(/match-analysis/)

@@ -77,6 +77,9 @@ from .league_heuristics import (
 
 #: The best-bet consensus heuristic's name on ``league_tips``.
 HEURISTIC_BEST_BET = "best_bet"
+#: FCL-14 (AFL parity): the AFL orchestrator's third generated heuristic,
+#: mirrored name (test-pinned against league_heuristics.HEURISTIC_YOLO).
+HEURISTIC_YOLO = "yolo"
 
 #: Stand-in for an infinite ladder percentage (nothing conceded yet):
 #: dominant but finite, so features stay ML-safe for the weekly fit.
@@ -88,6 +91,31 @@ LADDER_PCT_INFINITY_SENTINEL = 999.0
 #: is always the honest value here.
 FALLBACK_CONFIDENCE = 0.55
 FALLBACK_MARGIN = 6
+
+#: FCL-14 (yolo): the zero-information floor — no usable signal means an
+#: honest coin-flip confidence and the minimum margin, the same shape
+#: the AFL heuristics' zero-information defaults take.
+_ZERO_INFO_CONFIDENCE = 0.50
+_ZERO_INFO_MARGIN = 1
+
+#: FCL-14 (yolo): per-model signal scales — the |signal| value that
+#: counts as "maximally strong" for the confidence/margin mapping.
+#: Elo lives on a 400-point scale (a 100-point gap is decisive → 200
+#: reads as very strong); the win-diff signals saturate around 3-4
+#: within their windows, so 5 is the natural ceiling for form, ladder
+#: and matchup.
+YOLO_SIGNAL_SCALES: dict[str, float] = {
+    "form": 5.0,
+    "ladder": 5.0,
+    "elo": 200.0,
+    "matchup": 5.0,
+}
+
+#: FCL-14 (yolo): confidence/margin mapping — |signal| at the model's
+#: scale saturates to the AFL card's 0.95 confidence ceiling and a
+#: 26-point margin (the AFL cards' typical strong-tip range).
+YOLO_CONFIDENCE_SPAN = 0.45
+YOLO_MARGIN_SPAN = 26.0
 
 
 # ---------------------------------------------------------------------------
@@ -147,12 +175,101 @@ def pick_best_bet(
     side (FCL-3a); empty/zero-info input resolves to the same home
     default; a drawn event is draw-no-pick (NULL selection), matching
     the base models' own draw discipline.
+
+    FCL-14 (AFL parity): the tip carries the AFL card shape —
+    ``confidence`` scales with the vote share (unanimous → 0.90, a bare
+    majority → ~0.63, the same conservative band the AFL best_bet's
+    ``avg × 0.95`` cap lives in) and ``margin`` is the AFL fallback's
+    documented 6-point default (league base picks carry no margins to
+    average).  A draw-no-pick keeps both numbers NULL.
     """
     if is_drawn(event):
         return TipPick(event.event_id, HEURISTIC_BEST_BET, None)
-    return TipPick(
-        event.event_id, HEURISTIC_BEST_BET, _majority_vote_side(event, base_picks)
+    home, away = event.home_side_id, event.away_side_id
+    votes = [
+        pick.selected_side_id
+        for pick in base_picks
+        if pick.event_id == event.event_id and pick.selected_side_id is not None
+    ]
+    side = _majority_vote_side(event, base_picks)
+    if not votes:
+        return TipPick(
+            event.event_id, HEURISTIC_BEST_BET, side, _ZERO_INFO_CONFIDENCE, 6
+        )
+    winning_votes = votes.count(side) if side is not None else 0
+    share = winning_votes / len(votes)
+    confidence = round(min(0.90, _ZERO_INFO_CONFIDENCE + 0.40 * share), 3)
+    return TipPick(event.event_id, HEURISTIC_BEST_BET, side, confidence, 6)
+
+
+def league_yolo_pick(
+    event: CompletedEvent,
+    prior_history: Sequence[CompletedEvent],
+    season_history: Sequence[CompletedEvent],
+    model_names: Sequence[str] = LEAGUE_HEURISTICS,
+) -> TipPick:
+    """The league ``yolo`` tip: the single strongest model's pick (FCL-14).
+
+    The AFL yolo picks the highest-confidence model's prediction and
+    boosts it; league base models produce PICKS, not confidences, so
+    the honest league analogue ranks the models by their numeric
+    SIGNAL — the same feature values the learned combiners read
+    (:data:`LEAGUE_FEATURE_SPECS`, same slice routing: spanning models
+    the cross-season prefix, season-scoped ladder the same-season
+    prefix).  The strongest |signal| model's own side wins; ties
+    resolve to the canonical model order (first in ``model_names``),
+    and a zero-signal field (no history) resolves to the home side at
+    the zero-information floor — the same honest cold start every
+    league heuristic takes.
+
+    ``home_advantage`` is excluded from the ranking: its signal is the
+    constant 1.0 (it is always "home"), which would win every argmax
+    and turn yolo into a second home_advantage.
+
+    Confidence/margin map the winning signal through its model's
+    :data:`YOLO_SIGNAL_SCALES` scale — ``0.50 + 0.45 × |signal|/scale``
+    clamped to the AFL card's 0.95 ceiling, margin
+    ``max(1, round(26 × |signal|/scale))``.  A drawn event is
+    draw-no-pick (both numbers NULL), matching the derived set's
+    discipline.
+    """
+    if is_drawn(event):
+        return TipPick(event.event_id, HEURISTIC_YOLO, None)
+
+    best_model: str | None = None
+    best_signal = 0.0
+    best_primary = 0.0
+    for model in model_names:
+        if model == HEURISTIC_HOME_ADVANTAGE:
+            continue  # constant signal — see docstring
+        spec = _require_feature_spec(model)
+        history = (
+            prior_history if LEAGUE_MODELS[model].spans_seasons else season_history
+        )
+        values = spec.build(event, history)
+        # The PRIMARY signal is the first feature (ladder's percentage
+        # diff is the secondary evidence for its wins diff).
+        signal = abs(values[0]) if values else 0.0
+        if best_model is None or signal > best_signal:
+            best_model = model
+            best_signal = signal
+            best_primary = values[0] if values else 0.0
+
+    home, away = event.home_side_id, event.away_side_id
+    if best_model is None or best_signal <= 0.0:
+        # Zero information: the deterministic home-side floor.
+        return TipPick(
+            event.event_id, HEURISTIC_YOLO, home, _ZERO_INFO_CONFIDENCE,
+            _ZERO_INFO_MARGIN,
+        )
+    scale = YOLO_SIGNAL_SCALES.get(best_model, 5.0)
+    strength = min(1.0, best_signal / scale)
+    confidence = round(
+        min(0.95, _ZERO_INFO_CONFIDENCE + YOLO_CONFIDENCE_SPAN * strength), 3
     )
+    margin = max(_ZERO_INFO_MARGIN, int(round(YOLO_MARGIN_SPAN * strength)))
+    side = home if best_primary >= 0 else away
+    return TipPick(event.event_id, HEURISTIC_YOLO, side, confidence, margin)
 
 
 # ---------------------------------------------------------------------------

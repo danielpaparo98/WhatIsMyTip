@@ -522,6 +522,11 @@ def _patched_fetches(
         patch.object(
             service, "_fetch_scheduled_events", AsyncMock(return_value=[])
         ),
+        patch.object(
+            service,
+            "_fetch_existing_tip_numbers",
+            AsyncMock(return_value=({}, {})),
+        ),
     )
 
 
@@ -552,7 +557,7 @@ class TestGenerateForCompetitionSportScoping:
 
         rows = [call.args[0] for call in db.add.call_args_list]
         # 1 decided event × (4 base + 3 derived) + 1 draw × 7 draw-no-pick.
-        assert len(rows) == 14
+        assert len(rows) == 16
         base_rows = [
             row for row in rows if row.heuristic in set(RUGBY_LEAGUE_MODELS)
         ]
@@ -568,7 +573,7 @@ class TestGenerateForCompetitionSportScoping:
         assert {row.heuristic for row in derived_rows} == set(
             DERIVED_LEAGUE_HEURISTICS
         )
-        assert len(derived_rows) == 6
+        assert len(derived_rows) == 8
         assert all(row.competition_id == 42 for row in rows)
         assert all(row.season_id == 7 for row in rows)
         # The draw is draw-no-pick for base AND derived alike; the
@@ -581,7 +586,7 @@ class TestGenerateForCompetitionSportScoping:
             for row in rows
             if row.event_id == 1
         )
-        assert summary["tips_inserted"] == 14
+        assert summary["tips_inserted"] == 16
         assert summary["derived_tips"] == {
             name: 2 for name in DERIVED_LEAGUE_HEURISTICS
         }
@@ -603,7 +608,7 @@ class TestGenerateForCompetitionSportScoping:
             summary = await service.generate_for_competition(db, competition_id=42)
 
         rows = [call.args[0] for call in db.add.call_args_list]
-        assert len(rows) == 6  # 3 base + 3 derived for the decided event
+        assert len(rows) == 7  # 3 base + 4 derived for the decided event
         base = {
             row.heuristic for row in rows if row.heuristic in set(LEAGUE_HEURISTICS)
         }
@@ -614,7 +619,7 @@ class TestGenerateForCompetitionSportScoping:
         }
         assert base == set(LEAGUE_HEURISTICS)
         assert derived == set(DERIVED_LEAGUE_HEURISTICS)
-        assert summary["tips_inserted"] == 6
+        assert summary["tips_inserted"] == 7
 
     @pytest.mark.asyncio
     async def test_unresolvable_sport_falls_back_to_the_d3_set(self) -> None:
@@ -635,11 +640,11 @@ class TestGenerateForCompetitionSportScoping:
             row.heuristic for row in rows if row.heuristic in set(LEAGUE_HEURISTICS)
         }
         assert base == set(LEAGUE_HEURISTICS)
-        # ...and the derived trio completes the pass.
+        # ...and the derived set completes the pass.
         assert {row.heuristic for row in rows} == (
             set(LEAGUE_HEURISTICS) | set(DERIVED_LEAGUE_HEURISTICS)
         )
-        assert summary["tips_inserted"] == 6
+        assert summary["tips_inserted"] == 7
 
     @pytest.mark.asyncio
     async def test_persisted_order_follows_the_registry_order(self) -> None:

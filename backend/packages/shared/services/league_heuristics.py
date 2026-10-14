@@ -126,12 +126,17 @@ DEFAULT_MODEL_SET: tuple[str, ...] = LEAGUE_HEURISTICS
 HEURISTIC_BEST_BET = "best_bet"
 HEURISTIC_WEIGHTED_TIP = "weighted_tip"
 HEURISTIC_BOOSTED_TIP = "boosted_tip"
+#: FCL-14 (AFL parity): the AFL orchestrator's third generated heuristic
+#: — the single-strongest-model pick — now exists for every league too,
+#: so the selectable heuristic set is IDENTICAL across AFL and leagues.
+HEURISTIC_YOLO = "yolo"
 
 #: Derived-heuristic persistence/summary order (FCL-6).
 DERIVED_LEAGUE_HEURISTICS: tuple[str, ...] = (
     HEURISTIC_BEST_BET,
     HEURISTIC_WEIGHTED_TIP,
     HEURISTIC_BOOSTED_TIP,
+    HEURISTIC_YOLO,
 )
 
 #: AFL-scrape-sourced models with NO rugby-league equivalent (Phase 5.2
@@ -206,12 +211,20 @@ class CompletedEvent:
 
 @dataclass(frozen=True)
 class TipPick:
-    """One heuristic's selection for one event (persisted as a tip row)."""
+    """One heuristic's selection for one event (persisted as a tip row).
+
+    FCL-14: the derived heuristics also carry the AFL tip shape —
+    ``confidence`` (0..1) and home-signed ``margin`` (points) — so the
+    league cards render exactly like the AFL cards.  ``None`` for the
+    base result-derived models (picks, not numbers) and draw-no-picks.
+    """
 
     event_id: int
     heuristic: str
     #: ``event_participants.id``; ``None`` = draw-no-pick.
     selected_side_id: Optional[int]
+    confidence: Optional[float] = None
+    margin: Optional[int] = None
 
 
 @dataclass(frozen=True)
@@ -743,7 +756,17 @@ def _league_linear_pick(
                 exc_info=True,
             )
             tip = league_consensus_fallback(event, base_picks)
-    return TipPick(event.event_id, HEURISTIC_WEIGHTED_TIP, tip.selected_side_id)
+    # FCL-14: the combiner's full AFL-shaped tip (side + confidence +
+    # margin) is preserved — the league cards render the same numbers
+    # the AFL cards do.  A draw-no-pick keeps both numbers NULL (the
+    # fallback's advisory values are not a card's numbers).
+    return TipPick(
+        event.event_id,
+        HEURISTIC_WEIGHTED_TIP,
+        tip.selected_side_id,
+        tip.confidence if tip.selected_side_id is not None else None,
+        tip.margin if tip.selected_side_id is not None else None,
+    )
 
 
 def _league_boosted_pick(
@@ -782,7 +805,17 @@ def _league_boosted_pick(
                 exc_info=True,
             )
             tip = league_consensus_fallback(event, base_picks)
-    return TipPick(event.event_id, HEURISTIC_BOOSTED_TIP, tip.selected_side_id)
+    # FCL-14: the combiner's full AFL-shaped tip (side + confidence +
+    # margin) is preserved — the league cards render the same numbers
+    # the AFL cards do.  A draw-no-pick keeps both numbers NULL (the
+    # fallback's advisory values are not a card's numbers).
+    return TipPick(
+        event.event_id,
+        HEURISTIC_BOOSTED_TIP,
+        tip.selected_side_id,
+        tip.confidence if tip.selected_side_id is not None else None,
+        tip.margin if tip.selected_side_id is not None else None,
+    )
 
 
 def compute_derived_picks(
@@ -795,7 +828,7 @@ def compute_derived_picks(
     linear_weights: Optional[tuple[float, Mapping[str, float]]] = None,
     boosted_model: Optional[Any] = None,
 ) -> list[TipPick]:
-    """The three derived heuristics' tips for one completed event (FCL-6).
+    """The four derived heuristics' tips for one event (FCL-6, FCL-14).
 
     ``best_bet`` is always the pure majority vote over ``base_picks``
     (FCL-3a) — no training dependency, correct from the first sync.
@@ -803,6 +836,12 @@ def compute_derived_picks(
     caller supplies the competition's scoped weights/model and fall
     back to the same majority vote otherwise (FCL-3d); a learned
     prediction failure demotes to the fallback rather than raising.
+    ``yolo`` (FCL-14, AFL parity) is the single strongest base-model
+    signal's pick (:func:`league_consensus.league_yolo_pick`).
+
+    Every derived tip carries the AFL card shape — confidence (0..1)
+    and home-signed margin (points) — so the league cards render
+    exactly like the AFL cards (FCL-14).
 
     ``prior_history``/``season_history`` must be the EXACT prefix
     slices the base picks were computed from — the learned features
@@ -811,13 +850,13 @@ def compute_derived_picks(
     function).  ``model_names`` is the league's resolved BASE set: it
     orders both the feature contract and the vote.
 
-    Returns up to three picks in :data:`DERIVED_LEAGUE_HEURISTICS`
+    Returns up to four picks in :data:`DERIVED_LEAGUE_HEURISTICS`
     order.  A drawn event yields draw-no-pick (NULL) tips for all
-    three, matching the base models' own draw discipline; an event
+    four, matching the base models' own draw discipline; an event
     without both sides yields no tips at all (the pick FK targets the
     side rows).
     """
-    from .league_consensus import pick_best_bet
+    from .league_consensus import league_yolo_pick, pick_best_bet
 
     if event.home_side_id is None or event.away_side_id is None:
         return []
@@ -831,6 +870,7 @@ def compute_derived_picks(
             event, prior_history, season_history, base_picks, model_names,
             boosted_model,
         ),
+        league_yolo_pick(event, prior_history, season_history, model_names),
     ]
 
 
@@ -1315,6 +1355,29 @@ class LeagueHeuristicsService:
         ).all()
         return {(int(row[0]), str(row[1])): row[2] for row in rows}
 
+    @staticmethod
+    async def _fetch_existing_tip_numbers(
+        db: AsyncSession, event_ids: Sequence[int]
+    ) -> tuple[dict[tuple[int, str], Optional[float]], dict[tuple[int, str], Optional[int]]]:
+        """Persisted (confidence, margin) keyed (event_id, heuristic) —
+        the FCL-14 diff halves: a changed number is a changed tip."""
+        ids = [int(eid) for eid in event_ids]
+        if not ids:
+            return {}, {}
+        rows = (
+            await db.execute(
+                select(
+                    LeagueTip.event_id,
+                    LeagueTip.heuristic,
+                    LeagueTip.confidence,
+                    LeagueTip.margin,
+                ).where(LeagueTip.event_id.in_(ids))
+            )
+        ).all()
+        confidence = {(int(r[0]), str(r[1])): r[2] for r in rows}
+        margin = {(int(r[0]), str(r[1])): r[3] for r in rows}
+        return confidence, margin
+
     # -- persistence ------------------------------------------------------
 
     async def _upsert_tips(
@@ -1334,7 +1397,11 @@ class LeagueHeuristicsService:
         — the third element breaks the insert count out per heuristic
         name so the generation summary can report derived-tip counts.
         """
-        existing = await self._fetch_existing_tips(db, [p.event_id for p in picks])
+        event_ids = [p.event_id for p in picks]
+        existing = await self._fetch_existing_tips(db, event_ids)
+        existing_confidence, existing_margin = await self._fetch_existing_tip_numbers(
+            db, event_ids
+        )
         inserted = 0
         updated = 0
         inserted_by_heuristic: dict[str, int] = {}
@@ -1348,15 +1415,27 @@ class LeagueHeuristicsService:
                         selected_participant_id=pick.selected_side_id,
                         competition_id=competition_id,
                         season_id=season_id_by_event[pick.event_id],
+                        # FCL-14: the AFL card shape rides on the row.
+                        confidence=pick.confidence,
+                        margin=pick.margin,
                     )
                 )
                 inserted += 1
                 inserted_by_heuristic[pick.heuristic] = (
                     inserted_by_heuristic.get(pick.heuristic, 0) + 1
                 )
-            elif existing[key] != pick.selected_side_id:
+            elif (
+                existing[key] != pick.selected_side_id
+                or existing_confidence.get(key) != pick.confidence
+                or existing_margin.get(key) != pick.margin
+            ):
                 if await self._update_tip(
-                    db, pick.event_id, pick.heuristic, pick.selected_side_id
+                    db,
+                    pick.event_id,
+                    pick.heuristic,
+                    pick.selected_side_id,
+                    pick.confidence,
+                    pick.margin,
                 ):
                     updated += 1
         await db.flush()
@@ -1368,8 +1447,11 @@ class LeagueHeuristicsService:
         event_id: int,
         heuristic: str,
         selected_side_id: Optional[int],
+        confidence: Optional[float] = None,
+        margin: Optional[int] = None,
     ) -> bool:
-        """Point one stored tip at its recomputed selection (score revision)."""
+        """Point one stored tip at its recomputed selection (score
+        revision); FCL-14 also refreshes the AFL card numbers."""
         result = await db.execute(
             select(LeagueTip).where(
                 LeagueTip.event_id == event_id,
@@ -1380,6 +1462,8 @@ class LeagueHeuristicsService:
         if tip is None:
             return False
         tip.selected_participant_id = selected_side_id
+        tip.confidence = confidence
+        tip.margin = margin
         return True
 
 
@@ -1484,6 +1568,9 @@ async def league_round_tips(
                 LeagueTip.event_id,
                 LeagueTip.heuristic,
                 picked_team.name,
+                # FCL-14: the AFL card numbers ride on the row.
+                LeagueTip.confidence,
+                LeagueTip.margin,
             )
             .outerjoin(
                 picked_side, picked_side.id == LeagueTip.selected_participant_id
@@ -1492,15 +1579,21 @@ async def league_round_tips(
             .where(LeagueTip.event_id.in_(event_ids))
         )
     ).all()
-    picks_by_event: dict[int, dict[str, Optional[str]]] = {}
-    for event_id, heuristic, picked_name in tip_rows:
+    picks_by_event: dict[int, dict[str, dict[str, Any]]] = {}
+    for event_id, heuristic, picked_name, confidence, margin in tip_rows:
         by_name = picks_by_event.setdefault(
-            int(event_id), {h: None for h in canonical}
+            int(event_id),
+            {
+                h: {"picked": None, "confidence": None, "margin": None}
+                for h in canonical
+            },
         )
         if heuristic in by_name:
-            by_name[heuristic] = (
-                None if picked_name is None else str(picked_name)
-            )
+            by_name[heuristic] = {
+                "picked": None if picked_name is None else str(picked_name),
+                "confidence": None if confidence is None else float(confidence),
+                "margin": None if margin is None else int(margin),
+            }
 
     fixtures = [
         {
