@@ -26,8 +26,8 @@ Four layers, mirroring established repo patterns:
 
 from __future__ import annotations
 
-import os
 import contextlib
+import os
 import shutil
 import socket
 import subprocess
@@ -56,11 +56,13 @@ from packages.shared.services.league_heuristics import (
     HEURISTIC_HOME_ADVANTAGE,
     HEURISTIC_LADDER,
     HEURISTIC_MATCHUP,
+    HEURISTIC_VALUE,
     HEURISTIC_WEIGHTED_TIP,
     HEURISTIC_YOLO,
     LEAGUE_HEURISTICS,
     LEAGUE_MODEL_SETS,
     LEAGUE_MODELS,
+    PARITY_LEAGUE_MODEL_SET,
     RUGBY_LEAGUE_MODELS,
     SPORT_MODEL_SETS,
     CompletedEvent,
@@ -74,12 +76,14 @@ from packages.shared.services.league_heuristics import (
     compute_derived_picks,
     compute_event_picks,
     compute_standings,
+    compute_win_rates,
     is_drawn,
     league_model_set_for_competition,
     league_model_set_for_sport,
     pick_form,
     pick_home_advantage,
     pick_ladder,
+    pick_value,
     select_tip_seasons,
     sort_chronologically,
     wins_in_last_n,
@@ -260,6 +264,84 @@ class TestPickLadder:
         assert pick_ladder(_event(2, home_pid=12, away_pid=11), prior) == 102
 
 
+class TestComputeWinRates:
+    def test_decided_win_rate_per_participant(self) -> None:
+        history = [
+            _event(1, home_pid=11, away_pid=12, home_score=90, away_score=70),
+            _event(2, home_pid=12, away_pid=11, home_score=90, away_score=70),
+        ]
+        rates = compute_win_rates(history)
+        assert rates[11] == pytest.approx(0.5)
+        assert rates[12] == pytest.approx(0.5)
+
+    def test_draws_are_excluded_from_the_denominator(self) -> None:
+        """A draw is a win for neither side — it enters no denominator."""
+        history = [
+            _event(1, home_pid=11, away_pid=12, home_score=90, away_score=70),
+            _event(2, home_pid=11, away_pid=12, home_score=44, away_score=44),
+        ]
+        rates = compute_win_rates(history)
+        # 11: 1 win from its 1 DECIDED game (the draw doesn't inflate
+        # the denominator); 12: 0 wins from the same decided game —
+        # present at 0.0 (a decided loss is evidence, a draw is not).
+        assert rates == {11: pytest.approx(1.0), 12: pytest.approx(0.0)}
+
+    def test_undecided_rows_are_skipped_entirely(self) -> None:
+        assert compute_win_rates([_event(1)]) == {}
+
+    def test_order_does_not_matter(self) -> None:
+        e1 = _event(1, home_pid=11, away_pid=12, home_score=90, away_score=70)
+        e2 = _event(2, home_pid=12, away_pid=11, home_score=80, away_score=60)
+        assert compute_win_rates([e1, e2]) == compute_win_rates([e2, e1])
+
+
+class TestPickValue:
+    """PARITY (2026-10-14): the AFL ``value`` model's league counterpart —
+    the better all-time decided win rate; tie → home."""
+
+    def test_side_with_the_better_all_time_win_rate_is_picked(self) -> None:
+        prior = [
+            _event(1, home_pid=11, away_pid=13, home_score=90, away_score=70),
+            _event(2, home_pid=11, away_pid=14, home_score=90, away_score=70),
+            _event(3, home_pid=12, away_pid=15, home_score=50, away_score=80),
+        ]
+        # 11 is 2-0 (rate 1.0); 12 is 0-1 (rate 0.0) — 11 is the HOME
+        # side of the target event, so the home side is picked.
+        assert pick_value(_event(4, home_pid=11, away_pid=12), prior) == 101
+
+    def test_better_rate_side_is_picked_wherever_it_plays(self) -> None:
+        prior = [_event(1, home_pid=11, away_pid=12, home_score=70, away_score=90)]
+        # 12 won the only decided meeting → rate 1.0 vs 11's 0.0; 12 is
+        # now the HOME side.
+        assert pick_value(_event(2, home_pid=12, away_pid=11), prior) == 101
+
+    def test_tie_goes_home(self) -> None:
+        assert pick_value(_event(2), []) == 101
+
+    def test_rates_tie_goes_home_even_with_history(self) -> None:
+        prior = [
+            _event(1, home_pid=11, away_pid=13, home_score=90, away_score=70),
+            _event(2, home_pid=12, away_pid=14, home_score=90, away_score=70),
+        ]
+        # Both sides are 1-0 — the raw rates tie (home advantage is owned
+        # by its own model) → home.
+        assert pick_value(_event(3, home_pid=11, away_pid=12), prior) == 101
+
+    def test_draw_history_leaves_the_winless_side_at_the_default(self) -> None:
+        prior = [
+            _event(1, home_pid=11, away_pid=12, home_score=90, away_score=70),
+            _event(2, home_pid=11, away_pid=12, home_score=44, away_score=44),
+        ]
+        # 11: 1.0 from its single decided game; 12: 0.0 from the same
+        # decided game (the draw enters no denominator and no win) —
+        # the HOME side 11 has the better rate and is picked.
+        assert pick_value(_event(3), prior) == 101
+
+    def test_missing_sides_make_no_pick(self) -> None:
+        assert pick_value(_event(1, home_pid=None), []) is None
+        assert pick_value(_event(1, away_pid=None), []) is None
+
+
 class TestIsDrawn:
     def test_equal_scores_is_a_draw(self) -> None:
         assert is_drawn(_event(1, home_score=80, away_score=80))
@@ -435,6 +517,34 @@ class TestLeagueModelSets:
             == RUGBY_LEAGUE_MODELS
         )
 
+    def test_default_model_set_is_the_parity_five_in_canonical_order(self) -> None:
+        """PARITY (2026-10-14, absolute AFL/league parity): ONE canonical
+        base set for EVERY league — AFL's six result/weather models minus
+        the two with no non-AFL source.  Unregistered sports (state
+        leagues, sport 'afl') resolve here; the D3 trio is no longer any
+        league's active set."""
+        assert PARITY_LEAGUE_MODEL_SET == (
+            "elo",
+            "form",
+            "home_advantage",
+            "matchup",
+            "value",
+        )
+        assert DEFAULT_MODEL_SET == PARITY_LEAGUE_MODEL_SET
+
+    def test_rugby_league_is_registered_as_the_parity_set(self) -> None:
+        assert RUGBY_LEAGUE_MODELS == PARITY_LEAGUE_MODEL_SET
+        assert SPORT_MODEL_SETS["rugby-league"] == PARITY_LEAGUE_MODEL_SET
+
+    def test_ladder_stays_registered_but_in_no_active_set(self) -> None:
+        """``ladder`` remains a pure-registry pick (pick_ladder exists),
+        but no league's ACTIVE set contains it any more."""
+        assert HEURISTIC_LADDER in LEAGUE_MODELS
+        assert HEURISTIC_LADDER not in DEFAULT_MODEL_SET
+        assert HEURISTIC_LADDER not in RUGBY_LEAGUE_MODELS
+        for models in LEAGUE_MODEL_SETS.values():
+            assert HEURISTIC_LADDER not in models
+
     def test_unknown_model_name_in_a_registration_fails_fast(
         self, monkeypatch
     ) -> None:
@@ -536,9 +646,10 @@ class TestGenerateForCompetition:
     async def test_generates_base_and_derived_tips_per_completed_event(
         self,
     ) -> None:
-        """FCL-6: every completed event persists the base models' tips AND
-        the three derived heuristics (best_bet / weighted_tip /
-        boosted_tip) — drawn events carry NULL selections across all six."""
+        """FCL-6 + PARITY: every completed event persists the base
+        models' tips AND the four derived heuristics (best_bet /
+        weighted_tip / boosted_tip / yolo) — drawn events carry NULL
+        selections across all nine names."""
         seasons = [SeasonRef(id=1, label="2025", is_current=False),
                    SeasonRef(id=2, label="2026", is_current=True)]
         events = [
@@ -553,9 +664,9 @@ class TestGenerateForCompetition:
             summary = await service.generate_for_competition(db, competition_id=42)
 
         rows = [call.args[0] for call in db.add.call_args_list]
-        assert len(rows) == 21  # 3 completed events × (3 base + 4 derived)
+        assert len(rows) == 27  # 3 completed events × (5 base + 4 derived)
         assert {row.heuristic for row in rows} == (
-            set(LEAGUE_HEURISTICS) | set(DERIVED_LEAGUE_HEURISTICS)
+            set(DEFAULT_MODEL_SET) | set(DERIVED_LEAGUE_HEURISTICS)
         )
         assert all(row.competition_id == 42 for row in rows)
         assert {row.season_id for row in rows} == {1, 2}
@@ -570,7 +681,7 @@ class TestGenerateForCompetition:
             for row in rows
             if row.event_id != 2
         )
-        assert summary["tips_inserted"] == 21
+        assert summary["tips_inserted"] == 27
         assert summary["tips_updated"] == 0
         assert summary["derived_tips"] == {
             "best_bet": 3,
@@ -587,7 +698,9 @@ class TestGenerateForCompetition:
         events = [_event(1, season_id=1, home_score=90, away_score=70)]
         db = _fake_session()
         service = LeagueHeuristicsService()
-        picks = compute_all_picks_and_derived(events)
+        # PARITY: the pass resolves the DEFAULT (parity) set, so the
+        # stored rows must be computed from the SAME model set.
+        picks = compute_all_picks_and_derived(events, models=DEFAULT_MODEL_SET)
         existing = {(p.event_id, p.heuristic): p.selected_side_id for p in picks}
         numbers = (
             {(p.event_id, p.heuristic): p.confidence for p in picks},
@@ -603,7 +716,7 @@ class TestGenerateForCompetition:
         with _applied(second_patches):
             second = await service.generate_for_competition(db, competition_id=42)
 
-        assert first["tips_inserted"] == 7  # 3 base + 4 derived
+        assert first["tips_inserted"] == 9  # 5 base + 4 derived
         assert second["tips_inserted"] == 0
         assert second["tips_updated"] == 0
         assert second["derived_tips"] == {
@@ -615,7 +728,9 @@ class TestGenerateForCompetition:
     async def test_changed_pick_updates_the_existing_row_in_place(self) -> None:
         seasons = [SeasonRef(id=2, label="2026", is_current=True)]
         events = [_event(1, season_id=2, home_score=90, away_score=70)]
-        picks = compute_all_picks_and_derived(events)
+        # PARITY: the pass resolves the DEFAULT (parity) set, so the
+        # stored rows must be computed from the SAME model set.
+        picks = compute_all_picks_and_derived(events, models=DEFAULT_MODEL_SET)
         existing = {(p.event_id, p.heuristic): p.selected_side_id for p in picks}
         # Upstream score revision: the stored home_advantage pick is stale.
         existing[(1, HEURISTIC_HOME_ADVANTAGE)] = 999
@@ -638,9 +753,15 @@ class TestGenerateForCompetition:
 
         assert summary["tips_inserted"] == 0
         assert summary["tips_updated"] == 1
-        # The row was pointed at the recomputed pick (the home side);
-        # picks[0] is the first BASE pick — derived names follow it.
-        assert tip_row.selected_participant_id == picks[0].selected_side_id == 101
+        # The row was pointed at the recomputed pick (the home side).
+        home_advantage_pick = next(
+            p for p in picks if p.heuristic == HEURISTIC_HOME_ADVANTAGE
+        )
+        assert (
+            tip_row.selected_participant_id
+            == home_advantage_pick.selected_side_id
+            == 101
+        )
         db.add.assert_not_called()
         db.commit.assert_awaited_once()
 
@@ -948,13 +1069,13 @@ class TestGenerateForCompetitionDerived:
             summary = await service.generate_for_competition(db, competition_id=42)
 
         rows = [call.args[0] for call in db.add.call_args_list]
-        assert len(rows) == 7  # 1 event × (3 base + 4 derived)
+        assert len(rows) == 9  # 1 event × (5 base + 4 derived)
         assert {row.heuristic for row in rows} == (
-            set(LEAGUE_HEURISTICS) | set(DERIVED_LEAGUE_HEURISTICS)
+            set(DEFAULT_MODEL_SET) | set(DERIVED_LEAGUE_HEURISTICS)
         )
         assert all(row.competition_id == 42 for row in rows)
         assert all(row.season_id == 7 for row in rows)
-        assert summary["tips_inserted"] == 7
+        assert summary["tips_inserted"] == 9
         assert summary["derived_tips"] == {
             "best_bet": 1,
             "weighted_tip": 1,
@@ -974,9 +1095,9 @@ class TestGenerateForCompetitionDerived:
             summary = await service.generate_for_competition(db, competition_id=42)
 
         rows = [call.args[0] for call in db.add.call_args_list]
-        assert len(rows) == 7
+        assert len(rows) == 9
         assert all(row.selected_participant_id is None for row in rows)
-        assert summary["tips_inserted"] == 7
+        assert summary["tips_inserted"] == 9
 
     @pytest.mark.asyncio
     async def test_best_bet_is_the_majority_vote_over_disagreeing_base_models(
@@ -984,27 +1105,39 @@ class TestGenerateForCompetitionDerived:
     ) -> None:
         seasons = [SeasonRef(id=7, label="2026", is_current=True)]
         events = [
-            # 11: 1-0 at ~101.7%; 12: 1-0 at 180.0%.
+            # 11 wins big → Elo 1510, rate 1.0.
             _event(
                 1,
                 season_id=7,
                 home_pid=11,
                 away_pid=41,
-                home_score=60,
-                away_score=59,
+                home_score=100,
+                away_score=50,
             ),
+            # 12 wins big → Elo 1510 too, rate 1.0.
             _event(
                 2,
                 season_id=7,
                 home_pid=12,
                 away_pid=42,
-                home_score=90,
+                home_score=100,
                 away_score=50,
             ),
-            # Target: home_advantage → home, form ties 1-1 → home,
-            # ladder → away (12's percentage is higher) — a 2-1 split.
+            # 11 loses → Elo drops below 12 (~1499.7 vs 1510), rate 0.5.
             _event(
                 3,
+                season_id=7,
+                home_pid=11,
+                away_pid=21,
+                home_score=50,
+                away_score=100,
+            ),
+            # Target: home_advantage → home, form ties 1-1 → home,
+            # matchup (no meetings) → home — but elo (12 rated higher)
+            # AND value (12's rate 1.0 vs 11's 0.5) vote away: a 3-2
+            # split the majority vote resolves to home.
+            _event(
+                4,
                 season_id=7,
                 home_pid=11,
                 away_pid=12,
@@ -1022,13 +1155,19 @@ class TestGenerateForCompetitionDerived:
         by_key = {
             (row.event_id, row.heuristic): row.selected_participant_id
             for row in rows
-            if row.event_id == 3
+            if row.event_id == 4
         }
-        assert by_key[(3, HEURISTIC_BEST_BET)] == 101  # majority of the split
-        assert by_key[(3, HEURISTIC_LADDER)] == 102  # the dissenting base vote
+        # The two dissenting base votes (PARITY set).
+        assert by_key[(4, HEURISTIC_ELO)] == 102
+        assert by_key[(4, HEURISTIC_VALUE)] == 102
+        # ...against the three home votes.
+        assert by_key[(4, HEURISTIC_HOME_ADVANTAGE)] == 101
+        assert by_key[(4, HEURISTIC_FORM)] == 101
+        assert by_key[(4, HEURISTIC_MATCHUP)] == 101
+        assert by_key[(4, HEURISTIC_BEST_BET)] == 101  # majority of the split
         # Before training both combiners fall back to the SAME majority.
-        assert by_key[(3, HEURISTIC_WEIGHTED_TIP)] == 101
-        assert by_key[(3, HEURISTIC_BOOSTED_TIP)] == 101
+        assert by_key[(4, HEURISTIC_WEIGHTED_TIP)] == 101
+        assert by_key[(4, HEURISTIC_BOOSTED_TIP)] == 101
 
     @pytest.mark.asyncio
     async def test_loaded_learned_combiners_override_the_fallback(self) -> None:
@@ -1124,7 +1263,7 @@ class TestGenerateForCompetitionDerived:
         assert by_key[(1, HEURISTIC_BOOSTED_TIP)] == by_key[
             (1, HEURISTIC_BEST_BET)
         ]
-        assert summary["tips_inserted"] == 7
+        assert summary["tips_inserted"] == 9
         db.commit.assert_awaited_once()
 
     @pytest.mark.asyncio
@@ -1160,7 +1299,7 @@ class TestGenerateForCompetitionDerived:
         assert by_key[(1, HEURISTIC_BOOSTED_TIP)] == by_key[
             (1, HEURISTIC_BEST_BET)
         ]
-        assert summary["tips_inserted"] == 7
+        assert summary["tips_inserted"] == 9
         db.commit.assert_awaited_once()
 
     @pytest.mark.asyncio
@@ -1201,8 +1340,8 @@ class TestGenerateForCompetitionDerived:
         self,
     ) -> None:
         """All leagues are first-class (FCL-6): an unregistered name keeps
-        its sport's base set byte-identically AND gains the three derived
-        names."""
+        its sport's base set byte-identically AND gains the derived names.
+        PARITY: rugby-league's set IS the default parity five."""
         seasons = [SeasonRef(id=7, label="2026", is_current=True)]
         events = [_event(1, season_id=7, home_score=90, away_score=70)]
         db = _fake_session()
@@ -1228,11 +1367,11 @@ class TestGenerateForCompetitionDerived:
         assert {row.heuristic for row in rows} == (
             set(RUGBY_LEAGUE_MODELS) | set(DERIVED_LEAGUE_HEURISTICS)
         )
-        assert summary["tips_inserted"] == 8
+        assert summary["tips_inserted"] == 9
 
 
 class TestScheduledEventTips:
-    """FCL-12: forward tips — scheduled fixtures get the same six names.
+    """FCL-12: forward tips — scheduled fixtures get the same nine names.
 
     A tip is a tip: the league pages show upcoming fixtures, and every
     model in a league's set is causal (prior completed evidence only),
@@ -1243,7 +1382,7 @@ class TestScheduledEventTips:
     @pytest.mark.asyncio
     async def test_scheduled_event_persists_base_and_derived_tips(self) -> None:
         """One completed event + one scheduled: the scheduled fixture gets
-        all six names with picks from PRIOR evidence only (no NULLs — a
+        all nine names with picks from PRIOR evidence only (no NULLs — a
         fixture without scores is not a draw)."""
         seasons = [SeasonRef(id=7, label="2026", is_current=True)]
         completed = [_event(1, season_id=7, home_score=90, away_score=70)]
@@ -1268,22 +1407,23 @@ class TestScheduledEventTips:
         rows = [call.args[0] for call in db.add.call_args_list]
         scheduled_rows = [row for row in rows if row.event_id == 2]
         assert {row.heuristic for row in scheduled_rows} == (
-            set(LEAGUE_HEURISTICS) | set(DERIVED_LEAGUE_HEURISTICS)
+            set(DEFAULT_MODEL_SET) | set(DERIVED_LEAGUE_HEURISTICS)
         )
         # A fixture without scores is NOT a draw — every pick points at a side.
         assert all(
             row.selected_participant_id in (101, 102) for row in scheduled_rows
         )
-        assert summary["tips_inserted"] == 14  # 2 events × 7 names
+        assert summary["tips_inserted"] == 18  # 2 events × 9 names
         assert summary["scheduled_considered"] == 1
         assert summary["events_considered"] == 1  # completed only, unchanged
 
     @pytest.mark.asyncio
     async def test_scheduled_picks_follow_prior_evidence(self) -> None:
         """The scheduled pick is causal: home side wins the prior round
-        convincingly, so home_advantage, form (1 win vs 0) and ladder
-        (1-0 vs 0-0) all vote home — best_bet and the fallback combiners
-        echo the unanimous vote."""
+        convincingly, so every base model (home_advantage, form's 1-0
+        window, Elo's +20, matchup's 1-0 h2h, value's 1.0-vs-0.0 rate)
+        votes home — best_bet and the fallback combiners echo the
+        unanimous vote."""
         seasons = [SeasonRef(id=7, label="2026", is_current=True)]
         completed = [_event(1, season_id=7, home_score=90, away_score=70)]
         scheduled = [
@@ -1308,9 +1448,11 @@ class TestScheduledEventTips:
         scheduled_rows = [row for row in rows if row.event_id == 2]
         assert {row.heuristic: row.selected_participant_id
                 for row in scheduled_rows} == {
-            HEURISTIC_HOME_ADVANTAGE: 101,
+            HEURISTIC_ELO: 101,
             HEURISTIC_FORM: 101,
-            HEURISTIC_LADDER: 101,
+            HEURISTIC_HOME_ADVANTAGE: 101,
+            HEURISTIC_MATCHUP: 101,
+            HEURISTIC_VALUE: 101,
             HEURISTIC_BEST_BET: 101,
             HEURISTIC_WEIGHTED_TIP: 101,
             HEURISTIC_BOOSTED_TIP: 101,
@@ -1347,7 +1489,7 @@ class TestScheduledEventTips:
 
         rows = [call.args[0] for call in db.add.call_args_list]
         assert [row for row in rows if row.event_id == 2] == []
-        assert summary["tips_inserted"] == 7
+        assert summary["tips_inserted"] == 9
         assert summary["scheduled_considered"] == 1
 
     @pytest.mark.asyncio
@@ -1378,12 +1520,12 @@ class TestScheduledEventTips:
 
         rows = [call.args[0] for call in db.add.call_args_list]
         scheduled_rows = [row for row in rows if row.event_id == 2]
-        assert len(scheduled_rows) == 7
+        assert len(scheduled_rows) == 9
         assert all(
             row.selected_participant_id == 101  # the unanimous home vote
             for row in scheduled_rows
         )
-        assert summary["tips_inserted"] == 14
+        assert summary["tips_inserted"] == 18
 
     @pytest.mark.asyncio
     async def test_scheduled_picks_exclude_later_completed_evidence(self) -> None:
@@ -1400,15 +1542,18 @@ class TestScheduledEventTips:
                 home_score=90,
                 away_score=70,
             ),
-            # Starts AFTER the scheduled fixture yet is already completed.
+            # Starts AFTER the scheduled fixture yet is already completed:
+            # participant 12 (the AWAY side of E2) thrashes 11 — if this
+            # leaked into the fixture's evidence, ELO would flip to the
+            # away side (12 would be rated above 11 off this rout).
             _event(
                 3,
                 season_id=7,
                 starts_at=datetime(2026, 4, 15),
                 home_pid=12,
                 away_pid=11,
-                home_score=10,
-                away_score=120,  # participant 11 (the home side of E2) smashed
+                home_score=110,
+                away_score=10,
             ),
         ]
         scheduled = [
@@ -1433,13 +1578,16 @@ class TestScheduledEventTips:
         scheduled_rows = {r.heuristic: r.selected_participant_id
                           for r in rows if r.event_id == 2}
         # Evidence = E1 only (E3 starts after the fixture): form sees one
-        # 90-70 home win, ladder puts the home side 1-0 — home across the
-        # board.  Had E3 leaked in, ladder/form would flip to the away
-        # side (participant 11's 120-point rout as the away side).
+        # 90-70 home win and the home side leads/ties on every signal —
+        # home across the board.  Had E3 leaked in, the away side's
+        # 110-point rout would lift its Elo above the home side's and
+        # ELO (and only Elo) would flip to 102.
         assert scheduled_rows == {
-            HEURISTIC_HOME_ADVANTAGE: 101,
+            HEURISTIC_ELO: 101,
             HEURISTIC_FORM: 101,
-            HEURISTIC_LADDER: 101,
+            HEURISTIC_HOME_ADVANTAGE: 101,
+            HEURISTIC_MATCHUP: 101,
+            HEURISTIC_VALUE: 101,
             HEURISTIC_BEST_BET: 101,
             HEURISTIC_WEIGHTED_TIP: 101,
             HEURISTIC_BOOSTED_TIP: 101,
@@ -1696,15 +1844,16 @@ async def test_generation_round_trip_is_idempotent_against_unique_constraint(
     finally:
         await engine.dispose()
 
-    # 5 completed events × (3 base + 4 derived) heuristics; the
-    # scheduled event got nothing.  No scoped trained models exist, so
-    # both combiners ride the majority-vote fallback — rows still exist.
-    assert first["tips_inserted"] == 35
-    assert total == 35
-    assert heuristics == set(LEAGUE_HEURISTICS) | set(DERIVED_LEAGUE_HEURISTICS)
+    # 6 events (5 completed + 1 scheduled) × (5 base + 4 derived)
+    # heuristics — FCL-12 forward tips cover the scheduled fixture too.
+    # No scoped trained models exist, so both combiners ride the
+    # majority-vote fallback — rows still exist.
+    assert first["tips_inserted"] == 54
+    assert total == 54
+    assert heuristics == set(DEFAULT_MODEL_SET) | set(DERIVED_LEAGUE_HEURISTICS)
     assert season_ids == {ids["season_2025"], ids["season_2026"]}
-    # Exactly the seven draw tips (one drawn event × 7 names) carry NULL.
-    assert null_picks == 7
+    # Exactly the nine draw tips (one drawn event × 9 names) carry NULL.
+    assert null_picks == 9
     # Re-running must not duplicate or crash — and must not churn.
     assert second["tips_inserted"] == 0
     assert second["tips_updated"] == 0
@@ -1728,5 +1877,6 @@ async def test_module_level_entry_point_matches_service(_db_at_head) -> None:
     finally:
         await engine.dispose()
 
-    # 5 completed events × (3 base + 4 derived) heuristics.
-    assert summary["tips_inserted"] == 35
+    # 6 events (5 completed + 1 scheduled) × (5 base + 4 derived)
+    # heuristics — FCL-12 forward tips cover the scheduled fixture too.
+    assert summary["tips_inserted"] == 54

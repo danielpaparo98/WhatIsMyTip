@@ -72,21 +72,26 @@ class LeaguePickDetail(BaseModel):
     ``picked`` is the side name (``None`` = draw-no-pick);
     ``confidence`` (0..1) and ``margin`` (points) ride on the row for
     the derived heuristics — the same numbers the AFL cards render —
-    and are ``None`` for the base result-derived models.
+    and are ``None`` for the base result-derived models.  PARITY-1:
+    ``explanation`` is the persisted AI text (written by the nightly
+    league NLP sweep), so round cards render the same explanation the
+    AFL cards do at zero per-view LLM cost; ``None`` until generated.
     """
 
     picked: Optional[str] = None
     confidence: Optional[float] = None
     margin: Optional[int] = None
+    explanation: Optional[str] = None
 
 
 class LeagueRoundFixture(BaseModel):
     """One round fixture with its stored league picks (FCL-12).
 
     ``picks`` maps heuristic name → :class:`LeaguePickDetail`; absent
-    keys mean the heuristic has no stored tip for the fixture.  NO AI
-    explanations — the round page renders picks only, so a page view
-    never pays the LLM pipeline.
+    keys mean the heuristic has no stored tip for the fixture.  PARITY-1
+    (2026-10-14): the picks carry their PERSISTED explanations (written
+    by the nightly league NLP sweep), so round cards render the same
+    explanation text the AFL cards do at zero per-view LLM cost.
     """
 
     event_id: int

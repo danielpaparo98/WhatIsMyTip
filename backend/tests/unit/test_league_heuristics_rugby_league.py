@@ -1,25 +1,29 @@
-"""Rugby-league league-model registry (Phase 5.2, P2-3).
+"""Rugby-league league-model registry (Phase 5.2, P2-3; PARITY 2026-10-14).
 
-The reduced DB-only model set for rugby-league — ``elo``, ``form``,
-``home_advantage``, ``matchup`` — registered against the shared
-league-tips pipeline, keyed to the three national competitions
-(``nrl``/``nrlw``/``origin``, all sport ``rugby-league``), and the
-EXPLICIT EXCLUSION of the four AFL-scrape-sourced models
-(``weather_impact``, ``injury_impact``, ``player_form``, ``value``)
-which have no NRL source: requesting one for rugby-league is a clean
-repo-standard ``BackendServiceError``.
+The rugby-league model set is now the PARITY five — ``elo``, ``form``,
+``home_advantage``, ``matchup``, ``value`` — registered against the
+shared league-tips pipeline, keyed to the three national competitions
+(``nrl``/``nrlw``/``origin``, all sport ``rugby-league``).  The two
+AFL-scrape models with NO league data source at all
+(``injury_impact``, ``player_form``) remain EXPLICITLY EXCLUDED:
+requesting one for rugby-league is a clean repo-standard
+``BackendServiceError``.  ``value`` joined the set (it is
+result-derived) and ``weather_impact`` left the excluded list (it is
+not in the pure registry at all, so requesting it is a ``ValueError``
+— a 422 at the explanation-service layer).
 
 Layers, mirroring ``test_league_heuristics``:
 
-* **Per-sport registry** — the subset map and its D3 default (AFL
-  behavior byte-identical: no explicit AFL entry, unknown sports fall
-  back to the D3 set).
-* **Exclusion contract** — the repo-standard error shape for the four
-  excluded models.
-* **Pure pick logic** — the new result-derived ``elo`` and ``matchup``
+* **Per-sport registry** — the parity set and its default (every
+  unregistered sport — AFL included — resolves to the same parity set).
+* **Exclusion contract** — the repo-standard error shape for the two
+  excluded models, ``value`` resolving cleanly, ``weather_impact``
+  unknown at the registry.
+* **Pure pick logic** — the result-derived ``elo`` and ``matchup``
   rules, no database.
 * **Pipeline scoping** — ``compute_event_picks``/``compute_all_picks``
-  honour the per-sport set; the no-argument default stays the D3 three.
+  honour the per-sport set; the no-argument default stays the D3 three
+  (the pure-registry default, unused by any league's active set).
 * **Service orchestration** — the competition's ``sport_id`` selects
   the set (fake session, patched fetchers, no database).
 """
@@ -40,8 +44,10 @@ from packages.shared.services.league_heuristics import (
     ELO_START_RATING,
     HEURISTIC_ELO,
     HEURISTIC_MATCHUP,
+    HEURISTIC_VALUE,
     LEAGUE_HEURISTICS,
     LEAGUE_MODELS,
+    PARITY_LEAGUE_MODEL_SET,
     RUGBY_LEAGUE_EXCLUDED_MODELS,
     RUGBY_LEAGUE_MODELS,
     SPORT_MODEL_SETS,
@@ -94,8 +100,18 @@ def _event(
 
 
 class TestRugbyLeagueModelSet:
-    def test_exactly_the_four_db_only_models(self) -> None:
-        assert RUGBY_LEAGUE_MODELS == ("elo", "form", "home_advantage", "matchup")
+    def test_exactly_the_parity_five_in_canonical_order(self) -> None:
+        assert RUGBY_LEAGUE_MODELS == (
+            "elo",
+            "form",
+            "home_advantage",
+            "matchup",
+            "value",
+        )
+
+    def test_rugby_league_set_is_the_shared_parity_set(self) -> None:
+        assert RUGBY_LEAGUE_MODELS == PARITY_LEAGUE_MODEL_SET
+        assert DEFAULT_MODEL_SET == PARITY_LEAGUE_MODEL_SET
 
     def test_registry_lookup_for_rugby_league(self) -> None:
         assert league_model_set_for_sport("rugby-league") == RUGBY_LEAGUE_MODELS
@@ -103,18 +119,21 @@ class TestRugbyLeagueModelSet:
     def test_set_is_keyed_on_the_sport_context_id(self) -> None:
         assert SPORT_MODEL_SETS[RUGBY_LEAGUE.sport_id] == RUGBY_LEAGUE_MODELS
 
-    def test_afl_keeps_the_d3_set_unchanged(self) -> None:
+    def test_afl_resolves_to_the_parity_set_too(self) -> None:
+        """PARITY: the D3 trio survives only as the pure-registry default
+        parameter — it is no longer any league's active set.  AFL (no
+        sport registration) resolves to the same parity five."""
         assert LEAGUE_HEURISTICS == ("home_advantage", "form", "ladder")
-        assert league_model_set_for_sport("afl") == LEAGUE_HEURISTICS
+        assert league_model_set_for_sport("afl") == PARITY_LEAGUE_MODEL_SET
 
     def test_afl_has_no_explicit_registry_entry(self) -> None:
         """AFL is the default, not a registration — nothing to disturb."""
         assert "afl" not in SPORT_MODEL_SETS
-        assert DEFAULT_MODEL_SET is LEAGUE_HEURISTICS
+        assert DEFAULT_MODEL_SET is PARITY_LEAGUE_MODEL_SET
 
-    def test_unknown_or_missing_sport_falls_back_to_d3(self) -> None:
-        assert league_model_set_for_sport("netball") == LEAGUE_HEURISTICS
-        assert league_model_set_for_sport(None) == LEAGUE_HEURISTICS
+    def test_unknown_or_missing_sport_falls_back_to_the_parity_set(self) -> None:
+        assert league_model_set_for_sport("netball") == DEFAULT_MODEL_SET
+        assert league_model_set_for_sport(None) == DEFAULT_MODEL_SET
 
     def test_every_registered_model_has_a_pick_spec(self) -> None:
         assert all(name in LEAGUE_MODELS for name in RUGBY_LEAGUE_MODELS)
@@ -124,6 +143,7 @@ class TestRugbyLeagueModelSet:
     def test_new_models_exposed_under_their_contract_names(self) -> None:
         assert HEURISTIC_ELO == "elo"
         assert HEURISTIC_MATCHUP == "matchup"
+        assert HEURISTIC_VALUE == "value"
 
 
 class TestKeyedToTheThreeCompetitions:
@@ -149,10 +169,7 @@ class TestKeyedToTheThreeCompetitions:
 
 
 class TestExcludedModels:
-    @pytest.mark.parametrize(
-        "model_name",
-        ["weather_impact", "injury_impact", "player_form", "value"],
-    )
+    @pytest.mark.parametrize("model_name", ["injury_impact", "player_form"])
     def test_excluded_model_request_is_rejected_cleanly(
         self, model_name: str
     ) -> None:
@@ -167,8 +184,11 @@ class TestExcludedModels:
         assert exc.details["available"] == list(RUGBY_LEAGUE_MODELS)
 
     def test_exclusion_is_explicit_and_complete(self) -> None:
+        """PARITY revision: only the two player-level AFL-scrape models
+        remain excluded — ``value`` joined the set (result-derived) and
+        ``weather_impact`` left it (unknown to the pure registry)."""
         assert RUGBY_LEAGUE_EXCLUDED_MODELS == frozenset(
-            {"weather_impact", "injury_impact", "player_form", "value"}
+            {"injury_impact", "player_form"}
         )
 
     def test_excluded_names_are_not_league_picks(self) -> None:
@@ -178,6 +198,22 @@ class TestExcludedModels:
             assert name not in LEAGUE_MODELS
             assert name not in RUGBY_LEAGUE_MODELS
 
+    def test_value_now_resolves_like_any_other_model(self) -> None:
+        """PARITY: the win-rate model is result-derived, so rugby-league
+        gets it — the request resolves to the sport's (parity) set."""
+        assert require_league_model("value", sport_id="rugby-league") == (
+            RUGBY_LEAGUE_MODELS
+        )
+
+    def test_weather_impact_is_unknown_at_the_pure_registry(self) -> None:
+        """``weather_impact`` left the excluded frozenset and was never in
+        the result-derived registry — so it raises the unknown-name
+        ``ValueError`` (a 422 at the explanation-service layer), NOT the
+        excluded-model ``BackendServiceError``."""
+        assert "weather_impact" not in RUGBY_LEAGUE_EXCLUDED_MODELS
+        with pytest.raises(ValueError, match="weather_impact"):
+            require_league_model("weather_impact", sport_id="rugby-league")
+
     def test_included_models_pass_through_with_the_sport_set(self) -> None:
         for name in RUGBY_LEAGUE_MODELS:
             assert require_league_model(
@@ -185,7 +221,8 @@ class TestExcludedModels:
             ) == RUGBY_LEAGUE_MODELS
 
     def test_d3_model_not_offered_for_rugby_league_is_rejected(self) -> None:
-        """``ladder`` is AFL-only at the league-tips layer."""
+        """``ladder`` is registered in the pure registry but belongs to no
+        league's active parity set."""
         with pytest.raises(BackendServiceError) as excinfo:
             require_league_model("ladder", sport_id="rugby-league")
         assert excinfo.value.status_code == 400
@@ -377,7 +414,7 @@ class TestPickMatchup:
 
 
 class TestComputeEventPicksRugbyLeagueSet:
-    def test_exactly_the_four_models_in_registry_order(self) -> None:
+    def test_exactly_the_parity_five_in_registry_order(self) -> None:
         prior = [
             _event(1, home_pid=11, away_pid=12, home_score=90, away_score=70)
         ]
@@ -390,12 +427,15 @@ class TestComputeEventPicksRugbyLeagueSet:
             "form",
             "home_advantage",
             "matchup",
+            "value",
         ]
         assert "ladder" not in [p.heuristic for p in picks]
         assert all(p.event_id == 2 for p in picks)
         assert all(p.selected_side_id is not None for p in picks)
 
-    def test_draw_persists_draw_no_pick_for_all_four(self) -> None:
+    def test_draw_persists_draw_no_pick_for_the_whole_set(
+        self,
+    ) -> None:
         event = _event(1, home_score=44, away_score=44)
         picks = compute_event_picks(
             event, [], [], models=RUGBY_LEAGUE_MODELS
@@ -418,7 +458,7 @@ class TestComputeEventPicksRugbyLeagueSet:
 
 
 class TestComputeAllPicksRugbyLeagueSet:
-    def test_four_tips_per_decided_event_and_none_for_missing_sides(self) -> None:
+    def test_five_tips_per_decided_event_and_none_for_missing_sides(self) -> None:
         decided = _event(1, home_score=90, away_score=70)
         no_sides = _event(2, home_side=None)
         picks = compute_all_picks(
@@ -426,7 +466,7 @@ class TestComputeAllPicksRugbyLeagueSet:
         )
         assert {p.heuristic for p in picks} == set(RUGBY_LEAGUE_MODELS)
         assert all(p.event_id == 1 for p in picks)
-        assert len(picks) == 4
+        assert len(picks) == 5
 
     def test_elo_and_matchup_use_only_prior_evidence(self) -> None:
         r1 = _event(
@@ -461,10 +501,10 @@ class TestComputeAllPicksRugbyLeagueSet:
         )
         assert matchup.selected_side_id == now.away_side_id
 
-    def test_drawn_events_carry_null_picks_for_all_four(self) -> None:
+    def test_drawn_events_carry_null_picks_for_the_whole_set(self) -> None:
         draw = _event(1, home_score=44, away_score=44)
         picks = compute_all_picks([draw], models=RUGBY_LEAGUE_MODELS)
-        assert len(picks) == 4
+        assert len(picks) == 5
         assert {p.heuristic for p in picks} == set(RUGBY_LEAGUE_MODELS)
         assert all(p.selected_side_id is None for p in picks)
 
@@ -541,8 +581,8 @@ class TestGenerateForCompetitionSportScoping:
     async def test_rugby_league_competition_generates_base_plus_derived_tips(
         self,
     ) -> None:
-        """FCL-6: the sport-scoped BASE quartet (never ladder) plus the
-        three derived heuristics every league gets."""
+        """FCL-6: the sport-scoped parity BASE set (never ladder) plus the
+        derived heuristics every league gets."""
         seasons = [SeasonRef(id=7, label="2026", is_current=True)]
         events = [
             _event(1, season_id=7, home_score=90, away_score=70),
@@ -556,8 +596,8 @@ class TestGenerateForCompetitionSportScoping:
             summary = await service.generate_for_competition(db, competition_id=42)
 
         rows = [call.args[0] for call in db.add.call_args_list]
-        # 1 decided event × (4 base + 3 derived) + 1 draw × 7 draw-no-pick.
-        assert len(rows) == 16
+        # 1 decided event × (5 base + 4 derived) + 1 draw × 9 draw-no-pick.
+        assert len(rows) == 18
         base_rows = [
             row for row in rows if row.heuristic in set(RUGBY_LEAGUE_MODELS)
         ]
@@ -565,11 +605,11 @@ class TestGenerateForCompetitionSportScoping:
             row for row in rows if row.heuristic in set(DERIVED_LEAGUE_HEURISTICS)
         ]
         # BASE-set scoping (the original intent): exactly the sport's
-        # reduced quartet, persisted for BOTH events, ladder never.
+        # parity set, persisted for BOTH events, ladder never.
         assert {row.heuristic for row in base_rows} == set(RUGBY_LEAGUE_MODELS)
-        assert len(base_rows) == 8
+        assert len(base_rows) == 10
         assert "ladder" not in {row.heuristic for row in rows}
-        # DERIVED (FCL-6): the trio rides along for every event.
+        # DERIVED (FCL-6): the set rides along for every event.
         assert {row.heuristic for row in derived_rows} == set(
             DERIVED_LEAGUE_HEURISTICS
         )
@@ -586,18 +626,18 @@ class TestGenerateForCompetitionSportScoping:
             for row in rows
             if row.event_id == 1
         )
-        assert summary["tips_inserted"] == 16
+        assert summary["tips_inserted"] == 18
         assert summary["derived_tips"] == {
             name: 2 for name in DERIVED_LEAGUE_HEURISTICS
         }
         db.commit.assert_awaited_once()
 
     @pytest.mark.asyncio
-    async def test_afl_competition_base_stays_the_d3_three_plus_derived(
+    async def test_afl_competition_base_is_the_parity_five_plus_derived(
         self,
     ) -> None:
-        """FCL-6: AFL's BASE set is still the historical D3 trio — the
-        derived trio rides along for every league."""
+        """PARITY: AFL's BASE set is the parity five — the same set every
+        league resolves to — with the derived set riding along."""
         seasons = [SeasonRef(id=7, label="2026", is_current=True)]
         events = [_event(1, season_id=7, home_score=90, away_score=70)]
         db = _fake_session()
@@ -608,23 +648,23 @@ class TestGenerateForCompetitionSportScoping:
             summary = await service.generate_for_competition(db, competition_id=42)
 
         rows = [call.args[0] for call in db.add.call_args_list]
-        assert len(rows) == 7  # 3 base + 4 derived for the decided event
+        assert len(rows) == 9  # 5 base + 4 derived for the decided event
         base = {
-            row.heuristic for row in rows if row.heuristic in set(LEAGUE_HEURISTICS)
+            row.heuristic for row in rows if row.heuristic in set(DEFAULT_MODEL_SET)
         }
         derived = {
             row.heuristic
             for row in rows
             if row.heuristic in set(DERIVED_LEAGUE_HEURISTICS)
         }
-        assert base == set(LEAGUE_HEURISTICS)
+        assert base == set(DEFAULT_MODEL_SET)
         assert derived == set(DERIVED_LEAGUE_HEURISTICS)
-        assert summary["tips_inserted"] == 7
+        assert summary["tips_inserted"] == 9
 
     @pytest.mark.asyncio
-    async def test_unresolvable_sport_falls_back_to_the_d3_set(self) -> None:
-        """No competition row (sport None) → the historical BASE set —
-        plus the derived trio every league gets (FCL-6)."""
+    async def test_unresolvable_sport_falls_back_to_the_parity_set(self) -> None:
+        """No competition row (sport None) → the DEFAULT (parity) BASE
+        set — plus the derived set every league gets (FCL-6)."""
         seasons = [SeasonRef(id=7, label="2026", is_current=True)]
         events = [_event(1, season_id=7, home_score=90, away_score=70)]
         db = _fake_session()
@@ -635,16 +675,16 @@ class TestGenerateForCompetitionSportScoping:
             summary = await service.generate_for_competition(db, competition_id=42)
 
         rows = [call.args[0] for call in db.add.call_args_list]
-        # The BASE set falls back to the D3 trio exactly as before...
+        # The BASE set falls back to the parity five exactly as for AFL...
         base = {
-            row.heuristic for row in rows if row.heuristic in set(LEAGUE_HEURISTICS)
+            row.heuristic for row in rows if row.heuristic in set(DEFAULT_MODEL_SET)
         }
-        assert base == set(LEAGUE_HEURISTICS)
+        assert base == set(DEFAULT_MODEL_SET)
         # ...and the derived set completes the pass.
         assert {row.heuristic for row in rows} == (
-            set(LEAGUE_HEURISTICS) | set(DERIVED_LEAGUE_HEURISTICS)
+            set(DEFAULT_MODEL_SET) | set(DERIVED_LEAGUE_HEURISTICS)
         )
-        assert summary["tips_inserted"] == 7
+        assert summary["tips_inserted"] == 9
 
     @pytest.mark.asyncio
     async def test_persisted_order_follows_the_registry_order(self) -> None:

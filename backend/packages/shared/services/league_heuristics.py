@@ -85,6 +85,10 @@ HEURISTIC_FORM = "form"
 HEURISTIC_LADDER = "ladder"
 HEURISTIC_ELO = "elo"
 HEURISTIC_MATCHUP = "matchup"
+#: PARITY (2026-10-14): the AFL ``value`` model's result-derived league
+#: counterpart — all-time win-rate differential — is computable from
+#: synced results alone, so every league now gets it as a base pick.
+HEURISTIC_VALUE = "value"
 
 #: The D3 heuristic set, in canonical (persistence/grading) order.
 LEAGUE_HEURISTICS: tuple[str, ...] = (
@@ -93,16 +97,27 @@ LEAGUE_HEURISTICS: tuple[str, ...] = (
     HEURISTIC_LADDER,
 )
 
-#: The reduced rugby-league model set (Phase 5.2, P2-3): exactly the
-#: models computable from synced results alone — no AFL-calibrated ML
-#: artifacts, no new training pipeline.  Registered for the three
-#: national competitions (nrl / nrlw / origin, sport ``rugby-league``).
-RUGBY_LEAGUE_MODELS: tuple[str, ...] = (
+#: PARITY (2026-10-14, absolute AFL/league parity): ONE canonical base
+#: set for EVERY league — the six models the AFL flagship runs, minus
+#: the two with no non-AFL data source (``injury_impact`` /
+#: ``player_form``).  ``weather_impact`` — the sixth parity model — is
+#: computed on the numeric predictions pass
+#: (:mod:`.league_model_predictions`) rather than as a pure pick,
+#: because it reads the weather snapshots, not results.  Registered for
+#: rugby-league explicitly and used as the default for every other
+#: sport, so state leagues gain elo/matchup/value and the NRL family
+#: gains value with zero per-league code.
+PARITY_LEAGUE_MODEL_SET: tuple[str, ...] = (
     HEURISTIC_ELO,
     HEURISTIC_FORM,
     HEURISTIC_HOME_ADVANTAGE,
     HEURISTIC_MATCHUP,
+    HEURISTIC_VALUE,
 )
+
+#: The reduced rugby-league model set (Phase 5.2, P2-3) — now the
+#: parity set (see above).
+RUGBY_LEAGUE_MODELS: tuple[str, ...] = PARITY_LEAGUE_MODEL_SET
 
 #: Per-sport league-model registry (P2-3), keyed on ``sport_id``.
 #: ABSENT sports — AFL included — resolve to :data:`DEFAULT_MODEL_SET`,
@@ -112,9 +127,10 @@ SPORT_MODEL_SETS: dict[str, tuple[str, ...]] = {
     RUGBY_LEAGUE.sport_id: RUGBY_LEAGUE_MODELS,
 }
 
-#: The default (bootstrap AFL / D3) set for any sport without an
-#: explicit registration — the historical behaviour, byte-identical.
-DEFAULT_MODEL_SET: tuple[str, ...] = LEAGUE_HEURISTICS
+#: The default set for any sport without an explicit registration —
+#: the parity set (PARITY, 2026-10-14): every competition the site
+#: serves gets the same five result-derived base models.
+DEFAULT_MODEL_SET: tuple[str, ...] = PARITY_LEAGUE_MODEL_SET
 
 #: The three DERIVED heuristics (FCL-6) every competition gets, built ON
 #: the resolved base set by the generation pipeline — never registry
@@ -139,17 +155,19 @@ DERIVED_LEAGUE_HEURISTICS: tuple[str, ...] = (
     HEURISTIC_YOLO,
 )
 
-#: AFL-scrape-sourced models with NO rugby-league equivalent (Phase 5.2
-#: scope decision, 2026-10-09): weather needs an NRL weather history,
-#: injuries/player stats need NRL scrapers, value needs odds.  None has
-#: a source yet, so requesting one for rugby-league is rejected cleanly
-#: instead of silently producing garbage.
+#: AFL-scrape-sourced models with NO league source (PARITY revision of
+#: the Phase 5.2 scope decision): player injuries and player statistics
+#: need scrapers that only exist for the AFL.  ``value`` left this list
+#: (it is result-derived and now a base pick for every league) and
+#: ``weather_impact`` left it too (Open-Meteo serves every venue) —
+#: requesting either for rugby-league resolves through the registry
+#: like any other model.  Requesting one of the remaining two raises
+#: the repo-standard ``BackendServiceError`` 400
+#: ``model_unavailable_for_sport``.
 RUGBY_LEAGUE_EXCLUDED_MODELS: frozenset[str] = frozenset(
     {
-        "weather_impact",
         "injury_impact",
         "player_form",
-        "value",
     }
 )
 
@@ -195,6 +213,14 @@ class CompletedEvent:
     meaningless — and :func:`is_drawn` refuses to call it a draw.
     Defaults to ``True`` so every completed-event construction site
     (and every existing test factory) is unchanged.
+
+    PARITY-1: the snapshot also carries the VENUE — the weather-impact
+    model's same-venue history filter reads it.  ``None`` (the default)
+    keeps every existing construction site unchanged.
+
+    PARITY-1b: the snapshot also carries the ROUND — the grand-final
+    report's finals path labels results by round.  ``None`` (the
+    default) keeps every existing construction site unchanged.
     """
 
     event_id: int
@@ -207,6 +233,8 @@ class CompletedEvent:
     home_score: Optional[int]
     away_score: Optional[int]
     completed: bool = True
+    venue: Optional[str] = None
+    round_id: Optional[int] = None
 
 
 @dataclass(frozen=True)
@@ -495,6 +523,56 @@ def pick_matchup(
     return event.home_side_id
 
 
+def compute_win_rates(results: Sequence[CompletedEvent]) -> dict[int, float]:
+    """All-time decided win rate per participant (0..1).
+
+    The league counterpart of the AFL ``value`` model's aggregated
+    win-rate query: draws are excluded from the denominator (neither
+    side won), undecided rows are skipped entirely.  Sorting does not
+    matter — the output depends only on the SET of results.
+    """
+    wins: dict[int, int] = {}
+    decided: dict[int, int] = {}
+    for event in results:
+        home, away = event.home_participant_id, event.away_participant_id
+        if home is None or away is None:
+            continue
+        home_score, away_score = event.home_score, event.away_score
+        if home_score is None or away_score is None:
+            continue
+        if home_score == away_score:
+            continue  # a draw is a win for neither side
+        winner = home if home_score > away_score else away
+        loser = away if winner == home else home
+        wins[winner] = wins.get(winner, 0) + 1
+        decided[winner] = decided.get(winner, 0) + 1
+        decided[loser] = decided.get(loser, 0) + 1
+    return {
+        participant: (wins.get(participant, 0) / games)
+        for participant, games in decided.items()
+    }
+
+
+def pick_value(
+    event: CompletedEvent,
+    prior_results: Sequence[CompletedEvent],
+) -> Optional[int]:
+    """Side with the better all-time win rate; tie → home.
+
+    The league counterpart of the AFL ``value`` model's pick rule
+    (raw rates only — home advantage is owned by the
+    ``home_advantage`` model).  ``prior_results`` must contain only
+    events BEFORE this one.
+    """
+    home, away = event.home_participant_id, event.away_participant_id
+    if home is None or away is None:
+        return None
+    rates = compute_win_rates(prior_results)
+    if rates.get(away, 0.5) > rates.get(home, 0.5):
+        return event.away_side_id
+    return event.home_side_id
+
+
 # ---------------------------------------------------------------------------
 # Per-sport model registry (P2-3) — name → pure pick function.
 # ---------------------------------------------------------------------------
@@ -528,6 +606,7 @@ LEAGUE_MODELS: dict[str, LeagueModelSpec] = {
         LeagueModelSpec(HEURISTIC_LADDER, pick_ladder, spans_seasons=False),
         LeagueModelSpec(HEURISTIC_ELO, pick_elo, spans_seasons=True),
         LeagueModelSpec(HEURISTIC_MATCHUP, pick_matchup, spans_seasons=True),
+        LeagueModelSpec(HEURISTIC_VALUE, pick_value, spans_seasons=True),
     )
 }
 
@@ -621,8 +700,8 @@ def _raise_model_unavailable(model: str, sport_id: Optional[str]) -> None:
         message=(
             f"Model '{model}' is not available for "
             f"{sport_id or 'this sport'} — it requires AFL data sources "
-            f"with no NRL equivalent. Available models: "
-            f"{', '.join(available)}"
+            f"(player injuries / player statistics) with no league "
+            f"equivalent. Available models: {', '.join(available)}"
         ),
         details={
             "model": model,
@@ -1073,6 +1152,23 @@ class LeagueHeuristicsService:
                 e.event_id: e.season_id for e in [*events, *scheduled]
             },
         )
+        # PARITY-1: the numeric model breakdown rides the SAME pass and
+        # transaction — every league's match page serves the same
+        # ``model_predictions`` section the AFL page does.  Failure is
+        # contained (logged, empty counts) so tips never block on it.
+        try:
+            from .league_model_predictions import LeagueModelPredictionService
+
+            prediction_summary = await LeagueModelPredictionService().generate_for_competition(
+                db, competition_id=competition_id
+            )
+        except Exception:  # noqa: BLE001 — numbers never fail the tips pass
+            logger.warning(
+                "league model predictions failed for competition %s",
+                competition_id,
+                exc_info=True,
+            )
+            prediction_summary = {}
         await db.commit()
         summary = _summary(
             competition_id,
@@ -1083,6 +1179,11 @@ class LeagueHeuristicsService:
             derived=derived_inserted,
             scheduled=len(scheduled),
         )
+        if prediction_summary:
+            summary["model_predictions"] = {
+                "inserted": prediction_summary.get("predictions_inserted", 0),
+                "updated": prediction_summary.get("predictions_updated", 0),
+            }
         logger.info(
             "league heuristics: competition %s: %s", competition_id, summary
         )
@@ -1257,6 +1358,8 @@ class LeagueHeuristicsService:
                     away.participant_id,
                     home.score,
                     away.score,
+                    Event.venue,
+                    Event.round_id,
                 )
                 .join(home, and_(home.event_id == Event.id, home.side == "home"))
                 .join(away, and_(away.event_id == Event.id, away.side == "away"))
@@ -1277,6 +1380,8 @@ class LeagueHeuristicsService:
                 away_participant_id=int(row[6]),
                 home_score=row[7],
                 away_score=row[8],
+                venue=row[9],
+                round_id=row[10],
             )
             for row in rows
         ]
@@ -1310,6 +1415,8 @@ class LeagueHeuristicsService:
                     away.participant_id,
                     home.score,
                     away.score,
+                    Event.venue,
+                    Event.round_id,
                 )
                 .join(home, and_(home.event_id == Event.id, home.side == "home"))
                 .join(away, and_(away.event_id == Event.id, away.side == "away"))
@@ -1332,6 +1439,8 @@ class LeagueHeuristicsService:
                 home_score=row[7],
                 away_score=row[8],
                 completed=False,
+                venue=row[9],
+                round_id=row[10],
             )
             for row in rows
         ]
@@ -1571,6 +1680,11 @@ async def league_round_tips(
                 # FCL-14: the AFL card numbers ride on the row.
                 LeagueTip.confidence,
                 LeagueTip.margin,
+                # PARITY-1: so does the persisted AI explanation — the
+                # round page renders the same explanation text the AFL
+                # cards do, with zero per-view LLM cost (the text is
+                # written by the nightly league NLP sweep).
+                LeagueTip.explanation,
             )
             .outerjoin(
                 picked_side, picked_side.id == LeagueTip.selected_participant_id
@@ -1580,11 +1694,23 @@ async def league_round_tips(
         )
     ).all()
     picks_by_event: dict[int, dict[str, dict[str, Any]]] = {}
-    for event_id, heuristic, picked_name, confidence, margin in tip_rows:
+    for (
+        event_id,
+        heuristic,
+        picked_name,
+        confidence,
+        margin,
+        explanation,
+    ) in tip_rows:
         by_name = picks_by_event.setdefault(
             int(event_id),
             {
-                h: {"picked": None, "confidence": None, "margin": None}
+                h: {
+                    "picked": None,
+                    "confidence": None,
+                    "margin": None,
+                    "explanation": None,
+                }
                 for h in canonical
             },
         )
@@ -1593,6 +1719,7 @@ async def league_round_tips(
                 "picked": None if picked_name is None else str(picked_name),
                 "confidence": None if confidence is None else float(confidence),
                 "margin": None if margin is None else int(margin),
+                "explanation": None if explanation is None else str(explanation),
             }
 
     fixtures = [

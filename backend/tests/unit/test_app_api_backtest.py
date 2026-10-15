@@ -391,15 +391,15 @@ class TestLeagueModelSetDerivedHeuristics:
             RUGBY_LEAGUE_MODELS + DERIVED_LEAGUE_HEURISTICS
         )
 
-    def test_state_key_returns_d3_base_plus_derived(self):
+    def test_state_key_returns_parity_base_plus_derived(self):
         from app.api.backtest import _league_model_set
         from packages.shared.services.league_heuristics import (
+            DEFAULT_MODEL_SET,
             DERIVED_LEAGUE_HEURISTICS,
-            LEAGUE_HEURISTICS,
         )
 
         assert _league_model_set("wafl") == (
-            LEAGUE_HEURISTICS + DERIVED_LEAGUE_HEURISTICS
+            DEFAULT_MODEL_SET + DERIVED_LEAGUE_HEURISTICS
         )
 
     @pytest.mark.parametrize("league", ["nrl", "nrlw", "origin", "wafl", "vfl"])
@@ -466,8 +466,8 @@ class TestLeagueBranchesGradeDerivedHeuristics:
 
     def test_compare_state_league_passes_base_plus_derived(self):
         from packages.shared.services.league_heuristics import (
+            DEFAULT_MODEL_SET,
             DERIVED_LEAGUE_HEURISTICS,
-            LEAGUE_HEURISTICS,
         )
 
         session = _session_returning(_ScalarResult(42))
@@ -486,7 +486,7 @@ class TestLeagueBranchesGradeDerivedHeuristics:
             session,
             competition_id=42,
             season_label="2025",
-            models=LEAGUE_HEURISTICS + DERIVED_LEAGUE_HEURISTICS,
+            models=DEFAULT_MODEL_SET + DERIVED_LEAGUE_HEURISTICS,
         )
 
     def test_compare_national_league_passes_base_plus_derived(self):
@@ -542,11 +542,11 @@ class TestLeagueBranchesGradeDerivedHeuristics:
         """Registered but never synced: the REAL service runs against an
         empty DB — the zero payload renders base + derived, all zeroed."""
         from packages.shared.services.league_heuristics import (
+            DEFAULT_MODEL_SET,
             DERIVED_LEAGUE_HEURISTICS,
-            LEAGUE_HEURISTICS,
         )
 
-        expected = list(LEAGUE_HEURISTICS + DERIVED_LEAGUE_HEURISTICS)
+        expected = list(DEFAULT_MODEL_SET + DERIVED_LEAGUE_HEURISTICS)
         session = _session_returning(_EmptyResult())
         app = _build_app_with_backtest_router()
         _override_db(app, session)

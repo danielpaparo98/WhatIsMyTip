@@ -14,7 +14,7 @@
       <div class="teams">
         <div class="team">
           <img
-            :src="getLogoUrl(game.home_team ?? 'TBD')"
+            :src="logoUrlFor(game.home_team ?? 'TBD')"
             :alt="`${game.home_team ?? 'TBD'} logo`"
             class="team-logo"
             loading="lazy"
@@ -27,7 +27,7 @@
         <span class="vs">VS</span>
         <div class="team">
           <img
-            :src="getLogoUrl(game.away_team ?? 'TBD')"
+            :src="logoUrlFor(game.away_team ?? 'TBD')"
             :alt="`${game.away_team ?? 'TBD'} logo`"
             class="team-logo"
             loading="lazy"
@@ -47,7 +47,7 @@
       <p v-if="report.executive_summary" class="lede">{{ report.executive_summary }}</p>
     </header>
 
-    <!-- 01 · The Verdict -->
+    <!-- 01 Â· The Verdict -->
     <section v-if="report.prediction" class="gf-section">
       <h2 class="section-label"><span class="section-no">01</span>The Verdict</h2>
       <p class="verdict">
@@ -65,7 +65,7 @@
       </p>
     </section>
 
-    <!-- 02 · The Tips — weighted tip leads; one card per heuristic -->
+    <!-- 02 Â· The Tips — weighted tip leads; one card per heuristic -->
     <section v-if="tips.length > 0" class="gf-section">
       <h2 class="section-label"><span class="section-no">02</span>The Tips</h2>
       <div class="tip-cards">
@@ -79,7 +79,7 @@
       </div>
     </section>
 
-    <!-- 03 · The Models — every model's raw call, so users can see what
+    <!-- 03 Â· The Models — every model's raw call, so users can see what
          feeds the heuristics above -->
     <section v-if="models.length > 0" class="gf-section">
       <h2 class="section-label"><span class="section-no">03</span>The Models</h2>
@@ -94,7 +94,7 @@
       </div>
     </section>
 
-    <!-- 04 · Season Story -->
+    <!-- 04 Â· Season Story -->
     <section v-if="seasonStorySides.length > 0" class="gf-section">
       <h2 class="section-label"><span class="section-no">04</span>Season Story</h2>
       <div class="two-col">
@@ -108,7 +108,7 @@
       </div>
     </section>
 
-    <!-- 04 · Keys to the Game -->
+    <!-- 04 Â· Keys to the Game -->
     <section v-if="keys.length > 0" class="gf-section">
       <h2 class="section-label"><span class="section-no">05</span>Keys to the Game</h2>
       <ol class="key-list">
@@ -119,7 +119,7 @@
       </ol>
     </section>
 
-    <!-- 05 · Players to Watch -->
+    <!-- 05 Â· Players to Watch -->
     <section v-if="homePlayers.length > 0 || awayPlayers.length > 0" class="gf-section">
       <h2 class="section-label"><span class="section-no">06</span>Players to Watch</h2>
       <div class="two-col">
@@ -144,7 +144,7 @@
       </div>
     </section>
 
-    <!-- 06 · Injury Watch (hidden entirely when no data) -->
+    <!-- 06 Â· Injury Watch (hidden entirely when no data) -->
     <section v-if="homeInjuries.length > 0 || awayInjuries.length > 0" class="gf-section">
       <h2 class="section-label"><span class="section-no">07</span>Injury Watch</h2>
       <div class="two-col">
@@ -171,7 +171,7 @@
       </div>
     </section>
 
-    <!-- 07 · Conditions & X-Factor (each half hidden when the agent
+    <!-- 07 Â· Conditions & X-Factor (each half hidden when the agent
          could not assess it — no "unavailable" filler prose) -->
     <section v-if="weatherVisible || xFactorVisible" class="gf-section">
       <h2 class="section-label"><span class="section-no">08</span>Conditions &amp; X-Factor</h2>
@@ -187,7 +187,7 @@
       </div>
     </section>
 
-    <!-- 09 · Talking Points — horizontal quick-hit panels (scroll-snap
+    <!-- 09 Â· Talking Points — horizontal quick-hit panels (scroll-snap
          on mobile, a distinct layout family from the sections above) -->
     <section v-if="talkingPoints.length > 0" class="gf-section">
       <h2 class="section-label"><span class="section-no">09</span>Talking Points</h2>
@@ -211,24 +211,49 @@ import type {
   TeamStory,
   Tip,
 } from '~/composables/useApi'
-import { formatExplanationImpl, sortByHeuristicOrder } from '~/composables/useFormatters'
+import { formatExplanationImpl } from '~/composables/useFormatters'
+
+/**
+ * PARITY (2026-10-14): the minimal header shape the component reads.
+ * Both the AFL `Game` and the league event adapter
+ * (`{home_team, away_team, venue, date}`) satisfy it structurally, so
+ * the SAME component renders the report for every league.
+ */
+interface GrandFinalGameShape {
+  home_team: string | null
+  away_team: string | null
+  venue: string | null
+  date: string | null
+}
 
 interface Props {
   report: GrandFinalReport
-  game: Game
+  game: GrandFinalGameShape
   /** Heuristic tips for the game (from the game-detail payload). */
   tips?: Tip[]
   /** Every model's raw call, so users see what feeds the heuristics. */
   models?: ModelPrediction[]
+  /**
+   * PARITY: the league key — when set, club badges resolve through the
+   * league identity chain (generated initials for state-league clubs)
+   * instead of the AFL logo map.
+   */
+  leagueKey?: string
 }
 
 const props = withDefaults(defineProps<Props>(), {
   tips: () => [],
   models: () => [],
+  leagueKey: undefined,
 })
 
 const { getLogoUrl, getTeamDisplayName } = useTeamLogos()
+const { logoFor } = useTeamIdentity()
 const { formatDate, formatHeuristic, getModelDisplayName } = useFormatters()
+
+/** PARITY: league-aware badge resolution (AFL map by default). */
+const logoUrlFor = (name: string): string =>
+  props.leagueKey ? (logoFor(name, props.leagueKey) ?? '') : getLogoUrl(name)
 
 // BT-1 (boosted-tip): boosted_tip is the site's flagship recommendation
 // — it leads the card row, weighted_tip and yolo follow.  best_bet is
@@ -282,9 +307,13 @@ const xFactorVisible = computed(
 )
 
 const tips = computed<Tip[]>(() =>
-  sortByHeuristicOrder(props.tips).slice().sort(
-    (a, b) => (TIP_ORDER[a.heuristic] ?? 9) - (TIP_ORDER[b.heuristic] ?? 9),
-  ),
+  // n-4 (code review): a single sort — the discarded
+  // sortByHeuristicOrder pre-pass is gone.
+  props.tips
+    .slice()
+    .sort(
+      (a, b) => (TIP_ORDER[a.heuristic] ?? 9) - (TIP_ORDER[b.heuristic] ?? 9),
+    ),
 )
 
 const models = computed<ModelPrediction[]>(() => props.models)

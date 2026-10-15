@@ -1,15 +1,15 @@
 <template>
   <div class="match-detail-page">
     <!-- LEAGUE-ROUTES (2026-09-30, user request): the /{league}/match/{slug}
-         event detail page.  Presentation mirrors /game/[slug].vue's header
-         (back link, round/season/status strip, two teams with badges +
-         scores when completed, venue/date/time meta grid).  FCL-12
-         (2026-10-13): upcoming fixtures now show the league's STORED
-         forward picks with cached AI explanations; the AFL-specific
-         model-prediction / weather sections remain absent (no state-
-         league equivalents).  Winner emphasis follows the league home's
-         result rows (bold-winner, monochrome) instead of the AFL page's
-         accent-free equality between sides. -->
+         event detail page.  PARITY (2026-10-14): presentation is now
+         FIELD-IDENTICAL to /game/[slug].vue — back link, header, WeatherCard,
+         Heuristic Tips (AFL tip-card shape with persisted AI explanations),
+         Model Predictions (numeric: confidence + margin) and the
+         MatchAnalysisCard talking points.  One fetch
+         (GET /api/events/{slug}/detail) serves everything, exactly like the
+         AFL game page's single detail fetch.  Winner emphasis follows the
+         league home's result rows (bold-winner, monochrome) instead of the
+         AFL page's accent-free equality between sides. -->
     <!-- Loading State -->
     <div v-if="loading" class="loading" role="status" aria-live="polite">
       <div class="spinner"></div>
@@ -74,10 +74,17 @@
         </div>
       </section>
 
-      <!-- FCL-12/FCL-14: the AFL game page's two tipping sections,
-           mirrored — Heuristic Tips (the derived heuristics in the AFL
-           tip-card shape) then Model Predictions (the league's base
-           models, pick-only where the data is pick-only). -->
+      <!-- PARITY: Weather Conditions — identical slot to /game/[slug].vue
+           (hidden until a forecast exists; the supplementary-sync weather
+           pass populates league_event_weather). -->
+      <section v-if="detail?.weather" class="match-weather-section">
+        <WeatherCard :weather="detail.weather" />
+      </section>
+
+      <!-- PARITY: the AFL game page's tipping sections, mirrored —
+           Heuristic Tips (the derived heuristics in the AFL tip-card shape
+           with persisted AI explanations) then Model Predictions (numeric:
+           confidence + margin, exactly like the AFL page's). -->
       <section v-if="derivedTips && derivedTips.length > 0" class="match-tips-section">
         <h2 class="tips-heading">Heuristic Tips</h2>
         <div class="tips-grid">
@@ -104,14 +111,26 @@
         </div>
       </section>
 
-      <section v-if="modelTips && modelTips.length > 0" class="match-models-section">
+      <section v-if="modelPredictions && modelPredictions.length > 0" class="match-models-section">
         <h2 class="tips-heading">Model Predictions</h2>
         <div class="models-grid">
-          <div v-for="tip in modelTips" :key="tip.tipKey" class="model-card">
-            <span class="model-name">{{ tip.label }}</span>
-            <h3 class="model-pick">{{ tip.tipText }}</h3>
+          <div v-for="prediction in modelPredictions" :key="prediction.model_name" class="model-card">
+            <span class="model-name">{{ modelDisplayName(prediction.model_name) }}</span>
+            <h3 class="model-pick">{{ prediction.winner ? getTeamDisplayName(prediction.winner) : '—' }}</h3>
+            <p v-if="prediction.confidence !== null" class="model-confidence">
+              {{ Math.round(prediction.confidence * 100) }}%
+            </p>
+            <p v-if="prediction.margin !== null" class="model-margin">
+              Margin: {{ prediction.margin }} pts
+            </p>
           </div>
         </div>
+      </section>
+
+      <!-- PARITY: Talking Points — the same MatchAnalysisCard the AFL game
+           page renders (hidden until the nightly sweep has written one). -->
+      <section v-if="matchAnalysis" class="match-analysis-section">
+        <MatchAnalysisCard :analysis="matchAnalysis" />
       </section>
     </div>
   </div>
@@ -123,7 +142,7 @@
 // route rules (slug shape, league-key registry, cross-league ownership)
 // live in composables/useLeagueMatchRoute.ts so vitest can exercise them
 // without mounting this SFC.
-import type { EventDetailResponse, SportEvent } from '~/composables/useApi'
+import type { LeagueEventDetailResponse, SportEvent } from '~/composables/useApi'
 import {
   validateLeagueMatchRoute,
   eventMatchesLeague,
@@ -150,7 +169,7 @@ definePageMeta({
 })
 
 const route = useRoute()
-const { getEvent } = useApi()
+const { getEventDetail } = useApi()
 const { logoFor } = useTeamIdentity()
 const { getTeamDisplayName } = useTeamLogos()
 const { formatDate, formatTime } = useFormatters()
@@ -168,17 +187,20 @@ if (import.meta.client) {
   watch(league, (key) => setActiveLeague(key), { immediate: true })
 }
 
-// H-5-revised pattern (mirrors /game/[slug].vue): the useAsyncData key is
-// REACTIVE and includes league + slug — every match gets its own cache
-// slot, and a key change triggers the fetch automatically (a stale
-// previous match can never render under a new URL).  dedupe: 'cancel'
-// drops superseded in-flight fetches on rapid navigation.
+// PARITY (2026-10-14): ONE fetch serves everything — the
+// `/api/events/{slug}/detail` payload is field-identical to the AFL game
+// page's `/api/games/{slug}/detail`: event, tips (with persisted AI
+// explanations), numeric model_predictions, match_analysis talking points
+// and weather.  H-5-revised pattern (mirrors /game/[slug].vue): the
+// useAsyncData key is REACTIVE and includes league + slug — every match
+// gets its own cache slot, and a key change triggers the fetch
+// automatically.  dedupe: 'cancel' drops superseded in-flight fetches.
 const {
-  data: event,
+  data: detail,
   pending: loading,
   error: fetchError,
   refresh: refetch,
-} = await useAsyncData<EventDetailResponse | null>(
+} = await useAsyncData<LeagueEventDetailResponse | null>(
   computed(() => `league-match-${league.value}-${slug.value}`),
   async () => {
     // Same pre-flight guard as the game page: reject slugs the backend
@@ -186,12 +208,12 @@ const {
     if (!isValidEventSlug(slug.value)) {
       throw new Error('Invalid event slug')
     }
-    const detail = await getEvent(slug.value)
+    const detail = await getEventDetail(slug.value)
     // Cross-league slug-probing guard: /api/events/{slug} resolves ANY
     // league's event, so a WAFL URL must not render a SANFL payload.
     // A mismatch is a genuine 404 (wrong URL), not a transient error —
     // showError renders the global 404 page with the proper status.
-    if (!eventMatchesLeague(detail, league.value)) {
+    if (!eventMatchesLeague(detail.event, league.value)) {
       showError(createError({ statusCode: 404, statusMessage: 'Match not found' }))
       return null
     }
@@ -213,6 +235,8 @@ const {
     dedupe: 'cancel',
   },
 )
+
+const event = computed(() => detail.value?.event ?? null)
 
 const error = computed<string | null>(() => {
   if (!fetchError.value) return null
@@ -253,42 +277,13 @@ const statusLabel = computed(() => {
 })
 
 // ---------------------------------------------------------------------------
-// FCL-12 forward tips: the stored league picks for THIS event, served by
-// GET /api/tips/league WITH cached AI explanations (the round page's bulk
-// endpoint is deliberately explanation-free; the match page is where the
-// explanation budget belongs). Declared AFTER the event fetch so
-// `event.value` is already resolved; a scheduled fixture shows its forward
-// tips, a completed one keeps the results-only header, and any failure or
-// empty payload is non-fatal (the section simply does not render).
-// ---------------------------------------------------------------------------
-interface LeagueTipRow {
-  heuristic: string
-  picked: string | null
-  explanation: string | null
-}
-
-const { data: leagueTips } = await useAsyncData<LeagueTipRow[] | null>(
-  computed(() => `league-match-tips-${league.value}-${slug.value}`),
-  async () => {
-    const ev = event.value
-    if (!ev || ev.completed) return null
-    const config = useRuntimeConfig()
-    const apiBase = config.public.apiBase as string
-    return await $fetch<{ tips: LeagueTipRow[] }>(
-      `${apiBase}/api/tips/league`,
-      { params: { league: league.value, slug: slug.value }, timeout: 8000 },
-    )
-      .then((r) => (r.tips.length > 0 ? r.tips : null))
-      .catch(() => null)
-  },
-  { dedupe: 'cancel' },
-)
-
-// ---------------------------------------------------------------------------
-// FCL-13: the user's selected heuristic (the SAME selection the round
-// page and the AFL home use — one localStorage key, one preference).
-// The tips render in the league's canonical heuristic order with the
-// selected heuristic highlighted as the primary row.
+// PARITY tips + models: the detail payload's tips carry the AFL card shape
+// (picked/explanation/confidence/margin) for EVERY stored heuristic; the
+// derived four render as Heuristic Tips, and the numeric
+// model_predictions rows render as Model Predictions — the exact split
+// the AFL game page uses.  The tips render in the league's canonical
+// heuristic order with the selected heuristic highlighted as the primary
+// row.
 // ---------------------------------------------------------------------------
 const selectedHeuristic = ref<string>('best_bet')
 onMounted(() => {
@@ -301,53 +296,47 @@ onMounted(() => {
   }
 })
 
-const orderedTips = computed(() => {
-  const rows = leagueTips.value
+const DERIVED_SET = new Set(['best_bet', 'weighted_tip', 'boosted_tip', 'yolo'])
+
+const derivedTips = computed(() => {
+  const rows = detail.value?.tips
   if (!rows || rows.length === 0) return null
   const options = getLeagueHeuristicOptions(league.value)
   const labelFor = new Map(options.map((h) => [h.value, h.label]))
   const orderIndex = new Map(options.map((h, i) => [h.value, i]))
-  return [...rows]
+  return rows
+    .filter((row) => DERIVED_SET.has(row.heuristic))
     .map((row) => ({
       tipKey: row.heuristic,
       label: labelFor.get(row.heuristic) ?? row.heuristic.replaceAll('_', ' '),
       tipText:
         row.picked === null ? 'Draw' : getTeamDisplayName(row.picked!),
-      draw: row.picked === null,
       isSelection: row.heuristic === selectedHeuristic.value,
+      confidence: row.confidence,
+      margin: row.margin,
+      explanation: row.explanation,
       rank: orderIndex.get(row.heuristic) ?? options.length,
     }))
     .sort((a, b) => a.rank - b.rank)
 })
 
-// FCL-14: the AFL game page's section split — the DERIVED heuristics
-// render as AFL-style tip cards (badge/confidence/margin/explanation); the
-// league's BASE models render as model-prediction cards (pick-only —
-// result-derived models produce picks, not numbers).  Both ordered by
-// the league's canonical lists.
-const DERIVED_SET = new Set(['best_bet', 'weighted_tip', 'boosted_tip', 'yolo'])
+// PARITY: the numeric model breakdown — every stored prediction renders
+// with the same confidence % / margin numbers as the AFL page's cards,
+// labelled through the league's (six-model) display-name map.
+const modelPredictions = computed(() => detail.value?.model_predictions ?? null)
 
-const derivedTips = computed(() => {
-  const rows = orderedTips.value
-  if (!rows) return null
-  return rows
-    .filter((tip) => DERIVED_SET.has(tip.tipKey))
-    .map((tip) => {
-      const row = leagueTips.value!.find((r) => r.heuristic === tip.tipKey)!
-      return {
-        ...tip,
-        confidence: row.confidence ?? null,
-        margin: row.margin ?? null,
-        explanation: row.explanation ?? null,
-      }
-    })
+// PARITY: the AFL MatchAnalysisCard consumes the AFL analysis interface
+// (keyed `game_id`); the league payload keys `event_id`. The card reads
+// `analysis_text` only — map the key so the AFL component renders the
+// league talking points unmodified.
+const matchAnalysis = computed(() => {
+  const analysis = detail.value?.match_analysis
+  if (!analysis) return null
+  return { ...analysis, game_id: analysis.event_id }
 })
 
-const modelTips = computed(() => {
-  const rows = orderedTips.value
-  if (!rows) return null
-  return rows.filter((tip) => !DERIVED_SET.has(tip.tipKey))
-})
+const modelDisplayName = (modelName: string): string =>
+  leagueConfig.value.modelDisplayNames[modelName] ?? modelName.replaceAll('_', ' ')
 
 // Badges resolve through the shared identity chain (explicit entry → AFL
 // map → generated initials badge for state-league clubs, colored via the
@@ -549,6 +538,10 @@ useHead({
 }
 
 /* FCL-12 forward tips — monochrome, same card language as the header. */
+.match-weather-section {
+  margin-bottom: 2rem;
+}
+
 .match-tips-section {
   margin-top: 1.5rem;
   border: 1px solid var(--color-border);
@@ -659,6 +652,23 @@ useHead({
 .model-pick {
   font-size: 1.25rem;
   margin: 0;
+}
+
+/* PARITY: the AFL game page's numeric model cards — confidence % and
+   margin ride under the pick, same treatment as the tip cards. */
+.model-confidence {
+  font-size: 0.8125rem;
+  font-weight: 700;
+  margin: 0.5rem 0 0;
+}
+
+.model-margin {
+  font-size: 0.8125rem;
+  margin: 0.25rem 0 0;
+}
+
+.match-analysis-section {
+  margin-top: 1.5rem;
 }
 
 /* Teams */

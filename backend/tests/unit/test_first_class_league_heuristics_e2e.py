@@ -74,7 +74,6 @@ from packages.shared.services.league_heuristics import (
     HEURISTIC_BOOSTED_TIP,
     HEURISTIC_ELO,
     HEURISTIC_WEIGHTED_TIP,
-    LEAGUE_HEURISTICS,
     LEAGUE_MODEL_SETS,
     compute_all_picks,
     compute_all_picks_and_derived,
@@ -550,13 +549,14 @@ async def test_scheduled_fixture_gets_forward_tips_grading_stays_clean(
     finally:
         await engine.dispose()
 
-    # 4 completed + 1 scheduled, × 7 names (unregistered → D3 trio + derived).
-    assert summary["tips_inserted"] == 35
+    # 4 completed + 1 scheduled, × 9 names (unregistered → parity base
+    # five + four derived).
+    assert summary["tips_inserted"] == 45
     assert summary["scheduled_considered"] == 1
 
     stored = await _stored_tips(async_dsn, cid)
     scheduled_names = {h for (eid, h) in stored if eid == scheduled_id}
-    assert scheduled_names == set(LEAGUE_HEURISTICS) | set(
+    assert scheduled_names == set(DEFAULT_MODEL_SET) | set(
         DERIVED_LEAGUE_HEURISTICS
     )
     # The scheduled fixture's picks point at real sides (not draw-NULL).
@@ -566,7 +566,7 @@ async def test_scheduled_fixture_gets_forward_tips_grading_stays_clean(
     )
 
     # Grading cleanliness: the season comparison counts only completed
-    # rounds' tips — 4 completed × 6 names, the scheduled fixture's six
+    # rounds' tips — 4 completed × 9 names, the scheduled fixture's nine
     # rows are invisible to accuracy until the fixture completes.
     from packages.shared.services.league_backtest import LeagueBacktestService
 
@@ -578,7 +578,7 @@ async def test_scheduled_fixture_gets_forward_tips_grading_stays_clean(
                 session,
                 competition_id=cid,
                 season_label="2026",
-                models=LEAGUE_HEURISTICS + DERIVED_LEAGUE_HEURISTICS,
+                models=DEFAULT_MODEL_SET + DERIVED_LEAGUE_HEURISTICS,
             )
     finally:
         await engine.dispose()
@@ -615,13 +615,15 @@ async def test_scheduled_fixture_gets_forward_tips_grading_stays_clean(
     assert len(round_payload["fixtures"]) == 1
     fixture = round_payload["fixtures"][0]
     assert fixture["slug"].startswith("fcl08")
-    # FCL-14: picks are detail objects — {picked, confidence, margin}.
+    # FCL-14 + PARITY-1: picks are detail objects — {picked, confidence,
+    # margin, explanation} — over the parity base set + derived names.
     picks = fixture["picks"]
-    assert set(picks) == set(LEAGUE_HEURISTICS) | set(DERIVED_LEAGUE_HEURISTICS)
+    assert set(picks) == set(DEFAULT_MODEL_SET) | set(DERIVED_LEAGUE_HEURISTICS)
     named = [d["picked"] for d in picks.values() if d["picked"] is not None]
-    assert len(named) == len(LEAGUE_HEURISTICS) + len(
+    assert len(named) == len(DEFAULT_MODEL_SET) + len(
         DERIVED_LEAGUE_HEURISTICS
     ), picks
+    assert all("explanation" in d for d in picks.values())
     assert set(named) <= team_names, (named, team_names)
     # The derived picks carry the AFL card numbers; the base picks don't.
     assert picks["best_bet"]["confidence"] is not None
@@ -683,7 +685,7 @@ async def test_retrain_switches_combiners_from_fallback_to_scoped_learned_model(
             (p.event_id, p.heuristic): p.selected_side_id
             for p in compute_all_picks_and_derived(events, models=models)
         }
-        assert first["tips_inserted"] == 280  # 40 events × (3 base + 4 derived)
+        assert first["tips_inserted"] == 360  # 40 events × (5 base + 4 derived)
         assert stored == fallback
         # The opener's fallback is the tie→home majority vote (FCL-3a).
         assert fallback[(opener["event_id"], HEURISTIC_WEIGHTED_TIP)] == (
@@ -805,20 +807,21 @@ async def test_unregistered_state_league_keeps_pre_fcl_base_set_and_gains_derive
 
     stored = await _stored_tips(async_dsn, cid)
 
-    # Base names are EXACTLY the pre-FCL D3 trio (no sport registration
-    # for 'afl' → DEFAULT_MODEL_SET), plus the three derived names.
+    # Base names are EXACTLY the sport's default base set (no sport
+    # registration for 'afl' → DEFAULT_MODEL_SET, the parity five),
+    # plus the four derived names.
     base_names = {h for _, h in stored} - set(DERIVED_LEAGUE_HEURISTICS)
     assert base_names == set(DEFAULT_MODEL_SET)
     assert set(DERIVED_LEAGUE_HEURISTICS) <= {h for _, h in stored}
     # 6 completed events + 1 scheduled fixture (FCL-12 forward tip) ×
-    # (3 base + 3 derived) = 42.
-    assert summary["tips_inserted"] == 49
-    assert len(stored) == 49
+    # (5 base + 4 derived) = 63.
+    assert summary["tips_inserted"] == 63
+    assert len(stored) == 63
     assert await _scalar(
         async_dsn,
         "SELECT count(*) FROM league_tips WHERE event_id = :eid",
         {"eid": scheduled_id},
-    ) == 7
+    ) == 9
 
     # THE byte-identical pin: every base pick equals the pre-FCL
     # pipeline's pick for the same event, exactly.
@@ -1012,12 +1015,12 @@ async def test_model_load_failure_does_not_poison_the_generation_pass(
     finally:
         await engine.dispose()
 
-    # 4 completed events × (3 D3 base + 4 derived) — fallback picks.
-    assert summary["tips_inserted"] == 28
+    # 4 completed events × (5 parity base + 4 derived) — fallback picks.
+    assert summary["tips_inserted"] == 36
     assert summary["derived_tips"] == {
         "best_bet": 4,
         "weighted_tip": 4,
         "boosted_tip": 4,
         "yolo": 4,
     }
-    assert alive == 28
+    assert alive == 36

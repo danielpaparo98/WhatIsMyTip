@@ -84,6 +84,31 @@ describe('deriveSeasonState', () => {
     expect(deriveSeasonState(events, 23)).toBe('grand_final_upcoming')
   })
 
+  it('returns regular when the max round has MULTIPLE live events (M-3, code review)', () => {
+    // State-league fixtures are typically published only through the
+    // last home-and-away round: a multi-game max round is NOT yet a
+    // grand-final round — no GF branding, no confetti, no decider.
+    const events = [
+      makeCompleted({ id: 1, round_id: 1, starts_at: '2026-04-04T13:10:00' }),
+      makeEvent({ id: 2, round_id: 20, starts_at: '2026-08-29T13:10:00' }),
+      makeEvent({ id: 3, round_id: 20, starts_at: '2026-08-29T15:10:00' }),
+      makeEvent({ id: 4, round_id: 20, starts_at: '2026-08-30T14:10:00' }),
+    ]
+    expect(deriveSeasonState(events, 20)).toBe('regular')
+  })
+
+  it('returns grand_final_upcoming when ONE live decider remains in a partially played final round', () => {
+    // A final round with one settled game and one to come narrows to a
+    // single live decider — that live game IS the grand final (the M-3
+    // guard counts LIVE events only; settled rounds-mates never brand
+    // the page, and the GF event selector picks the live one).
+    const events = [
+      makeCompleted({ id: 1, round_id: 20, starts_at: '2026-08-29T13:10:00' }),
+      makeEvent({ id: 2, round_id: 20, starts_at: '2026-08-30T14:10:00' }),
+    ]
+    expect(deriveSeasonState(events, 20)).toBe('grand_final_upcoming')
+  })
+
   it('returns regular when the max round is live but the passed current round is earlier', () => {
     // Defensive against a stale/inconsistent round id: the GF strip is
     // only shown for the round the page is actually displaying.

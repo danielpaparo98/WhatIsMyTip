@@ -9,14 +9,14 @@ Two sport paths share ONE OpenRouter pipeline:
   + :class:`LeagueTipExplanationService` explain ``league_tips`` rows
   through the SAME request path — a sport-aware prompt/fallback subclass
   overrides only the wording hooks, never the LLM machinery.  Evidence
-  is restricted to the reduced rugby-league model set (elo, form,
-  home_advantage, matchup) and computed by the SAME pure functions that
-  made the pick, so the explanation can never cite a signal the pick
-  could not see (weather/injuries/player_form/value are not gathered
-  and are rejected at the registry).  Explanations are not persisted
-  (``league_tips`` carries no explanation column by design) — they are
-  cached under the rugby-league cache namespace instead, so one tip
-  pays for at most one OpenRouter call.
+  is restricted to the league model set and computed by the SAME pure
+  functions that made the pick, so the explanation can never cite a
+  signal the pick could not see.  PARITY-1 (2026-10-14): explanations
+  ARE now persisted on ``league_tips.explanation`` — the nightly league
+  NLP sweep writes them (and on-demand generations write back), so
+  reads prefer the stored text and only pay the LLM when it is
+  missing; the cache bounds repeat on-demand cost to one OpenRouter
+  call per (competition, event, model) per TTL window.
 """
 
 
@@ -618,6 +618,12 @@ class LeagueTipExplanationService:
                 f"No {heuristic} tip found for event {event_id}",
             )
 
+        # PARITY-1 (AFL parity): the PERSISTED explanation wins — the
+        # nightly league NLP sweep writes the same pre-generated text
+        # the AFL tips table carries, so reads never pay the LLM.
+        if tip.explanation:
+            return str(tip.explanation)
+
         cache = self._cache if self._cache is not None else LEAGUE_EXPLANATION_CACHE
         cache_key = self._cache_key(competition_id, event_id, heuristic)
         cached = await cache.get(cache_key)
@@ -664,6 +670,22 @@ class LeagueTipExplanationService:
             ) from None
 
         await cache.set(cache_key, explanation)
+
+        # PARITY-1: write-back — an on-demand generation is persisted on
+        # the tip row exactly like the AFL service persists onto
+        # ``tips.explanation``, so every later read (round page
+        # included) is LLM-free.  A persistence failure never blocks
+        # the response: the caller already has the text.
+        try:
+            tip.explanation = explanation
+            await db.commit()
+        except Exception:  # noqa: BLE001 — degrade, never block
+            logger.warning(
+                "League explanations: persisting explanation for "
+                f"(event {event_id}, {heuristic}) failed",
+                exc_info=True,
+            )
+            await db.rollback()
         return explanation
 
     async def explanations_for_event(
@@ -756,6 +778,75 @@ class LeagueTipExplanationService:
                     "picked": picked,
                     "explanation": explanation,
                     # FCL-14: the AFL card numbers ride on the row.
+                    "confidence": (
+                        None if tip.confidence is None else float(tip.confidence)
+                    ),
+                    "margin": None if tip.margin is None else int(tip.margin),
+                }
+            )
+        results.sort(key=lambda item: models_order.index(item["heuristic"]))
+        return results
+
+    async def persisted_explanations_for_event(
+        self, db: AsyncSession, *, event_id: int
+    ) -> list[dict[str, Optional[str]]]:
+        """Every sport-valid tip on one event, STORED explanations only.
+
+        S-1 (code review): the pure-read twin of
+        :meth:`explanations_for_event` — no LLM call, no cache write, no
+        persistence.  This is what the ``/api/events/{slug}/detail``
+        endpoint serves (the AFL detail endpoint reads stored text only
+        too); on-demand generation stays the ``GET /api/tips/league``
+        and nightly-sweep contract.  Same graceful shape: missing event
+        → ``[]``, missing explanation → ``None``.
+        """
+        row = (
+            await db.execute(
+                select(
+                    Event,
+                    Season.competition_id,
+                    Competition.sport_id,
+                    Competition.name,
+                )
+                .join(Season, Event.season_id == Season.id)
+                .join(Competition, Season.competition_id == Competition.id)
+                .where(Event.id == event_id)
+            )
+        ).first()
+        if row is None:
+            return []
+        _event, _competition_id, sport_id, competition_name = row
+
+        tips = list(
+            (
+                await db.execute(
+                    select(LeagueTip).where(LeagueTip.event_id == event_id)
+                )
+            ).scalars()
+        )
+        if not tips:
+            return []
+
+        models_order = list(
+            league_model_set_for_competition(
+                competition_name, str(sport_id) if sport_id is not None else None
+            )
+        ) + list(DERIVED_LEAGUE_HEURISTICS)
+        allowed = set(models_order)
+        sides = await self._fetch_sides(db, event_id)
+
+        results: list[dict[str, Optional[str]]] = []
+        for tip in tips:
+            heuristic = str(tip.heuristic)
+            if heuristic not in allowed:
+                continue
+            results.append(
+                {
+                    "heuristic": heuristic,
+                    "picked": self._picked_name(tip, sides),
+                    "explanation": (
+                        None if tip.explanation is None else str(tip.explanation)
+                    ),
                     "confidence": (
                         None if tip.confidence is None else float(tip.confidence)
                     ),

@@ -815,7 +815,9 @@ class TestRunLeagueRetrainPostgres:
             events = await league_retrain._fetch_completed_events(
                 session, competition_id
             )
-        rows = league_retrain.build_league_training_rows(events)
+        rows = league_retrain.build_league_training_rows(
+            events, model_names=league_model_set_for_sport("afl")
+        )
         X = np.array([features for features, _ in rows], dtype=float)  # noqa: N806 — ML design-matrix convention
         preds = reg.predict(X)
         assert bool(np.all(np.isfinite(preds)))

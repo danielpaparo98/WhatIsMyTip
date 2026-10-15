@@ -29,6 +29,9 @@ from ..config import settings
 from ..logger import get_logger
 from ..models import Game, Injury, MatchWeather
 
+# PARITY-1: the league-event weather model lives on the multisport
+# tables — imported lazily inside the method to keep this module's
+# import graph AFL-shaped.
 logger = get_logger(__name__)
 
 _JOB_NAME = "supplementary-sync"
@@ -84,6 +87,13 @@ class SupplementaryDataSyncService:
         except Exception as e:  # noqa: BLE001
             logger.error(f"Weather sync failed: {e}", exc_info=True)
             stats["errors"].append(f"weather sync: {e}")
+
+        # ---- league-event weather (PARITY-1) ----------------------------
+        try:
+            stats["league_weather_stored"] = await self._sync_league_weather()
+        except Exception as e:  # noqa: BLE001
+            logger.error(f"League weather sync failed: {e}", exc_info=True)
+            stats["errors"].append(f"league weather sync: {e}")
 
         # ---- staleness --------------------------------------------------
         try:
@@ -240,6 +250,122 @@ class SupplementaryDataSyncService:
         if stored:
             await self.db.commit()
         logger.info(f"Supplementary sync: stored {stored} weather forecasts")
+        return stored
+
+    async def _sync_league_weather(self) -> int:
+        """Fetch forecasts for upcoming league events (PARITY-1).
+
+        The league twin of :meth:`_sync_weather`: every scheduled
+        multisport event with a venue, kicking off inside the lookahead
+        window, that has no ``league_event_weather`` row yet gets an
+        Open-Meteo forecast snapshot.  Venue resolution rides
+        ``WeatherClient.resolve_coords`` (maps + geocoding fallback).
+        """
+        from ..models import Event, LeagueEventWeather
+
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        horizon = now + timedelta(days=_WEATHER_LOOKAHEAD_DAYS)
+
+        result = await self.db.execute(
+            select(Event)
+            .where(
+                Event.status == "scheduled",
+                Event.completed.is_(False),
+                Event.venue.isnot(None),
+                Event.venue != "",
+                Event.starts_at.isnot(None),
+                Event.starts_at >= now,
+                Event.starts_at <= horizon,
+            )
+            .order_by(Event.starts_at)
+            .limit(100)
+        )
+        upcoming = result.scalars().all()
+        if not upcoming:
+            return 0
+
+        existing = await self.db.execute(
+            select(LeagueEventWeather.event_id).where(
+                LeagueEventWeather.event_id.in_([e.id for e in upcoming])
+            )
+        )
+        covered = {int(row[0]) for row in existing.all()}
+
+        stored = 0
+        for event in upcoming:
+            # Belt-and-braces mirror of the SQL venue filter: a row
+            # without a venue has nothing to resolve coordinates for.
+            if not event.venue:
+                continue
+            if int(event.id) in covered:
+                continue
+
+            # F-2 (code review): one venue's provider failure must not
+            # abort the pass (the AFL loop has the same shape, but the
+            # league loop is 2x larger) — log, keep the forecasts
+            # already staged, and continue.
+            try:
+                if self._weather_client is not None:
+                    forecast = await self._weather_client.get_forecast(
+                        event.venue, days=_WEATHER_LOOKAHEAD_DAYS
+                    )
+                else:
+                    from ..weather.client import WeatherClient
+
+                    async with WeatherClient() as client:
+                        forecast = await client.get_forecast(
+                            event.venue, days=_WEATHER_LOOKAHEAD_DAYS
+                        )
+
+                hourly = (forecast or {}).get("hourly") or {}
+                times = hourly.get("time") or []
+                if not times:
+                    continue
+
+                kickoff = (
+                    event.starts_at.replace(tzinfo=None)
+                    if event.starts_at.tzinfo
+                    else event.starts_at
+                )
+                idx = self._nearest_hour_index(times, kickoff)
+
+                self.db.add(
+                    LeagueEventWeather(
+                        event_id=event.id,
+                        venue=event.venue,
+                        match_date=kickoff.date(),
+                        temperature=_pick_hourly(hourly, "temperature_2m", idx),
+                        precipitation=_pick_hourly(hourly, "precipitation", idx),
+                        wind_speed=_pick_hourly(hourly, "windspeed_10m", idx),
+                        wind_direction=_pick_hourly(
+                            hourly, "winddirection_10m", idx
+                        ),
+                        # NB: the AFL path reads the legacy "windgusts" key
+                        # (always absent from the API payload); the league
+                        # path reads the key Open-Meteo actually returns.
+                        wind_gusts=_pick_hourly(hourly, "windgusts_10m", idx),
+                        humidity=_pick_hourly(hourly, "relative_humidity_2m", idx),
+                        weather_code=_pick_hourly(hourly, "weathercode", idx),
+                        data_type="forecast",
+                        raw_hourly=hourly,
+                    )
+                )
+                stored += 1
+            except Exception as e:  # noqa: BLE001 — one venue never fails the pass
+                logger.warning(
+                    "Supplementary sync: league weather failed for event "
+                    "%s (%s): %s",
+                    event.id,
+                    event.venue,
+                    e,
+                )
+
+        if stored:
+            await self.db.commit()
+        if stored:
+            logger.info(
+                f"Supplementary sync: stored {stored} league weather forecasts"
+            )
         return stored
 
     async def _is_injury_data_stale(self) -> bool:

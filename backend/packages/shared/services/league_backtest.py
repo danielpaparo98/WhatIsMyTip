@@ -85,7 +85,14 @@ from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
-from ..models import Event, EventParticipant, LeagueTip, Season
+from ..models import (
+    Event,
+    EventParticipant,
+    LeagueModelPrediction,
+    LeagueTip,
+    Participant,
+    Season,
+)
 from .league_heuristics import LEAGUE_HEURISTICS, SeasonRef
 from .settlement import is_valid_decimal_odds, settle_stake
 
@@ -342,6 +349,73 @@ def _resolve_models(models: Sequence[str] | None) -> tuple[str, ...]:
 
 
 # ---------------------------------------------------------------------------
+# PARITY-1: model-prediction grading (the AFL /model-compare shape).
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class GradedModelPrediction:
+    """One model prediction joined to its event result, graded."""
+
+    model_name: str
+    round_id: int | None
+    is_correct: bool
+    is_draw: bool
+    margin: int
+
+
+def _model_metrics(
+    model_name: str, graded: Sequence[GradedModelPrediction]
+) -> dict:
+    """One model's season metrics — the AFL ``/model-compare`` dict.
+
+    Every prediction settles at the representative fallback price (no
+    league odds source): a correct pick profits ``stake *
+    (FALLBACK - 1)``, a miss loses the stake, a draw pushes.
+    """
+
+    tips_made = len(graded)
+    tips_correct = sum(1 for g in graded if g.is_correct)
+    profit = sum(
+        settle_stake(
+            is_correct=g.is_correct, is_draw=g.is_draw, decimal_odds=None
+        )
+        for g in graded
+    )
+    return {
+        "model_name": model_name,
+        "total_tips": tips_made,
+        "total_correct": tips_correct,
+        "overall_accuracy": tips_correct / tips_made if tips_made else 0.0,
+        "total_profit": profit,
+        "avg_margin": (
+            sum(g.margin for g in graded) / tips_made if tips_made else 0.0
+        ),
+        "odds_coverage": 0.0,
+    }
+
+
+def _enrich_coefficient(feature_name: str, coefficient: float | None) -> dict:
+    """Split one weighted-model feature into (model, type) — the AFL
+    ``get_active_weighted_model`` convention, mirrored verbatim."""
+    if feature_name.endswith("_margin_home"):
+        model_name = feature_name[: -len("_margin_home")]
+        ctype = "margin"
+    elif feature_name.endswith("_conf"):
+        model_name = feature_name[: -len("_conf")]
+        ctype = "confidence"
+    else:
+        model_name = feature_name
+        ctype = "other"
+    return {
+        "feature_name": feature_name,
+        "coefficient": coefficient,
+        "model": model_name,
+        "type": ctype,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Payload builders — pure mappers onto the AFL shapes.
 # ---------------------------------------------------------------------------
 def _no_best_overall() -> BestOverall:
@@ -523,6 +597,135 @@ class LeagueBacktestService:
             "total_rounds": total_rounds,
         }
 
+    # -- PARITY-1: the AFL /model-compare + active-model mirrors ---------
+
+    async def model_compare(
+        self,
+        db: AsyncSession,
+        *,
+        competition_id: int,
+        season_label: str,
+    ) -> dict:
+        """The AFL ``/model-compare`` shape, graded on
+        ``league_model_predictions``.
+
+        Every stored model's season metrics (accuracy + profit; profit
+        settles through the shared settlement module at the
+        representative fallback price — leagues have no odds source, so
+        ``odds_coverage`` is honestly 0), sorted accuracy-descending
+        with the AFL ``best_overall`` summary.  An unknown label
+        degrades to the empty comparison, exactly like
+        :meth:`compare_season`.
+        """
+        season_id = await self._fetch_season_id(db, competition_id, season_label)
+        if season_id is None:
+            return {
+                "season": season_label,
+                "comparison": [],
+                "best_overall": {
+                    "model_name": None,
+                    "accuracy": 0.0,
+                    "profit": 0.0,
+                },
+            }
+        rows = await self._fetch_graded_model_predictions(db, season_id)
+        by_model: dict[str, list[GradedModelPrediction]] = {}
+        for graded in rows:
+            by_model.setdefault(graded.model_name, []).append(graded)
+        comparison = [
+            _model_metrics(model_name, graded)
+            for model_name, graded in sorted(by_model.items())
+        ]
+        comparison.sort(key=lambda item: item["overall_accuracy"], reverse=True)
+        best = (
+            {
+                "model_name": comparison[0]["model_name"],
+                "accuracy": comparison[0]["overall_accuracy"],
+                "profit": comparison[0]["total_profit"],
+            }
+            if comparison
+            else {"model_name": None, "accuracy": 0.0, "profit": 0.0}
+        )
+        return {"season": season_label, "comparison": comparison, "best_overall": best}
+
+    async def get_active_weighted_model(
+        self, db: AsyncSession, *, competition_id: int
+    ) -> dict | None:
+        """The competition-scoped twin of the AFL active-weighted payload.
+
+        Reads THIS competition's active ``weighted_tip`` version (FCL-4
+        scope: never leaks the global AFL model or another league's),
+        enriching each coefficient with ``model``/``type`` exactly like
+        :meth:`BacktestService.get_active_weighted_model`.
+        """
+        from ..crud.model_versions import (
+            get_active_model_version,
+            get_model_coefficients,
+        )
+
+        model_version = await get_active_model_version(
+            db, "weighted_tip", competition_id=competition_id
+        )
+        if model_version is None:
+            return None
+        coefficient_rows = await get_model_coefficients(db, model_version.id)
+        coefficients = [
+            _enrich_coefficient(row.feature_name, row.coefficient)
+            for row in coefficient_rows
+        ]
+        return {
+            "model_name": "weighted_tip",
+            "version": model_version.version,
+            "trained_at": model_version.trained_at.isoformat()
+            if model_version.trained_at
+            else None,
+            "training_rows": model_version.training_rows,
+            "intercept": model_version.intercept,
+            "metrics": model_version.metrics or {},
+            "coefficients": coefficients,
+        }
+
+    async def get_active_boosted_model(
+        self, db: AsyncSession, *, competition_id: int
+    ) -> dict | None:
+        """The competition-scoped twin of the AFL boosted-model payload.
+
+        Reads THIS competition's active ``boosted_tip`` version with its
+        stored importances (the retrain overloads
+        ``ModelCoefficient.coefficient`` with mean |SHAP|), enriched and
+        ordered exactly like ``boosted_explanations.get_active_boosted_model``.
+        """
+        from ..crud.model_versions import (
+            get_active_model_version,
+            get_model_coefficients,
+        )
+        from .boosted_explanations import _enrich_importance
+
+        model_version = await get_active_model_version(
+            db, "boosted_tip", competition_id=competition_id
+        )
+        if model_version is None:
+            return None
+        coefficient_rows = await get_model_coefficients(db, model_version.id)
+        importances = [
+            _enrich_importance(row.feature_name, float(row.coefficient))
+            for row in coefficient_rows
+        ]
+        importances.sort(
+            key=lambda item: (-abs(item["shap_value"]), item["feature_name"])
+        )
+        return {
+            "model_name": "boosted_tip",
+            "version": model_version.version,
+            "trained_at": model_version.trained_at.isoformat()
+            if model_version.trained_at
+            else None,
+            "training_rows": model_version.training_rows,
+            "is_active": bool(model_version.is_active),
+            "metrics": model_version.metrics or {},
+            "importances": importances,
+        }
+
     # -- fetchers (patched out in unit tests) ---------------------------
 
     @staticmethod
@@ -656,11 +859,84 @@ class LeagueBacktestService:
         ).scalar()
         return int(total or 0), int(completed or 0)
 
+    @staticmethod
+    async def _fetch_graded_model_predictions(
+        db: AsyncSession, season_id: int
+    ) -> list["GradedModelPrediction"]:
+        """Completed-event model predictions for the season, graded.
+
+        The model row's ``winner`` is a participant NAME; the actual
+        winner is resolved from the event's side rows the same way, so
+        correctness is a name comparison — the AFL
+        ``actual_winner_name`` semantics ported to the multisport
+        tables.  No league odds source: every prediction settles at the
+        fallback price (``decimal_odds=None``).
+        """
+        home = aliased(EventParticipant)
+        away = aliased(EventParticipant)
+        home_p = aliased(Participant)
+        away_p = aliased(Participant)
+        rows = (
+            await db.execute(
+                select(
+                    Event.round_id,
+                    LeagueModelPrediction.model_name,
+                    LeagueModelPrediction.winner,
+                    LeagueModelPrediction.margin,
+                    home_p.name,
+                    away_p.name,
+                    home.score,
+                    away.score,
+                )
+                .join(Event, LeagueModelPrediction.event_id == Event.id)
+                .join(home, and_(home.event_id == Event.id, home.side == "home"))
+                .join(away, and_(away.event_id == Event.id, away.side == "away"))
+                .join(home_p, home_p.id == home.participant_id)
+                .join(away_p, away_p.id == away.participant_id)
+                .where(
+                    Event.season_id == season_id,
+                    Event.completed.is_(True),
+                    home.score.isnot(None),
+                    away.score.isnot(None),
+                )
+            )
+        ).all()
+        graded: list[GradedModelPrediction] = []
+        for (
+            round_id,
+            model_name,
+            winner,
+            margin,
+            home_name,
+            away_name,
+            home_score,
+            away_score,
+        ) in rows:
+            if home_score is None or away_score is None:
+                continue
+            if home_score == away_score:
+                actual = None  # draw
+            elif home_score > away_score:
+                actual = str(home_name)
+            else:
+                actual = str(away_name)
+            graded.append(
+                GradedModelPrediction(
+                    model_name=str(model_name),
+                    round_id=round_id,
+                    is_correct=winner is not None and winner == actual,
+                    is_draw=home_score == away_score,
+                    margin=int(margin or 0),
+                )
+            )
+        return graded
+
 
 __all__ = [
     "AvailableSeasons",
     "BestOverall",
     "CurrentSeasonPerformance",
+    "GradedModelPrediction",
     "GradedTip",
     "HeuristicSeasonPerformance",
     "LeagueBacktestService",

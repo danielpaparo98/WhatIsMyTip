@@ -7,21 +7,22 @@ normalized 2017+ rugby-league history.
 
 Contracts under test:
 
-* **Reduced base model set** — grading consumes
-  ``league_model_set_for_sport('rugby-league')`` = (``elo``, ``form``,
-  ``home_advantage``, ``matchup``); ``ladder`` never appears in a
-  rugby-league payload and its tips are never fetched.  FCL-7: the API
-  additionally passes the three DERIVED heuristics every league's
-  ``league_tips`` carries (``best_bet`` / ``weighted_tip`` /
-  ``boosted_tip``) on top of that base set.
+* **Parity base model set** — grading consumes
+  ``league_model_set_for_sport('rugby-league')`` = the parity five
+  (``elo``, ``form``, ``home_advantage``, ``matchup``, ``value``);
+  ``ladder`` never appears in a rugby-league payload and its tips are
+  never fetched.  FCL-7: the API additionally passes the DERIVED
+  heuristics every league's ``league_tips`` carries (``best_bet`` /
+  ``weighted_tip`` / ``boosted_tip`` / ``yolo``) on top of that base
+  set.
 * **API league dispatch** — ``?league=nrl|nrlw|origin`` resolves through
   the cross-registry ``get_league`` facade (the guardrail flip: these
   keys used to 404 as state-registry unknowns) and passes the base set
-  plus the derived trio even before the competition is first synced;
+  plus the derived set even before the competition is first synced;
   unknown keys stay a 404 in the repo-standard shape;
   absent/``afl``/empty keys keep the legacy payloads byte-identical
-  (no league dispatch); state keys now also grade their D3 base set
-  plus the derived trio (FCL-7).
+  (no league dispatch); state keys grade the same parity base set
+  plus the derived set (FCL-7, PARITY).
 * **Draws honored in grading** (``has_draws=True``) — a drawn event has
   no winner, so every tip on it grades incorrect but settles as a PUSH
   ($0, stake refunded) per the ``settlement.py`` kernel — never a loss.
@@ -75,14 +76,15 @@ from packages.shared.services.league_heuristics import (
     HEURISTIC_FORM,
     HEURISTIC_HOME_ADVANTAGE,
     HEURISTIC_MATCHUP,
+    HEURISTIC_VALUE,
     LEAGUE_HEURISTICS,
     RUGBY_LEAGUE_MODELS,
     LeagueHeuristicsService,
     league_model_set_for_sport,
 )
 
-#: FCL-7: the model set the API passes for a national key — the sport's
-#: reduced base quartet plus the three derived heuristics.
+#: FCL-7 (PARITY): the model set the API passes for a national key — the
+#: sport's parity base five plus the derived heuristics.
 _BACKTEST_MODEL_SET = RUGBY_LEAGUE_MODELS + DERIVED_LEAGUE_HEURISTICS
 
 _BACKEND_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
@@ -101,17 +103,18 @@ _NATIONAL_KEYS = ("nrl", "nrlw", "origin")
 class TestGradingConsumesTheRugbyLeagueSet:
     """The backtest grades exactly the registered rugby-league models."""
 
-    def test_rugby_league_resolves_to_the_reduced_set(self) -> None:
+    def test_rugby_league_resolves_to_the_parity_set(self) -> None:
         assert league_model_set_for_sport(RUGBY_LEAGUE_SPORT_ID) == (
             RUGBY_LEAGUE_MODELS
         )
 
-    def test_reduced_set_is_exactly_the_four_db_only_models(self) -> None:
+    def test_parity_set_is_exactly_the_five_models_in_canonical_order(self) -> None:
         assert RUGBY_LEAGUE_MODELS == (
             HEURISTIC_ELO,
             HEURISTIC_FORM,
             HEURISTIC_HOME_ADVANTAGE,
             HEURISTIC_MATCHUP,
+            HEURISTIC_VALUE,
         )
 
     def test_ladder_is_not_a_rugby_league_model(self) -> None:
@@ -836,9 +839,9 @@ async def _seed_rugby_league(async_dsn: str) -> dict[str, int]:
 async def _generate_tips(async_dsn: str, competition_id: int) -> None:
     """Populate league_tips exactly as the sync hook would.
 
-    FCL-6: every completed event persists its base picks AND the three
-    derived heuristics — 4 decided events × (4 base + 3 derived) plus
-    the draw event's 7 draw-no-pick rows = 35.
+    FCL-6 + PARITY: every event (completed, drawn or scheduled)
+    persists its base picks AND the four derived heuristics —
+    6 events × (5 base + 4 derived) = 54.
     """
     engine = create_async_engine(async_dsn, poolclass=NullPool)
     factory = async_sessionmaker(engine, expire_on_commit=False)
@@ -849,7 +852,7 @@ async def _generate_tips(async_dsn: str, competition_id: int) -> None:
             )
     finally:
         await engine.dispose()
-    assert summary["tips_inserted"] == 48
+    assert summary["tips_inserted"] == 54
 
 
 def _by_heuristic(entries: list[dict]) -> dict[str, dict]:

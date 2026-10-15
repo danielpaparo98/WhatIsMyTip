@@ -63,6 +63,7 @@ from .league_heuristics import (
     HEURISTIC_HOME_ADVANTAGE,
     HEURISTIC_LADDER,
     HEURISTIC_MATCHUP,
+    HEURISTIC_VALUE,
     LEAGUE_HEURISTICS,
     LEAGUE_MODELS,
     CompletedEvent,
@@ -70,6 +71,7 @@ from .league_heuristics import (
     TipPick,
     compute_elo_ratings,
     compute_standings,
+    compute_win_rates,
     head_to_head_wins,
     is_drawn,
     wins_in_last_n,
@@ -185,7 +187,6 @@ def pick_best_bet(
     """
     if is_drawn(event):
         return TipPick(event.event_id, HEURISTIC_BEST_BET, None)
-    home, away = event.home_side_id, event.away_side_id
     votes = [
         pick.selected_side_id
         for pick in base_picks
@@ -353,6 +354,19 @@ def _h2h_wins_diff_features(
     return (float(wins_home - wins_away),)
 
 
+def _value_win_rate_diff_features(
+    event: CompletedEvent, prior_history: Sequence[CompletedEvent]
+) -> tuple[float, ...]:
+    """Home minus away all-time decided win rate (the value signal)."""
+    home, away = event.home_participant_id, event.away_participant_id
+    if home is None or away is None:
+        return (0.0,)
+    rates = compute_win_rates(prior_history)
+    return (
+        rates.get(home, 0.5) - rates.get(away, 0.5),
+    )
+
+
 @dataclass(frozen=True)
 class LeagueFeatureSpec:
     """One league model's numeric encoding.
@@ -399,6 +413,11 @@ LEAGUE_FEATURE_SPECS: dict[str, LeagueFeatureSpec] = {
             HEURISTIC_MATCHUP,
             ("matchup_h2h_wins_diff",),
             _h2h_wins_diff_features,
+        ),
+        LeagueFeatureSpec(
+            HEURISTIC_VALUE,
+            ("value_win_rate_diff",),
+            _value_win_rate_diff_features,
         ),
     )
 }

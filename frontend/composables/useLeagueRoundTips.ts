@@ -4,10 +4,13 @@
 // ("Scheduled") for upcoming fixtures — the state-league era design
 // predated first-class league heuristics. FCL-12 gives every league
 // forward tips (picks made from prior completed evidence only), exposed
-// through GET /api/tips/league-round — a BULK endpoint deliberately
-// WITHOUT AI explanations so a round-page view never pays the LLM
-// pipeline (the per-event /api/tips/league endpoint owns explanations
-// for the match pages).
+// through GET /api/tips/league-round.
+//
+// PARITY (2026-10-14): the payload now carries the PERSISTED AI
+// explanation per pick (written by the nightly league NLP sweep), so
+// round cards render the same explanation text the AFL cards do at
+// zero per-view LLM cost — explanations became pre-generated data, not
+// a request-time pipeline.
 //
 // Fetch pattern = useLeagueEvents' awaited useAsyncData contract:
 // reactive per-(league, round) cache key + `dedupe: 'cancel'`, so the
@@ -19,8 +22,16 @@
 import { computed } from 'vue'
 import type { Ref } from 'vue'
 
+/** One heuristic's stored pick (PARITY: AFL card shape + explanation). */
+export interface LeagueRoundPickDetail {
+  picked: string | null
+  confidence: number | null
+  margin: number | null
+  explanation: string | null
+}
+
 /** One fixture's stored picks, keyed by heuristic name. */
-export type LeagueRoundPicks = Record<string, string | null>
+export type LeagueRoundPicks = Record<string, LeagueRoundPickDetail>
 
 export interface LeagueRoundTipFixture {
   event_id: number
@@ -108,5 +119,5 @@ export async function useLeagueRoundTips(
     return out
   })
 
-  return { tipsBySlug, pending, fetchError }
+  return { tipsBySlug, pending, fetchError, refresh: refetch }
 }
