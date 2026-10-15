@@ -121,7 +121,17 @@ class LeagueMatchAnalysisService:
     """Generate/store talking points for one league event."""
 
     def __init__(self, client: Optional[OpenRouterClient] = None):
-        self._injected_client = client
+        # F-3 (code review): the default client is constructed ONCE and
+        # closed by :meth:`close` (the sweep's finally) — a fresh httpx
+        # pool per analysis leaked until GC.
+        self._client: Optional[OpenRouterClient] = client
+
+    def _client_for(self, competition_name: str) -> OpenRouterClient:
+        """The injected client, or a sport-aware default."""
+        if self._client is not None:
+            return self._client
+        self._client = LeagueMatchAnalysisOpenRouterClient(competition_name)
+        return self._client
 
     async def generate_and_store_analysis(
         self, db: AsyncSession, *, event_id: int
@@ -201,9 +211,7 @@ class LeagueMatchAnalysisService:
             "date": event.starts_at.isoformat() if event.starts_at else "TBD",
         }
 
-        client = self._injected_client or LeagueMatchAnalysisOpenRouterClient(
-            competition_name
-        )
+        client = self._client_for(competition_name)
         try:
             analysis_text = await client.generate_match_analysis(
                 game_dict,
@@ -241,25 +249,42 @@ class LeagueMatchAnalysisService:
     async def store_analysis(
         db: AsyncSession, *, event_id: int, analysis_text: str
     ) -> None:
-        """Insert or overwrite the event's talking points."""
-        row = (
-            await db.execute(
-                select(LeagueMatchAnalysis).where(
-                    LeagueMatchAnalysis.event_id == event_id
+        """Insert or overwrite the event's talking points.
+
+        F-1 (code review): a failed commit leaves the session ABORTED —
+        roll back so the caller's remaining work survives (the repo's
+        write-back discipline, explanation.py:679-688).
+        """
+        try:
+            row = (
+                await db.execute(
+                    select(LeagueMatchAnalysis).where(
+                        LeagueMatchAnalysis.event_id == event_id
+                    )
                 )
-            )
-        ).scalar_one_or_none()
-        if row is None:
-            db.add(
-                LeagueMatchAnalysis(
-                    event_id=event_id, analysis_text=analysis_text
+            ).scalar_one_or_none()
+            if row is None:
+                db.add(
+                    LeagueMatchAnalysis(
+                        event_id=event_id, analysis_text=analysis_text
+                    )
                 )
+            else:
+                row.analysis_text = analysis_text
+            await db.commit()
+        except Exception:  # noqa: BLE001 — degrade, never break the sweep
+            logger.warning(
+                "league match analysis: persisting analysis for event %s "
+                "failed",
+                event_id,
+                exc_info=True,
             )
-        else:
-            row.analysis_text = analysis_text
-        await db.commit()
+            try:
+                await db.rollback()
+            except Exception:  # noqa: BLE001
+                pass
 
     async def close(self) -> None:
-        """Release the injected client's resources (if any)."""
-        if self._injected_client is not None:
-            await self._injected_client.close()
+        """Release the client's resources (default or injected)."""
+        if self._client is not None:
+            await self._client.close()

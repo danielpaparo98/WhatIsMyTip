@@ -15,7 +15,7 @@ logged and never fails the pass.
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from sqlalchemy import and_, select
@@ -31,6 +31,14 @@ logger = get_logger(__name__)
 #: sweep is round-scoped; leagues have no shared "current round"
 #: notion, so the lookahead window is the equivalent scope.
 _LEAGUE_SWEEP_LOOKAHEAD_DAYS = 10
+
+#: R-1 (code review): per-RUN fixture budget.  On the first night after
+#: deploy the backlog is 200 fixtures x 5 content pieces x ~5-30 s per
+#: LLM call — far past the tip-generation job's 30-minute budget.  A
+#: bounded batch finishes inside the cron, and the skip-if-exists
+#: contract means every subsequent night drains the remainder until
+#: steady state (a handful of fresh fixtures per round).
+_LEAGUE_SWEEP_MAX_FIXTURES = 40
 
 #: The derived heuristics the round-page cards render — the only rows
 #: that need persisted explanations.
@@ -59,6 +67,25 @@ async def _live_competition_ids(db: AsyncSession) -> list[int]:
     return [int(row[0]) for row in rows]
 
 
+async def _rollback_quietly(session: AsyncSession) -> None:
+    """Clear a poisoned transaction so the sweep's remaining items survive.
+
+    F-1 (code review): a failed statement/commit leaves the AsyncSession
+    ABORTED — every later statement dies with PendingRollbackError.  The
+    repo's documented discipline (FCL-11 savepoints,
+    local_competition_sync._refresh_league_tips, explanation.py's
+    write-back) is to roll back in the except path; the rollback itself
+    must never raise.
+    """
+    try:
+        await session.rollback()
+    except Exception:  # noqa: BLE001 — a failed rollback is logged, not raised
+        logger.warning(
+            "league NLP sweep: rollback after failure itself failed",
+            exc_info=True,
+        )
+
+
 async def run_league_nlp_sweep(session: AsyncSession) -> dict[str, Any]:
     """Back-fill missing AI content for every league's upcoming fixtures.
 
@@ -77,13 +104,20 @@ async def run_league_nlp_sweep(session: AsyncSession) -> dict[str, Any]:
         if not competition_ids:
             return counts
 
-        now = datetime.now()
+        # C-2 (code review): a single documented clock convention —
+        # naive-UTC now against venue-local ``starts_at``.  Venue-local
+        # offsets skew the window by hours (never days), the sweep is
+        # idempotent (skip-if-exists) and re-runs nightly, so the
+        # boundary slack self-heals; a per-competition tz conversion
+        # would re-implement local_competition_sync._to_local for no
+        # behavioural gain at this window size.
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
         horizon = now + timedelta(days=_LEAGUE_SWEEP_LOOKAHEAD_DAYS)
         upcoming = (
-            (
-                await db_execute_upcoming(session, competition_ids, now, horizon)
-            ).all()
-        )
+            await _fetch_upcoming_fixtures(
+                session, competition_ids, now, horizon
+            )
+        ).all()
         if not upcoming:
             return counts
 
@@ -97,63 +131,71 @@ async def run_league_nlp_sweep(session: AsyncSession) -> dict[str, Any]:
 
         # event_id -> (competition_id, event_db_id): the explanation
         # service keys on (competition_id, event_id); the analysis and
-        # report services key on event_id alone.
-        for competition_id, event_id in upcoming:
-            # Persisted explanations for the four derived heuristics.
-            for heuristic in _DERIVED:
+        # report services key on event_id alone.  F-3 (code review): the
+        # default clients hold httpx pools — the AFL sweep closes its
+        # services in a finally, mirrored here.
+        try:
+            for competition_id, event_id in upcoming[:_LEAGUE_SWEEP_MAX_FIXTURES]:
+                # Persisted explanations for the four derived heuristics.
+                for heuristic in _DERIVED:
+                    try:
+                        text = await explanation_service.generate_explanation_for_tip(
+                            session,
+                            competition_id=int(competition_id),
+                            event_id=int(event_id),
+                            heuristic=heuristic,
+                        )
+                        if text:
+                            counts["explanations_created"] += 1
+                    except Exception as e:  # noqa: BLE001 — one tip never fails the sweep
+                        logger.warning(
+                            "league NLP sweep: explanation (%s, %s, %s) "
+                            "failed: %s",
+                            competition_id,
+                            event_id,
+                            heuristic,
+                            e,
+                        )
+                        await _rollback_quietly(session)
+
+                # Match-analysis talking points (skip-if-exists inside).
                 try:
-                    text = await explanation_service.generate_explanation_for_tip(
-                        session,
-                        competition_id=int(competition_id),
-                        event_id=int(event_id),
-                        heuristic=heuristic,
-                    )
-                    if text:
-                        counts["explanations_created"] += 1
-                except Exception as e:  # noqa: BLE001 — one tip never fails the sweep
+                    if await analysis_service.generate_and_store_analysis(
+                        session, event_id=int(event_id)
+                    ):
+                        counts["match_analyses_created"] += 1
+                except Exception as e:  # noqa: BLE001
                     logger.warning(
-                        "league NLP sweep: explanation (%s, %s, %s) "
-                        "failed: %s",
-                        competition_id,
+                        "league NLP sweep: match analysis failed for event "
+                        "%s: %s",
                         event_id,
-                        heuristic,
                         e,
                     )
+                    await _rollback_quietly(session)
 
-            # Match-analysis talking points (skip-if-exists inside).
-            try:
-                if await analysis_service.generate_and_store_analysis(
-                    session, event_id=int(event_id)
-                ):
-                    counts["match_analyses_created"] += 1
-            except Exception as e:  # noqa: BLE001
-                logger.warning(
-                    "league NLP sweep: match analysis failed for event "
-                    "%s: %s",
-                    event_id,
-                    e,
-                )
-
-            # PARITY-1: the grand-final pre-match report (the service's
-            # gates skip non-GF events cheaply — one detection query).
-            try:
-                if await report_service.generate_and_store_report(
-                    session, event_id=int(event_id)
-                ):
-                    counts["match_reports_created"] += 1
-            except Exception as e:  # noqa: BLE001
-                logger.warning(
-                    "league NLP sweep: GF report failed for event %s: %s",
-                    event_id,
-                    e,
-                )
+                # PARITY-1: the grand-final pre-match report (the service's
+                # gates skip non-GF events cheaply — one detection query).
+                try:
+                    if await report_service.generate_and_store_report(
+                        session, event_id=int(event_id)
+                    ):
+                        counts["match_reports_created"] += 1
+                except Exception as e:  # noqa: BLE001
+                    logger.warning(
+                        "league NLP sweep: GF report failed for event %s: %s",
+                        event_id,
+                        e,
+                    )
+                    await _rollback_quietly(session)
+        finally:
+            await analysis_service.close()
     except Exception as e:  # noqa: BLE001 — the sweep never fails the cron
         counts["error"] = str(e)
         logger.error("league NLP sweep failed: %s", e, exc_info=True)
     return counts
 
 
-async def db_execute_upcoming(
+async def _fetch_upcoming_fixtures(
     session: AsyncSession,
     competition_ids: list[int],
     now: datetime,

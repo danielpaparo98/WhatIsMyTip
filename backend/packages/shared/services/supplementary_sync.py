@@ -300,50 +300,65 @@ class SupplementaryDataSyncService:
             if int(event.id) in covered:
                 continue
 
-            if self._weather_client is not None:
-                forecast = await self._weather_client.get_forecast(
-                    event.venue, days=_WEATHER_LOOKAHEAD_DAYS
-                )
-            else:
-                from ..weather.client import WeatherClient
-
-                async with WeatherClient() as client:
-                    forecast = await client.get_forecast(
+            # F-2 (code review): one venue's provider failure must not
+            # abort the pass (the AFL loop has the same shape, but the
+            # league loop is 2x larger) — log, keep the forecasts
+            # already staged, and continue.
+            try:
+                if self._weather_client is not None:
+                    forecast = await self._weather_client.get_forecast(
                         event.venue, days=_WEATHER_LOOKAHEAD_DAYS
                     )
+                else:
+                    from ..weather.client import WeatherClient
 
-            hourly = (forecast or {}).get("hourly") or {}
-            times = hourly.get("time") or []
-            if not times:
-                continue
+                    async with WeatherClient() as client:
+                        forecast = await client.get_forecast(
+                            event.venue, days=_WEATHER_LOOKAHEAD_DAYS
+                        )
 
-            kickoff = (
-                event.starts_at.replace(tzinfo=None)
-                if event.starts_at.tzinfo
-                else event.starts_at
-            )
-            idx = self._nearest_hour_index(times, kickoff)
+                hourly = (forecast or {}).get("hourly") or {}
+                times = hourly.get("time") or []
+                if not times:
+                    continue
 
-            self.db.add(
-                LeagueEventWeather(
-                    event_id=event.id,
-                    venue=event.venue,
-                    match_date=kickoff.date(),
-                    temperature=_pick_hourly(hourly, "temperature_2m", idx),
-                    precipitation=_pick_hourly(hourly, "precipitation", idx),
-                    wind_speed=_pick_hourly(hourly, "windspeed_10m", idx),
-                    wind_direction=_pick_hourly(hourly, "winddirection_10m", idx),
-                    # NB: the AFL path reads the legacy "windgusts" key
-                    # (always absent from the API payload); the league
-                    # path reads the key Open-Meteo actually returns.
-                    wind_gusts=_pick_hourly(hourly, "windgusts_10m", idx),
-                    humidity=_pick_hourly(hourly, "relative_humidity_2m", idx),
-                    weather_code=_pick_hourly(hourly, "weathercode", idx),
-                    data_type="forecast",
-                    raw_hourly=hourly,
+                kickoff = (
+                    event.starts_at.replace(tzinfo=None)
+                    if event.starts_at.tzinfo
+                    else event.starts_at
                 )
-            )
-            stored += 1
+                idx = self._nearest_hour_index(times, kickoff)
+
+                self.db.add(
+                    LeagueEventWeather(
+                        event_id=event.id,
+                        venue=event.venue,
+                        match_date=kickoff.date(),
+                        temperature=_pick_hourly(hourly, "temperature_2m", idx),
+                        precipitation=_pick_hourly(hourly, "precipitation", idx),
+                        wind_speed=_pick_hourly(hourly, "windspeed_10m", idx),
+                        wind_direction=_pick_hourly(
+                            hourly, "winddirection_10m", idx
+                        ),
+                        # NB: the AFL path reads the legacy "windgusts" key
+                        # (always absent from the API payload); the league
+                        # path reads the key Open-Meteo actually returns.
+                        wind_gusts=_pick_hourly(hourly, "windgusts_10m", idx),
+                        humidity=_pick_hourly(hourly, "relative_humidity_2m", idx),
+                        weather_code=_pick_hourly(hourly, "weathercode", idx),
+                        data_type="forecast",
+                        raw_hourly=hourly,
+                    )
+                )
+                stored += 1
+            except Exception as e:  # noqa: BLE001 — one venue never fails the pass
+                logger.warning(
+                    "Supplementary sync: league weather failed for event "
+                    "%s (%s): %s",
+                    event.id,
+                    event.venue,
+                    e,
+                )
 
         if stored:
             await self.db.commit()

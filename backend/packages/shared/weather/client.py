@@ -213,15 +213,27 @@ class WeatherClient:
         try:
             response = await self.client.get(
                 GEOCODING_BASE_URL,
-                params={"name": venue, "count": 1, "language": "en"},
+                params={"name": venue, "count": 5, "language": "en"},
             )
             response.raise_for_status()
             results = (response.json() or {}).get("results") or []
             if results:
-                first = results[0]
+                # S-2 (code review): an ambiguous ground name ("Rushton
+                # Park") can geocode anywhere on earth — prefer an
+                # Australian/NZ hit before falling back to the first
+                # result, so a same-named overseas place never wins.
+                preferred = next(
+                    (
+                        r
+                        for r in results
+                        if str(r.get("country_code", "")).upper()
+                        in ("AU", "NZ")
+                    ),
+                    results[0],
+                )
                 coords = {
-                    "lat": float(first["latitude"]),
-                    "lon": float(first["longitude"]),
+                    "lat": float(preferred["latitude"]),
+                    "lon": float(preferred["longitude"]),
                 }
                 await medium_cache.set(cache_key, coords)
                 return coords

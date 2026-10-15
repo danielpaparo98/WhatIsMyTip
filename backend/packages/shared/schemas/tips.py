@@ -88,9 +88,10 @@ class LeagueRoundFixture(BaseModel):
     """One round fixture with its stored league picks (FCL-12).
 
     ``picks`` maps heuristic name → :class:`LeaguePickDetail`; absent
-    keys mean the heuristic has no stored tip for the fixture.  NO AI
-    explanations — the round page renders picks only, so a page view
-    never pays the LLM pipeline.
+    keys mean the heuristic has no stored tip for the fixture.  PARITY-1
+    (2026-10-14): the picks carry their PERSISTED explanations (written
+    by the nightly league NLP sweep), so round cards render the same
+    explanation text the AFL cards do at zero per-view LLM cost.
     """
 
     event_id: int

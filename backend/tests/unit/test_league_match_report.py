@@ -1,4 +1,4 @@
-﻿"""Unit tests for the league grand-final pre-match report (PARITY-1).
+"""Unit tests for the league grand-final pre-match report (PARITY-1).
 
 Covers the detection gate (the league twin of
 ``models_ml.neutral.is_grand_final``), the pure section builders, the
@@ -176,7 +176,7 @@ class TestPureBuilders:
 
 
 # ---------------------------------------------------------------------------
-# Editorial client â€” strict-JSON contract, fallback on ANY failure
+# Editorial client — strict-JSON contract, fallback on ANY failure
 # ---------------------------------------------------------------------------
 
 

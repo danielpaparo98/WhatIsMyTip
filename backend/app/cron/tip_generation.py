@@ -71,6 +71,10 @@ class TipGenerationJob(BaseJob):
                 "match_analyses_created": sweep.get(
                     "match_analyses_created", 0
                 ),
+                # R-2 (code review): surface league GF-report generation —
+                # previously invisible in the job result and the
+                # site-rebuild webhook payload.
+                "match_reports_created": sweep.get("match_reports_created", 0),
                 "error": sweep.get("error"),
             }
         except Exception as e:  # noqa: BLE001 — leagues never fail AFL generation

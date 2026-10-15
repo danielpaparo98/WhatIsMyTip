@@ -65,6 +65,14 @@ export function deriveSeasonState(
   // round and still has events to be played. Requiring roundId === max
   // keeps mid-season pages 'regular' even though the back half of the
   // fixture is always "upcoming".
+  //
+  // M-3 (code review): the final round must carry EXACTLY ONE live
+  // event to qualify as the grand final. State-league fixtures are
+  // typically published only through the last home-and-away round, so
+  // in that window a 9-game max round IS the highest round — branding
+  // it "GF", firing confetti and rendering a "decider" for its earliest
+  // game would be wrong. A multi-game max round stays 'regular' until
+  // the feed narrows it to the decider.
   const roundIds = events
     .map((e) => e.round_id)
     .filter((r): r is number => typeof r === 'number')
@@ -72,7 +80,8 @@ export function deriveSeasonState(
     return 'regular'
   }
   const finalRoundEvents = events.filter((e) => e.round_id === roundId)
-  return finalRoundEvents.some(isLive) ? 'grand_final_upcoming' : 'regular'
+  const liveFinals = finalRoundEvents.filter(isLive)
+  return liveFinals.length === 1 ? 'grand_final_upcoming' : 'regular'
 }
 
 /**

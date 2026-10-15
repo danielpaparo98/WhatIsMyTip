@@ -340,7 +340,7 @@ class TestGetEventDetail:
             mock_crud.get_by_slug_with_participants = AsyncMock(
                 return_value=_make_event_dict()
             )
-            service_cls.return_value.explanations_for_event = AsyncMock(
+            service_cls.return_value.persisted_explanations_for_event = AsyncMock(
                 return_value=[tip]
             )
             client = TestClient(app)
@@ -379,7 +379,7 @@ class TestGetEventDetail:
             mock_crud.get_by_slug_with_participants = AsyncMock(
                 return_value=_make_event_dict()
             )
-            service_cls.return_value.explanations_for_event = AsyncMock(
+            service_cls.return_value.persisted_explanations_for_event = AsyncMock(
                 return_value=[]
             )
             client = TestClient(app)

@@ -517,7 +517,13 @@ def compute_all_model_predictions(
     predictions: list[LeagueModelPredictionPick] = []
     for index, event in enumerate(history):
         if event.completed:
-            prior = history[:index]
+            # C-1 (code review): the positional slice mixes scheduled
+            # snapshots into the evidence — a NULL-starts_at (sorts
+            # first) or postponed fixture would leak its 0-0 placeholder
+            # into every completed event's Elo/form evidence.  Mirror
+            # the tips walk (compute_all_picks_and_derived): completed
+            # events read COMPLETED evidence only.
+            prior = [e for e in history[:index] if e.completed]
         else:
             prior = [
                 e

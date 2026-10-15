@@ -291,6 +291,58 @@ class TestComputeAllModelPredictions:
         # breakdown covers completed events too).
         assert (3, "elo") in by_key
 
+    def test_completed_numbers_ignore_scheduled_snapshots(self) -> None:
+        """C-1 (code review): the reverse direction — a SCHEDULED
+        fixture must never contaminate a COMPLETED event's evidence.
+
+        A NULL-starts_at scheduled fixture sorts FIRST (the
+        ``starts_at or MIN_TIME`` rule); a postponed fixture carrying a
+        stale DECISIVE scoreline would hand participant 12 a phantom
+        win that flips E2's elo row from a 2-point home margin to a
+        1-point AWAY margin.  The completed branch must read COMPLETED
+        evidence only."""
+        # The contaminator: an undated scheduled fixture with a stale
+        # decisive scoreline (postponed-game shape).
+        leak = _event(
+            9,
+            starts_at=None,
+            home_pid=12,
+            away_pid=11,
+            home_score=110,
+            away_score=10,
+            completed=False,
+        )
+        e1 = _event(
+            1,
+            starts_at=datetime(2026, 4, 1),
+            home_pid=11,
+            away_pid=12,
+            home_score=90,
+            away_score=70,
+        )
+        e2 = _event(
+            2,
+            starts_at=datetime(2026, 4, 8),
+            home_pid=11,
+            away_pid=12,
+            completed=False,
+        )
+        side_names = {101: "Alpha", 102: "Beta", 201: "Gamma", 202: "Delta"}
+        predictions = compute_all_model_predictions(
+            [leak, e1, e2],
+            side_names=side_names,
+            weather_by_event={},
+        )
+        by_key = {(p.event_id, p.model_name): p for p in predictions}
+        elo_e2 = by_key[(2, "elo")]
+        # Clean evidence: E1 alone leaves 11 two bands above 12 → the
+        # home side by 2.  With the leak, 12 edges ahead and the row
+        # flips to the away side by 1.
+        assert elo_e2.winner == "Alpha"
+        assert elo_e2.margin == 2
+        # The scheduled fixture itself still gets its forward rows.
+        assert (9, "elo") in by_key
+
     def test_drawn_and_unnamed_events_yield_no_rows(self) -> None:
         draw = _event(1, home_score=44, away_score=44)
         unknown_sides = _event(2, home_side=999, away_side=998)

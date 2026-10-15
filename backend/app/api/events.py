@@ -229,6 +229,12 @@ async def get_event_detail(
     persisted AI explanations), the numeric model breakdown, match
     analysis talking points, and weather.
 
+    S-1 (code review): PURE READ — the tips carry their STORED
+    explanation text (written by the nightly sweep) or ``null``, never
+    an on-demand LLM call; the AFL detail endpoint reads stored text
+    only too.  On-demand generation stays the ``GET /api/tips/league``
+    contract.
+
     Raises 404 ``not_found`` when no event exists for ``slug``.  Every
     section degrades independently: a missing analysis or weather row
     is ``null``, never an error — exactly like the AFL detail.
@@ -250,7 +256,7 @@ async def get_event_detail(
         raise http_error(404, "not_found", "Event not found")
     event_id = int(event["id"])
 
-    tips = await LeagueTipExplanationService().explanations_for_event(
+    tips = await LeagueTipExplanationService().persisted_explanations_for_event(
         db, event_id=event_id
     )
 

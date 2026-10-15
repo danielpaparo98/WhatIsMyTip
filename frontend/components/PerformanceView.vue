@@ -221,12 +221,10 @@
       <!-- The unified payload fetch carries its own top-level pending
            state, so this section has no separate loading branch — only
            error / empty / content. -->
-      <div v-if="activeModelError" class="error" role="status" aria-live="polite">
-        <p>{{ activeModelError }}</p>
-      </div>
-      <!-- Review #2: ONE mutually-exclusive chain — error → empty →
-           content — so a fetch failure can never render the error AND
-           the "no trained model" copy at the same time. -->
+      <!-- m-1 (code review): ONE mutually-exclusive chain — error →
+           empty → content — so a fetch failure can never render the
+           error AND the "no trained model" copy at the same time (the
+           previously duplicated error block is gone). -->
       <div v-if="activeModelError" class="error" role="status" aria-live="polite">
         <p>{{ activeModelError }}</p>
       </div>
@@ -246,10 +244,10 @@
             <strong>Intercept:</strong> {{ activeModelData.model.intercept.toFixed(2) }}
           </span>
           <span v-if="activeModelData.model.metrics.r2 != null" class="meta-item">
-            <strong>R²:</strong> {{ activeModelData.model.metrics.r2.toFixed(4) }}
+            <strong>R²:</strong> {{ Number(activeModelData.model.metrics.r2).toFixed(4) }}
           </span>
           <span v-if="activeModelData.model.metrics.mae != null" class="meta-item">
-            <strong>MAE:</strong> {{ activeModelData.model.metrics.mae.toFixed(1) }}
+            <strong>MAE:</strong> {{ Number(activeModelData.model.metrics.mae).toFixed(1) }}
           </span>
         </div>
 
@@ -612,6 +610,7 @@ const LEAGUE_HEURISTIC_ORDER = [
   'home_advantage',
   'matchup',
   'value',
+  'weather_impact',
   'best_bet',
   'weighted_tip',
   'boosted_tip',
@@ -624,17 +623,22 @@ const LEAGUE_HEURISTIC_LABELS: Record<string, string> = {
   home_advantage: 'Home Advantage',
   matchup: 'Matchup',
   value: 'Value',
+  weather_impact: 'Weather Impact',
 }
 
 const heuristicLabel = (heuristic: string): string =>
   LEAGUE_HEURISTIC_LABELS[heuristic] ?? formatHeuristic(heuristic)
 
 const byLeagueHeuristicOrder = <T extends { heuristic: string }>(rows: T[]): T[] =>
-  [...rows].sort(
-    (a, b) =>
-      LEAGUE_HEURISTIC_ORDER.indexOf(a.heuristic) -
-      LEAGUE_HEURISTIC_ORDER.indexOf(b.heuristic),
-  )
+  // n-2 (code review): unlisted entries sort LAST (indexOf → -1 would
+  // otherwise float them above every listed row).
+  [...rows].sort((a, b) => {
+    const idx = (h: string) => {
+      const i = LEAGUE_HEURISTIC_ORDER.indexOf(h)
+      return i === -1 ? LEAGUE_HEURISTIC_ORDER.length : i
+    }
+    return idx(a.heuristic) - idx(b.heuristic)
+  })
 
 const sortedCurrentHeuristics = computed<LeagueCurrentSeasonHeuristicPerformance[]>(() => {
   const list = currentSeason.value?.heuristics ?? []

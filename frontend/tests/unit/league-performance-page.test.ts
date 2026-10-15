@@ -328,11 +328,11 @@ describe('performance view presentation', () => {
 
   it('orders league heuristics deterministically (PARITY canonical order)', () => {
     // PARITY (2026-10-14): the league order is the canonical parity set
-    // — five base models (elo, form, home_advantage, matchup, value)
-    // followed by the four derived heuristics — never the retired D3
-    // trio.
+    // — six base models (elo, form, home_advantage, matchup, value,
+    // weather_impact) followed by the four derived heuristics — never
+    // the retired D3 trio.
     expect(VIEW).toMatch(
-      /LEAGUE_HEURISTIC_ORDER = \[\s*\n\s*'elo',\s*\n\s*'form',\s*\n\s*'home_advantage',\s*\n\s*'matchup',\s*\n\s*'value',\s*\n\s*'best_bet',\s*\n\s*'weighted_tip',\s*\n\s*'boosted_tip',\s*\n\s*'yolo',\s*\n\s*\]/,
+      /LEAGUE_HEURISTIC_ORDER = \[\s*\n\s*'elo',\s*\n\s*'form',\s*\n\s*'home_advantage',\s*\n\s*'matchup',\s*\n\s*'value',\s*\n\s*'weather_impact',\s*\n\s*'best_bet',\s*\n\s*'weighted_tip',\s*\n\s*'boosted_tip',\s*\n\s*'yolo',\s*\n\s*\]/,
     )
     expect(VIEW).toMatch(/byLeagueHeuristicOrder/)
   })

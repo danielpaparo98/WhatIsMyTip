@@ -821,11 +821,14 @@ export const useApi = () => {
     league?: string,
     season?: number | string,
   ): Promise<LeagueModelComparisonResponse> => {
+    // n-1 (code review): same sibling discipline — omit empty params,
+    // never a bare trailing 'season='.
     const queryParams = new URLSearchParams()
-    queryParams.append('season', season?.toString() ?? '')
+    if (season !== undefined) queryParams.append('season', season.toString())
     if (league && league !== 'afl') queryParams.append('league', league)
+    const queryString = queryParams.toString()
     const response = await fetchWithTimeout(
-      `/api/backtest/model-compare?${queryParams}`,
+      queryString ? `/api/backtest/model-compare?${queryString}` : '/api/backtest/model-compare',
     )
     if (!response.ok) throw new Error('Failed to compare models')
     return response.json()

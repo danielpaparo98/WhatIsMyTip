@@ -104,7 +104,13 @@ async def is_league_grand_final(db: AsyncSession, *, event_id: int) -> bool:
             select(
                 func.max(Event.round_id),
                 func.count(func.distinct(Event.round_id)),
-            ).where(Event.season_id == season_id)
+            ).where(
+                Event.season_id == season_id,
+                # C-4 (code review): a cancelled/void phantom round must
+                # not inflate the distinct-round floor or set a wrong
+                # max — only playable rounds count.
+                Event.status.in_(("scheduled", "completed")),
+            )
         )
     ).one()
     return bool(
@@ -445,6 +451,13 @@ class LeagueMatchReportService:
                 e,
                 exc_info=True,
             )
+            # F-1 (code review): a failed statement/commit leaves the
+            # session ABORTED — roll back so the sweep's remaining items
+            # survive (the FCL-11 / _refresh_league_tips discipline).
+            try:
+                await db.rollback()
+            except Exception:  # noqa: BLE001
+                pass
             return None
 
     # -- internals ---------------------------------------------------------
@@ -572,13 +585,18 @@ class LeagueMatchReportService:
 
         # Model consensus + the verdict.
         model_predictions = await self._fetch_model_predictions(db, event_id)
+        # C-3 (code review): a partial write can leave a NULL-winner row
+        # — abstentions never count toward the tally.
+        decided_predictions = [
+            p for p in model_predictions if p[1] is not None
+        ]
         picking_home = sum(
-            1 for _, w, _, _ in model_predictions if w == home_name
+            1 for _, w, _, _ in decided_predictions if w == home_name
         )
         picking_away = sum(
-            1 for _, w, _, _ in model_predictions if w == away_name
+            1 for _, w, _, _ in decided_predictions if w == away_name
         )
-        total = len(model_predictions)
+        total = len(decided_predictions)
         if total:
             leader = home_name if picking_home >= picking_away else away_name
             consensus_summary = (
@@ -598,7 +616,7 @@ class LeagueMatchReportService:
             ),
         }
         prediction = await self._build_prediction(
-            db, event_id, sides, home_name, away_name, model_predictions
+            db, event_id, sides, home_name, away_name, decided_predictions
         )
 
         # Weather (optional section — null hides it).
@@ -607,13 +625,15 @@ class LeagueMatchReportService:
         )
 
         # Editorial call (best-effort) with deterministic fallbacks.
+        # F-3 (code review): the per-report client is closed in a finally
+        # — one report per league per season, but the pool still should
+        # not outlive the call.
         competition_name = await self._competition_name(
             db, int(competition_id)
         )
-        editorial = (
-            await LeagueReportOpenRouterClient(
-                competition_name
-            ).generate_report_sections(
+        report_client = LeagueReportOpenRouterClient(competition_name)
+        try:
+            editorial = await report_client.generate_report_sections(
                 {
                     "competition_name": competition_name,
                     "home_name": home_name,
@@ -624,7 +644,8 @@ class LeagueMatchReportService:
                     "evidence_lines": evidence_lines,
                 }
             )
-        )
+        finally:
+            await report_client.close()
         if editorial is None:
             editorial = _fallback_editorial(
                 home_name, away_name, evidence_lines, prediction
