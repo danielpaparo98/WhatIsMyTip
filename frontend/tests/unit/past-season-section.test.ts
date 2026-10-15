@@ -117,6 +117,10 @@ describe('summarizePastSeason', () => {
   })
 
   it('sorts rows by the heuristic display order (boosted first, unknowns last)', () => {
+    // USER DECISION (2026-10-15): yolo is no longer in HEURISTIC_ORDER
+    // (three visible heuristics), so at the DATA layer it sinks to the
+    // unlisted tail (stable order: input order preserved) — the VIEW
+    // filters it out entirely (sortedPastSeasonRows).
     const rows = summarizePastSeason({
       season: 2025,
       comparison: {
@@ -130,8 +134,8 @@ describe('summarizePastSeason', () => {
     expect(rows.map((r) => r.heuristic)).toEqual([
       'boosted_tip',
       'weighted_tip',
-      'yolo',
       'unlisted_heuristic',
+      'yolo',
     ])
   })
 

@@ -141,8 +141,11 @@ describe('index.vue state wiring', () => {
     expect(BANNER).not.toContain('fireCelebration')
   })
 
-  it('heuristic tips are passed into the report', () => {
-    expect(INDEX).toMatch(/:tips="grandFinalDetail\?\.tips \?\? \[\]"/)
+  it('heuristic tips are passed into the report (yolo filtered, USER DECISION)', () => {
+    expect(INDEX).toMatch(/:tips="grandFinalTips"/)
+    expect(INDEX).toMatch(
+      /grandFinalTips = computed<Tip\[\]>\(\(\) =>[\s\S]*?tip\.heuristic !== 'yolo'/,
+    )
     expect(GF_REPORT).toContain('The Tips')
     expect(GF_REPORT).toMatch(/formatHeuristic\(tip\.heuristic\)/)
   })
@@ -280,9 +283,9 @@ describe('GrandFinalReport component contract', () => {
     expect(GF_REPORT.indexOf('weighted_tip', tipIdx)).toBeLessThan(
       GF_REPORT.indexOf('best_bet', tipIdx),
     )
-    expect(GF_REPORT.indexOf('best_bet', tipIdx)).toBeLessThan(
-      GF_REPORT.indexOf('yolo', tipIdx),
-    )
+    // USER DECISION (2026-10-15): exactly THREE visible heuristics —
+    // the component filters yolo tips out before rendering.
+    expect(GF_REPORT).toMatch(/filter\(\(tip\) => tip\.heuristic !== 'yolo'\)/)
     expect(GF_REPORT).toContain('class="tip-cards"')
     expect(GF_REPORT).toContain('class="tip-card"')
   })

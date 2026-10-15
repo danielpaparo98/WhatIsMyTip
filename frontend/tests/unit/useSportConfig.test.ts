@@ -42,15 +42,16 @@ describe('SPORT_CONFIG', () => {
     }
   })
 
-  // BT-1 (boosted-tip): four heuristics now — boosted_tip leads as the
-  // flagship; best_bet is retained for historical-season display.
-  it('labels all four heuristics in boosted-tip-first order', () => {
+  // USER DECISION (2026-10-15): exactly THREE heuristics visible —
+  // boosted_tip leads as the flagship; yolo is generated + stored but
+  // deliberately NOT selectable or rendered anywhere.
+  it('labels exactly three heuristics in boosted-tip-first order (no yolo)', () => {
     expect(SPORT_CONFIG.heuristicOrder).toEqual([
       'boosted_tip',
       'weighted_tip',
       'best_bet',
-      'yolo',
     ])
+    expect(SPORT_CONFIG.heuristicOrder).not.toContain('yolo')
     for (const h of SPORT_CONFIG.heuristicOrder) {
       expect(SPORT_CONFIG.heuristicLabels, `Missing label for heuristic: ${h}`).toHaveProperty(h)
     }
@@ -109,15 +110,15 @@ describe('rugby-league SportConfig', () => {
     }
   })
 
-  it('orders the AFL heuristic set — identical tabs across AFL and every league (PARITY)', () => {
+  it('orders the AFL heuristic set — identical tabs across AFL and every league (PARITY, no yolo)', () => {
     for (const key of RUGBY_LEAGUE_KEYS) {
       const config = getLeagueConfig(key)
       expect(config.heuristicOrder, key).toEqual([
         'boosted_tip',
         'weighted_tip',
         'best_bet',
-        'yolo',
       ])
+      expect(config.heuristicOrder, key).not.toContain('yolo')
       for (const h of config.heuristicOrder) {
         expect(config.heuristicLabels, `Missing label for heuristic: ${h}`).toHaveProperty(h)
         expect(config.heuristicLabels[h], key).not.toBe(h)

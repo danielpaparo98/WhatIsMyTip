@@ -157,10 +157,14 @@ const {
       throw new Error('Invalid game slug')
     }
     const detail = await getGameDetail(slug.value)
-    // Sort tips by canonical heuristic order
-    // (Boosted → Weighted → Best Bet → YOLO)
+    // USER DECISION (2026-10-15): exactly THREE visible heuristics —
+    // yolo tips stay in the stored data but are filtered out of the
+    // rendered grid.  Then sort by canonical heuristic order
+    // (Boosted → Weighted → Best Bet).
     if (detail?.tips) {
-      detail.tips = sortByHeuristicOrder(detail.tips)
+      detail.tips = sortByHeuristicOrder(
+        detail.tips.filter((tip) => tip.heuristic !== 'yolo'),
+      )
     }
     return detail
   },

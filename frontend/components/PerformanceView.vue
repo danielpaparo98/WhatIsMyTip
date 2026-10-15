@@ -49,7 +49,7 @@
 
       <div class="current-season-cards">
         <div
-          v-for="row in pastSeason.rows"
+          v-for="row in sortedPastSeasonRows"
           :key="row.heuristic"
           class="current-season-card"
         >
@@ -614,7 +614,6 @@ const LEAGUE_HEURISTIC_ORDER = [
   'best_bet',
   'weighted_tip',
   'boosted_tip',
-  'yolo',
 ]
 
 const LEAGUE_HEURISTIC_LABELS: Record<string, string> = {
@@ -640,9 +639,23 @@ const byLeagueHeuristicOrder = <T extends { heuristic: string }>(rows: T[]): T[]
     return idx(a.heuristic) - idx(b.heuristic)
   })
 
+// USER DECISION (2026-10-15): exactly THREE visible heuristics — yolo
+// rows are graded by the backend but never render in the cards.
+const VISIBLE_HEURISTICS = new Set(['boosted_tip', 'weighted_tip', 'best_bet'])
+
 const sortedCurrentHeuristics = computed<LeagueCurrentSeasonHeuristicPerformance[]>(() => {
-  const list = currentSeason.value?.heuristics ?? []
+  const list = (currentSeason.value?.heuristics ?? []).filter((h) =>
+    VISIBLE_HEURISTICS.has(h.heuristic),
+  )
   return isAfl.value ? list : byLeagueHeuristicOrder(list)
+})
+
+/** The past-season card rows, yolo filtered, canonical order kept. */
+const sortedPastSeasonRows = computed(() => {
+  const rows = (pastSeason.value?.rows ?? []).filter((row) =>
+    VISIBLE_HEURISTICS.has(row.heuristic),
+  )
+  return isAfl.value ? sortByHeuristicOrder(rows) : byLeagueHeuristicOrder(rows)
 })
 
 // PARITY: per-league model display names — the six-model parity set

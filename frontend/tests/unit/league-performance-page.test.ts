@@ -305,7 +305,9 @@ describe('performance view presentation', () => {
 
   it('renders the Most Recent Past Season section', () => {
     expect(VIEW).toContain('Most Recent Past Season')
-    expect(VIEW).toMatch(/v-for="row in pastSeason\.rows"/)
+    // USER DECISION (2026-10-15): the rows render through the yolo-
+    // filtered computed (sortedPastSeasonRows), not the raw payload.
+    expect(VIEW).toMatch(/v-for="row in sortedPastSeasonRows"/)
   })
 
   it('gates cards on graded rounds (no "$0.00" cards for an unplayed season)', () => {
@@ -329,11 +331,12 @@ describe('performance view presentation', () => {
   it('orders league heuristics deterministically (PARITY canonical order)', () => {
     // PARITY (2026-10-14): the league order is the canonical parity set
     // — six base models (elo, form, home_advantage, matchup, value,
-    // weather_impact) followed by the four derived heuristics — never
-    // the retired D3 trio.
+    // weather_impact) followed by the derived heuristics. USER DECISION
+    // (2026-10-15): yolo is not in the order list — it never renders.
     expect(VIEW).toMatch(
-      /LEAGUE_HEURISTIC_ORDER = \[\s*\n\s*'elo',\s*\n\s*'form',\s*\n\s*'home_advantage',\s*\n\s*'matchup',\s*\n\s*'value',\s*\n\s*'weather_impact',\s*\n\s*'best_bet',\s*\n\s*'weighted_tip',\s*\n\s*'boosted_tip',\s*\n\s*'yolo',\s*\n\s*\]/,
+      /LEAGUE_HEURISTIC_ORDER = \[\s*\n\s*'elo',\s*\n\s*'form',\s*\n\s*'home_advantage',\s*\n\s*'matchup',\s*\n\s*'value',\s*\n\s*'weather_impact',\s*\n\s*'best_bet',\s*\n\s*'weighted_tip',\s*\n\s*'boosted_tip',\s*\n\s*\]/,
     )
+    expect(VIEW).not.toMatch(/'yolo'/)
     expect(VIEW).toMatch(/byLeagueHeuristicOrder/)
   })
 

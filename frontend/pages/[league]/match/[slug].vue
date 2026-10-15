@@ -296,7 +296,9 @@ onMounted(() => {
   }
 })
 
-const DERIVED_SET = new Set(['best_bet', 'weighted_tip', 'boosted_tip', 'yolo'])
+// USER DECISION (2026-10-15): exactly THREE visible heuristics — yolo
+// tips stay in the payload (generated + stored) but never render.
+const DERIVED_SET = new Set(['best_bet', 'weighted_tip', 'boosted_tip'])
 
 const derivedTips = computed(() => {
   const rows = detail.value?.tips

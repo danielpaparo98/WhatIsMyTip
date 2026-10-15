@@ -34,7 +34,7 @@
       v-else-if="grandFinalReport && grandFinalGame"
       :report="grandFinalReport.report"
       :game="grandFinalGame"
-      :tips="grandFinalDetail?.tips ?? []"
+      :tips="grandFinalTips"
       :models="grandFinalDetail?.model_predictions ?? []"
     />
 
@@ -82,7 +82,7 @@
         <h2 class="section-title">Heuristic Tips</h2>
         <div class="tips-grid">
           <TipCard
-            v-for="tip in grandFinalDetail.tips"
+            v-for="tip in grandFinalTips"
             :key="tip.id"
             :heuristic="tip.heuristic"
             :selected-team="tip.selected_team"
@@ -262,6 +262,7 @@ import type {
   GamesWithTipsResponse,
   LatestRoundResponse,
   MatchReportResponse,
+  Tip,
 } from '~/composables/useApi'
 import { HEURISTIC_ORDER } from '~/composables/useFormatters'
 import { AUTO_REFRESH_MS, pickGrandFinalGame, resolveHomeState, useLatestRound } from '~/composables/useLatestRound'
@@ -379,6 +380,15 @@ const {
 const grandFinalGame = computed<Game | null>(() => grandFinalData.value?.game ?? null)
 const grandFinalDetail = computed<GameDetailResponse | null>(() => grandFinalData.value?.detail ?? null)
 const grandFinalReport = computed<MatchReportResponse | null>(() => grandFinalData.value?.report ?? null)
+
+// USER DECISION (2026-10-15): exactly THREE visible heuristics — the
+// GF views (report component + fallback TipCard grid) filter yolo out
+// of the detail payload's tips.
+const grandFinalTips = computed<Tip[]>(() =>
+  (grandFinalDetail.value?.tips ?? []).filter(
+    (tip) => tip.heuristic !== 'yolo',
+  ),
+)
 
 // GF-DESIGN: confetti in BOTH finalists' kit colours (user request).
 // The resolved GF game gives us the two teams; their canonical palettes

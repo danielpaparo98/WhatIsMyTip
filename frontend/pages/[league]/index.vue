@@ -547,7 +547,9 @@ const gfGame = computed(() => {
 // derived heuristics map onto the AFL tip shape and null-winner models
 // drop out (the same content the AFL sections would render).
 // ---------------------------------------------------------------------------
-const GF_DERIVED = new Set(['best_bet', 'weighted_tip', 'boosted_tip', 'yolo'])
+// USER DECISION (2026-10-15): exactly THREE visible heuristics — yolo
+// never renders (generated + stored, but not visible anywhere).
+const GF_DERIVED = new Set(['best_bet', 'weighted_tip', 'boosted_tip'])
 
 const gfTips = computed<Tip[]>(() =>
   (gfDetail.value?.tips ?? [])

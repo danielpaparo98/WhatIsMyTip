@@ -161,16 +161,19 @@ test.describe('Game Detail Flow - End to End', () => {
       await expect(heuristicSelector).toBeVisible();
       const heuristicTabs = heuristicSelector.locator('.heuristic-btn');
       const tabCount = await heuristicTabs.count();
-      expect(tabCount).toBeGreaterThanOrEqual(3); // best_bet, yolo, weighted_tip
+      // USER DECISION (2026-10-15): exactly THREE tabs — boosted_tip,
+      // weighted_tip, best_bet (yolo is generated but never visible).
+      expect(tabCount).toBe(3);
+      await expect(page.locator('.heuristic-selector .heuristic-btn', { hasText: /yolo/i })).toHaveCount(0);
     });
 
     await test.step('Click a non-default heuristic tab to exercise the locator', async () => {
-      const yoloTab = page.locator('.heuristic-selector .heuristic-btn', {
-        hasText: /yolo/i,
+      const bestBetTab = page.locator('.heuristic-selector .heuristic-btn', {
+        hasText: /best bet/i,
       });
-      await yoloTab.first().click();
+      await bestBetTab.first().click();
       // The selected tab should carry the .active class.
-      await expect(yoloTab.first()).toHaveClass(/active/);
+      await expect(bestBetTab.first()).toHaveClass(/active/);
     });
 
     await test.step('Wait for games grid to re-render with the selected heuristic', async () => {

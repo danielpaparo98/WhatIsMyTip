@@ -36,10 +36,12 @@ export const AFL_CONFIG: SportConfig = {
   contestNoun: 'Game',
   stageNoun: 'Round',
   displayTimezone: 'Australia/Sydney',
-  // BT-1 (boosted-tip): boosted_tip leads as the flagship heuristic;
-  // best_bet is no longer generated (removed from the orchestrator) but
-  // stays listed so historical tips/backtest rows still render.
-  heuristicOrder: ['boosted_tip', 'weighted_tip', 'best_bet', 'yolo'],
+  // USER DECISION (2026-10-15): exactly THREE heuristics visible —
+  // Boosted Tip, Weighted Tip, Best Bet. The FCL-14 ``yolo`` tip is
+  // still GENERATED and stored (backend data stays intact; it can be
+  // re-enabled), but it is not selectable and not rendered anywhere:
+  // every visible surface derives from this list or filters yolo out.
+  heuristicOrder: ['boosted_tip', 'weighted_tip', 'best_bet'],
   heuristicLabels: {
     boosted_tip: 'Boosted Tip',
     weighted_tip: 'Weighted Tip',
@@ -173,14 +175,14 @@ export function getLeagueConfig(key: string): SportConfig {
 // ---------------------------------------------------------------------------
 
 /**
- * The user-selectable heuristics for a league (FCL-14, absolute AFL
- * parity): EXACTLY the AFL heuristic list — same values, same order,
- * same labels — so the selector is indistinguishable across AFL and
- * every league.  The league pipeline generates all four (best_bet,
- * weighted_tip, boosted_tip + the FCL-14 yolo), so every tab works.
- * (The league BASE models are not selectable tabs — they are the
- * "models" layer, rendered on the match page's model-predictions
- * section exactly like the AFL page's.)
+ * The user-selectable heuristics for a league (USER DECISION 2026-10-15,
+ * absolute AFL parity): EXACTLY the AFL heuristic list — same values,
+ * same order, same labels — so the selector is indistinguishable across
+ * AFL and every league.  Three tabs: boosted_tip, weighted_tip,
+ * best_bet (``yolo`` is generated and stored but deliberately not
+ * visible).  The league BASE models are not selectable tabs — they are
+ * the "models" layer, rendered on the match page's model-predictions
+ * section exactly like the AFL page's.
  */
 export function getLeagueHeuristicOptions(
   key: string | null | undefined,

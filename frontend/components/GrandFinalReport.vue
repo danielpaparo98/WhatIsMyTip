@@ -307,10 +307,12 @@ const xFactorVisible = computed(
 )
 
 const tips = computed<Tip[]>(() =>
+  // USER DECISION (2026-10-15): exactly THREE visible heuristics —
+  // yolo never renders (generated + stored, but not visible anywhere).
   // n-4 (code review): a single sort — the discarded
   // sortByHeuristicOrder pre-pass is gone.
   props.tips
-    .slice()
+    .filter((tip) => tip.heuristic !== 'yolo')
     .sort(
       (a, b) => (TIP_ORDER[a.heuristic] ?? 9) - (TIP_ORDER[b.heuristic] ?? 9),
     ),
