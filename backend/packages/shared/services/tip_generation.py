@@ -685,6 +685,37 @@ async def run_tip_generation(session: AsyncSession) -> Dict[str, Any]:
         nlp_sweep_error = str(exc)
         summary_parts.append("NLP sweep failed (tips still saved)")
 
+    # PARITY-1 (moved from TipGenerationJob.run — OPS-FIX 2026-10-15):
+    # the LEAGUE NLP sweep runs HERE, in the service, so BOTH the nightly
+    # cron and the admin ``POST /api/admin/tip-generation/trigger`` path
+    # execute it.  (The trigger calls this function directly, bypassing
+    # the job wrapper — a manual trigger could never sweep the leagues.)
+    # Best-effort by contract; persisted-first keeps repeat passes free.
+    league_sweep: Dict[str, Any] = {}
+    league_sweep_error: Optional[str] = None
+    try:
+        from .league_nlp_sweep import run_league_nlp_sweep
+
+        league_sweep = await run_league_nlp_sweep(session)
+        if league_sweep.get("explanations_created"):
+            summary_parts.append(
+                f"Generated {league_sweep['explanations_created']} league "
+                "tip explanations"
+            )
+        if league_sweep.get("match_analyses_created"):
+            summary_parts.append(
+                f"Generated {league_sweep['match_analyses_created']} league "
+                "match analyses"
+            )
+        if league_sweep.get("match_reports_created"):
+            summary_parts.append(
+                f"Generated {league_sweep['match_reports_created']} league "
+                "grand-final report(s)"
+            )
+    except Exception as exc:  # noqa: BLE001
+        league_sweep_error = str(exc)
+        summary_parts.append("League NLP sweep failed (tips still saved)")
+
     if error_count == 0 and games_processed == 0 and not base_message:
         # No upcoming round at all — still a success, surface a clear message
         if not summary_parts or "Generated tips" not in summary_parts[0]:
@@ -716,4 +747,15 @@ async def run_tip_generation(session: AsyncSession) -> Dict[str, Any]:
         "match_analyses_created": nlp_sweep["match_analyses_created"],
         "match_reports_created": nlp_sweep["match_reports_created"],
         "nlp_sweep_error": nlp_sweep_error,
+        # PARITY-1: the league sweep's results (same surfaces).
+        "league_explanations_created": league_sweep.get(
+            "explanations_created", 0
+        ),
+        "league_match_analyses_created": league_sweep.get(
+            "match_analyses_created", 0
+        ),
+        "league_match_reports_created": league_sweep.get(
+            "match_reports_created", 0
+        ),
+        "league_sweep_error": league_sweep_error,
     }

@@ -57,7 +57,62 @@ def _patch_invalidate(monkeypatch):
     return invalidate
 
 
+def _patch_league_sweep(monkeypatch, counts: dict | None = None):
+    """Patch the league NLP sweep (OPS-FIX: it now runs inside the
+    service, so unit tests must not hit the real DB path)."""
+    sweep = AsyncMock(
+        return_value=counts
+        or {
+            "explanations_created": 0,
+            "match_analyses_created": 0,
+            "match_reports_created": 0,
+            "error": None,
+        }
+    )
+    monkeypatch.setattr(
+        "packages.shared.services.league_nlp_sweep.run_league_nlp_sweep",
+        sweep,
+    )
+    return sweep
+
+
 class TestRunTipGeneration:
+    @pytest.mark.asyncio
+    async def test_league_sweep_runs_inside_the_service(self, monkeypatch):
+        """OPS-FIX (2026-10-15): the league NLP sweep runs in
+        ``run_tip_generation`` — the ADMIN TRIGGER calls this function
+        directly (bypassing the job wrapper), so a manual trigger must
+        sweep the leagues too.  The counts land on the result."""
+        session = _make_session()
+        gen_stats = {
+            "games_processed": 0,
+            "tips_created": 0,
+            "tips_skipped": 0,
+            "tips_updated": 0,
+            "model_predictions_created": 0,
+            "errors": [],
+        }
+        _patch_generation(monkeypatch, gen_stats)
+        _patch_explanation(monkeypatch, return_value=0)
+        _patch_invalidate(monkeypatch)
+        sweep = _patch_league_sweep(
+            monkeypatch,
+            {
+                "explanations_created": 124,
+                "match_analyses_created": 31,
+                "match_reports_created": 1,
+                "error": None,
+            },
+        )
+
+        result = await run_tip_generation(session)
+
+        sweep.assert_awaited_once_with(session)
+        assert result["league_explanations_created"] == 124
+        assert result["league_match_analyses_created"] == 31
+        assert result["league_match_reports_created"] == 1
+        assert result["league_sweep_error"] is None
+
     @pytest.mark.asyncio
     async def test_happy_path_with_explanations(self, monkeypatch):
         session = _make_session()
@@ -73,6 +128,7 @@ class TestRunTipGeneration:
         gen = _patch_generation(monkeypatch, gen_stats)
         expl = _patch_explanation(monkeypatch, return_value=27)
         _patch_invalidate(monkeypatch)
+        _patch_league_sweep(monkeypatch)
 
         result = await run_tip_generation(session)
 
@@ -99,6 +155,7 @@ class TestRunTipGeneration:
         _patch_generation(monkeypatch, gen_stats)
         _patch_explanation(monkeypatch, return_value=0)
         _patch_invalidate(monkeypatch)
+        _patch_league_sweep(monkeypatch)
 
         result = await run_tip_generation(session)
 
@@ -129,6 +186,7 @@ class TestRunTipGeneration:
             lambda: expl,
         )
         _patch_invalidate(monkeypatch)
+        _patch_league_sweep(monkeypatch)
 
         result = await run_tip_generation(session)
 
