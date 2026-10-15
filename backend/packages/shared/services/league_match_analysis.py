@@ -141,13 +141,27 @@ class LeagueMatchAnalysisService:
         Returns the analysis text, or ``None`` when the event does not
         exist or generation failed (best-effort by contract).
         """
+        text, _created = await self.ensure_analysis(db, event_id=event_id)
+        return text
+
+    async def ensure_analysis(
+        self, db: AsyncSession, *, event_id: int
+    ) -> tuple[Optional[str], bool]:
+        """The talking points for one event, plus whether it was GENERATED.
+
+        SEED-FIX (2026-10-15): the skip-if-exists path returns existing
+        text at zero cost — the sweep's counter needs the distinction
+        so stored analyses are never recounted as new.  Same best-effort
+        contract: ``None`` when the event does not exist or generation
+        failed; never raises.
+        """
         existing = await self.get_analysis(db, event_id=event_id)
         if existing is not None:
-            return existing
+            return existing, False
 
         sides = await LeagueTipExplanationService._fetch_sides(db, event_id)
         if not sides.get("home") or not sides.get("away"):
-            return None
+            return None, False
 
         from ..models import Competition, Event, Season
 
@@ -164,7 +178,7 @@ class LeagueMatchAnalysisService:
             )
         ).first()
         if event_row is None:
-            return None
+            return None, False
         event, competition_name, competition_id = event_row
 
         prior_results = await LeagueTipExplanationService._fetch_prior_results(
@@ -224,12 +238,12 @@ class LeagueMatchAnalysisService:
                 event_id,
                 exc_info=True,
             )
-            return None
+            return None, False
 
         if not analysis_text:
-            return None
+            return None, False
         await self.store_analysis(db, event_id=event_id, analysis_text=analysis_text)
-        return analysis_text
+        return analysis_text, True
 
     @staticmethod
     async def get_analysis(

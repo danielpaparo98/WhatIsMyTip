@@ -137,15 +137,21 @@ async def run_league_nlp_sweep(session: AsyncSession) -> dict[str, Any]:
         try:
             for competition_id, event_id in upcoming[:_LEAGUE_SWEEP_MAX_FIXTURES]:
                 # Persisted explanations for the four derived heuristics.
+                # SEED-FIX (2026-10-15): count only GENUINELY generated
+                # text — persisted-first and cache hits return existing
+                # content at zero cost and must not inflate the counter
+                # (the drain loop relied on this terminating at zero).
                 for heuristic in _DERIVED:
                     try:
-                        text = await explanation_service.generate_explanation_for_tip(
-                            session,
-                            competition_id=int(competition_id),
-                            event_id=int(event_id),
-                            heuristic=heuristic,
+                        _text, created = (
+                            await explanation_service.ensure_explanation_for_tip(
+                                session,
+                                competition_id=int(competition_id),
+                                event_id=int(event_id),
+                                heuristic=heuristic,
+                            )
                         )
-                        if text:
+                        if created:
                             counts["explanations_created"] += 1
                     except Exception as e:  # noqa: BLE001 — one tip never fails the sweep
                         logger.warning(
@@ -159,10 +165,14 @@ async def run_league_nlp_sweep(session: AsyncSession) -> dict[str, Any]:
                         await _rollback_quietly(session)
 
                 # Match-analysis talking points (skip-if-exists inside).
+                # SEED-FIX: count only genuinely generated text.
                 try:
-                    if await analysis_service.generate_and_store_analysis(
-                        session, event_id=int(event_id)
-                    ):
+                    _text, created = (
+                        await analysis_service.ensure_analysis(
+                            session, event_id=int(event_id)
+                        )
+                    )
+                    if created:
                         counts["match_analyses_created"] += 1
                 except Exception as e:  # noqa: BLE001
                     logger.warning(

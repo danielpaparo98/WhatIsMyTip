@@ -35,15 +35,11 @@ def _patched_harness(
     containment behaviour are observable.
     """
     explanation_double = MagicMock()
-    explanation_double.generate_explanation_for_tip = AsyncMock(
-        side_effect=explanations
-        if isinstance(explanations, Exception)
-        else (lambda *a, **kw: "text") if explanations is None else explanations
+    explanation_double.ensure_explanation_for_tip = AsyncMock(
+        return_value=("text", True)
     )
     analysis_double = MagicMock()
-    analysis_double.generate_and_store_analysis = AsyncMock(
-        return_value=True
-    )
+    analysis_double.ensure_analysis = AsyncMock(return_value=("text", True))
     analysis_double.close = AsyncMock()
     report_double = MagicMock()
     report_double.generate_and_store_report = AsyncMock(return_value=True)
@@ -116,7 +112,7 @@ class TestRunLeagueNlpSweep:
         patchers, explanation_double, _, report_double = _patched_harness(
             fixtures=fixtures
         )
-        explanation_double.generate_explanation_for_tip = AsyncMock(
+        explanation_double.ensure_explanation_for_tip = AsyncMock(
             side_effect=RuntimeError("llm down")
         )
         db = MagicMock()
@@ -128,7 +124,7 @@ class TestRunLeagueNlpSweep:
         assert counts["match_reports_created"] == 2
         # Explanations failed 4x per event (the derived heuristics) and
         # every failure rolled the session back.
-        assert explanation_double.generate_explanation_for_tip.await_count == 8
+        assert explanation_double.ensure_explanation_for_tip.await_count == 8
         assert db.rollback.await_count == 8
 
     @pytest.mark.asyncio
@@ -148,6 +144,26 @@ class TestRunLeagueNlpSweep:
         assert counts["error"] is None
         # F-3: the analysis service's client is closed in the finally.
         analysis_double.close.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_persisted_hits_are_not_counted_as_created(self):
+        """SEED-FIX (2026-10-15): persisted-first / cache hits return
+        existing content — the sweep must count only genuinely
+        generated text, or the nightly metric over-reports forever."""
+        fixtures = _fixture_rows(2)
+        patchers, explanation_double, _, _ = _patched_harness(
+            fixtures=fixtures
+        )
+        explanation_double.ensure_explanation_for_tip = AsyncMock(
+            return_value=("already stored", False)
+        )
+        db = MagicMock()
+        db.rollback = AsyncMock()
+        with patchers[0], patchers[1], patchers[2], patchers[3], patchers[4]:
+            counts = await league_nlp_sweep.run_league_nlp_sweep(db)
+        # Every tip was served (8 calls) but NONE counted as created.
+        assert explanation_double.ensure_explanation_for_tip.await_count == 8
+        assert counts["explanations_created"] == 0
 
     @pytest.mark.asyncio
     async def test_unexpected_top_level_failure_is_captured_not_raised(self):

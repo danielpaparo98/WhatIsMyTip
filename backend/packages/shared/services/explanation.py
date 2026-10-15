@@ -570,15 +570,21 @@ class LeagueTipExplanationService:
 
     # -- public operations -------------------------------------------------
 
-    async def generate_explanation_for_tip(
+    async def ensure_explanation_for_tip(
         self,
         db: AsyncSession,
         *,
         competition_id: int,
         event_id: int,
         heuristic: str,
-    ) -> str:
-        """Generate (or fetch cached) the AI explanation for one tip."""
+    ) -> tuple[str, bool]:
+        """The explanation for one tip, plus whether it was GENERATED.
+
+        The sweep's counter needs the distinction (SEED-FIX, 2026-10-15):
+        persisted-first and cache hits return existing text at zero LLM
+        cost and must not count as generation.  Same gates and same
+        degradation shape as :meth:`generate_explanation_for_tip`.
+        """
         # Local import: packages.shared stays free of app.* at module
         # load time (the repo's documented pattern).
         from app.core.exceptions import http_error
@@ -622,13 +628,13 @@ class LeagueTipExplanationService:
         # nightly league NLP sweep writes the same pre-generated text
         # the AFL tips table carries, so reads never pay the LLM.
         if tip.explanation:
-            return str(tip.explanation)
+            return str(tip.explanation), False
 
         cache = self._cache if self._cache is not None else LEAGUE_EXPLANATION_CACHE
         cache_key = self._cache_key(competition_id, event_id, heuristic)
         cached = await cache.get(cache_key)
         if cached is not None:
-            return str(cached)
+            return str(cached), False
 
         sides = await self._fetch_sides(db, event_id)
         prior_results = await self._fetch_prior_results(db, competition_id, event)
@@ -686,7 +692,24 @@ class LeagueTipExplanationService:
                 exc_info=True,
             )
             await db.rollback()
-        return explanation
+        return explanation, True
+
+    async def generate_explanation_for_tip(
+        self,
+        db: AsyncSession,
+        *,
+        competition_id: int,
+        event_id: int,
+        heuristic: str,
+    ) -> str:
+        """Generate (or fetch cached) the AI explanation for one tip."""
+        text, _created = await self.ensure_explanation_for_tip(
+            db,
+            competition_id=competition_id,
+            event_id=event_id,
+            heuristic=heuristic,
+        )
+        return text
 
     async def explanations_for_event(
         self, db: AsyncSession, *, event_id: int
