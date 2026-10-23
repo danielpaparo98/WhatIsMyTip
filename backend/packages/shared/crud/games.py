@@ -247,13 +247,13 @@ class GameCRUD:
 
     @staticmethod
     async def create_or_update(
-        db: AsyncSession, game_data: dict
+        db: AsyncSession, fixture: "FixtureDTO"
     ) -> Game:
-        """Create or update a game from Squiggle data.
+        """Create or update a game from a canonical fixture DTO.
 
         Delegates to create_or_update_with_tracking and returns just the Game.
         """
-        result = await GameCRUD.create_or_update_with_tracking(db, game_data)
+        result = await GameCRUD.create_or_update_with_tracking(db, fixture)
         return result["game"]
 
     @staticmethod

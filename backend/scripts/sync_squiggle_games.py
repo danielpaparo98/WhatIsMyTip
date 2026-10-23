@@ -40,6 +40,7 @@ from packages.shared.db import get_engine
 from packages.shared.models import Game
 from packages.shared.squiggle import SquiggleClient
 from packages.shared.crud.games import GameCRUD
+from packages.shared.ingestion.squiggle_provider import fixture_from_squiggle
 from packages.shared.squiggle.utils import parse_squiggle_complete
 
 
@@ -195,7 +196,11 @@ async def sync_season(
 
     synced = 0
     for game_data in games_data:
-        game = await GameCRUD.create_or_update(session, game_data)
+        # P3-1: the CRUD layer speaks canonical FixtureDTO — translate
+        # the raw Squiggle payload first (vendor dialect lives in the
+        # provider module).
+        fixture = fixture_from_squiggle(game_data)
+        game = await GameCRUD.create_or_update(session, fixture)
         if game is not None:
             synced += 1
 
