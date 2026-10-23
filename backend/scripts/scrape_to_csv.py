@@ -41,6 +41,11 @@ from packages.shared.weather import WeatherClient
 
 DEFAULT_OUTPUT_DIR = os.path.join(os.path.dirname(__file__), "..", "data")
 
+# Max concurrent Open-Meteo archive requests during weather scraping.
+# Open-Meteo's free tier allows ~600 calls/min — 10 concurrent keeps
+# a full season's weather to a couple of minutes.
+WEATHER_CONCURRENCY = 10
+
 # ---------------------------------------------------------------------------
 # CSV helpers
 # ---------------------------------------------------------------------------
@@ -535,30 +540,29 @@ async def scrape_weather(
         print(f"\n--- Scraping weather data for {len(match_details)} games ---")
 
     weather_rows: List[dict] = []
+    semaphore = asyncio.Semaphore(WEATHER_CONCURRENCY)
+    total = len(match_details)
+    done = 0
 
-    async with WeatherClient() as client:
-        for i, game in enumerate(match_details):
-            game_id = game.get("game_id", "")
-            venue = game.get("venue", "")
-            match_date_str = game.get("match_date", "")
+    async def fetch_one(client: WeatherClient, i: int, game: dict) -> Optional[dict]:
+        nonlocal done
+        game_id = game.get("game_id", "")
+        venue = game.get("venue", "")
+        match_date_str = game.get("match_date", "")
 
-            if not venue or not match_date_str:
-                if verbose:
-                    print(f"  [{i + 1}] Skipping game {game_id}: missing venue or date")
-                continue
-
+        if not venue or not match_date_str:
             if verbose:
-                print(
-                    f"  [{i + 1}/{len(match_details)}] Fetching weather for {venue} on {match_date_str}..."
-                )
+                print(f"  [{i + 1}] Skipping game {game_id}: missing venue or date")
+            return None
 
-            try:
-                match_date = datetime.strptime(match_date_str, "%Y-%m-%d").date()
-            except ValueError:
-                if verbose:
-                    print(f"    Invalid date: {match_date_str}")
-                continue
+        try:
+            match_date = datetime.strptime(match_date_str, "%Y-%m-%d").date()
+        except ValueError:
+            if verbose:
+                print(f"    Invalid date: {match_date_str}")
+            return None
 
+        async with semaphore:
             try:
                 weather = await client.get_match_day_weather(
                     venue=venue,
@@ -566,42 +570,51 @@ async def scrape_weather(
                 )
             except Exception as e:
                 if verbose:
-                    print(f"    WARNING: Weather fetch failed: {e}")
-                continue
+                    print(f"    WARNING: Weather fetch failed for {game_id}: {e}")
+                return None
 
-            if not weather or "hourly" not in weather:
-                if verbose:
-                    print("    No weather data returned")
-                continue
+        done += 1
+        if verbose and done % 25 == 0:
+            print(f"  Weather progress: {done}/{total} fetched")
 
-            hourly = weather.get("hourly", {})
-            times = hourly.get("time", [])
-            mid_idx = len(times) // 2 if times else 0
+        if not weather or "hourly" not in weather:
+            if verbose:
+                print(f"    No weather data returned for game {game_id}")
+            return None
 
-            def _get_val(key: str, idx: int = mid_idx, default=None):
-                values = hourly.get(key, [])
-                if idx < len(values):
-                    return values[idx]
-                return default
+        hourly = weather.get("hourly", {})
+        times = hourly.get("time", [])
+        mid_idx = len(times) // 2 if times else 0
 
-            match_dt = datetime.strptime(match_date_str, "%Y-%m-%d")
-            data_type = "historical" if match_dt < datetime.now() else "forecast"
+        def _get_val(key: str, idx: int = mid_idx, default=None):
+            values = hourly.get(key, [])
+            if idx < len(values):
+                return values[idx]
+            return default
 
-            weather_rows.append(
-                {
-                    "game_id": game_id,
-                    "venue": venue,
-                    "match_date": match_date_str,
-                    "temperature": _get_val("temperature_2m"),
-                    "precipitation": _get_val("precipitation"),
-                    "wind_speed": _get_val("windspeed_10m"),
-                    "wind_direction": _get_val("winddirection_10m"),
-                    "wind_gusts": _get_val("windgusts_10m"),
-                    "humidity": _get_val("relative_humidity_2m"),
-                    "weather_code": _get_val("weathercode"),
-                    "data_type": data_type,
-                }
-            )
+        match_dt = datetime.strptime(match_date_str, "%Y-%m-%d")
+        data_type = "historical" if match_dt < datetime.now() else "forecast"
+
+        return {
+            "game_id": game_id,
+            "venue": venue,
+            "match_date": match_date_str,
+            "temperature": _get_val("temperature_2m"),
+            "precipitation": _get_val("precipitation"),
+            "wind_speed": _get_val("windspeed_10m"),
+            "wind_direction": _get_val("winddirection_10m"),
+            "wind_gusts": _get_val("windgusts_10m"),
+            "humidity": _get_val("relative_humidity_2m"),
+            "weather_code": _get_val("weathercode"),
+            "data_type": data_type,
+        }
+
+    async with WeatherClient() as client:
+        results = await asyncio.gather(
+            *(fetch_one(client, i, game) for i, game in enumerate(match_details))
+        )
+
+    weather_rows = [row for row in results if row is not None]
 
     write_csv(os.path.join(output_dir, "match_weather.csv"), weather_rows)
     return len(weather_rows)
