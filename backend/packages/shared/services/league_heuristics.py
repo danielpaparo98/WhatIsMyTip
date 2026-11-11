@@ -77,6 +77,7 @@ from sqlalchemy.orm import aliased
 from ..logger import get_logger
 from ..models import Competition, Event, EventParticipant, LeagueTip, Participant, Season
 from ..sport_context import RUGBY_LEAGUE
+from .placeholders import is_placeholder_venue
 
 logger = get_logger(__name__)
 
@@ -1443,6 +1444,7 @@ class LeagueHeuristicsService:
                 round_id=row[10],
             )
             for row in rows
+            if not is_placeholder_venue(row[9])
         ]
 
     @staticmethod

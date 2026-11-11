@@ -9,6 +9,7 @@ services fully patched out.
 
 from __future__ import annotations
 
+from datetime import datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -20,6 +21,34 @@ from packages.shared.services import league_nlp_sweep
 def _fixture_rows(n: int) -> list[tuple[int, int]]:
     """``(competition_id, event_id)`` rows the upcoming query returns."""
     return [(1, 100 + i) for i in range(n)]
+
+
+class TestFetchUpcomingFixtures:
+    @pytest.mark.asyncio
+    async def test_drops_tbc_venue_placeholders(self) -> None:
+        """AFLW-2026 REGRESSION (2026-11-11, prod): unresolved finals
+        brackets sit scheduled at venue "To Be Confirmed" forever — they
+        must never consume the sweep's explanation/analysis/report
+        budget (the old sweep wrote "Loser of QF1 is the pick for this
+        match" AI copy for them)."""
+        rows = [
+            (1, 100, "GMHBA Stadium"),
+            (1, 101, "To Be Confirmed"),
+            (1, 102, "to be confirmed"),  # case-insensitive
+            (1, 103, None),  # NULL venue is kept (not decidable)
+        ]
+        session = SimpleNamespace(
+            execute=AsyncMock(return_value=SimpleNamespace(all=lambda: rows))
+        )
+
+        out = await league_nlp_sweep._fetch_upcoming_fixtures(
+            session,
+            competition_ids=[1],
+            now=datetime(2026, 11, 10, 12, 0, 0),
+            horizon=datetime(2026, 11, 20, 12, 0, 0),
+        )
+
+        assert out == [(1, 100), (1, 103)]
 
 
 def _patched_harness(
@@ -53,7 +82,7 @@ def _patched_harness(
         patch.object(
             league_nlp_sweep,
             "_fetch_upcoming_fixtures",
-            AsyncMock(return_value=SimpleNamespace(all=lambda: fixtures)),
+            AsyncMock(return_value=fixtures),
         ),
         patch(
             "packages.shared.services.explanation.LeagueTipExplanationService",

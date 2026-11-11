@@ -147,10 +147,25 @@ class AflPlatformProvider:
                 "pageNum": 1,
             },
         )
-        return [
-            self._match_to_fixture(match, season)
-            for match in payload.get("matches", [])
-        ]
+        fixtures: List[FixtureDTO] = []
+        skipped_placeholders = 0
+        for match in payload.get("matches", []):
+            # AFLW-2026 REGRESSION (2026-11-11, prod): unresolved finals
+            # brackets arrive as "1st" vs "4th" at venue "To Be
+            # Confirmed" and the feed never closes them out once the
+            # real fixtures land.  Mirror the Sportix provider's skip —
+            # they arrive for real once teams/venue are confirmed.
+            venue_name = ((match.get("venue") or {}).get("name")) or ""
+            if venue_name.strip().lower() == "to be confirmed":
+                skipped_placeholders += 1
+                continue
+            fixtures.append(self._match_to_fixture(match, season))
+        if skipped_placeholders:
+            logger.info(
+                "aflapi: skipped %d placeholder fixture(s) (TBC venue)",
+                skipped_placeholders,
+            )
+        return fixtures
 
     async def get_fixture(self, external_id: int | str) -> Optional[FixtureDTO]:
         """Single match via the documented ``GET matches/{id}`` helper.

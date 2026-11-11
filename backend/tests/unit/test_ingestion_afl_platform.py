@@ -168,14 +168,49 @@ class TestAflPlatformAFLW:
         provider, calls = _make_provider(3, _load(_AFLW_PATH))
         fixtures = await provider.get_fixtures(2026)
 
-        # The real 2026 AFLW season payload (in progress) carries 117 matches.
-        assert len(fixtures) == 117
+        # The real 2026 AFLW season payload (in progress) carries 117
+        # matches — 9 of them TBC-venue finals placeholders, which the
+        # provider skips (see the placeholder regression test below).
+        assert len(fixtures) == 108
         assert any(
             c[0] == "matches"
             and c[1].get("competitionId") == 3
             and c[1].get("compSeasonId") == 96
             for c in calls
         )
+
+    @pytest.mark.asyncio
+    async def test_placeholder_tbc_venue_fixtures_are_skipped(self):
+        """AFLW-2026 REGRESSION (2026-11-11, prod): unresolved finals
+        brackets arrive as "1st" vs "4th" at venue "To Be Confirmed" and
+        the feed never closes them out once the real fixtures land —
+        they must never become event rows (they pinned the league page
+        to the first finals round and got tipped "1st" to win at 90%)."""
+        payload = _load(_AFLW_PATH)
+        provider, _ = _make_provider(3, payload)
+        fixtures = await provider.get_fixtures(2026)
+
+        raw_tbc = [
+            m
+            for m in payload["matches"]
+            if ((m.get("venue") or {}).get("name") or "").strip().lower()
+            == "to be confirmed"
+        ]
+        assert raw_tbc, "fixture payload must contain a TBC placeholder"
+
+        assert len(fixtures) == len(payload["matches"]) - len(raw_tbc)
+        assert all(
+            (f.venue or "").strip().lower() != "to be confirmed"
+            for f in fixtures
+        )
+        # Every REAL match survives: spot-check the first non-TBC one.
+        real = next(
+            m
+            for m in payload["matches"]
+            if ((m.get("venue") or {}).get("name") or "").strip().lower()
+            != "to be confirmed"
+        )
+        assert _dto_for(fixtures, real) is not None
 
     @pytest.mark.asyncio
     async def test_scheduled_match_has_no_score_and_not_completed(self):
@@ -185,7 +220,15 @@ class TestAflPlatformAFLW:
         provider, _ = _make_provider(3, payload)
         fixtures = await provider.get_fixtures(2026)
 
-        raw = next(m for m in payload["matches"] if m["status"] != "CONCLUDED")
+        # A scheduled match that is NOT a TBC placeholder (those are
+        # skipped entirely — see the placeholder regression test).
+        raw = next(
+            m
+            for m in payload["matches"]
+            if m["status"] != "CONCLUDED"
+            and ((m.get("venue") or {}).get("name") or "").strip().lower()
+            != "to be confirmed"
+        )
         dto = _dto_for(fixtures, raw)
 
         assert dto.completed is False

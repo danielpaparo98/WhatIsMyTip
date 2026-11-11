@@ -1418,6 +1418,29 @@ class TestScheduledEventTips:
         assert summary["events_considered"] == 1  # completed only, unchanged
 
     @pytest.mark.asyncio
+    async def test_fetch_scheduled_events_drops_tbc_venue_placeholders(self) -> None:
+        """AFLW-2026 REGRESSION (2026-11-11, prod): unresolved finals
+        brackets sit in the events table as scheduled rows at venue
+        "To Be Confirmed" and are never closed out by the feed — the
+        forward-tips fetch must not tip them ("1st" to win at 90%)."""
+        rows = [
+            # (id, season_id, starts_at, home_side_id, away_side_id,
+            #  home_participant_id, away_participant_id, home_score,
+            #  away_score, venue, round_id) — the select's column order.
+            (2, 7, datetime(2026, 4, 8), 11, 12, 101, 102, None, None,
+             "GMHBA Stadium", 14),
+            (3, 7, datetime(2026, 11, 9), 13, 14, 103, 104, None, None,
+             "To Be Confirmed", 14),
+        ]
+        db = AsyncMock()
+        db.execute = AsyncMock(return_value=SimpleNamespace(all=lambda: rows))
+
+        out = await LeagueHeuristicsService._fetch_scheduled_events(db, [7])
+
+        assert [e.event_id for e in out] == [2]
+        assert out[0].venue == "GMHBA Stadium"
+
+    @pytest.mark.asyncio
     async def test_scheduled_picks_follow_prior_evidence(self) -> None:
         """The scheduled pick is causal: home side wins the prior round
         convincingly, so every base model (home_advantage, form's 1-0

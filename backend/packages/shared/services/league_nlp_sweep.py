@@ -24,6 +24,7 @@ from sqlalchemy.orm import aliased
 
 from ..logger import get_logger
 from ..models import Competition, Event, EventParticipant, Season
+from .placeholders import is_placeholder_venue
 
 logger = get_logger(__name__)
 
@@ -113,11 +114,9 @@ async def run_league_nlp_sweep(session: AsyncSession) -> dict[str, Any]:
         # behavioural gain at this window size.
         now = datetime.now(timezone.utc).replace(tzinfo=None)
         horizon = now + timedelta(days=_LEAGUE_SWEEP_LOOKAHEAD_DAYS)
-        upcoming = (
-            await _fetch_upcoming_fixtures(
-                session, competition_ids, now, horizon
-            )
-        ).all()
+        upcoming = await _fetch_upcoming_fixtures(
+            session, competition_ids, now, horizon
+        )
         if not upcoming:
             return counts
 
@@ -210,12 +209,18 @@ async def _fetch_upcoming_fixtures(
     competition_ids: list[int],
     now: datetime,
     horizon: datetime,
-):
-    """Upcoming scheduled fixtures (with sides) across the leagues."""
+) -> list[tuple[Any, Any]]:
+    """Upcoming scheduled fixtures (with sides) across the leagues.
+
+    AFLW-2026 REGRESSION (2026-11-11, prod): TBC-venue rows are
+    unresolved finals brackets the feed never closes out — they must
+    never consume the explanation/analysis/report budget, so they are
+    filtered here (the predicate lives in services.placeholders).
+    """
     home_side = aliased(EventParticipant)
     away_side = aliased(EventParticipant)
     stmt = (
-        select(Season.competition_id, Event.id)
+        select(Season.competition_id, Event.id, Event.venue)
         .join(home_side, and_(home_side.event_id == Event.id, home_side.side == "home"))
         .join(away_side, and_(away_side.event_id == Event.id, away_side.side == "away"))
         .join(Season, Event.season_id == Season.id)
@@ -229,4 +234,9 @@ async def _fetch_upcoming_fixtures(
         .order_by(Season.competition_id, Event.starts_at, Event.id)
         .limit(200)
     )
-    return await session.execute(stmt)
+    rows = (await session.execute(stmt)).all()
+    return [
+        (competition_id, event_id)
+        for competition_id, event_id, venue in rows
+        if not is_placeholder_venue(venue)
+    ]
