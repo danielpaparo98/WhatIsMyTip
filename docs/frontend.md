@@ -282,7 +282,7 @@ Any **internal** navigation to `/` — the header logo, the league dropdown's AF
 
 #### End-of-season treatment
 
-- When every event in the season payload is settled, the league page shows a premier celebration (`OffSeasonCelebration` + `ConfettiEffect`) instead of a bare last-round list; the premier is the winner of the latest-dated completed event ([`useSeasonState.ts`](frontend/composables/useSeasonState.ts:1)).
+- When every event in the season payload is settled, the league page shows a premier celebration (`OffSeasonCelebration` + `ConfettiEffect`) **with the final round's results still rendered below it** — the celebration never replaces the results (RESULTS-BELOW fix, 2026-11-11: the old `v-if/v-else-if/v-else` chain made the results section unreachable once the season completed, leaving every finished league — WAFL et al. — celebration-only in prod); the premier is the winner of the latest-dated completed event ([`useSeasonState.ts`](frontend/composables/useSeasonState.ts:1)).
 - When the season's highest round is still upcoming, the round strip reads `GF • {season}` instead of `R{n} • {season}`.
 - Clubs without logo files render a generated monochrome initials badge coloured from their club's league palette (`useTeamIdentity` + `useLeagueColors`) — no broken images on state-league pages.
 - League crests populate from `GET /api/teams` (`syncTeamIdentity`, awaited inside the league/match data handlers so they bake into prerendered HTML): entries with a `logo_url` render the real crest; clubs without one keep the generated initials-badge fallback.

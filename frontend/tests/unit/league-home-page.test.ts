@@ -199,6 +199,40 @@ describe('league page season-complete celebration', () => {
     expect(PAGE).toMatch(/derivePremier\(/)
   })
 
+  it('keeps the final round results BELOW the celebration (RESULTS-BELOW regression)', () => {
+    // REGRESSION (2026-11-11, prod): the old v-if/v-else-if/v-else chain
+    // made the fixtures/results section unreachable once the season
+    // completed — every finished league home (WAFL et al. in the
+    // off-season) rendered a celebration-only page with zero results,
+    // contradicting this file's documented "the final round's results
+    // stay below so the page keeps its substance" contract and the SEO
+    // meta ("premier, final results and every graded tip of the
+    // season"). The section must NOT be the chain's v-else sibling.
+    expect(PAGE, 'results section must not be the celebration branch’s v-else').not.toMatch(
+      /<section v-else class="section">/,
+    )
+    // The celebration template is followed (same branch scope) by the
+    // round section — results stay below the celebration.
+    const celebrationIdx = PAGE.indexOf('<template v-if="isSeasonComplete">')
+    const sectionIdx = PAGE.indexOf('<section class="section">')
+    expect(celebrationIdx, 'season-complete branch not found').toBeGreaterThan(-1)
+    expect(sectionIdx, 'round section not found').toBeGreaterThan(celebrationIdx)
+  })
+
+  it('keeps grand-final week exclusive (GF branch never shows the round section)', () => {
+    // PARITY (2026-10-14): grand-final week owns the page — the GF
+    // branch is the primary v-if; celebration + results live in its
+    // v-else so GF week and season_complete never render together.
+    expect(PAGE).toMatch(/<template v-if="isGrandFinalWeek">/)
+  })
+
+  it('hides the heuristic selector when the round has no upcoming fixtures', () => {
+    // In a completed round every card shows its result — the FCL-13
+    // selector would be dead UI (nothing left to tip). It renders only
+    // when at least one displayed fixture is still upcoming.
+    expect(PAGE).toMatch(/v-if="hasUpcomingFixtures"\s+class="heuristic-selector"/)
+  })
+
   it('fires ConfettiEffect in both finalists’ league colours', () => {
     expect(PAGE).toMatch(/<ConfettiEffect/)
     expect(PAGE).toMatch(/:colors=/)

@@ -28,18 +28,6 @@
   </div>
 
   <template v-else>
-    <!-- End of season: the premier celebration carries the same
-         ALWAYS-HERO convention as the AFL post-season state (the hero
-         above never unmounts); the final round's results stay below so
-         the page keeps its substance. -->
-    <template v-if="isSeasonComplete">
-      <OffSeasonCelebration
-        :premier="premier"
-        :season="seasonNumber"
-        :league="leagueKey"
-      />
-    </template>
-
     <!-- =================================================================
          PARITY (2026-10-14): GRAND-FINAL WEEK — the AFL home's STATE 1,
          mirrored for every league. The stored GF report renders through
@@ -49,7 +37,7 @@
          talking points) with a "Load full report" retry — the exact
          degradation contract of the AFL home.
          ================================================================= -->
-    <template v-else-if="isGrandFinalWeek">
+    <template v-if="isGrandFinalWeek">
       <div v-if="gfPending" class="loading" role="status" aria-live="polite">
         <div class="spinner"></div>
       </div>
@@ -145,111 +133,145 @@
       </div>
     </template>
 
-    <section v-else class="section">
-      <!-- Round strip: "GF • {season}" for the season's final round
-           (upcoming or played), "R{n} • {season}" for regular rounds. -->
-      <div v-if="roundId !== null" class="round-display">
-        <span class="round-label">{{ leagueConfig.displayName }}</span>
-        <span class="round-value">{{ roundStrip }}</span>
-        <span class="game-count">{{ roundEvents.length }} {{ leagueConfig.contestNoun }}s</span>
-      </div>
+    <!-- =================================================================
+         Everything else — regular rounds AND the completed season.
 
-      <div v-if="roundEvents.length === 0" class="empty" role="status" aria-live="polite">
-        <p>No fixtures found for this round yet.</p>
-      </div>
-      <template v-else>
-        <!-- FCL-13: the AFL home's user-selectable heuristic, mirrored —
-             the selected tab drives which stored pick each upcoming
-             card shows (no refetch; the payload carries every pick). -->
-        <div class="heuristic-selector" role="tablist" aria-label="Heuristic filter">
-          <button
-            v-for="h in heuristicOptions"
-            :key="h.value"
-            role="tab"
-            :aria-selected="selectedHeuristic === h.value"
-            @click="selectedHeuristic = h.value"
-            :class="['heuristic-btn', { active: selectedHeuristic === h.value }]"
-          >
-            {{ h.label }}
-          </button>
+         RESULTS-BELOW REGRESSION FIX (2026-11-11, prod): the old
+         v-if/v-else-if/v-else chain made the round section unreachable
+         once every event settled — every finished league home (WAFL et
+         al. in the off-season) rendered a celebration-only page with
+         zero results, contradicting this file's documented "the final
+         round's results stay below so the page keeps its substance"
+         contract and the season-complete SEO meta ("premier, final
+         results and every graded tip of the season"). Grand-final week
+         remains the exclusive branch; the celebration and the round
+         section now render TOGETHER, celebration on top. The client
+         refresh (onNuxtReady + the 5-minute poller) re-derives the
+         state from live data on every visit — the prerendered HTML is
+         the SEO first paint, never the final word.
+         ================================================================= -->
+    <template v-else>
+      <!-- End of season: the premier celebration carries the same
+           ALWAYS-HERO convention as the AFL post-season state (the hero
+           above never unmounts); the final round's results stay below
+           so the page keeps its substance. -->
+      <template v-if="isSeasonComplete">
+        <OffSeasonCelebration
+          :premier="premier"
+          :season="seasonNumber"
+          :league="leagueKey"
+        />
+      </template>
+
+      <section class="section">
+        <!-- Round strip: "GF • {season}" for the season's final round
+             (upcoming or played), "R{n} • {season}" for regular rounds. -->
+        <div v-if="roundId !== null" class="round-display">
+          <span class="round-label">{{ leagueConfig.displayName }}</span>
+          <span class="round-value">{{ roundStrip }}</span>
+          <span class="game-count">{{ roundEvents.length }} {{ leagueConfig.contestNoun }}s</span>
         </div>
 
-        <Transition name="fade" mode="out-in">
-          <div :key="selectedHeuristic" class="games-grid">
-            <NuxtLink
-              v-for="ev in roundEvents"
-              :key="ev.slug"
-              :to="`/${leagueKey}/match/${ev.slug}`"
-              class="game-card-link"
+        <div v-if="roundEvents.length === 0" class="empty" role="status" aria-live="polite">
+          <p>No fixtures found for this round yet.</p>
+        </div>
+        <template v-else>
+          <!-- FCL-13: the AFL home's user-selectable heuristic, mirrored —
+               the selected tab drives which stored pick each upcoming
+               card shows (no refetch; the payload carries every pick).
+               Hidden when the round has nothing left to tip — a fully
+               completed round (season-complete finals included) renders
+               pure result cards, so the tablist would be dead UI. -->
+          <div v-if="hasUpcomingFixtures" class="heuristic-selector" role="tablist" aria-label="Heuristic filter">
+            <button
+              v-for="h in heuristicOptions"
+              :key="h.value"
+              role="tab"
+              :aria-selected="selectedHeuristic === h.value"
+              @click="selectedHeuristic = h.value"
+              :class="['heuristic-btn', { active: selectedHeuristic === h.value }]"
             >
-              <article class="game-card">
-                <div class="match-info">
-                  <div class="teams">
-                    <div class="team home">
-                      <img :src="sideLogo(ev, 'home')" :alt="`${sideName(ev, 'home')} logo`" class="team-logo" loading="lazy" decoding="async" width="40" height="40" />
-                      <span class="team-name">{{ displayName(sideName(ev, 'home')) }}</span>
-                    </div>
-                    <span class="vs">VS</span>
-                    <div class="team away">
-                      <img :src="sideLogo(ev, 'away')" :alt="`${sideName(ev, 'away')} logo`" class="team-logo" loading="lazy" decoding="async" width="40" height="40" />
-                      <span class="team-name">{{ displayName(sideName(ev, 'away')) }}</span>
-                    </div>
-                  </div>
-                  <div class="match-details">
-                    <span class="venue">{{ ev.venue ?? 'TBD' }}</span>
-                    <span class="date">{{ ev.starts_at ? formatDate(ev.starts_at) : 'TBD' }}</span>
-                  </div>
-                </div>
+              {{ h.label }}
+            </button>
+          </div>
 
-                <!-- Results when played; the SELECTED heuristic's tip in
-                     the AFL card shape (FCL-14: badge, confidence,
-                     winner, margin); "No tip available" when the
-                     heuristic has no stored tip — byte-identical to
-                     the AFL home's card states. -->
-                <div v-if="ev.completed" class="tip-info league-result">
-                  <div class="result-row">
-                    <span class="result-team" :class="{ winner: sideIsWinner(ev, 'home') }">
-                      {{ sideName(ev, 'home') }}
-                    </span>
-                    <span class="result-score">{{ sideScore(ev, 'home') ?? '—' }}</span>
+          <Transition name="fade" mode="out-in">
+            <div :key="selectedHeuristic" class="games-grid">
+              <NuxtLink
+                v-for="ev in roundEvents"
+                :key="ev.slug"
+                :to="`/${leagueKey}/match/${ev.slug}`"
+                class="game-card-link"
+              >
+                <article class="game-card">
+                  <div class="match-info">
+                    <div class="teams">
+                      <div class="team home">
+                        <img :src="sideLogo(ev, 'home')" :alt="`${sideName(ev, 'home')} logo`" class="team-logo" loading="lazy" decoding="async" width="40" height="40" />
+                        <span class="team-name">{{ displayName(sideName(ev, 'home')) }}</span>
+                      </div>
+                      <span class="vs">VS</span>
+                      <div class="team away">
+                        <img :src="sideLogo(ev, 'away')" :alt="`${sideName(ev, 'away')} logo`" class="team-logo" loading="lazy" decoding="async" width="40" height="40" />
+                        <span class="team-name">{{ displayName(sideName(ev, 'away')) }}</span>
+                      </div>
+                    </div>
+                    <div class="match-details">
+                      <span class="venue">{{ ev.venue ?? 'TBD' }}</span>
+                      <span class="date">{{ ev.starts_at ? formatDate(ev.starts_at) : 'TBD' }}</span>
+                    </div>
                   </div>
-                  <div class="result-row">
-                    <span class="result-team" :class="{ winner: sideIsWinner(ev, 'away') }">
-                      {{ sideName(ev, 'away') }}
-                    </span>
-                    <span class="result-score">{{ sideScore(ev, 'away') ?? '—' }}</span>
+
+                  <!-- Results when played; the SELECTED heuristic's tip in
+                       the AFL card shape (FCL-14: badge, confidence,
+                       winner, margin); "No tip available" when the
+                       heuristic has no stored tip — byte-identical to
+                       the AFL home's card states. -->
+                  <div v-if="ev.completed" class="tip-info league-result">
+                    <div class="result-row">
+                      <span class="result-team" :class="{ winner: sideIsWinner(ev, 'home') }">
+                        {{ sideName(ev, 'home') }}
+                      </span>
+                      <span class="result-score">{{ sideScore(ev, 'home') ?? '—' }}</span>
+                    </div>
+                    <div class="result-row">
+                      <span class="result-team" :class="{ winner: sideIsWinner(ev, 'away') }">
+                        {{ sideName(ev, 'away') }}
+                      </span>
+                      <span class="result-score">{{ sideScore(ev, 'away') ?? '—' }}</span>
+                    </div>
                   </div>
-                </div>
-                <div v-else-if="pickFor(ev)" class="tip-info">
-                  <div class="tip-header">
-                    <span class="heuristic-badge">{{ heuristicLabel }}</span>
-                    <span
-                      v-if="pickFor(ev)!.confidence !== null"
-                      class="confidence"
-                    >{{ Math.round(pickFor(ev)!.confidence! * 100) }}%</span>
-                  </div>
-                  <div class="tip-body">
-                    <h3>{{ displayName(pickFor(ev)!.name) }}</h3>
-                    <p v-if="pickFor(ev)!.margin !== null" class="margin">
-                      Margin: {{ pickFor(ev)!.margin }} pts
+                  <div v-else-if="pickFor(ev)" class="tip-info">
+                    <div class="tip-header">
+                      <span class="heuristic-badge">{{ heuristicLabel }}</span>
+                      <span
+                        v-if="pickFor(ev)!.confidence !== null"
+                        class="confidence"
+                      >{{ Math.round(pickFor(ev)!.confidence! * 100) }}%</span>
+                    </div>
+                    <div class="tip-body">
+                      <h3>{{ displayName(pickFor(ev)!.name) }}</h3>
+                      <p v-if="pickFor(ev)!.margin !== null" class="margin">
+                        Margin: {{ pickFor(ev)!.margin }} pts
+                      </p>
+                    </div>
+                    <!-- PARITY (2026-10-14): the persisted AI explanation —
+                         the same text the AFL home cards render, written by
+                         the nightly league NLP sweep. -->
+                    <p v-if="pickFor(ev)!.explanation" class="explanation">
+                      {{ formatExplanation(pickFor(ev)!.explanation!) }}
                     </p>
                   </div>
-                  <!-- PARITY (2026-10-14): the persisted AI explanation —
-                       the same text the AFL home cards render, written by
-                       the nightly league NLP sweep. -->
-                  <p v-if="pickFor(ev)!.explanation" class="explanation">
-                    {{ formatExplanation(pickFor(ev)!.explanation!) }}
-                  </p>
-                </div>
-                <div v-else class="no-tip">
-                  <p>No tip available</p>
-                </div>
-              </article>
-            </NuxtLink>
-          </div>
-        </Transition>
-      </template>
-    </section>
+                  <div v-else class="no-tip">
+                    <p>No tip available</p>
+                  </div>
+                </article>
+              </NuxtLink>
+            </div>
+          </Transition>
+        </template>
+      </section>
+    </template>
   </template>
 
   <!-- GF-DESIGN parity: once the season is complete, confetti fires in
@@ -412,6 +434,16 @@ const heuristicLabel = computed(
   () =>
     heuristicOptions.value.find((h) => h.value === selectedHeuristic.value)
       ?.label ?? 'Model tip',
+)
+/**
+ * Whether the displayed round still has fixtures left to play — the
+ * FCL-13 selector only earns its place when there is something to tip.
+ * A fully completed round (a settled season's finals included) renders
+ * pure result cards, so the tablist hides (RESULTS-BELOW fix,
+ * 2026-11-11).
+ */
+const hasUpcomingFixtures = computed(() =>
+  roundEvents.value.some((ev) => !ev.completed),
 )
 onMounted(() => {
   const stored = localStorage.getItem('selected-heuristic')
