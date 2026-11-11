@@ -100,6 +100,7 @@ function stubNuxt() {
 
 afterEach(() => {
   vi.unstubAllGlobals()
+  vi.useRealTimers()
 })
 
 describe('useLeagueEvents season fetch (FIX 1: full-season limit)', () => {
@@ -122,6 +123,10 @@ describe('useLeagueEvents season fetch (FIX 1: full-season limit)', () => {
   })
 
   it('derives the current round, label and ordered round events from the payload', async () => {
+    // AFLW-2026 REGRESSION: round derivation is staleness-aware, so pin
+    // the clock into the fixture's season (June 2026) — with the real
+    // wall clock (November) the June fixtures would read as stale.
+    vi.useFakeTimers({ now: new Date('2026-06-15T00:00:00Z') })
     stubNuxt()
 
     const { roundId, seasonLabel, seasonEvents, roundEvents, unavailable, error } =

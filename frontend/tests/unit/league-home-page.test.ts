@@ -371,6 +371,14 @@ describe('useLeagueEvents refactor', () => {
     expect(COMPOSABLE).toMatch(/interface LeagueEventsState[\s\S]*?seasonEvents/)
   })
 
+  it('filters bracket placeholders out of the displayed round events', () => {
+    // AFLW-2026 REGRESSION (2026-11-11): finals placeholders ("1st vs
+    // 4th") share the real fixtures' round — they must never render as
+    // cards even when their round IS the displayed one.
+    expect(COMPOSABLE).toMatch(/!isPlaceholderEvent\(e\)/)
+    expect(COMPOSABLE).toMatch(/import \{[^}]*isPlaceholderEvent[^}]*\} from '\.\.\/lib\/leagueRoutes'/)
+  })
+
   it('keeps the pure helper signatures stable', () => {
     // Behavioural pins live in league-aware-home.test.ts; here we make
     // sure the exports survived the refactor with their contracts.

@@ -166,11 +166,92 @@ describe('deriveSeasonState', () => {
     expect(deriveSeasonState(events, 2)).toBe('regular')
   })
 
-  it('returns regular when all events are settled but no current round exists', () => {
+  it('returns season_complete when the only unsettled events are bracket placeholders', () => {
+    // AFLW-2026 REGRESSION (2026-11-11): finals placeholders ("1st vs
+    // 4th", venue "To Be Confirmed") are never settled by the feed —
+    // they must not block the premier celebration forever.
+    const events = [
+      makeCompleted({ id: 1, round_id: 13, starts_at: '2026-11-08T13:05:00' }),
+      makeCompleted({ id: 2, round_id: 16, starts_at: '2026-11-30T14:10:00' }),
+      makeEvent({
+        id: 3,
+        round_id: 13,
+        venue: 'To Be Confirmed',
+        starts_at: '2026-11-02T12:00:00',
+        participants: [
+          { side: 'home', participant_name: '1st', score: null, is_winner: null },
+          { side: 'away', participant_name: '4th', score: null, is_winner: null },
+        ],
+      }),
+      makeEvent({
+        id: 4,
+        round_id: 16,
+        venue: 'To Be Confirmed',
+        starts_at: '2026-11-23T12:00:00',
+        participants: [
+          { side: 'home', participant_name: 'Winner of PF1', score: null, is_winner: null },
+          { side: 'away', participant_name: 'Winner of PF2', score: null, is_winner: null },
+        ],
+      }),
+    ]
+    expect(deriveSeasonState(events, 16)).toBe('season_complete')
+  })
+
+  it('still refuses season_complete when a real event is unsettled (placeholders are not a loophole)', () => {
     const events = [
       makeCompleted({ id: 1, round_id: 1, starts_at: '2026-04-04T13:10:00' }),
+      makeEvent({ id: 2, round_id: 16, starts_at: '2026-11-30T14:10:00' }),
+      makeEvent({
+        id: 3,
+        round_id: 13,
+        venue: 'To Be Confirmed',
+        starts_at: '2026-11-02T12:00:00',
+        participants: [
+          { side: 'home', participant_name: '1st', score: null, is_winner: null },
+          { side: 'away', participant_name: '4th', score: null, is_winner: null },
+        ],
+      }),
     ]
-    expect(deriveSeasonState(events, null)).toBe('regular')
+    expect(deriveSeasonState(events, 16)).not.toBe('season_complete')
+  })
+
+  it('counts only REAL live events for the one-live-decider GF rule', () => {
+    // The real grand-final fixture landed alongside the unresolved
+    // placeholder in the same round: the placeholder must not push the
+    // live count to 2 (which would demote GF week to 'regular').
+    const events = [
+      makeCompleted({ id: 1, round_id: 1, starts_at: '2026-04-04T13:10:00' }),
+      makeEvent({ id: 2, round_id: 16, starts_at: '2026-11-28T14:10:00' }),
+      makeEvent({
+        id: 3,
+        round_id: 16,
+        venue: 'To Be Confirmed',
+        starts_at: '2026-11-23T12:00:00',
+        participants: [
+          { side: 'home', participant_name: 'Winner of PF1', score: null, is_winner: null },
+          { side: 'away', participant_name: 'Winner of PF2', score: null, is_winner: null },
+        ],
+      }),
+    ]
+    expect(deriveSeasonState(events, 16)).toBe('grand_final_upcoming')
+  })
+
+  it('returns regular for a payload that contains ONLY placeholders', () => {
+    // Nothing real to celebrate (and nothing real to show): a
+    // placeholder-only payload must never celebrate.
+    const events = [
+      makeEvent({
+        id: 1,
+        round_id: 16,
+        venue: 'To Be Confirmed',
+        starts_at: '2026-11-23T12:00:00',
+        participants: [
+          { side: 'home', participant_name: 'Winner of PF1', score: null, is_winner: null },
+          { side: 'away', participant_name: 'Winner of PF2', score: null, is_winner: null },
+        ],
+      }),
+    ]
+    expect(deriveSeasonState(events, 16)).not.toBe('season_complete')
   })
 
   it('ignores null-round (tournament-style) events for the max round but not for completeness', () => {

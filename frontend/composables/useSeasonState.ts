@@ -17,6 +17,10 @@
 // without the Nuxt runtime (same pattern as useLeagueEvents.ts).
 
 import type { SportEvent } from '~/composables/useApi'
+// AFLW-2026 REGRESSION (2026-11-11): bracket-placeholder detection
+// shared with the round/route derivation (pure module — safe to import
+// here; leagueRoutes is deliberately Nuxt-free).
+import { isPlaceholderEvent } from '../lib/leagueRoutes'
 
 /** End-of-season presentation state for a league home page. */
 export type SeasonState = 'regular' | 'grand_final_upcoming' | 'season_complete'
@@ -33,10 +37,13 @@ function isSettled(e: SportEvent): boolean {
 /**
  * An event that is still to be played (or in progress): dated and not
  * settled. Undated TBD fixtures are deliberately NOT live — they can't
- * anchor "the grand final is next week" on their own.
+ * anchor "the grand final is next week" on their own. Bracket
+ * placeholders (AFLW-2026 regression: "Winner of PF1 vs Winner of
+ * PF2", never resolved by the feed) are NOT live either — the real
+ * decider must be identifiable when it lands beside its placeholder.
  */
 function isLive(e: SportEvent): boolean {
-  return !!e.starts_at && !isSettled(e)
+  return !!e.starts_at && !isSettled(e) && !isPlaceholderEvent(e)
 }
 
 /**
@@ -57,9 +64,16 @@ export function deriveSeasonState(
   // where "every event is settled" holds for zero events).
   if (events.length === 0 || roundId === null) return 'regular'
 
+  // AFLW-2026 REGRESSION (2026-11-11): bracket placeholders are never
+  // settled by the feed — judge season completeness on the REAL events
+  // only. A payload of nothing but placeholders stays 'regular'
+  // (decisive empty → nothing to celebrate).
+  const decisive = events.filter((e) => !isPlaceholderEvent(e))
+  if (decisive.length === 0) return 'regular'
+
   // Season over: the whole payload is settled and we know the round to
   // anchor the celebration display on.
-  if (events.every(isSettled)) return 'season_complete'
+  if (decisive.every(isSettled)) return 'season_complete'
 
   // Grand final upcoming: the displayed round is the season's highest
   // round and still has events to be played. Requiring roundId === max
@@ -103,13 +117,17 @@ export function deriveSeasonState(
  * the final round and are ignored by the guard.
  */
 export function derivePremier(events: SportEvent[]): string | null {
-  if (events.every(isSettled)) {
-    const roundIds = events
+  // AFLW-2026 REGRESSION (2026-11-11): judge the struck-final-round
+  // veto on REAL events only — a backend cleanup that voids the
+  // placeholder twin of a PLAYED grand final must not veto the premier.
+  const realEvents = events.filter((e) => !isPlaceholderEvent(e))
+  if (realEvents.every(isSettled)) {
+    const roundIds = realEvents
       .map((e) => e.round_id)
       .filter((r): r is number => typeof r === 'number')
     if (roundIds.length > 0) {
       const maxRound = Math.max(...roundIds)
-      const finalRoundStruck = events.some(
+      const finalRoundStruck = realEvents.some(
         (e) =>
           e.round_id === maxRound &&
           !e.completed &&

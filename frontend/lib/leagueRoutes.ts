@@ -147,6 +147,59 @@ export function resolveCompetition(
 }
 
 /**
+ * AFLW-2026 REGRESSION (2026-11-11, prod): finals bracket placeholder
+ * detection. The AFL platform feed emits unresolved finals as fixtures
+ * whose SIDES are bracket expressions — "1st" vs "4th", "Loser of QF1"
+ * vs "Winner of EF1", "Winner of PF1" vs "Winner of PF2" — at venue
+ * "To Be Confirmed", and never closes them out when the real fixtures
+ * land. Such events must never pin the displayed round, never render as
+ * cards, and never block the season-complete derivation.
+ *
+ * Deliberately pure + Nuxt-free (shared by the runtime composables, the
+ * prerender enumeration, and useSeasonState). An event counts as a
+ * placeholder only when it HAS sides and EVERY side is a bracket
+ * expression — a real fixture paired against a not-yet-resolved side
+ * stays real (we simply don't know enough to call it a placeholder).
+ */
+export function isPlaceholderEvent(e: SportEvent): boolean {
+  const names = e.participants.map((p) => p.participant_name.trim().toLowerCase())
+  if (names.length === 0) return false
+  return names.every(isBracketSideName)
+}
+
+/** One bracket-expression side name ("1st", "Loser of QF1", "TBC"). */
+function isBracketSideName(name: string): boolean {
+  if (name === 'tbd' || name === 'tbc') return true
+  // Ladder positions: 1st/2nd/3rd/4th/…/8th.
+  if (/^\d+(st|nd|rd|th)$/.test(name)) return true
+  // Bracket outcomes: "Winner of QF1", "Loser of EF1", …
+  if (/^(winner|loser) of\b/.test(name)) return true
+  return false
+}
+
+/**
+ * AFLW-2026 REGRESSION (2026-11-11, prod): stale-scheduled detection.
+ * A REAL match completes within hours of its start; a fixture still
+ * `scheduled` more than STALE_SCHEDULED_HOURS after its start time is
+ * feed debris (a placeholder that was synced, or a result the feed
+ * failed to close). Such events must not pin `deriveCurrentRound` on a
+ * long-past round.
+ *
+ * The 48h threshold keeps genuine in-progress matches live (their
+ * starts_at is minutes-to-hours in the past while the result sync
+ * lands).
+ */
+const STALE_SCHEDULED_MS = 48 * 60 * 60 * 1000
+
+export function isStaleScheduled(e: SportEvent, now: Date): boolean {
+  if (e.completed || e.status === 'cancelled' || e.status === 'void') return false
+  if (!e.starts_at) return false
+  const startMs = Date.parse(e.starts_at)
+  if (Number.isNaN(startMs)) return false
+  return now.getTime() - startMs > STALE_SCHEDULED_MS
+}
+
+/**
  * Derive the league's "current" round from a full season of events.
  *
  * Mirrors the AFL locator's semantics: during the season the first
@@ -155,19 +208,28 @@ export function resolveCompetition(
  * wins — so a finished (or partially cancelled) league shows its
  * grand final / last played round, never a blank or cancelled round.
  * Events without a round number (tournament-style) are ignored.
+ *
+ * AFLW-2026 REGRESSION (2026-11-11): bracket-placeholder events (see
+ * `isPlaceholderEvent`) and stale-scheduled events (see
+ * `isStaleScheduled`) are ignored entirely — a finals bracket that the
+ * feed never resolves must not pin the displayed round to the first
+ * finals week forever.
  */
 export function deriveCurrentRound(
   events: SportEvent[],
   now: Date = new Date(),
 ): number | null {
-  const valid = events.filter(e => typeof e.round_id === 'number')
+  const valid = events.filter(
+    (e) => typeof e.round_id === 'number' && !isPlaceholderEvent(e),
+  )
   if (valid.length === 0) return null
 
   const isLive = (e: SportEvent): boolean =>
     !!e.starts_at &&
     !e.completed &&
     e.status !== 'cancelled' &&
-    e.status !== 'void'
+    e.status !== 'void' &&
+    !isStaleScheduled(e, now)
 
   const upcoming = valid.filter(isLive)
   if (upcoming.length > 0) {
@@ -245,8 +307,11 @@ export function buildLeagueRoutes(
     if (!events || events.length === 0) continue
     const round = deriveCurrentRound(events, now)
     if (round === null) continue
+    // AFLW-2026 REGRESSION (2026-11-11): bracket placeholders share the
+    // real fixtures' round — never enumerate prerendered match pages for
+    // "1st vs 4th" style rows.
     const roundEvents = sortRoundEvents(
-      events.filter(e => e.round_id === round),
+      events.filter((e) => e.round_id === round && !isPlaceholderEvent(e)),
     )
     for (const event of roundEvents) {
       if (typeof event.slug === 'string' && event.slug.length > 0) {
@@ -283,6 +348,12 @@ export type LeagueEnumerationErrorSink = (source: string, err: unknown) => void
 export async function enumerateLeagueRoutes(
   apiBase: string,
   onError?: LeagueEnumerationErrorSink,
+  /**
+   * AFLW-2026 REGRESSION (2026-11-11): injectable build clock, the same
+   * contract as `buildLeagueRoutes` — staleness-aware round derivation
+   * needs a pinned `now` in tests (default = the wall clock).
+   */
+  now: Date = new Date(),
 ): Promise<string[]> {
   const eventsByLeague: Record<string, SportEvent[]> = {}
   try {
@@ -322,5 +393,5 @@ export async function enumerateLeagueRoutes(
     // match routes arrive with the next successful build.
     onError?.('sports', err)
   }
-  return buildLeagueRoutes(LEAGUE_ROUTE_KEYS, eventsByLeague)
+  return buildLeagueRoutes(LEAGUE_ROUTE_KEYS, eventsByLeague, now)
 }

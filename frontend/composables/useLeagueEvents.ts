@@ -46,6 +46,7 @@ import {
   LEAGUE_COMPETITION_NAMES,
   SEASON_EVENT_LIMIT,
   deriveCurrentRound,
+  isPlaceholderEvent,
   resolveCompetition,
   sortRoundEvents,
 } from '../lib/leagueRoutes'
@@ -57,6 +58,7 @@ import { syncTeamIdentity } from './useTeamIdentity'
 export {
   LEAGUE_COMPETITION_NAMES,
   deriveCurrentRound,
+  isPlaceholderEvent,
   resolveCompetition,
   sortRoundEvents,
 }
@@ -210,11 +212,16 @@ export async function useLeagueEvents(leagueSource: LeagueEventsSource) {
   const seasonEvents = computed<SportEvent[]>(() => data.value?.events ?? [])
   const seasonLabel = computed<string | null>(() => data.value?.seasonLabel ?? null)
   const roundId = computed<number | null>(() => deriveCurrentRound(seasonEvents.value))
+  // AFLW-2026 REGRESSION (2026-11-11): bracket placeholders share the
+  // real fixtures' round — they must never render as cards (the round
+  // derivation above already ignores them when picking the round).
   const roundEvents = computed<SportEvent[]>(() =>
     roundId.value === null
       ? []
       : sortRoundEvents(
-          seasonEvents.value.filter((e) => e.round_id === roundId.value),
+          seasonEvents.value.filter(
+            (e) => e.round_id === roundId.value && !isPlaceholderEvent(e),
+          ),
         ),
   )
   const unavailable = computed<boolean>(() => data.value?.unavailable ?? false)
