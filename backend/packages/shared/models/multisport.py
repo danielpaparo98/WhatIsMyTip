@@ -576,3 +576,20 @@ __all__ = [
     "LeagueEventWeather",
     "LeagueMatchReport",
 ]
+
+
+# AFLW-2026 REGRESSION (2026-11-12): every event_id-keyed DERIVED table
+# whose rows describe a matchup rather than the event's bare result.
+# When the feed re-identifies an event in place (finals brackets
+# resolving "1st" vs "4th" into real clubs), EventCRUD.upsert_fixture
+# clears these rows so the tip refresh + nightly sweeps regenerate them
+# against the real fixture (all writers here are skip-if-exists, so a
+# stale row would poison the event forever). Any NEW event_id-keyed
+# derived table added to this module MUST register here.
+DERIVED_EVENT_TABLES = (
+    LeagueTip,
+    LeagueModelPrediction,
+    LeagueMatchAnalysis,
+    LeagueMatchReport,
+    LeagueEventWeather,
+)

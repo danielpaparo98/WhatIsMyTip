@@ -7,6 +7,7 @@ re-syncing the same feed updates in place, never duplicates.
 
 from __future__ import annotations
 
+import dataclasses
 from datetime import datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
@@ -237,7 +238,8 @@ class TestUpsertFixtureIdentityRefresh:
                 MagicMock(                               # 4 existing sides
                     scalars=MagicMock(return_value=MagicMock(all=lambda: sides))
                 ),
-                MagicMock(),                             # 5-8 stale derived deletes
+                MagicMock(),                             # 5-9 stale derived deletes
+                MagicMock(),
                 MagicMock(),
                 MagicMock(),
                 MagicMock(),
@@ -245,10 +247,14 @@ class TestUpsertFixtureIdentityRefresh:
         )
         db.flush = AsyncMock()
 
+        # Round moved too (feed re-slotted the fixture) — pins the
+        # round_id leg of the identity refresh.
+        fixture = dataclasses.replace(self._resolved_fixture(), round_id=15)
+
         out = await EventCRUD.upsert_fixture(
             db,
             season_id=9,
-            fixture=self._resolved_fixture(),
+            fixture=fixture,
             home_participant_id=201,
             away_participant_id=202,
         )
@@ -257,7 +263,7 @@ class TestUpsertFixtureIdentityRefresh:
         # identity refreshed to the feed's truth
         assert event.venue == "IKON Park"
         assert event.starts_at == datetime(2026, 11, 14, 19, 15)
-        assert event.round_id == 14
+        assert event.round_id == 15
         assert event.sync_version == 2  # bumped on change
         # sides REPOINTED in place - never a second home/away insert
         assert not [
@@ -272,8 +278,57 @@ class TestUpsertFixtureIdentityRefresh:
         ]
         tables = " ".join(deletes)
         for expected in ("league_tips", "league_model_predictions",
-                         "league_match_analys", "league_match_report"):
+                         "league_match_analys", "league_match_report",
+                         "league_event_weather"):
             assert expected in tables, f"missing delete for {expected}"
+
+    @pytest.mark.asyncio
+    async def test_second_pass_resolved_event_is_a_no_op(self):
+        """The night AFTER a successful resolution, re-syncing the same
+        (now real) fixture must be a pure last_synced_at touch: no
+        identity refresh, no side repointing, NO derived-row deletes —
+        a redundant delete here would regenerate tips on every sync
+        forever (generate_league_tips runs per sync)."""
+        event = self._placeholder_event()
+        # end state of the resolution pass:
+        event.round_id = 14
+        event.venue = "IKON Park"
+        event.starts_at = datetime(2026, 11, 14, 19, 15)
+        event.sync_version = 2
+        sides = self._placeholder_sides()
+        sides[0].participant_id = 201  # Carlton
+        sides[1].participant_id = 202  # Hawthorn
+        db = _make_db(
+            [
+                _result(SimpleNamespace(event_id=501)),  # source ref hit
+                _result(event),                          # event by id
+                MagicMock(                               # existing sides
+                    scalars=MagicMock(return_value=MagicMock(all=lambda: sides))
+                ),
+            ]
+        )
+        db.flush = AsyncMock()
+
+        out = await EventCRUD.upsert_fixture(
+            db,
+            season_id=9,
+            fixture=self._resolved_fixture(),
+            home_participant_id=201,
+            away_participant_id=202,
+        )
+
+        assert out is event
+        assert event.venue == "IKON Park"
+        assert event.starts_at == datetime(2026, 11, 14, 19, 15)
+        assert event.sync_version == 2  # unchanged - nothing changed
+        assert sides[0].participant_id == 201  # merged, not repointed
+        assert sides[1].participant_id == 202
+        assert not [
+            o for o in db.added if type(o).__name__ == "EventParticipant"
+        ]
+        # exactly the 3 documented queries ran (ref, event, sides) —
+        # any DELETE here fails via StopIteration on the 4th execute.
+        assert db.execute.await_count == 3
 
     @pytest.mark.asyncio
     async def test_identity_refresh_skipped_when_target_natural_key_taken(self):
@@ -288,6 +343,7 @@ class TestUpsertFixtureIdentityRefresh:
                     scalars=MagicMock(return_value=MagicMock(all=lambda: sides))
                 ),
                 MagicMock(),                             # stale derived deletes
+                MagicMock(),
                 MagicMock(),
                 MagicMock(),
                 MagicMock(),

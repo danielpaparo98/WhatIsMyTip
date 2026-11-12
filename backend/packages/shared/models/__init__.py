@@ -466,6 +466,7 @@ class ModelCoefficient(Base):
 # Sport-generic domain model (ADR 0001 / migration 0010).  Imported here
 # so ``Base.metadata`` registers every table for alembic autogenerate.
 from .multisport import (  # noqa: E402,F401
+    DERIVED_EVENT_TABLES,
     Competition,
     Event,
     EventParticipant,
@@ -493,6 +494,7 @@ from .multisport import (  # noqa: E402,F401
 __all__ = [
     "BacktestResult",
     "Competition",
+    "DERIVED_EVENT_TABLES",
     "EloCache",
     "Event",
     "EventParticipant",

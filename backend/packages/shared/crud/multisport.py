@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..logger import get_logger
 from ..services.placeholders import is_placeholder_venue
 from ..models import (
+    DERIVED_EVENT_TABLES,
     Event,
     EventParticipant,
     EventSourceRef,
@@ -119,6 +120,9 @@ class EventCRUD:
 
         now = datetime.now(timezone.utc)
         event: Optional[Event] = None
+        # Set in the update path (AFLW-2026 identity refresh); the
+        # sides/cleanup block below runs for creates too.
+        identity_refresh_applied = False
 
         # 1. source ref (fast path on re-sync)
         if fixture.external_id is not None:
@@ -185,7 +189,9 @@ class EventCRUD:
             # below still re-points the teams).
             stored_is_placeholder = is_placeholder_venue(event.venue)
             incoming_is_real = (
-                not is_placeholder_venue(fixture.venue)
+                bool(fixture.venue)
+                and bool(fixture.starts_at)
+                and not is_placeholder_venue(fixture.venue)
                 and fixture.home_participant is not None
                 and fixture.away_participant is not None
             )
@@ -215,6 +221,7 @@ class EventCRUD:
                     event.venue = fixture.venue
                     event.starts_at = fixture.starts_at
                     event.round_id = fixture.round_id
+                    identity_refresh_applied = True
                     changed = True
 
             if changed:
@@ -265,6 +272,42 @@ class EventCRUD:
             )
         ).scalars().all()
         sides_by_side = {s.side: s for s in existing_sides}
+        rows_by_pid = {
+            s.participant_id: s
+            for s in existing_sides
+            if s.participant_id is not None
+        }
+
+        # A genuine home/away SWAP (finals venue assignment can flip the
+        # nominal home team when a bracket resolves) cannot be expressed
+        # as two in-place participant_id updates: either intermediate
+        # state violates unique (event_id, participant_id) because the
+        # constraint is non-deferrable and enforced per-row. Replace
+        # both side rows instead — deletes are flushed BEFORE the
+        # inserts below (SQLAlchemy emits same-table deletes last in a
+        # combined flush).
+        swap_detected = (
+            home_participant_id is not None
+            and away_participant_id is not None
+            and home_participant_id != away_participant_id
+            and (
+                (
+                    rows_by_pid.get(home_participant_id) is not None
+                    and rows_by_pid[home_participant_id].side != "home"
+                )
+                or (
+                    rows_by_pid.get(away_participant_id) is not None
+                    and rows_by_pid[away_participant_id].side != "away"
+                )
+            )
+        )
+        if swap_detected:
+            for s in existing_sides:
+                if s.side in ("home", "away"):
+                    db.delete(s)
+            sides_by_side = {}
+            existing_sides = []
+            await db.flush()  # deletes land before the new inserts
 
         reidentified = False
         for side, name, score, pid in (
@@ -291,28 +334,21 @@ class EventCRUD:
                         is_winner=is_winner,
                     )
                 )
+                if swap_detected:
+                    reidentified = True
 
-        if reidentified:
-            # The matchup changed under this event id: every derived row
-            # (tips, picks, AI copy) describes the OLD placeholder
-            # matchup. Clear them — the sync's tip refresh regenerates
-            # tips/predictions immediately, and the nightly NLP sweep
-            # rewrites explanations/analyses/reports against the real
-            # fixture (they are skip-if-exists, so they MUST be gone).
+        if reidentified or identity_refresh_applied:
+            # The matchup (or its identity) changed under this event id:
+            # every derived row (tips, picks, AI copy, weather snapshot)
+            # may describe the OLD placeholder matchup. Clear them — the
+            # sync's tip refresh regenerates tips/predictions
+            # immediately, and the nightly NLP sweep + supplementary
+            # sync rewrite explanations/analyses/reports/weather against
+            # the real fixture (all are skip-if-exists, so they MUST be
+            # gone).
             from sqlalchemy import delete
 
-            from ..models import (
-                LeagueMatchAnalysis,
-                LeagueMatchReport,
-                LeagueModelPrediction,
-                LeagueTip,
-            )
-            for model in (
-                LeagueTip,
-                LeagueModelPrediction,
-                LeagueMatchAnalysis,
-                LeagueMatchReport,
-            ):
+            for model in DERIVED_EVENT_TABLES:
                 await db.execute(
                     delete(model).where(model.event_id == event.id)
                 )
