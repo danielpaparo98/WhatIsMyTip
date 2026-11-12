@@ -18,6 +18,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..logger import get_logger
+from ..services.placeholders import is_placeholder_venue
 from ..models import (
     Event,
     EventParticipant,
@@ -172,6 +173,50 @@ class EventCRUD:
             if event.status != new_status:
                 event.status = new_status
                 changed = True
+
+            # AFLW-2026 REGRESSION (2026-11-12, prod): the feed resolves
+            # finals brackets IN PLACE — the same external_id flips from
+            # a placeholder fixture ("1st" vs "4th", venue "To Be
+            # Confirmed", nominal time) to the real one. Refresh the
+            # event's identity (venue/starts_at/round) so the real
+            # fixture is not trapped in placeholder clothing. Guarded by
+            # the natural key: if another event already holds the
+            # target slot, leave the identity alone (the sides block
+            # below still re-points the teams).
+            stored_is_placeholder = is_placeholder_venue(event.venue)
+            incoming_is_real = (
+                not is_placeholder_venue(fixture.venue)
+                and fixture.home_participant is not None
+                and fixture.away_participant is not None
+            )
+            identity_changed = (
+                stored_is_placeholder
+                and incoming_is_real
+                and (
+                    event.venue != fixture.venue
+                    or event.starts_at != fixture.starts_at
+                    or event.round_id != fixture.round_id
+                )
+            )
+            if identity_changed:
+                key_clash = (
+                    await db.execute(
+                        select(Event.id).where(
+                            Event.season_id == season_id,
+                            Event.event_type == "match",
+                            Event.round_id == fixture.round_id,
+                            Event.starts_at == fixture.starts_at,
+                            Event.venue == fixture.venue,
+                            Event.id != event.id,
+                        )
+                    )
+                ).scalar_one_or_none()
+                if key_clash is None:
+                    event.venue = fixture.venue
+                    event.starts_at = fixture.starts_at
+                    event.round_id = fixture.round_id
+                    changed = True
+
             if changed:
                 event.sync_version = (event.sync_version or 0) + 1
             event.last_synced_at = now
@@ -206,6 +251,12 @@ class EventCRUD:
                 )
 
         # ---- event participants (sides) ----------------------------
+        # AFLW-2026 REGRESSION (2026-11-12): key rows by SIDE, not by
+        # participant_id — a placeholder resolution RENAMES the sides
+        # ("1st"→"Carlton"), and a participant_id-keyed merge cannot see
+        # that; it would insert second home/away rows and blow the
+        # unique (event_id, side) constraint, rolling the whole fixture
+        # back every sync.
         existing_sides = (
             await db.execute(
                 select(EventParticipant).where(
@@ -213,8 +264,9 @@ class EventCRUD:
                 )
             )
         ).scalars().all()
-        sides_by_participant = {s.participant_id: s for s in existing_sides}
+        sides_by_side = {s.side: s for s in existing_sides}
 
+        reidentified = False
         for side, name, score, pid in (
             ("home", fixture.home_participant, fixture.home_score, home_participant_id),
             ("away", fixture.away_participant, fixture.away_score, away_participant_id),
@@ -222,8 +274,11 @@ class EventCRUD:
             if pid is None:
                 continue  # TBC side — no participant identity yet
             is_winner = (side == winning_side) if has_result else None
-            row = sides_by_participant.get(pid)
+            row = sides_by_side.get(side)
             if row is not None:
+                if row.participant_id != pid:
+                    row.participant_id = pid
+                    reidentified = True
                 row.score = score
                 row.is_winner = is_winner
             else:
@@ -235,6 +290,31 @@ class EventCRUD:
                         score=score,
                         is_winner=is_winner,
                     )
+                )
+
+        if reidentified:
+            # The matchup changed under this event id: every derived row
+            # (tips, picks, AI copy) describes the OLD placeholder
+            # matchup. Clear them — the sync's tip refresh regenerates
+            # tips/predictions immediately, and the nightly NLP sweep
+            # rewrites explanations/analyses/reports against the real
+            # fixture (they are skip-if-exists, so they MUST be gone).
+            from sqlalchemy import delete
+
+            from ..models import (
+                LeagueMatchAnalysis,
+                LeagueMatchReport,
+                LeagueModelPrediction,
+                LeagueTip,
+            )
+            for model in (
+                LeagueTip,
+                LeagueModelPrediction,
+                LeagueMatchAnalysis,
+                LeagueMatchReport,
+            ):
+                await db.execute(
+                    delete(model).where(model.event_id == event.id)
                 )
 
         await db.flush()
