@@ -205,10 +205,10 @@ services:
     value: https://whatismytip.com
   - key: NUXT_PUBLIC_UMAMI_HOST
     scope: RUN_AND_BUILD_TIME
-    value: https://cloud.umami.is
+    value: https://analytics.whatismytip.com
   - key: NUXT_PUBLIC_UMAMI_WEBSITE_ID
     scope: RUN_AND_BUILD_TIME
-    value: 82e9b924-49cb-4d16-9e69-5682a1143ea6
+    value: f9498b93-2df4-404b-903a-307de0874edf
   - key: NUXT_PUBLIC_BUY_ME_A_COFFEE_URL
     scope: RUN_AND_BUILD_TIME
     value: https://www.buymeacoffee.com/danielpaparo
@@ -242,10 +242,10 @@ static_sites:
     value: https://whatismytip.com
   - key: NUXT_PUBLIC_UMAMI_HOST
     scope: BUILD_TIME
-    value: https://cloud.umami.is
+    value: https://analytics.whatismytip.com
   - key: NUXT_PUBLIC_UMAMI_WEBSITE_ID
     scope: BUILD_TIME
-    value: 82e9b924-49cb-4d16-9e69-5682a1143ea6
+    value: f9498b93-2df4-404b-903a-307de0874edf
   - key: NUXT_PUBLIC_BUY_ME_A_COFFEE_URL
     scope: BUILD_TIME
   - key: NODE_ENV

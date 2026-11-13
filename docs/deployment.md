@@ -266,8 +266,8 @@ curl https://whatismytip.com/health
 | Variable | Value |
 |----------|-------|
 | `NUXT_PUBLIC_API_BASE` | `https://whatismytip.com` |
-| `NUXT_PUBLIC_UMAMI_HOST` | (optional) Umami host for analytics |
-| `NUXT_PUBLIC_UMAMI_WEBSITE_ID` | (optional) Umami website ID |
+| `NUXT_PUBLIC_UMAMI_HOST` | `https://analytics.whatismytip.com` — self-hosted Umami (see `docs/umami-setup.md`) |
+| `NUXT_PUBLIC_UMAMI_WEBSITE_ID` | The `whatismytip.com` website entry's ID in that instance |
 | `NUXT_PUBLIC_SITE_URL` | `https://whatismytip.com` |
 
 ### Step 4: Deploy
