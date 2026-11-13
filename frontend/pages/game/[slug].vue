@@ -248,6 +248,22 @@ useHead({
     { rel: 'canonical', href: canonicalUrl }
   ]
 })
+
+// ---------------------------------------------------------------------------
+// Analytics (ANALYTICS, 2026-11-13): match_viewed for AFL game pages.
+//
+// H-5 context: this component instance is REUSED across /game/a → /game/b
+// navigations, so onMounted alone would miss subsequent navigations — the
+// slug watcher covers those (no `immediate`, mount already fired).
+// Both no-op during prerender and when analytics is disabled.
+// ---------------------------------------------------------------------------
+onMounted(() => {
+  track(ANALYTICS_EVENTS.matchViewed, { league: 'afl' })
+})
+
+watch(slug, () => {
+  track(ANALYTICS_EVENTS.matchViewed, { league: 'afl' })
+})
 </script>
 
 <style scoped>

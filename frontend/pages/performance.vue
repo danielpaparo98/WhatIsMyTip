@@ -15,6 +15,12 @@
 // config (was hardcoded to the production domain).
 const siteUrl = useRuntimeConfig().public.siteUrl as string
 
+// ANALYTICS (2026-11-13): typed funnel anchor for the AFL performance
+// page. No-ops during prerender and when analytics is disabled.
+onMounted(() => {
+  track(ANALYTICS_EVENTS.performanceViewed, { league: 'afl' })
+})
+
 // PERF-RENAME (2026-10-07): every SEO/canonical/JSON-LD URL points at
 // ${siteUrl}/performance; the /backtest route is a permanent redirect
 // (see nuxt.config.ts routeRules).

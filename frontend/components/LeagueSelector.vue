@@ -31,6 +31,9 @@ const { activeLeague, setActiveLeague } = useActiveLeague()
 function onSelect(event: Event) {
   const key = (event.target as HTMLSelectElement).value
   setActiveLeague(key)
+  // ANALYTICS: which non-default leagues get explored via the selector.
+  // `track` no-ops during SSR/prerender and when analytics is disabled.
+  track(ANALYTICS_EVENTS.leagueSelectorUsed, { to: key })
   navigateTo(key === 'afl' ? '/' : `/${key}`)
 }
 </script>

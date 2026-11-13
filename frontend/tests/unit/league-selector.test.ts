@@ -19,6 +19,7 @@ import {
   LEAGUE_STORAGE_KEY,
   useActiveLeague,
 } from '../../composables/useSportConfig'
+import { ANALYTICS_EVENTS } from '../../utils/analytics'
 
 const SELECT = 'select.league-select'
 
@@ -34,9 +35,14 @@ async function mountSelector() {
 // Nuxt's auto-imported navigateTo on change, which has no plain-vitest
 // global — stub it for EVERY test so any change event resolves. The
 // navigation assertions below install their own spy over this stub.
+// ANALYTICS (2026-11-13): onSelect now also fires the typed analytics
+// wrapper (another Nuxt auto-import) — stub `track` the same way and
+// bind the REAL event constants so the call site's payload stays honest.
 beforeEach(() => {
   window.localStorage.clear()
   vi.stubGlobal('navigateTo', vi.fn())
+  vi.stubGlobal('track', vi.fn())
+  vi.stubGlobal('ANALYTICS_EVENTS', ANALYTICS_EVENTS)
 })
 
 afterEach(() => {

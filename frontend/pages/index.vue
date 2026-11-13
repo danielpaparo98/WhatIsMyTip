@@ -179,7 +179,7 @@
             :key="h.value"
             role="tab"
             :aria-selected="selectedHeuristic === h.value"
-            @click="selectedHeuristic = h.value"
+            @click="onHeuristicSelect(h.value)"
             :class="['heuristic-btn', { active: selectedHeuristic === h.value }]"
           >
             {{ h.label }}
@@ -425,6 +425,24 @@ const refreshAll = async () => {
   await refreshRound()
   setLatestRound(round.value)
   await refreshGames()
+}
+
+// ---------------------------------------------------------------------------
+// Analytics (ANALYTICS, 2026-11-13)
+//
+// home_viewed — typed funnel anchor for '/' (page views are auto-tracked
+// by URL; this adds the league context and survives route-scheme changes).
+// heuristic_selected — user tab clicks ONLY: the localStorage restore below
+// mutates `selectedHeuristic` without user intent and must not fire.
+// Both no-op during prerender and when analytics is disabled.
+// ---------------------------------------------------------------------------
+onMounted(() => {
+  track(ANALYTICS_EVENTS.homeViewed, { league: 'afl' })
+})
+
+function onHeuristicSelect(value: string) {
+  selectedHeuristic.value = value
+  track(ANALYTICS_EVENTS.heuristicSelected, { heuristic: value, league: 'afl' })
 }
 
 // ---------------------------------------------------------------------------
