@@ -59,6 +59,97 @@ export const ANALYTICS_EVENTS = {
 export type AnalyticsEventName =
   (typeof ANALYTICS_EVENTS)[keyof typeof ANALYTICS_EVENTS]
 
+// ---------------------------------------------------------------------------
+// Ready queue (ANALYTICS-QUEUE, 2026-11-13)
+//
+// The injection plugin is CLIENT-ONLY (umami.client.ts — the H-1 fix):
+// the deferred Umami script enters the DOM during hydration and needs a
+// network round-trip before `window.umami` exists. View-anchor events,
+// however, fire in `onMounted` — reliably BEFORE the global appears.
+// Without buffering, every mount-time event hits the no-op guard and is
+// silently lost (verified live in prod: pageviews landed, 100% of custom
+// events dropped).
+//
+// So `track()` buffers events until the global appears. A single lazy
+// poll timer flushes the queue in order; the pipeline gives up (and
+// disables itself) after READY_TIMEOUT_MS so an ad-blocked script can't
+// leave a timer — or a growing queue — behind forever. Once the global
+// is present, dispatch is immediate with no queue hop.
+// ---------------------------------------------------------------------------
+const READY_POLL_MS = 100
+const READY_TIMEOUT_MS = 5000
+const MAX_QUEUED = 20
+
+interface QueuedEvent {
+  name: AnalyticsEventName
+  data?: AnalyticsEventData
+}
+
+let queue: QueuedEvent[] = []
+let flushTimer: ReturnType<typeof setInterval> | null = null
+
+/** True when `window.umami.track` is callable right now. */
+function umamiReady(): boolean {
+  if (typeof window === 'undefined') return false
+  const umami = (window as BrowserWindow).umami
+  return !!umami && typeof umami.track === 'function'
+}
+
+/** Direct dispatch — only called when the global is present. */
+function dispatch(name: AnalyticsEventName, data?: AnalyticsEventData): boolean {
+  const umami = (window as BrowserWindow).umami
+  try {
+    umami?.track(name, data)
+    return true
+  } catch {
+    // The Umami client must never break the host app — swallow and move on.
+    // Common causes: ad-blocker probes tripping, CSP regressions, or a stale
+    // umami global left by a previous load on a different host.
+    return false
+  }
+}
+
+function stopFlushTimer(): void {
+  if (flushTimer !== null) {
+    clearInterval(flushTimer)
+    flushTimer = null
+  }
+}
+
+/** Flush the buffered events, in order, then tear the pipeline down. */
+function flushQueue(): void {
+  const buffered = queue
+  queue = []
+  stopFlushTimer()
+  for (const { name, data } of buffered) dispatch(name, data)
+}
+
+function startFlushTimer(): void {
+  if (flushTimer !== null) return
+  const startedAt = Date.now()
+  flushTimer = setInterval(() => {
+    if (umamiReady()) {
+      flushQueue()
+    } else if (Date.now() - startedAt >= READY_TIMEOUT_MS) {
+      // Umami never showed up within the window (blocked, stalled,
+      // disabled env). Abandon the buffer and tear the pipeline down —
+      // but do NOT latch a permanent off-state: if the script arrives
+      // later, new events simply take the normal dispatch path.
+      queue = []
+      stopFlushTimer()
+    }
+  }, READY_POLL_MS)
+}
+
+/**
+ * Test seam — resets the module-level queue/timer state. Exported solely
+ * for the unit suite; production code must never call this.
+ */
+export function __resetAnalyticsForTests(): void {
+  queue = []
+  stopFlushTimer()
+}
+
 /**
  * Arbitrary event payload. Umami accepts any JSON-serialisable record; we
  * restrict to JSON primitives so payloads survive SSR serialisation and
@@ -98,22 +189,17 @@ export function track(
 ): boolean {
   // The window guard is checked INSIDE the function (never at module
   // top-level) so importing this util during SSR/prerender cannot throw —
-  // the module body has no side effects that reach for `window`.
+  // the module body has no side effects that reach for `window`. SSR
+  // never queues: the prerender process has no client to flush into.
   if (typeof window === 'undefined') return false
 
-  // The global is optional — Umami may be blocked, mid-load, or disabled
-  // (no NUXT_PUBLIC_UMAMI_WEBSITE_ID configured). Localised cast keeps the
-  // global type surface clean (see UmamiAnalytics JSDoc).
-  const umami = (window as BrowserWindow).umami
-  if (!umami || typeof umami.track !== 'function') return false
+  // Fast path — the global is present, dispatch right now.
+  if (umamiReady()) return dispatch(eventName, eventData)
 
-  try {
-    umami.track(eventName, eventData)
-    return true
-  } catch {
-    // The Umami client must never break the host app — swallow and move on.
-    // Common causes: ad-blocker probes tripping, CSP regressions, or a stale
-    // umami global left by a previous load on a different host.
-    return false
-  }
+  // Buffer for the flush loop. Bounded — the funnel-start anchors (the
+  // FIRST events a page fires) are the ones worth keeping, so once full
+  // the queue stops accepting newer events.
+  if (queue.length < MAX_QUEUED) queue.push({ name: eventName, data: eventData })
+  startFlushTimer()
+  return true
 }
