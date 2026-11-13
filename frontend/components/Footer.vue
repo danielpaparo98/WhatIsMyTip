@@ -13,6 +13,7 @@
         target="_blank"
         rel="noopener"
         class="buy-me-coffee-btn"
+        @click="onBuyMeACoffee"
       >
         <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <path d="M18 8h1a4 4 0 0 1 0 8h-1"></path>
@@ -30,6 +31,12 @@
 <script setup lang="ts">
 const config = useRuntimeConfig()
 const buyMeACoffeeUrl = config.public.buyMeACoffeeUrl as string
+
+// ANALYTICS: the site's one conversion signal — the supporter CTA was
+// actually clicked. Fires on click; the external navigation proceeds.
+function onBuyMeACoffee() {
+  track(ANALYTICS_EVENTS.buyMeACoffeeClicked)
+}
 </script>
 
 <style scoped>

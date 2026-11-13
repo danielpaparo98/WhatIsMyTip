@@ -32,6 +32,9 @@ export default defineNuxtPlugin(() => {
       {
         src: `${host}/script.js`,
         'data-website-id': websiteId,
+        // Tagged so the injection point is greppable from the rendered HTML
+        // and a future CSP can allowlist by marker without parsing `src`.
+        'data-analytics': 'umami',
         defer: true,
         key: 'umami-analytics',
       },

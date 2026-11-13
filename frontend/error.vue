@@ -21,6 +21,16 @@ const props = defineProps<Props>()
 // LEAGUE-NAV (2026-09-30, user request): the error page's home link
 // follows the active league (defaults to '/' before hydration).
 const { homePath } = useActiveLeague()
+
+// ANALYTICS (2026-11-13): client-visible error surface — 404s measure
+// broken links, 5xx measure client-visible failures. onMounted only runs
+// client-side, so the wrapper's SSR no-op makes prerendered 404 shells
+// (which DO execute this script during generate) safe by construction.
+onMounted(() => {
+  track(ANALYTICS_EVENTS.errorPageShown, {
+    status_code: props.error?.statusCode ?? 0,
+  })
+})
 </script>
 
 <style scoped>

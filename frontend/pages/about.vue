@@ -178,6 +178,12 @@
 // runtime config (was hardcoded to the production domain).
 const siteUrl = useRuntimeConfig().public.siteUrl as string
 
+// ANALYTICS (2026-11-13): content-reach anchor for the about page.
+// No-ops during prerender and when analytics is disabled.
+onMounted(() => {
+  track(ANALYTICS_EVENTS.aboutViewed)
+})
+
 // FX-05 / FX-20: page-specific SEO + canonical URL
 useSeoMeta({
   title: 'About',

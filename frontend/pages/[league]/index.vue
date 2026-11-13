@@ -188,7 +188,7 @@
               :key="h.value"
               role="tab"
               :aria-selected="selectedHeuristic === h.value"
-              @click="selectedHeuristic = h.value"
+              @click="onHeuristicSelect(h.value)"
               :class="['heuristic-btn', { active: selectedHeuristic === h.value }]"
             >
               {{ h.label }}
@@ -487,6 +487,25 @@ const formatExplanation = (text: string): string => text.replace(/—/g, '–')
 // process, so a globally-scoped selection would leak another league's
 // labels into the static HTML.
 const leagueConfig = computed(() => getLeagueConfig(leagueKey.value ?? 'afl'))
+
+// ---------------------------------------------------------------------------
+// Analytics (ANALYTICS, 2026-11-13)
+//
+// league_viewed — typed funnel anchor for /{league}. heuristic_selected —
+// user tab clicks ONLY (the localStorage restore in onMounted below is not
+// a user action). Both no-op during prerender and without analytics.
+// ---------------------------------------------------------------------------
+onMounted(() => {
+  track(ANALYTICS_EVENTS.leagueViewed, { league: leagueKey.value ?? 'afl' })
+})
+
+function onHeuristicSelect(value: string) {
+  selectedHeuristic.value = value
+  track(ANALYTICS_EVENTS.heuristicSelected, {
+    heuristic: value,
+    league: leagueKey.value ?? 'afl',
+  })
+}
 
 // ---------------------------------------------------------------------------
 // End-of-season state (subtask 01 helpers): the celebration/strip switch

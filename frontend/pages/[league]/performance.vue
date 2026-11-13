@@ -47,6 +47,12 @@ const leagueKey = computed<string | null>(() => {
   return typeof key === 'string' && key.length > 0 ? key : null
 })
 
+// ANALYTICS (2026-11-13): typed funnel anchor for /{league}/performance.
+// No-ops during prerender and when analytics is disabled.
+onMounted(() => {
+  track(ANALYTICS_EVENTS.performanceViewed, { league: leagueKey.value ?? 'afl' })
+})
+
 // ---------------------------------------------------------------------------
 // Active-league sync (same contract as the league home): visiting
 // /{league}/performance must move the header dropdown with the route.
